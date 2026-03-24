@@ -18,6 +18,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     private var completion: ((NSImage?) -> Void)?
     private var blockType: BlockType = .mermaid
     private var tempFile: URL?
+    private var offscreenWindow: NSWindow?
 
     // Cache rendered images by source hash
     private static var cache = NSCache<NSString, NSImage>()
@@ -63,6 +64,15 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         // Make WKWebView background transparent so snapshot has no opaque fill
         webView?.setValue(false, forKey: "drawsBackground")
 
+        // WKWebView requires being in a window hierarchy to render content on recent macOS.
+        // Add it to a hidden offscreen window.
+        if let wv = webView {
+            let offscreenWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: maxWidth, height: 100),
+                                           styleMask: .borderless, backing: .buffered, defer: false)
+            offscreenWindow.contentView?.addSubview(wv)
+            self.offscreenWindow = offscreenWindow
+        }
+
         guard let bundleURL = Bundle.main.url(forResource: "MPreview", withExtension: "bundle") else {
             NSLog("[BlockRenderer] ERROR: MPreview.bundle not found")
             completion?(nil)
@@ -104,7 +114,8 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             <head>
                 <meta charset="utf-8">
                 <style>
-                    body { margin: 0; padding: 0; background: transparent; color: \(textColor); }
+                    * { margin: 0; padding: 0; }
+                    body { background: transparent; color: \(textColor); }
                     .mermaid { max-width: \(Int(maxWidth))px; }
                     svg { max-width: 100%; }
                 </style>
@@ -118,14 +129,17 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
                         setTimeout(function() {
                             var svg = document.querySelector('.mermaid svg');
                             if (svg) {
-                                // Expand the SVG viewBox by 2px on each side to include stroke overflow
+                                // Use the SVG's intrinsic size from viewBox for tight bounds
                                 var vb = svg.viewBox.baseVal;
                                 if (vb && vb.width > 0) {
-                                    svg.setAttribute('viewBox',
-                                        (vb.x - 2) + ' ' + (vb.y - 2) + ' ' +
-                                        (vb.width + 4) + ' ' + (vb.height + 4));
+                                    window.webkit.messageHandlers.renderComplete.postMessage({
+                                        width: Math.ceil(vb.width + 4),
+                                        height: Math.ceil(vb.height + 4)
+                                    });
+                                    return;
                                 }
                             }
+                            // Fallback to bounding rect
                             var el = svg || document.querySelector('.mermaid');
                             var rect = el.getBoundingClientRect();
                             window.webkit.messageHandlers.renderComplete.postMessage({

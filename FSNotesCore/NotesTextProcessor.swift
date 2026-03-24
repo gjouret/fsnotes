@@ -332,6 +332,9 @@ public class NotesTextProcessor {
     
     public static func resetFont(attributedString: NSMutableAttributedString, paragraphRange: NSRange) {
         attributedString.addAttribute(.font, value: font, range: paragraphRange)
+        // Remove negative kern from previous WYSIWYG pass so characters
+        // don't collapse when re-highlighted or when switching to source mode
+        attributedString.removeAttribute(.kern, range: paragraphRange)
         attributedString.fixAttributes(in: paragraphRange)
     }
 
@@ -339,6 +342,11 @@ public class NotesTextProcessor {
         let paragraphRange = paragraphRange ?? NSRange(0..<attributedString.length)
         
         attributedString.beginEditing()
+        // Always remove kern from previous WYSIWYG pass before re-highlighting.
+        // Without this, negative kern persists and collapses text when switching
+        // to source mode or when the paragraph is re-highlighted.
+        attributedString.removeAttribute(.kern, range: paragraphRange)
+
         if paragraphRange.length == attributedString.length {
             // Initial operation
             resetFont(attributedString: attributedString, paragraphRange: paragraphRange)
@@ -442,10 +450,27 @@ public class NotesTextProcessor {
             }
             
             if NotesTextProcessor.hideSyntax {
-                NotesTextProcessor.autolinkPrefixRegex.matches(string, range: range) { (innerResult) -> Void in
-                    guard let innerRange = innerResult?.range else { return }
-                    hideSyntaxIfNecessary(range: innerRange)
-                    attributedString.fixAttributes(in: innerRange)
+                // Only hide http(s):// prefix for bare URLs, not URLs inside
+                // markdown links [text](url) — check if preceded by [ or ](
+                let nsStr = string as NSString
+                let isInsideMarkdownLink: Bool = {
+                    if range.location > 0 {
+                        let charBefore = nsStr.substring(with: NSRange(location: range.location - 1, length: 1))
+                        if charBefore == "[" { return true }
+                    }
+                    if range.location > 1 {
+                        let twoCharsBefore = nsStr.substring(with: NSRange(location: range.location - 2, length: 2))
+                        if twoCharsBefore == "](" { return true }
+                    }
+                    return false
+                }()
+
+                if !isInsideMarkdownLink {
+                    NotesTextProcessor.autolinkPrefixRegex.matches(string, range: range) { (innerResult) -> Void in
+                        guard let innerRange = innerResult?.range else { return }
+                        hideSyntaxIfNecessary(range: innerRange)
+                        attributedString.fixAttributes(in: innerRange)
+                    }
                 }
             }
         }
@@ -532,14 +557,16 @@ public class NotesTextProcessor {
         // We detect and process inline anchors (links)
         NotesTextProcessor.anchorInlineRegex.matches(string, range: paragraphRange) { (result) -> Void in
             guard let range = result?.range else { return }
-            attributedString.addAttribute(.font, value: codeFont, range: range)
-            //attributedString.fixAttributes(in: range)
-            
+            // In WYSIWYG mode, use the note font for display text (not code font)
+            if !NotesTextProcessor.hideSyntax {
+                attributedString.addAttribute(.font, value: codeFont, range: range)
+            }
+
             var destinationLink : String?
             NotesTextProcessor.coupleRoundRegex.matches(string, range: range) { (innerResult) -> Void in
                 guard let innerRange = innerResult?.range else { return }
                 attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: innerRange)
-                
+
                 guard let linkRange = result?.range(at: 3), linkRange.length > 0 else { return }
 
                 let substring = attributedString.mutableString.substring(with: linkRange)
@@ -548,9 +575,31 @@ public class NotesTextProcessor {
                 destinationLink = substring
                 attributedString.addAttribute(.link, value: substring, range: linkRange)
 
-                hideSyntaxIfNecessary(range: innerRange)
+                // In WYSIWYG mode, also apply .link to the display text (group 2)
+                // so it's clickable
+                if NotesTextProcessor.hideSyntax, let displayRange = result?.range(at: 2), displayRange.length > 0 {
+                    attributedString.addAttribute(.link, value: substring, range: displayRange)
+                }
+
+                // Only hide ](url) — not the display text matched by .*
+                // The coupleRoundPattern matches ".*](url)", so innerRange includes
+                // the display text. Find where ]( starts and hide from there.
+                let fullStr = (string as NSString).substring(with: innerRange)
+                if let closeBracketRange = fullStr.range(of: "](") {
+                    let offset = fullStr.distance(from: fullStr.startIndex, to: closeBracketRange.lowerBound)
+                    let hideStart = innerRange.location + offset
+                    let hideLength = innerRange.length - offset
+                    if hideLength > 0 {
+                        let hideRange = NSRange(location: hideStart, length: hideLength)
+                        // Remove .link from hidden range — NSTextView overrides
+                        // foregroundColor for .link text, drawing it blue even
+                        // when we set Color.clear. Must remove .link first.
+                        attributedString.removeAttribute(.link, range: hideRange)
+                        hideSyntaxIfNecessary(range: hideRange)
+                    }
+                }
             }
-            
+
             NotesTextProcessor.openingSquareRegex.matches(string, range: range) { (innerResult) -> Void in
                 guard let innerRange = innerResult?.range else { return }
                 attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: innerRange)
@@ -581,20 +630,26 @@ public class NotesTextProcessor {
         
         NotesTextProcessor.anchorInlineGFMRegex.matches(string, range: paragraphRange) { (result) -> Void in
             guard let range = result?.range else { return }
-            attributedString.addAttribute(.font, value: codeFont, range: range)
-            //attributedString.fixAttributes(in: range)
-            
+            if !NotesTextProcessor.hideSyntax {
+                attributedString.addAttribute(.font, value: codeFont, range: range)
+            }
+
             var destinationLink : String?
-            
+
             NotesTextProcessor.coupleRoundRegex.matches(string, range: range) { (innerResult) -> Void in
                 guard let innerRange = innerResult?.range else { return }
                 attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: innerRange)
-                
+
                 if let linkRange = result?.range(at: 3), linkRange.length > 0 {
                     let substring = attributedString.mutableString.substring(with: linkRange)
                     guard substring.count > 0 else { return }
                     destinationLink = substring
                     attributedString.addAttribute(.link, value: substring, range: linkRange)
+
+                    // In WYSIWYG mode, apply .link to display text so it's clickable
+                    if NotesTextProcessor.hideSyntax, let displayRange = result?.range(at: 2), displayRange.length > 0 {
+                        attributedString.addAttribute(.link, value: substring, range: displayRange)
+                    }
                     
                     let fullURL = attributedString.mutableString.substring(with: innerRange)
                     if let angleStart = fullURL.range(of: "<")?.lowerBound,
@@ -616,17 +671,28 @@ public class NotesTextProcessor {
                     destinationLink = substring
                     attributedString.addAttribute(.link, value: substring, range: linkRange)
                 }
-                
-                hideSyntaxIfNecessary(range: innerRange)
+
+                // Only hide ](url) — not the display text matched by .*
+                let fullStr = (string as NSString).substring(with: innerRange)
+                if let closeBracketRange = fullStr.range(of: "](") {
+                    let offset = fullStr.distance(from: fullStr.startIndex, to: closeBracketRange.lowerBound)
+                    let hideStart = innerRange.location + offset
+                    let hideLength = innerRange.length - offset
+                    if hideLength > 0 {
+                        let hideRange = NSRange(location: hideStart, length: hideLength)
+                        attributedString.removeAttribute(.link, range: hideRange)
+                        hideSyntaxIfNecessary(range: hideRange)
+                    }
+                }
             }
-            
+
             // Opening [
             NotesTextProcessor.openingSquareRegex.matches(string, range: range) { (innerResult) -> Void in
                 guard let innerRange = innerResult?.range else { return }
                 attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: innerRange)
                 hideSyntaxIfNecessary(range: innerRange)
             }
-            
+
             // Closing ]
             NotesTextProcessor.closingSquareRegex.matches(string, range: range) { (innerResult) -> Void in
                 guard let innerRange = innerResult?.range else { return }

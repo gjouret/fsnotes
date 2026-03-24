@@ -14,6 +14,49 @@ import UIKit
 import AVKit
 #endif
 
+#if os(OSX)
+/// Attachment cell that centers an image within the full container width.
+/// The cell spans the container width so paragraph alignment doesn't matter —
+/// centering is handled in the draw method, immune to addTabStops resets.
+class CenteredImageCell: NSTextAttachmentCell {
+    private let imageSize: NSSize
+    private let containerWidth: CGFloat
+
+    init(image: NSImage, imageSize: NSSize, containerWidth: CGFloat) {
+        self.imageSize = imageSize
+        self.containerWidth = containerWidth
+        super.init(imageCell: image)
+    }
+
+    required init(coder: NSCoder) {
+        self.imageSize = .zero
+        self.containerWidth = 400
+        super.init(coder: coder)
+    }
+
+    override func cellSize() -> NSSize {
+        return NSSize(width: containerWidth, height: imageSize.height)
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        guard let image = self.image else { return }
+        let x = cellFrame.origin.x + (cellFrame.width - imageSize.width) / 2
+        let drawRect = NSRect(origin: NSPoint(x: x, y: cellFrame.origin.y),
+                              size: imageSize)
+        image.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1.0,
+                   respectFlipped: true, hints: nil)
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
+        draw(withFrame: cellFrame, in: controlView)
+    }
+
+    override func cellBaselineOffset() -> NSPoint {
+        return NSPoint(x: 0, y: -2)
+    }
+}
+#endif
+
 class TextStorageProcessor: NSObject, NSTextStorageDelegate {
     public var editor: EditTextView?
     public var detector = CodeBlockDetector()
@@ -95,40 +138,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
         var result = detector.codeBlocks(textStorage: textStorage, editedRange: editedRange, delta: delta, newRanges: codeBlockRanges)
         note.codeBlockRangesCache = codeBlockRanges
 
-        // Hide code fence lines (``` ) in WYSIWYG mode
-        if NotesTextProcessor.hideSyntax {
-            let string = textStorage.string as NSString
-
-            for codeRange in codeBlockRanges {
-                guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }
-                let firstLineRange = string.lineRange(for: NSRange(location: codeRange.location, length: 0))
-                let firstLine = string.substring(with: firstLineRange).trimmingCharacters(in: .whitespacesAndNewlines)
-
-                // Hide opening fence: only the backticks, keep the language name visible
-                if firstLineRange.length > 0 {
-                    let backtickCount = min(3, firstLineRange.length)
-                    let backtickRange = NSRange(location: firstLineRange.location, length: backtickCount)
-                    self.hideSyntaxRange(backtickRange, in: textStorage)
-
-                    // If it's a special block (mermaid/math), hide the language name too
-                    if firstLine.hasPrefix("```mermaid") || firstLine.hasPrefix("```math") || firstLine.hasPrefix("```latex") {
-                        self.hideSyntaxRange(firstLineRange, in: textStorage)
-                    }
-                }
-
-                // Hide closing fence line entirely
-                let lastCharLoc = max(codeRange.location, NSMaxRange(codeRange) - 1)
-                let lastLineRange = string.lineRange(for: NSRange(location: lastCharLoc, length: 0))
-                if lastLineRange.location > firstLineRange.location && lastLineRange.length > 0 {
-                    self.hideSyntaxRange(lastLineRange, in: textStorage)
-                }
-            }
-        }
-
-        // Render mermaid/math blocks as inline images in WYSIWYG mode
-        #if os(OSX)
-        renderSpecialCodeBlocks(textStorage: textStorage, codeBlockRanges: codeBlockRanges)
-        #endif
+        // In WYSIWYG mode, code blocks show all content as-is (no syntax hiding).
+        // Fences (```), language names, and code are all visible.
+        // Mermaid/math rendering is triggered ONLY when the cursor leaves the code
+        // block (in textViewDidChangeSelection), NOT on every keystroke here.
 
         // Highlight code block end (```), that wiped previously in highlightMarkdown
         for range in codeBlockRanges {
@@ -257,18 +270,12 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
     public func renderSpecialCodeBlocks(textStorage: NSTextStorage, codeBlockRanges: [NSRange]) {
         guard NotesTextProcessor.hideSyntax else { return }
         let string = textStorage.string as NSString
-        NSLog("[renderSpecialCodeBlocks] Called with \(codeBlockRanges.count) code block ranges")
-        let debugLog = "/tmp/fsnotes_render_debug.log"
-        let msg0 = "[\(Date())] renderSpecialCodeBlocks called with \(codeBlockRanges.count) ranges, hideSyntax=\(NotesTextProcessor.hideSyntax)\n"
-        if let fh = FileHandle(forWritingAtPath: debugLog) { fh.seekToEndOfFile(); fh.write(msg0.data(using: .utf8)!); fh.closeFile() }
-        else { FileManager.default.createFile(atPath: debugLog, contents: msg0.data(using: .utf8)) }
 
         for codeRange in codeBlockRanges {
             guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }
 
             let firstLineRange = string.lineRange(for: NSRange(location: codeRange.location, length: 0))
             let firstLine = string.substring(with: firstLineRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            NSLog("[renderSpecialCodeBlocks] First line: '\(firstLine)'")
 
             var blockType: BlockRenderer.BlockType?
             if firstLine.hasPrefix("```mermaid") {
@@ -312,14 +319,16 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                     let currentText = (textStorage.string as NSString).substring(with: codeRange)
                     guard currentText.contains(source.prefix(20)) else { return }
 
-                    // Replace the entire code block with a rendered image attachment
-                    let attachment = NSTextAttachment()
-                    let cell = NSTextAttachmentCell(imageCell: image)
+                    // Replace the entire code block with a centered rendered image
                     let scale = min(maxWidth / image.size.width, 1.0)
                     let scaledSize = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-                    cell.image?.size = scaledSize
+
+                    // Use a cell that spans the full container width and centers the image.
+                    // This is stable against paragraph style resets by addTabStops.
+                    let attachment = NSTextAttachment()
+                    let cell = CenteredImageCell(image: image, imageSize: scaledSize, containerWidth: maxWidth)
                     attachment.attachmentCell = cell
-                    attachment.bounds = NSRect(origin: .zero, size: scaledSize)
+                    attachment.bounds = NSRect(origin: .zero, size: NSSize(width: maxWidth, height: scaledSize.height))
 
                     let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
                     let attRange = NSRange(location: 0, length: attachmentString.length)
@@ -335,13 +344,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                     self.isRendering = true
                     textStorage.beginEditing()
                     textStorage.replaceCharacters(in: codeRange, with: attachmentString)
-                    // Also clear background on the replaced range in storage
+                    // Clear background on the replaced range
                     let replacedRange = NSRange(location: codeRange.location, length: attachmentString.length)
                     if replacedRange.location + replacedRange.length <= textStorage.length {
                         textStorage.removeAttribute(.backgroundColor, range: replacedRange)
                     }
                     textStorage.endEditing()
                     self.isRendering = false
+
+                    // Remove the rendered code block from the cache so LayoutManager
+                    // doesn't draw a gray background behind the image
+                    self.editor?.note?.codeBlockRangesCache?.removeAll { $0 == codeRange }
                 }
             }
         }

@@ -89,8 +89,8 @@ extension NSTextStorage {
 
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineSpacing = lineSpacing
-            paragraph.alignment = .left
             paragraph.tabStops = tabs
+            paragraph.alignment = .left
 
             if value.count > 1 {
                 let prefix = value.getSpacePrefix()

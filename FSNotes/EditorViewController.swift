@@ -522,7 +522,32 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         NotesTextProcessor.hideSyntax = !isWYSIWYG
         UserDefaultsManagement.wysiwygMode = NotesTextProcessor.hideSyntax
 
-        // Re-highlight the entire document
+        // When switching to source mode, restore all rendered block attachments
+        // (mermaid/math) back to their original markdown source
+        if !NotesTextProcessor.hideSyntax {
+            storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: NSRange(location: 0, length: storage.length), options: .reverse) { value, range, _ in
+                if let originalMarkdown = value as? String {
+                    // Replace with an attributed string that has left-aligned paragraph style
+                    // (the attachment had centered alignment which would persist otherwise)
+                    let leftStyle = NSMutableParagraphStyle()
+                    leftStyle.alignment = .left
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: UserDefaultsManagement.noteFont,
+                        .paragraphStyle: leftStyle
+                    ]
+                    let restored = NSAttributedString(string: originalMarkdown, attributes: attrs)
+                    storage.replaceCharacters(in: range, with: restored)
+                }
+            }
+        }
+
+        // Re-detect code blocks after restoration (cache is stale)
+        if let processor = editor.textStorageProcessor {
+            let codeBlockRanges = processor.detector.findCodeBlocks(in: storage)
+            editor.note?.codeBlockRangesCache = codeBlockRanges
+        }
+
+        // Re-highlight the entire document with fresh code block ranges
         let fullRange = NSRange(location: 0, length: storage.length)
         if fullRange.length > 0 {
             storage.beginEditing()
@@ -531,7 +556,24 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 paragraphRange: fullRange,
                 codeBlockRanges: editor.note?.codeBlockRangesCache
             )
+
+            // Also apply code block syntax coloring (highlightMarkdown doesn't do this —
+            // it's normally handled by TextStorageProcessor.process() via getHighlighter)
+            if let codeRanges = editor.note?.codeBlockRangesCache {
+                for range in codeRanges {
+                    NotesTextProcessor.getHighlighter().highlight(in: storage, fullRange: range)
+                }
+            }
+
             storage.endEditing()
+            storage.updateParagraphStyle(range: fullRange)
+        }
+
+        // When switching to WYSIWYG mode, render any mermaid/math blocks
+        if NotesTextProcessor.hideSyntax,
+           let processor = editor.textStorageProcessor,
+           let codeRanges = editor.note?.codeBlockRangesCache {
+            processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
         }
 
         // Show/hide formatting toolbar
@@ -1596,6 +1638,21 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 }
             
                 vc.focusEditArea()
+
+                // In WYSIWYG mode, start new blank notes in H1 so the first
+                // line becomes the title. Insert "# " (hidden) and set typing
+                // attributes to header font.
+                if NotesTextProcessor.hideSyntax && text.isEmpty {
+                    let formatter = TextFormatter(textView: vc.editor, note: note)
+                    formatter.header("#")
+                    // Set typing attributes to H1 font
+                    let baseFontSize = CGFloat(UserDefaultsManagement.fontSize)
+                    let headerFont = NSFont.boldSystemFont(ofSize: baseFontSize * 2.0)
+                    vc.editor.typingAttributes = [
+                        .font: headerFont,
+                        .foregroundColor: NotesTextProcessor.fontColor
+                    ]
+                }
 
                 NSApp.activate(ignoringOtherApps: true)
                 self.view.window?.makeKeyAndOrderFront(self)

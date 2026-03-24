@@ -2047,19 +2047,9 @@ class ViewController: EditorViewController,
         // Update formatting toolbar button states
         formattingToolbar?.updateButtonStates(for: editor)
 
-        // Trigger mermaid/math rendering when cursor leaves a code block
+        // Trigger mermaid/math rendering when cursor leaves a pending code block
         #if os(OSX)
-        if NotesTextProcessor.hideSyntax,
-           let note = editor.note,
-           let processor = editor.textStorageProcessor,
-           let codeRanges = note.codeBlockRangesCache,
-           let storage = editor.textStorage {
-            let cursorLoc = editor.selectedRange().location
-            let isInCodeBlock = codeRanges.contains { $0.contains(cursorLoc) }
-            if !isInCodeBlock {
-                processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
-            }
-        }
+        editor.triggerCodeBlockRenderingIfNeeded()
         #endif
 
         editor.userActivity?.needsSave = true

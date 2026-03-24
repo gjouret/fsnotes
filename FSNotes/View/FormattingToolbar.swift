@@ -96,7 +96,7 @@ class FormattingToolbar: NSView {
         // Insert group
         addButton(id: "link", symbol: "link", tooltip: "Insert Link (Cmd+K)", action: #selector(EditTextView.linkMenu(_:)))
         addButton(id: "wikilink", symbol: "doc.text", tooltip: "Wiki-Link to Note", action: #selector(EditTextView.wikiLinks(_:)))
-        addButton(id: "image", symbol: "photo", tooltip: "Insert Image/File", action: #selector(EditTextView.insertFileOrImage(_:)))
+        addButton(id: "image", symbol: "paperclip", tooltip: "Insert Image/File", action: #selector(EditTextView.insertFileOrImage(_:)))
         addButton(id: "table", symbol: "tablecells", tooltip: "Insert Table", action: #selector(EditTextView.insertTableMenu(_:)))
         addButton(id: "codeBlock", symbol: "chevron.left.forwardslash.chevron.right", tooltip: "Code Block", action: #selector(EditTextView.insertCodeBlock(_:)))
         addButton(id: "horizontalRule", symbol: "minus", tooltip: "Horizontal Rule", action: #selector(EditTextView.horizontalRuleMenu(_:)))

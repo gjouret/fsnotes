@@ -18,6 +18,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     private var retainedTableEditorVC: TableEditorViewController?
     public var note: Note?
     public var viewDelegate: ViewController?
+
+    /// Range of a code block that was restored from a rendered image and needs re-rendering
+    /// when the cursor moves outside it
+    public var pendingRenderBlockRange: NSRange?
     
     let storage = Storage.shared()
     let caretWidth: CGFloat = 2
@@ -327,6 +331,26 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return
         }
 
+        // In WYSIWYG mode, clicking a link opens it (like a browser)
+        if NotesTextProcessor.hideSyntax, let storage = textStorage {
+            let point = convert(event.locationInWindow, from: nil)
+            let charIndex = characterIndexForInsertion(at: point)
+            if charIndex >= 0 && charIndex < storage.length {
+                if let link = storage.attribute(.link, at: charIndex, effectiveRange: nil) {
+                    if let urlString = link as? String {
+                        if urlString.isValidEmail(), let mail = URL(string: "mailto:\(urlString)") {
+                            NSWorkspace.shared.open(mail)
+                        } else if let url = URL(string: urlString) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } else if let url = link as? URL {
+                        NSWorkspace.shared.open(url)
+                    }
+                    return
+                }
+            }
+        }
+
         let range = selectedRange
         if handleTodo(event) {
             self.window?.makeFirstResponder(self)
@@ -343,13 +367,54 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             self.handleClick(event)
             self.dragDetected = false
         }
+
+        // Trigger mermaid rendering if cursor moved outside a code block
+        triggerCodeBlockRenderingIfNeeded()
+    }
+
+    /// Trigger rendering of mermaid/math code blocks if cursor is outside all code blocks
+    public func triggerCodeBlockRenderingIfNeeded() {
+        #if os(OSX)
+        guard NotesTextProcessor.hideSyntax,
+              let processor = self.textStorageProcessor,
+              let storage = self.textStorage else { return }
+
+        // If there's a specific pending block, check if cursor left it
+        if let pendingRange = pendingRenderBlockRange {
+            let cursorLoc = selectedRange().location
+            let isInsidePending = NSLocationInRange(cursorLoc, pendingRange)
+
+            if !isInsidePending {
+                // Cursor left the pending block — render it
+                pendingRenderBlockRange = nil
+
+                let freshRanges = processor.detector.findCodeBlocks(in: storage)
+                self.note?.codeBlockRangesCache = freshRanges
+
+                if !freshRanges.isEmpty {
+                    processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: freshRanges)
+                }
+            }
+            return
+        }
+
+        // Also check for any unrendered mermaid/math blocks (e.g., on initial note load)
+        let freshRanges = processor.detector.findCodeBlocks(in: storage)
+        guard !freshRanges.isEmpty else { return }
+        self.note?.codeBlockRangesCache = freshRanges
+
+        let cursorLoc = selectedRange().location
+        let isInCodeBlock = freshRanges.contains { NSLocationInRange(cursorLoc, $0) }
+        if !isInCodeBlock {
+            processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: freshRanges)
+        }
+        #endif
     }
     
     private func handleRenderedBlockClick(_ event: NSEvent) -> Bool {
         guard let storage = textStorage,
               let container = self.textContainer,
-              let manager = self.layoutManager,
-              let window = self.window else { return false }
+              let manager = self.layoutManager else { return false }
 
         let point = self.convert(event.locationInWindow, from: nil)
         let properPoint = NSPoint(x: point.x - textContainerInset.width, y: point.y)
@@ -359,28 +424,40 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         // Check if clicked on an attachment with rendered block metadata
         guard storage.attribute(.attachment, at: index, effectiveRange: nil) != nil,
-              let source = storage.attribute(.renderedBlockSource, at: index, effectiveRange: nil) as? String,
-              let typeStr = storage.attribute(.renderedBlockType, at: index, effectiveRange: nil) as? String else {
+              let originalMarkdown = storage.attribute(.renderedBlockOriginalMarkdown, at: index, effectiveRange: nil) as? String else {
             return false
         }
 
-        let blockType: BlockSourceEditor.BlockType = typeStr == "mermaid" ? .mermaid : .math
+        // Restore the original markdown code block inline (replacing the attachment)
+        let attachmentRange = NSRange(location: index, length: 1)
+        guard NSMaxRange(attachmentRange) <= storage.length else { return false }
 
-        BlockSourceEditor.show(source: source, type: blockType, in: window) { [weak self] updatedSource in
-            guard let updatedSource = updatedSource, let self = self else { return }
-
-            // Rebuild the code block with updated source
-            let fence = typeStr == "mermaid" ? "```mermaid" : "```math"
-            let newBlock = "\(fence)\n\(updatedSource)\n```\n"
-
-            // The attachment is a single character at `index` — replace it with the new code block
-            let attachmentRange = NSRange(location: index, length: 1)
-            guard NSMaxRange(attachmentRange) <= storage.length else { return }
-            self.insertText(newBlock, replacementRange: attachmentRange)
-
-            // The new code block will be detected and re-rendered by renderSpecialCodeBlocks
-            // on the next process() cycle
+        // Ensure the restored markdown ends with \n so the code block regex can
+        // match the closing fence (requires \n or end-of-string after ```)
+        var markdown = originalMarkdown
+        if !markdown.hasSuffix("\n") {
+            markdown += "\n"
         }
+
+        breakUndoCoalescing()
+        insertText(markdown, replacementRange: attachmentRange)
+        breakUndoCoalescing()
+
+        // Strip leaked rendered-block attributes from the restored text
+        // (insertText inherits typing attributes from the attachment, which had these)
+        let restoredRange = NSRange(location: index, length: min(markdown.count, storage.length - index))
+        if restoredRange.length > 0 {
+            storage.removeAttribute(.renderedBlockSource, range: restoredRange)
+            storage.removeAttribute(.renderedBlockType, range: restoredRange)
+            storage.removeAttribute(.renderedBlockOriginalMarkdown, range: restoredRange)
+        }
+
+        // Place cursor inside the code block for editing
+        let cursorPos = min(index + markdown.count - 5, storage.length) // before closing ```\n
+        setSelectedRange(NSRange(location: cursorPos, length: 0))
+
+        // Mark this code block range as needing re-render when cursor leaves
+        pendingRenderBlockRange = restoredRange
 
         return true
     }
@@ -996,11 +1073,90 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         formatter.italic()
     }
 
+    /// Normalize a URL string: if it looks like a bare domain (no scheme),
+    /// prepend https://
+    private static func normalizeURL(_ input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Already has a scheme
+        if trimmed.contains("://") || trimmed.hasPrefix("mailto:") {
+            return trimmed
+        }
+        // Looks like a domain name (contains a dot, no spaces)
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            return "https://" + trimmed
+        }
+        return trimmed
+    }
+
     @IBAction func linkMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.link()
+        // Check clipboard for a URL
+        if let clipboardString = NSPasteboard.general.string(forType: .string) {
+            let normalized = EditTextView.normalizeURL(clipboardString)
+            if let url = URL(string: normalized),
+               let scheme = url.scheme, ["http", "https", "ftp", "ftps", "mailto"].contains(scheme.lowercased()) {
+                // Clipboard has a URL — insert link directly
+                let selectedText = attributedSubstring(forProposedRange: selectedRange(), actualRange: nil)?.string ?? ""
+                let displayText = selectedText.isEmpty ? normalized : selectedText
+                let markdown = "[\(displayText)](\(normalized))"
+                let range = selectedRange()
+                insertText(markdown, replacementRange: range)
+                return
+            }
+        }
+        // No URL in clipboard — show dialog
+        showLinkDialog()
+    }
+
+    private func showLinkDialog() {
+        guard let window = self.window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Enter the Internet address (URL) for this link."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Remove Link")
+
+        let urlField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        urlField.placeholderString = "https://example.com"
+        alert.accessoryView = urlField
+        alert.window.initialFirstResponder = urlField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self = self else { return }
+            if response == .alertFirstButtonReturn {
+                let rawInput = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !rawInput.isEmpty else { return }
+                let urlString = EditTextView.normalizeURL(rawInput)
+
+                let selectedText = self.attributedSubstring(forProposedRange: self.selectedRange(), actualRange: nil)?.string ?? ""
+                let displayText = selectedText.isEmpty ? urlString : selectedText
+                let markdown = "[\(displayText)](\(urlString))"
+                let range = self.selectedRange()
+                self.insertText(markdown, replacementRange: range)
+            } else if response == .alertThirdButtonReturn {
+                // Remove link: if cursor is inside a markdown link, strip the syntax
+                let range = self.selectedRange()
+                guard let storage = self.textStorage else { return }
+                let nsString = storage.string as NSString
+                let paraRange = nsString.paragraphRange(for: range)
+                let paraString = nsString.substring(with: paraRange)
+
+                // Match [text](url) pattern around cursor
+                let linkPattern = "\\[([^\\]]*?)\\]\\(([^)]*?)\\)"
+                if let regex = try? NSRegularExpression(pattern: linkPattern),
+                   let match = regex.firstMatch(in: paraString, range: NSRange(location: 0, length: paraString.count)) {
+                    let cursorInPara = range.location - paraRange.location
+                    if NSLocationInRange(cursorInPara, match.range) {
+                        let textRange = match.range(at: 1)
+                        let displayText = (paraString as NSString).substring(with: textRange)
+                        let fullRange = NSRange(location: paraRange.location + match.range.location, length: match.range.length)
+                        self.insertText(displayText, replacementRange: fullRange)
+                    }
+                }
+            }
+        }
     }
 
     @IBAction func underlineMenu(_ sender: Any) {
@@ -1706,7 +1862,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
 
         insertText("```\n\n```\n", replacementRange: currentRange)
-        setSelectedRange(NSRange(location: currentRange.location + 4, length: 0))
+        // Place cursor at end of opening ``` so user can type language name
+        setSelectedRange(NSRange(location: currentRange.location + 3, length: 0))
     }
 
     @IBAction func insertCodeSpan(_ sender: NSMenuItem) {
@@ -1811,13 +1968,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         viewDelegate?.refillEditArea(force: true)
     }
 
+    /// Image file extensions that should be pasted directly inline
+    private static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "tiff", "tif", "webp", "heic", "heif", "svg", "bmp", "ico"
+    ]
+
     private func saveFile(url: URL, in note: Note) -> Bool {
         guard let data = try? Data(contentsOf: url) else { return false }
         let preferredName = url.lastPathComponent
+        let ext = url.pathExtension.lowercased()
 
-        // Images (PNG, JPG, GIF, TIFF, WebP, HEIC): existing inline attachment behavior
-        let fileType = data.getFileType()
-        if fileType != .unknown {
+        // Images: paste directly inline as attachment
+        if EditTextView.imageExtensions.contains(ext) || data.getFileType() != .unknown {
             guard let attributed = NSMutableAttributedString.build(data: data, preferredName: preferredName) else { return false }
             breakUndoCoalescing()
             insertText(attributed, replacementRange: selectedRange())
@@ -1825,8 +1987,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return true
         }
 
-        // All other files (PDF, SVG, DOCX, PPTX, XLSX, Pages, Keynote, Numbers, etc.):
-        // save file, generate QuickLook thumbnail, insert markdown table card
+        // Other files: save file, generate QuickLook thumbnail, insert table card.
+        // For files QL can't render, uses a generic file icon.
         return saveFileWithThumbnail(data: data, preferredName: preferredName, in: note)
     }
 
@@ -1899,8 +2061,28 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
                 markdown = "\n[\(displayName)](\(encodedFilePath))\n"
             }
         } else {
-            // No thumbnail available — just insert a plain link
-            markdown = "\n[\(displayName)](\(encodedFilePath))\n"
+            // No QL thumbnail available — use the system file icon as thumbnail
+            let ext = (preferredName as NSString).pathExtension
+            let fileIcon = NSWorkspace.shared.icon(forFileType: ext)
+            fileIcon.size = NSSize(width: 128, height: 128)
+            if let tiffData = fileIcon.tiffRepresentation,
+               let bitmapRep = NSBitmapImageRep(data: tiffData),
+               let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                let iconName = (preferredName as NSString).deletingPathExtension + "_icon.png"
+                if let (iconRelPath, iconURL) = note.save(data: pngData, preferredName: iconName) {
+                    let encodedIconPath = iconRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? iconRelPath
+                    if note.imageUrl != nil {
+                        note.imageUrl!.append(iconURL)
+                    } else {
+                        note.imageUrl = [iconURL]
+                    }
+                    markdown = "\n| Attachment |\n|:---:|\n| ![\(iconName)](\(encodedIconPath)) |\n| [\(displayName)](\(encodedFilePath)) |\n"
+                } else {
+                    markdown = "\n[\(displayName)](\(encodedFilePath))\n"
+                }
+            } else {
+                markdown = "\n[\(displayName)](\(encodedFilePath))\n"
+            }
         }
 
         breakUndoCoalescing()
