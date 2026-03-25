@@ -130,10 +130,11 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         drawCodeBlockBackground(forGlyphRange: glyphsToShow, at: origin)
         drawHorizontalRules(forGlyphRange: glyphsToShow, at: origin)
         drawBlockquoteBorders(forGlyphRange: glyphsToShow, at: origin)
+        drawHeaderBottomBorders(forGlyphRange: glyphsToShow, at: origin)
 
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
-    
+
     override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
         let storageLength = self.textStorage?.length ?? 0
         let storageFullRange = NSRange(location: 0, length: storageLength)
@@ -215,16 +216,20 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             guard value != nil else { return }
             let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             if glyphRange.length == 0 { return }
-            let rect = self.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-            if rect.isEmpty { return }
 
-            let lineY = rect.midY + origin.y
+            // Use the line fragment rect (full container width) instead of the
+            // bounding rect (which is empty after kern-collapsing the --- text)
+            let lineFragmentRect = self.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            if lineFragmentRect.isEmpty { return }
+
+            // MPreview CSS: background #e7e7e7, height 4px, margin 16px 0, no inset
+            let containerWidth = textContainer.size.width
+            let lineY = lineFragmentRect.midY + origin.y
+            let padding = textContainer.lineFragmentPadding
+
             context.saveGState()
-            context.setStrokeColor(NSColor.separatorColor.cgColor)
-            context.setLineWidth(1.0)
-            context.move(to: CGPoint(x: rect.minX + origin.x + 20, y: lineY))
-            context.addLine(to: CGPoint(x: rect.maxX + origin.x - 20, y: lineY))
-            context.strokePath()
+            context.setFillColor(NSColor(red: 0.906, green: 0.906, blue: 0.906, alpha: 1.0).cgColor) // #e7e7e7
+            context.fill(CGRect(x: origin.x + padding, y: lineY - 2, width: containerWidth - padding * 2, height: 4))
             context.restoreGState()
         }
     }
@@ -245,11 +250,69 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let rect = self.boundingRect(forGlyphRange: glyphRange, in: textContainer)
             if rect.isEmpty { return }
 
-            // Draw bar at fixed position (left margin), not relative to text indent
-            let barX = origin.x + textContainer.lineFragmentPadding + 4
+            // MPreview CSS: border-left 4px solid #ddd, padding 0 15px
+            let barX = origin.x + textContainer.lineFragmentPadding + 2
             context.saveGState()
-            context.setFillColor(NSColor.systemGray.withAlphaComponent(0.4).cgColor)
-            context.fill(CGRect(x: barX, y: rect.minY + origin.y + 2, width: 2.5, height: rect.height - 4))
+            context.setFillColor(NSColor(red: 0.867, green: 0.867, blue: 0.867, alpha: 1.0).cgColor) // #ddd
+            context.fill(CGRect(x: barX, y: rect.minY + origin.y, width: 4, height: rect.height))
+            context.restoreGState()
+        }
+    }
+
+    private func drawHeaderBottomBorders(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        guard NotesTextProcessor.hideSyntax else { return }
+        guard let textStorage = self.textStorage,
+              let context = NSGraphicsContext.current?.cgContext,
+              let textContainer = self.textContainers.first else { return }
+        guard let blocks = processor?.blocks, !blocks.isEmpty else { return }
+
+        let visibleCharRange = self.characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        let storageFullRange = NSRange(location: 0, length: textStorage.length)
+        let safeRange = visibleCharRange.clamped(to: storageFullRange)
+        guard safeRange.length > 0 else { return }
+
+        let baseSize = UserDefaultsManagement.noteFont.pointSize
+
+        // Use the block model to find H1/H2 headers
+        for block in blocks {
+            let level: Int
+            switch block.type {
+            case .heading(let l) where l <= 2: level = l
+            case .headingSetext(let l) where l <= 2: level = l
+            default: continue
+            }
+
+            // Only process blocks that intersect the visible range
+            guard NSIntersectionRange(block.range, safeRange).length > 0 else { continue }
+            guard block.range.location < textStorage.length,
+                  NSMaxRange(block.range) <= textStorage.length else { continue }
+
+            let glyphRange = self.glyphRange(forCharacterRange: block.range, actualCharacterRange: nil)
+            if glyphRange.length == 0 { continue }
+
+            // Get the line fragment rect for the last glyph in the header paragraph
+            let lastGlyphIndex = min(glyphRange.location + glyphRange.length - 1, self.numberOfGlyphs - 1)
+            let lineFragRect = self.lineFragmentRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil)
+            if lineFragRect.isEmpty { continue }
+
+            // MPreview CSS: h1:not(.no-border), h2 { padding-bottom: .3em; border-bottom: 1px solid #eee }
+            // .3em relative to the header's font-size:
+            //   H1 (1.8em = 25.2pt): .3em = 7.6pt
+            //   H2 (1.6em = 22.4pt): .3em = 6.7pt
+            let headerFontSize = level == 1 ? baseSize * 1.8 : baseSize * 1.6
+            let paddingBottom = headerFontSize * 0.3
+            let containerWidth = textContainer.size.width
+            let lineY = lineFragRect.maxY + origin.y + paddingBottom
+
+            context.saveGState()
+            // #eeeeee = rgb(238,238,238) = 0.933
+            context.setStrokeColor(NSColor(red: 0.933, green: 0.933, blue: 0.933, alpha: 1.0).cgColor)
+            // CSS "1px" = 0.5pt on Retina displays (thin hairline matching MPreview)
+            context.setLineWidth(0.5)
+            // Full content width, edge to edge (no lineFragmentPadding inset)
+            context.move(to: CGPoint(x: origin.x, y: lineY))
+            context.addLine(to: CGPoint(x: origin.x + containerWidth, y: lineY))
+            context.strokePath()
             context.restoreGState()
         }
     }

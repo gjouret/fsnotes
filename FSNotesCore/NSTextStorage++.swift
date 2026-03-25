@@ -78,6 +78,14 @@ extension NSTextStorage {
      * Implements https://github.com/glushchenko/fsnotes/issues/311
      */
     public func addTabStops(range: NSRange, tabs: [NSTextTab]) {
+        // When WYSIWYG block model is active, Phase 5 handles paragraph styles.
+        // Skip addTabStops to avoid overwriting block-aware spacing.
+        if NotesTextProcessor.hideSyntax,
+           let delegate = self.delegate as? TextStorageProcessor,
+           !delegate.blocks.isEmpty {
+            return
+        }
+
         let font = UserDefaultsManagement.noteFont
         let lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
         let paragraphRange = mutableString.paragraphRange(for: range)
@@ -92,9 +100,10 @@ extension NSTextStorage {
             paragraph.tabStops = tabs
             paragraph.alignment = .left
 
+            var matchedPrefix: String?
+
             if value.count > 1 {
                 let prefix = value.getSpacePrefix()
-                var matchedPrefix: String?
 
                 if prefix.isEmpty {
                     for marker in markers {
@@ -119,6 +128,55 @@ extension NSTextStorage {
 
                 if let prefix = matchedPrefix {
                     paragraph.headIndent = prefix.widthOfString(usingFont: font, tabs: tabs)
+                }
+            }
+
+            // In WYSIWYG mode, add spacing to match MPreview CSS
+            if NotesTextProcessor.hideSyntax {
+                let isH1 = value.hasPrefix("# ") || value.hasPrefix("#\n")
+                let isH2 = value.hasPrefix("## ") && !value.hasPrefix("### ")
+                let isH3 = value.hasPrefix("### ") && !value.hasPrefix("#### ")
+
+                // MPreview CSS: h1/h2 have padding-bottom: .3em, border-bottom, margin-bottom: 16px
+                // The border is drawn by LayoutManager at maxY, so paragraphSpacing
+                // must provide: .3em (text→border) + 16px (border→next paragraph)
+                if isH1 || isH2 {
+                    paragraph.paragraphSpacing = 20  // ~.3em + 16px
+                } else if isH3 {
+                    paragraph.paragraphSpacing = 12
+                }
+
+                // MPreview CSS: ul/ol have margin-bottom: 16px, li+li have margin-top: 0.25em
+                // Detect list items (bullets, numbered, todos) but NOT blockquotes
+                let isListItem = matchedPrefix != nil && matchedPrefix != "> "
+                    && !(matchedPrefix?.hasPrefix("> ") ?? false)
+                if isListItem {
+                    // Check if previous/next paragraphs are also list items
+                    let prevParEnd = parRange.location
+                    let nextParStart = NSMaxRange(parRange)
+                    let fullString = self.mutableString as String
+
+                    var prevIsListItem = false
+                    if prevParEnd > 0 {
+                        let prevRange = (fullString as NSString).paragraphRange(for: NSRange(location: prevParEnd - 1, length: 0))
+                        let prevPar = (fullString as NSString).substring(with: prevRange)
+                        prevIsListItem = markers.contains(where: { prevPar.hasPrefix($0) || prevPar.contains(where: { $0.isWhitespace }) && markers.contains(where: { prevPar.trimmingCharacters(in: .whitespaces).hasPrefix($0) }) })
+                            || self.getNumberListPrefix(paragraph: prevPar) != nil
+                    }
+
+                    var nextIsListItem = false
+                    if nextParStart < fullString.count {
+                        let nextRange = (fullString as NSString).paragraphRange(for: NSRange(location: nextParStart, length: 0))
+                        let nextPar = (fullString as NSString).substring(with: nextRange)
+                        nextIsListItem = markers.contains(where: { nextPar.hasPrefix($0) || nextPar.trimmingCharacters(in: .whitespaces).hasPrefix($0) })
+                            || self.getNumberListPrefix(paragraph: nextPar) != nil
+                    }
+
+                    // First item in list: add space before (like margin-top on <ul>)
+                    paragraph.paragraphSpacingBefore = prevIsListItem ? 4 : 12
+
+                    // Last item in list: add space after (like margin-bottom on <ul>)
+                    paragraph.paragraphSpacing = nextIsListItem ? 4 : 12
                 }
             }
 

@@ -15,7 +15,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     
     public var editorViewController: EditorViewController?
     public var textStorageProcessor: TextStorageProcessor?
-    private var retainedTableEditorVC: TableEditorViewController?
+    // retainedTableEditorVC removed — table editing is now inline via InlineTableView
     public var note: Note?
     public var viewDelegate: ViewController?
 
@@ -327,9 +327,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
 
         // Check for click on rendered block (mermaid/math) — open source editor
+        // But NOT tables — those are handled as interactive views
         if NotesTextProcessor.hideSyntax, handleRenderedBlockClick(event) {
             return
         }
+
+        // Unfocus all inline table views when clicking in the editor
+        unfocusAllInlineTableViews()
 
         // In WYSIWYG mode, clicking a link opens it (like a browser)
         if NotesTextProcessor.hideSyntax, let storage = textStorage {
@@ -398,14 +402,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return
         }
 
-        // Also check for any unrendered mermaid/math blocks (e.g., on initial note load)
+        // Also check for any unrendered mermaid/math blocks or tables (e.g., on initial note load)
         let freshRanges = processor.detector.findCodeBlocks(in: storage)
-        guard !freshRanges.isEmpty else { return }
         self.note?.codeBlockRangesCache = freshRanges
 
         let cursorLoc = selectedRange().location
-        let isInCodeBlock = freshRanges.contains { NSLocationInRange(cursorLoc, $0) }
-        if !isInCodeBlock {
+        let isInCodeBlock = !freshRanges.isEmpty && freshRanges.contains { NSLocationInRange(cursorLoc, $0) }
+        if !isInCodeBlock && !freshRanges.isEmpty {
             processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: freshRanges)
         }
         #endif
@@ -426,6 +429,17 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         guard storage.attribute(.attachment, at: index, effectiveRange: nil) != nil,
               let originalMarkdown = storage.attribute(.renderedBlockOriginalMarkdown, at: index, effectiveRange: nil) as? String else {
             return false
+        }
+
+        // Tables are interactive — don't restore to markdown on click
+        if let blockType = storage.attribute(.renderedBlockType, at: index, effectiveRange: nil) as? String,
+           blockType == RenderedBlockType.table.rawValue {
+            // Focus the table view instead
+            if let att = storage.attribute(.attachment, at: index, effectiveRange: nil) as? NSTextAttachment,
+               let cell = att.attachmentCell as? InlineTableAttachmentCell {
+                cell.inlineTableView.isFocused = true
+            }
+            return true
         }
 
         // Restore the original markdown code block inline (replacing the attachment)
@@ -593,6 +607,12 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
            let link = textStorage.attribute(.link, at: index, effectiveRange: nil) {
 
             if textStorage.attribute(.tag, at: index, effectiveRange: nil) != nil {
+                NSCursor.pointingHand.set()
+                return
+            }
+
+            // In WYSIWYG mode, always show hand cursor for links
+            if NotesTextProcessor.hideSyntax {
                 NSCursor.pointingHand.set()
                 return
             }
@@ -974,6 +994,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {
             textStorageProcessor?.detector = CodeBlockDetector()
 
+            // Clear stale code block ranges BEFORE replacing storage content
+            // to prevent LayoutManager.drawBackground from accessing out-of-bounds ranges
+            note.codeBlockRangesCache = []
+            pendingRenderBlockRange = nil
+
             storage.setAttributedString(content)
         } else {
             storage.setAttributedString(note.content)
@@ -981,6 +1006,28 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         
         if highlight {
             textStorage?.highlightKeyword(search: getSearchText())
+        }
+
+        // In WYSIWYG mode, ensure code fences are hidden after fill
+        // (process() may not always run the fence-hiding path on setAttributedString)
+        if NotesTextProcessor.hideSyntax, let storage = textStorage, let processor = textStorageProcessor {
+            let codeBlockRanges = processor.detector.findCodeBlocks(in: storage)
+            note.codeBlockRangesCache = codeBlockRanges
+            let string = storage.string as NSString
+            for codeRange in codeBlockRanges {
+                guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }
+                let openingLineRange = string.lineRange(for: NSRange(location: codeRange.location, length: 0))
+                if openingLineRange.length > 0 {
+                    processor.hideSyntaxRange(openingLineRange, in: storage)
+                }
+                let endLoc = NSMaxRange(codeRange)
+                if endLoc > 0 {
+                    let closingLineRange = string.lineRange(for: NSRange(location: endLoc - 1, length: 0))
+                    if closingLineRange.length > 0, closingLineRange.location != openingLineRange.location {
+                        processor.hideSyntaxRange(closingLineRange, in: storage)
+                    }
+                }
+            }
         }
 
         viewDelegate?.restoreScrollPosition()
@@ -1744,51 +1791,138 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     }
 
     @IBAction func insertTableMenu(_ sender: Any) {
-        guard let _ = self.note, isEditable else { return }
-        showTableEditor(existingRange: nil, existingData: nil)
-    }
-
-    @IBAction func editTableMenu(_ sender: Any) {
         guard let storage = textStorage, isEditable else { return }
-        let loc = selectedRange().location
-        guard let tableRange = TableEditorViewController.tableRange(in: storage, at: loc) else { return }
-        let markdown = (storage.string as NSString).substring(with: tableRange)
-        guard let data = TableEditorViewController.parse(markdown: markdown) else { return }
-        showTableEditor(existingRange: tableRange, existingData: data)
+
+        // Insert a 2x2 empty markdown table at cursor
+        let tableMarkdown = "|  |  |\n|--|--|\n|  |  |"
+        let insertRange = selectedRange()
+        let prefix = insertRange.location > 0 ? "\n" : ""
+        insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
+
+        // In WYSIWYG mode, immediately render as InlineTableView
+        if NotesTextProcessor.hideSyntax {
+            renderTables()
+            // Focus the first cell of the new table
+            focusFirstInlineTableCell()
+        }
     }
 
-    private func showTableEditor(existingRange: NSRange?, existingData: TableEditorViewController.TableData?) {
-        guard let vc = editorViewController, let window = vc.view.window else { return }
-
-        let tableVC = TableEditorViewController()
-        tableVC.existingData = existingData
-        // Retain the controller so stepper targets don't dangle while the sheet is displayed
-        retainedTableEditorVC = tableVC
-
-        let alert = NSAlert()
-        alert.messageText = existingRange != nil ? "Edit Table" : "Insert Table"
-        alert.addButton(withTitle: existingRange != nil ? "Update" : "Insert")
-        alert.addButton(withTitle: "Cancel")
-        alert.accessoryView = tableVC.view
-
-        // Force layout so the view has correct size
-        tableVC.view.layoutSubtreeIfNeeded()
-
-        alert.beginSheetModal(for: window) { [weak self] response in
-            defer { self?.retainedTableEditorVC = nil }
-            guard let self = self, response == .alertFirstButtonReturn else { return }
-            let markdown = tableVC.generateMarkdown()
-            guard !markdown.isEmpty else { return }
-
-            if let range = existingRange {
-                // Replace existing table
-                self.insertText(markdown + "\n", replacementRange: range)
-            } else {
-                // Insert at cursor
-                let insertRange = self.selectedRange()
-                self.insertText("\n" + markdown + "\n", replacementRange: insertRange)
+    /// Focus the first editable cell in the most recently added InlineTableView
+    private func focusFirstInlineTableCell() {
+        for subview in subviews.reversed() {
+            if let tableView = subview as? InlineTableView {
+                tableView.isFocused = true
+                tableView.focusFirstCell()
+                break
             }
         }
+    }
+
+    /// Unfocus all inline table views (hide their controls)
+    func unfocusAllInlineTableViews() {
+        for subview in subviews {
+            if let tableView = subview as? InlineTableView, tableView.isFocused {
+                tableView.isFocused = false
+            }
+        }
+    }
+
+    /// Remove all inline table view subviews (called on source mode toggle or note switch)
+    func removeAllInlineTableViews() {
+        for subview in subviews {
+            if subview is InlineTableView {
+                subview.removeFromSuperview()
+            }
+        }
+    }
+
+    // MARK: - Inline Table Rendering
+
+    /// Render markdown tables as inline InlineTableView widgets in WYSIWYG mode
+    func renderTables() {
+        guard NotesTextProcessor.hideSyntax,
+              let storage = textStorage,
+              let processor = textStorageProcessor else { return }
+
+        let tableRanges = TableUtility.findAllTableRanges(in: storage)
+        let string = storage.string as NSString
+
+        // Process in reverse so range offsets stay valid
+        for tableRange in tableRanges.reversed() {
+            guard tableRange.location < string.length, NSMaxRange(tableRange) <= string.length else { continue }
+
+            let tableMarkdown = string.substring(with: tableRange)
+
+            // Check if already rendered
+            if storage.attribute(.renderedBlockSource, at: tableRange.location, effectiveRange: nil) as? String == tableMarkdown {
+                continue
+            }
+
+            guard let data = TableUtility.parse(markdown: tableMarkdown) else { continue }
+
+            let maxWidth = getTableMaxWidth()
+
+            // Create the inline table view
+            let tableView = InlineTableView()
+            tableView.configure(with: data)
+            tableView.containerWidth = maxWidth
+            tableView.isFocused = false
+            tableView.rebuild()
+
+            // Create attachment
+            let attachment = NSTextAttachment()
+            let cellSize = tableView.intrinsicContentSize
+            let cell = InlineTableAttachmentCell(tableView: tableView, size: cellSize)
+            attachment.attachmentCell = cell
+            attachment.bounds = NSRect(origin: .zero, size: cellSize)
+
+            let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+            let attRange = NSRange(location: 0, length: attachmentString.length)
+            attachmentString.addAttributes([
+                .renderedBlockSource: tableMarkdown,
+                .renderedBlockType: RenderedBlockType.table.rawValue,
+                .renderedBlockOriginalMarkdown: tableMarkdown
+            ], range: attRange)
+            attachmentString.removeAttribute(.backgroundColor, range: attRange)
+
+            // Replace table markdown with attachment
+            processor.isRendering = true
+            storage.beginEditing()
+            storage.replaceCharacters(in: tableRange, with: attachmentString)
+            let replacedRange = NSRange(location: tableRange.location, length: attachmentString.length)
+            if replacedRange.location + replacedRange.length <= storage.length {
+                storage.removeAttribute(.backgroundColor, range: replacedRange)
+            }
+            storage.endEditing()
+            processor.isRendering = false
+
+            // Add the table view as a subview
+            addSubview(tableView)
+
+            // Set up the markdown changed callback
+            tableView.onMarkdownChanged = { [weak storage] (newMarkdown: String) in
+                guard let storage = storage else { return }
+                let fullRange = NSRange(location: 0, length: storage.length)
+                storage.enumerateAttribute(.renderedBlockType, in: fullRange, options: []) { value, range, stop in
+                    if let type = value as? String, type == RenderedBlockType.table.rawValue, range.length == 1 {
+                        if let att = storage.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment,
+                           let attCell = att.attachmentCell as? InlineTableAttachmentCell,
+                           attCell.inlineTableView === tableView {
+                            storage.addAttribute(.renderedBlockOriginalMarkdown, value: newMarkdown, range: range)
+                            storage.addAttribute(.renderedBlockSource, value: newMarkdown, range: range)
+                            stop.pointee = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func getTableMaxWidth() -> CGFloat {
+        if let editorWidth = enclosingScrollView?.contentView.bounds.width {
+            return editorWidth - 40
+        }
+        return 400
     }
 
     @IBAction func horizontalRuleMenu(_ sender: Any) {

@@ -1039,6 +1039,10 @@ public class Note: NSObject  {
     }
 
     public func save(content: NSMutableAttributedString) {
+        // Reverse WYSIWYG bullet substitution before saving:
+        // Phase 4 replaces "- " with "• " for display; we must restore the original markers.
+        Self.restoreBulletMarkers(in: content)
+
         self.content = content
 
         let copy = content.unloadAttachments()
@@ -1046,6 +1050,24 @@ public class Note: NSObject  {
 
         if write(attributedString: copy) {
             Storage.shared().add(self)
+        }
+    }
+
+    /// Reverses the bullet character substitution done by Phase 4 for WYSIWYG display.
+    /// Finds characters marked with .listBullet attribute and restores the original marker.
+    public static func restoreBulletMarkers(in content: NSMutableAttributedString) {
+        let fullRange = NSRange(location: 0, length: content.length)
+        // Enumerate in reverse to avoid range invalidation
+        var replacements: [(NSRange, String)] = []
+        content.enumerateAttribute(.listBullet, in: fullRange, options: []) { value, range, _ in
+            guard let originalMarker = value as? String else { return }
+            let currentChar = (content.string as NSString).substring(with: NSRange(location: range.location, length: 1))
+            if currentChar == "\u{2022}" {
+                replacements.append((NSRange(location: range.location, length: 1), originalMarker))
+            }
+        }
+        for (range, marker) in replacements.reversed() {
+            content.replaceCharacters(in: range, with: marker)
         }
     }
 
@@ -1060,6 +1082,7 @@ public class Note: NSObject  {
     }
         
     public func save() -> Bool {
+        Self.restoreBulletMarkers(in: self.content)
         let attributedString = self.content.unloadAttachments()
 
         return write(attributedString: attributedString)

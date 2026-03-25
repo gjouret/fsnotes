@@ -76,6 +76,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         guard let bundleURL = Bundle.main.url(forResource: "MPreview", withExtension: "bundle") else {
             NSLog("[BlockRenderer] ERROR: MPreview.bundle not found")
             completion?(nil)
+            cleanup()
             return
         }
         NSLog("[BlockRenderer] Bundle URL: \(bundleURL.path)")
@@ -93,6 +94,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         } catch {
             NSLog("[BlockRenderer] ERROR writing temp file: \(error)")
             completion?(nil)
+            cleanup()
         }
     }
 
@@ -195,12 +197,14 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
               let body = message.body as? [String: Any] else {
             NSLog("[BlockRenderer] ERROR: unexpected message format")
             completion?(nil)
+            cleanup()
             return
         }
 
         if let error = body["error"] {
             NSLog("[BlockRenderer] ERROR from JS: \(error)")
             completion?(nil)
+            cleanup()
             return
         }
 
@@ -208,6 +212,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
               let height = body["height"] as? CGFloat,
               width > 0, height > 0 else {
             completion?(nil)
+            cleanup()
             return
         }
 

@@ -569,11 +569,18 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             storage.updateParagraphStyle(range: fullRange)
         }
 
-        // When switching to WYSIWYG mode, render any mermaid/math blocks
+        // When switching to WYSIWYG mode, render any mermaid/math blocks and tables
         if NotesTextProcessor.hideSyntax,
-           let processor = editor.textStorageProcessor,
-           let codeRanges = editor.note?.codeBlockRangesCache {
-            processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
+           let processor = editor.textStorageProcessor {
+            if let codeRanges = editor.note?.codeBlockRangesCache {
+                processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
+            }
+            editor.renderTables()
+        }
+
+        // When switching to source mode, remove inline table views
+        if !NotesTextProcessor.hideSyntax {
+            editor.removeAllInlineTableViews()
         }
 
         // Show/hide formatting toolbar

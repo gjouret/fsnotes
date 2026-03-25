@@ -62,6 +62,27 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
     public var detector = CodeBlockDetector()
     public var isRendering = false
 
+    // MARK: - Block Model (Phase A: shadow mode — populated alongside existing code)
+
+    /// The block model — single source of truth for all WYSIWYG rendering.
+    /// Populated by MarkdownBlockParser during process().
+    public var blocks: [MarkdownBlock] = []
+
+    /// All code block ranges derived from the block model.
+    /// Replaces Note.codeBlockRangesCache once fully wired up.
+    public var codeBlockRanges: [NSRange] {
+        return blocks.compactMap { block in
+            if case .codeBlock = block.type { return block.range }
+            return nil
+        }
+    }
+
+    /// Find the block at a given character index. O(log n).
+    public func block(at characterIndex: Int) -> MarkdownBlock? {
+        guard let idx = MarkdownBlockParser.blockIndex(in: blocks, containing: characterIndex) else { return nil }
+        return blocks[idx]
+    }
+
     /// Hide syntax characters by making them invisible (clear color) and
     /// collapsing their width (negative kern). Preserves existing font so
     /// the cursor inherits correct height. Mirrors the approach in
@@ -116,7 +137,22 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
 
         defer {
             loadImages(textStorage: textStorage, checkRange: editedRange)
-            textStorage.updateParagraphStyle(range: editedRange)
+
+            // Phase 5: Block-aware paragraph styles (replaces addTabStops)
+            // Must run after block model is populated (updateBlockModel runs at end of process body)
+            if !blocks.isEmpty {
+                let paragraphRange = (textStorage.string as NSString).paragraphRange(for: editedRange)
+                phase5_paragraphStyles(textStorage: textStorage, range: paragraphRange)
+            } else {
+                // Fallback to old addTabStops if block model not yet populated
+                textStorage.updateParagraphStyle(range: editedRange)
+            }
+
+            // Phase 4: Unified syntax hiding (replaces scattered fence hiding)
+            if NotesTextProcessor.hideSyntax && !blocks.isEmpty {
+                let paragraphRange = (textStorage.string as NSString).paragraphRange(for: editedRange)
+                phase4_hideSyntax(textStorage: textStorage, range: paragraphRange)
+            }
         }
 
         if note.content.length == textStorage.length && (
@@ -126,6 +162,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
         // Full load
         if editedRange.length == textStorage.length {
             NotesTextProcessor.highlight(attributedString: textStorage)
+
+            // Populate block model on full load — Phase 4 (syntax hiding) and
+            // Phase 5 (paragraph styles) run from the defer block using this model
+            updateBlockModel(textStorage: textStorage, editedRange: editedRange, delta: delta)
+
+            // Also update legacy cache for code blocks (still used by some consumers)
+            note.codeBlockRangesCache = codeBlockRanges
             return
         }
 
@@ -171,6 +214,279 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                 let safeRange = safeRange(range, in: textStorage)
                 NotesTextProcessor.resetFont(attributedString: textStorage, paragraphRange: safeRange)
                 NotesTextProcessor.highlightMarkdown(attributedString: textStorage, paragraphRange: safeRange)
+            }
+        }
+
+        // Phase 4 (syntax hiding) runs from defer block after block model is populated.
+        // No more scattered fence hiding here — it's unified in phase4_hideSyntax().
+
+        // Populate block model after all highlighting is complete.
+        updateBlockModel(textStorage: textStorage, editedRange: editedRange, delta: delta)
+    }
+
+    /// Populate the block model from the current text storage.
+    /// In shadow mode, this is informational only — no rendering depends on it yet.
+    private func updateBlockModel(textStorage: NSTextStorage, editedRange: NSRange, delta: Int) {
+        let string = textStorage.string as NSString
+        guard string.length > 0 else {
+            blocks = []
+            return
+        }
+
+        if editedRange.length == textStorage.length || blocks.isEmpty {
+            // Full parse (initial load or first time)
+            blocks = MarkdownBlockParser.parse(string: string)
+        } else {
+            // Incremental: adjust existing blocks, re-parse dirty ones
+            var dirtyIndices = MarkdownBlockParser.adjustBlocks(&blocks, forEditAt: editedRange.location, delta: delta)
+
+            // Also mark the block at the edit location as dirty
+            if let editIdx = MarkdownBlockParser.blockIndex(in: blocks, containing: min(editedRange.location, string.length - 1)) {
+                dirtyIndices.insert(editIdx)
+            }
+
+            if !dirtyIndices.isEmpty {
+                MarkdownBlockParser.reparseBlocks(&blocks, dirtyIndices: dirtyIndices, string: string)
+            }
+        }
+    }
+
+    // MARK: - Phase 5: Block-Aware Paragraph Styles
+
+    /// Apply paragraph styles based on the block model.
+    /// Reads block types to determine spacing, indentation, alignment.
+    /// ONLY sets .paragraphStyle — does not touch .foregroundColor, .kern, or .font.
+    func phase5_paragraphStyles(textStorage: NSTextStorage, range: NSRange) {
+        let font = UserDefaultsManagement.noteFont
+        let baseSize = CGFloat(font.pointSize)
+        let lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+        let tabs = textStorage.getTabStops()
+        let string = textStorage.string as NSString
+
+        // Get blocks that intersect the range
+        let affectedBlocks = MarkdownBlockParser.blocks(in: blocks, intersecting: range)
+
+        for block in affectedBlocks {
+            guard block.range.location < string.length,
+                  NSMaxRange(block.range) <= string.length else { continue }
+
+            // Find this block's global index for neighbor lookups
+            let globalIdx = MarkdownBlockParser.blockIndex(in: blocks, containing: block.range.location)
+            let prevBlock = globalIdx.flatMap { $0 > 0 ? blocks[$0 - 1] : nil }
+            let nextBlock = globalIdx.flatMap { $0 < blocks.count - 1 ? blocks[$0 + 1] : nil }
+            let isFirst = (globalIdx == 0)
+
+            // Process each paragraph within the block
+            // CRITICAL: use enclosingRange (3rd param) not substringRange (2nd param)
+            // because paragraphSpacing must be set on the \n separator character
+            string.enumerateSubstrings(in: block.range, options: .byParagraphs) { [self] value, _, parRange, _ in
+                guard let value = value else { return }
+
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.lineSpacing = lineSpacing
+                paragraph.tabStops = tabs
+                paragraph.alignment = .left
+
+                // Block-type-specific styles — values from MPreview main.css:
+                //   body { font-size: 14px; line-height: 1.2 }
+                //   h1,h2,h3,h4,h5,h6 { margin-top: 1em; margin-bottom: 16px; line-height: 1.4 }
+                //   h1 { font-size: 1.8em; margin: .67em 0 }
+                //   h1:not(.no-border), h2 { padding-bottom: .3em; border-bottom: 1px solid #eee }
+                //   h2 { font-size: 1.6em }  h3 { font-size: 1.4em }
+                //   h4 { font-size: 1.2em }  h5,h6 { font-size: 1em }
+                //   ul,ol { padding-left: 2em; margin-bottom: 16px; margin-top: 0 }
+                //   li { line-height: 28px }
+                //   p { margin-bottom: 16px }  hr { margin: 16px 0 }
+                switch block.type {
+                case .heading(let level), .headingSetext(let level):
+                    // CSS: h1,h2,...,h6 { margin-top: 1em; margin-bottom: 16px }
+                    //      h1 { font-size: 1.8em; margin: .67em 0 }
+                    //      h1:not(.no-border), h2 { padding-bottom: .3em; border-bottom: 1px solid #eee }
+                    //      h2 { font-size: 1.6em }  h3 { font-size: 1.4em }
+                    //      h4 { font-size: 1.2em }  h5,h6 { font-size: 1em }
+                    if level == 1 {
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.67 }
+                        // .67em bottom margin + .3em border padding (relative to h1 size 1.8em)
+                        paragraph.paragraphSpacing = baseSize * 0.67 + baseSize * 1.8 * 0.3
+                    } else if level == 2 {
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize }  // margin-top: 1em
+                        // 16px margin + .3em padding (relative to h2 size 1.6em)
+                        paragraph.paragraphSpacing = 16 + baseSize * 1.6 * 0.3
+                    } else {
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize }  // margin-top: 1em
+                        paragraph.paragraphSpacing = 16  // margin-bottom: 16px
+                    }
+
+                case .unorderedList, .orderedList:
+                    // MPreview CSS: ul,ol { padding-left: 2em; margin-top: 0; margin-bottom: 16px }
+                    //               li { line-height: 28px }
+                    let markers = ["\u{2022} ", "- ", "* ", "+ "]
+                    let prefix = value.getSpacePrefix()
+                    var matchedPrefix: String?
+
+                    if prefix.isEmpty {
+                        for marker in markers {
+                            if value.hasPrefix(marker) { matchedPrefix = marker; break }
+                        }
+                    } else {
+                        for marker in markers {
+                            let full = prefix + marker
+                            if value.hasPrefix(full) { matchedPrefix = full; break }
+                        }
+                    }
+                    if matchedPrefix == nil {
+                        matchedPrefix = textStorage.getNumberListPrefix(paragraph: value)
+                    }
+
+                    // padding-left: 2em
+                    let listIndent = baseSize * 2
+                    if let mp = matchedPrefix {
+                        let markerWidth = mp.widthOfString(usingFont: font, tabs: tabs)
+                        paragraph.headIndent = max(markerWidth, listIndent)
+                        paragraph.firstLineHeadIndent = paragraph.headIndent - markerWidth
+                    } else {
+                        paragraph.headIndent = listIndent
+                    }
+
+                    // li { line-height: 28px } → inter-item spacing comes from line height
+                    // 28px line-height at 14px font = 14px extra → ~7pt spacing per item
+                    paragraph.lineSpacing = 7
+
+                    // ul margin-top: 0, margin-bottom: 16px
+                    let isFirstLine = (parRange.location == block.range.location)
+                    let isLastLine = (NSMaxRange(parRange) >= NSMaxRange(block.range))
+                    paragraph.paragraphSpacingBefore = isFirstLine ? 0 : 2
+                    paragraph.paragraphSpacing = isLastLine ? 16 : 0
+
+                case .todoItem:
+                    let markerWidth = "- [ ] ".widthOfString(usingFont: font, tabs: tabs)
+                    paragraph.headIndent = markerWidth
+                    let prevIsTodo = prevBlock.map { self.isListBlock($0.type) } ?? false
+                    let nextIsTodo = nextBlock.map { self.isListBlock($0.type) } ?? false
+                    paragraph.paragraphSpacingBefore = prevIsTodo ? 4 : 8
+                    paragraph.paragraphSpacing = nextIsTodo ? 4 : 16
+
+                case .blockquote:
+                    // blockquote: margin 0, padding 0 15px, border-left 4px #ddd
+                    paragraph.firstLineHeadIndent = 15
+                    paragraph.headIndent = 15
+                    paragraph.paragraphSpacing = 16
+
+                case .horizontalRule:
+                    // hr: margin 16px 0, height 4px, background #e7e7e7
+                    paragraph.paragraphSpacingBefore = 16
+                    paragraph.paragraphSpacing = 16
+
+                case .codeBlock:
+                    // pre: margin-bottom 16px
+                    paragraph.paragraphSpacing = 16
+
+                case .paragraph:
+                    // p: margin-bottom 16px
+                    // CSS collapses margins, NSTextView adds them. Use half to compensate.
+                    paragraph.paragraphSpacing = 12
+
+                case .empty, .table, .yamlFrontmatter:
+                    break
+                }
+
+                textStorage.addAttribute(.paragraphStyle, value: paragraph, range: parRange)
+            }
+        }
+    }
+
+    private func isListBlock(_ type: MarkdownBlockType) -> Bool {
+        switch type {
+        case .unorderedList, .orderedList, .todoItem: return true
+        default: return false
+        }
+    }
+
+    // MARK: - Phase 4: Unified Syntax Hiding
+
+    /// Single-pass syntax hiding: applies clear color + negative kern to ALL
+    /// syntax ranges from the block model. Runs ONCE after highlighting.
+    func phase4_hideSyntax(textStorage: NSTextStorage, range: NSRange) {
+        guard NotesTextProcessor.hideSyntax else { return }
+
+        // Prevent re-entrant processing from character replacements (e.g., bullet substitution)
+        isRendering = true
+        defer { isRendering = false }
+
+        let affectedBlocks = MarkdownBlockParser.blocks(in: blocks, intersecting: range)
+
+        for block in affectedBlocks {
+            // Skip syntax hiding for list items — bullets use character substitution,
+            // ordered lists show numbers as-is (they're already the correct display format)
+            let skipHiding: Bool
+            switch block.type {
+            case .unorderedList, .orderedList:
+                skipHiding = true
+            default:
+                skipHiding = false
+            }
+
+            if !skipHiding {
+                for syntaxRange in block.syntaxRanges {
+                    guard syntaxRange.location < textStorage.length,
+                          NSMaxRange(syntaxRange) <= textStorage.length else { continue }
+                    hideSyntaxRange(syntaxRange, in: textStorage)
+                }
+            }
+
+            // Block-specific visual replacements
+            switch block.type {
+            case .unorderedList:
+                // Schedule bullet character substitution outside didProcessEditing
+                // (NSTextStorage doesn't allow replaceCharacters inside the delegate callback)
+                let syntaxRanges = block.syntaxRanges
+                DispatchQueue.main.async { [weak textStorage] in
+                    guard let ts = textStorage else { return }
+                    self.isRendering = true
+                    ts.beginEditing()
+                    // Process in reverse order to avoid range invalidation
+                    for syntaxRange in syntaxRanges.reversed() {
+                        guard syntaxRange.location < ts.length,
+                              NSMaxRange(syntaxRange) <= ts.length,
+                              syntaxRange.length >= 2 else { continue }
+                        let marker = (ts.string as NSString).substring(with: NSRange(location: syntaxRange.location, length: 1))
+                        if marker == "-" || marker == "*" || marker == "+" {
+                            let bulletRange = NSRange(location: syntaxRange.location, length: 1)
+                            // Use BLACK CIRCLE (●) for a larger, more visible bullet like MPreview
+                            ts.replaceCharacters(in: bulletRange, with: "\u{2022}")
+                            // Mark for save-path reversal and ensure bullet is visible
+                            ts.addAttribute(.listBullet, value: marker, range: bulletRange)
+                            ts.addAttribute(.foregroundColor, value: NSColor.textColor, range: bulletRange)
+                            // Slightly larger font for bullet to match MPreview's disc style
+                            let fontSize = CGFloat(UserDefaultsManagement.fontSize)
+                            let bulletFont = NSFont.systemFont(ofSize: fontSize * 0.8)
+                            ts.addAttribute(.font, value: bulletFont, range: bulletRange)
+                            ts.removeAttribute(.kern, range: bulletRange)
+                            // Also ensure the full syntax range (bullet + space) has visible color
+                            ts.addAttribute(.foregroundColor, value: NSColor.textColor, range: syntaxRange)
+                            ts.removeAttribute(.kern, range: syntaxRange)
+                        }
+                    }
+                    ts.endEditing()
+                    self.isRendering = false
+                }
+
+            case .blockquote:
+                // Set .blockquote on the full block range for LayoutManager border drawing
+                textStorage.addAttribute(.blockquote, value: true, range: block.range)
+
+            case .horizontalRule:
+                // Set .horizontalRule for LayoutManager line drawing
+                textStorage.addAttribute(.horizontalRule, value: true, range: block.range)
+
+            case .heading(let level) where level <= 2:
+                // Existing highlightMarkdown sets the header font; we just need
+                // the attribute for LayoutManager to draw bottom borders.
+                // The header regex already handles this.
+                break
+
+            default:
+                break
             }
         }
     }
@@ -334,7 +650,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                     let attRange = NSRange(location: 0, length: attachmentString.length)
                     attachmentString.addAttributes([
                         .renderedBlockSource: source,
-                        .renderedBlockType: type == .mermaid ? "mermaid" : "math",
+                        .renderedBlockType: (type == .mermaid ? RenderedBlockType.mermaid : RenderedBlockType.math).rawValue,
                         .renderedBlockOriginalMarkdown: originalMarkdown
                     ], range: attRange)
                     // Clear code block background so no border appears
@@ -359,6 +675,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
             }
         }
     }
+
+    // Table rendering moved to EditTextView (InlineTableView types not available in FSNotesCore)
     #endif
 
     private func getImageMaxWidth() -> CGFloat {

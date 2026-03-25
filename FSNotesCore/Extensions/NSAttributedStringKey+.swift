@@ -8,60 +8,25 @@
 
 import Foundation
 
+public enum RenderedBlockType: String {
+    case mermaid, math, table
+}
+
 public extension NSAttributedString.Key {
-    static var attachmentSave: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.attachment.save")
-    }
-
-    static var attachmentUrl: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.attachment.url")
-    }
-
-    static var attachmentPath: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.attachment.path")
-    }
-
-    static var attachmentTitle: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.attachment.title")
-    }
-
-    static var todo: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.todo")
-    }
-
-    static var tag: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.tag")
-    }
-
-    static var yamlBlock: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.yaml")
-    }
-
-    static var highlight: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.highlight")
-    }
-
-    static var horizontalRule: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.hr")
-    }
-
-    static var blockquote: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.blockquote")
-    }
-
-    static var renderedBlockSource: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.rendered.source")
-    }
-
-    static var renderedBlockType: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.rendered.type")
-    }
-
-    static var renderedBlockRange: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.rendered.range")
-    }
-
-    static var renderedBlockOriginalMarkdown: NSAttributedString.Key {
-        return NSAttributedString.Key(rawValue: "es.fsnot.rendered.original")
-    }
+    static let attachmentSave = NSAttributedString.Key(rawValue: "es.fsnot.attachment.save")
+    static let attachmentUrl = NSAttributedString.Key(rawValue: "es.fsnot.attachment.url")
+    static let attachmentPath = NSAttributedString.Key(rawValue: "es.fsnot.attachment.path")
+    static let attachmentTitle = NSAttributedString.Key(rawValue: "es.fsnot.attachment.title")
+    static let todo = NSAttributedString.Key(rawValue: "es.fsnot.todo")
+    static let tag = NSAttributedString.Key(rawValue: "es.fsnot.tag")
+    static let yamlBlock = NSAttributedString.Key(rawValue: "es.fsnot.yaml")
+    static let highlight = NSAttributedString.Key(rawValue: "es.fsnot.highlight")
+    static let horizontalRule = NSAttributedString.Key(rawValue: "es.fsnot.hr")
+    static let blockquote = NSAttributedString.Key(rawValue: "es.fsnot.blockquote")
+    static let renderedBlockSource = NSAttributedString.Key(rawValue: "es.fsnot.rendered.source")
+    static let renderedBlockType = NSAttributedString.Key(rawValue: "es.fsnot.rendered.type")
+    static let renderedBlockRange = NSAttributedString.Key(rawValue: "es.fsnot.rendered.range")
+    static let renderedBlockOriginalMarkdown = NSAttributedString.Key(rawValue: "es.fsnot.rendered.original")
+    static let listBullet = NSAttributedString.Key(rawValue: "es.fsnot.list.bullet")
+    static let codeFence = NSAttributedString.Key(rawValue: "es.fsnot.code.fence")
 }

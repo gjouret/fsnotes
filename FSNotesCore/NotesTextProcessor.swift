@@ -19,6 +19,9 @@ public class NotesTextProcessor {
     typealias Image = NSImage
     typealias Font = NSFont
 
+    /// MPreview CSS link color: #4078c0
+    private static let wysiwygLinkColor = NSColor(red: 0.251, green: 0.471, blue: 0.753, alpha: 1.0)
+
     public static var fontColor: NSColor {
         get {
             return NSColor(named: "mainText")!
@@ -448,6 +451,11 @@ public class NotesTextProcessor {
             } else if let substring = String(substring).addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) {
                 attributedString.addAttribute(.link, value: substring, range: range)
             }
+
+            // MPreview CSS: link color #4078c0
+            if NotesTextProcessor.hideSyntax {
+                attributedString.addAttribute(.foregroundColor, value: wysiwygLinkColor, range: range)
+            }
             
             if NotesTextProcessor.hideSyntax {
                 // Only hide http(s):// prefix for bare URLs, not URLs inside
@@ -549,7 +557,15 @@ public class NotesTextProcessor {
             guard let range = result?.range else { return }
             NotesTextProcessor.listOpeningRegex.matches(string, range: range) { (innerResult) -> Void in
                 guard let innerRange = innerResult?.range else { return }
-                attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: innerRange)
+                if NotesTextProcessor.hideSyntax {
+                    // In WYSIWYG mode: DON'T hide list markers.
+                    // Unordered lists: Phase 4 replaces "-" with "•" via character substitution.
+                    // Ordered lists: numbers are already the correct display ("1.", "2.", etc.)
+                    // Just style the marker subtly
+                    attributedString.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: innerRange)
+                } else {
+                    attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: innerRange)
+                }
             }
         }
 
@@ -576,9 +592,10 @@ public class NotesTextProcessor {
                 attributedString.addAttribute(.link, value: substring, range: linkRange)
 
                 // In WYSIWYG mode, also apply .link to the display text (group 2)
-                // so it's clickable
+                // so it's clickable, and set link color to match MPreview CSS (#4078c0)
                 if NotesTextProcessor.hideSyntax, let displayRange = result?.range(at: 2), displayRange.length > 0 {
                     attributedString.addAttribute(.link, value: substring, range: displayRange)
+                    attributedString.addAttribute(.foregroundColor, value: wysiwygLinkColor, range: displayRange) // #4078c0
                 }
 
                 // Only hide ](url) — not the display text matched by .*

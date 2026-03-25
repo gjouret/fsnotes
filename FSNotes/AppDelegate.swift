@@ -8,6 +8,8 @@
 
 import Cocoa
 import UserNotifications
+import WebKit
+import libcmark_gfm
 
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -50,6 +52,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        // Check for render-comparison mode (used by automated visual tests)
+        if ProcessInfo.processInfo.arguments.contains("--render-comparison") {
+            // Force light mode immediately for consistent comparison
+            NSApp.appearance = NSAppearance(named: .aqua)
+            for window in NSApp.windows {
+                window.appearance = NSAppearance(named: .aqua)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+                // Also set on any windows created after launch
+                for window in NSApp.windows {
+                    window.appearance = NSAppearance(named: .aqua)
+                }
+                self.runRenderComparison()
+            }
+        }
+
         // Ensure the font panel is closed when the app starts, in case it was
         // left open when the app quit.
         NSFontManager.shared.fontPanel(false)?.orderOut(self)
@@ -502,5 +520,339 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         
         return views
+    }
+
+    // MARK: - Render Comparison Test
+
+    func runRenderComparison() {
+        let outputDir = "/tmp/fsnotes_compare"
+        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+
+        // Find the ViewController — it may be the contentViewController or a child
+        // Force light mode for consistent comparison
+        NSApp.appearance = NSAppearance(named: .aqua)
+
+        var vc: ViewController?
+        for window in NSApp.windows {
+            if let v = window.contentViewController as? ViewController {
+                vc = v
+                break
+            }
+            // Check children
+            for child in (window.contentViewController?.children ?? []) {
+                if let v = child as? ViewController {
+                    vc = v
+                    break
+                }
+            }
+        }
+
+        guard let viewController = vc else {
+            NSLog("[RenderComparison] No ViewController found in %d windows", NSApp.windows.count)
+            for w in NSApp.windows {
+                NSLog("[RenderComparison] Window: %@ vc: %@", w.title, String(describing: type(of: w.contentViewController)))
+            }
+            NSApp.terminate(nil)
+            return
+        }
+
+        let editor = viewController.editor!
+
+        // If a specific note title is provided via --compare-note argument, select it
+        if let noteArgIdx = ProcessInfo.processInfo.arguments.firstIndex(of: "--compare-note"),
+           noteArgIdx + 1 < ProcessInfo.processInfo.arguments.count {
+            let targetTitle = ProcessInfo.processInfo.arguments[noteArgIdx + 1]
+            NSLog("[RenderComparison] Looking for note: %@", targetTitle)
+            let allNotes = Storage.shared().noteList
+            if let targetNote = allNotes.first(where: { $0.title == targetTitle }) {
+                viewController.notesTableView.select(note: targetNote)
+                // Wait for note to load, then continue comparison
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.continueRenderComparison(viewController: viewController, editor: editor, outputDir: outputDir)
+                }
+                return
+            }
+        }
+
+        continueRenderComparison(viewController: viewController, editor: editor, outputDir: outputDir)
+    }
+
+    private func continueRenderComparison(viewController: ViewController, editor: EditTextView, outputDir: String) {
+        guard let note = editor.note,
+              let storage = editor.textStorage else {
+            NSLog("[RenderComparison] No note loaded")
+            NSApp.terminate(nil)
+            return
+        }
+
+        let noteTitle = note.title
+        NSLog("[RenderComparison] Rendering note: %@", noteTitle)
+
+        // Debug: write block model to file
+        if let processor = editor.textStorageProcessor {
+            var debugLines = "[RenderComparison] Block model has \(processor.blocks.count) blocks:\n"
+            for (i, block) in processor.blocks.enumerated() {
+                let typeStr: String
+                switch block.type {
+                case .paragraph: typeStr = "paragraph"
+                case .heading(let l): typeStr = "heading(\(l))"
+                case .headingSetext(let l): typeStr = "headingSetext(\(l))"
+                case .codeBlock(let lang): typeStr = "codeBlock(\(lang ?? "nil"))"
+                case .blockquote: typeStr = "blockquote"
+                case .unorderedList: typeStr = "unorderedList"
+                case .orderedList: typeStr = "orderedList"
+                case .todoItem(let c): typeStr = "todoItem(\(c))"
+                case .horizontalRule: typeStr = "horizontalRule"
+                case .table: typeStr = "table"
+                case .yamlFrontmatter: typeStr = "yamlFrontmatter"
+                case .empty: typeStr = "empty"
+                }
+                debugLines += "  [\(i)] \(typeStr) range=(\(block.range.location),\(block.range.length)) syntaxRanges=\(block.syntaxRanges.count)\n"
+            }
+            // Also check LayoutManager's processor reference
+            if let lm = editor.layoutManager as? LayoutManager {
+                debugLines += "LayoutManager.processor: \(lm.processor != nil ? "SET" : "NIL")\n"
+                debugLines += "LayoutManager.processor?.blocks.count: \(lm.processor?.blocks.count ?? -1)\n"
+            }
+            // Check paragraph styles at START and END of first few blocks
+            for i in 0..<min(5, processor.blocks.count) {
+                let block = processor.blocks[i]
+                let startPos = block.range.location
+                let endPos = min(NSMaxRange(block.range) - 1, storage.length - 1)
+                if startPos < storage.length {
+                    if let pStart = storage.attribute(.paragraphStyle, at: startPos, effectiveRange: nil) as? NSParagraphStyle {
+                        debugLines += "  -> pStyle START[\(startPos)]: before=\(pStart.paragraphSpacingBefore) after=\(pStart.paragraphSpacing)\n"
+                    }
+                    if endPos > startPos, endPos < storage.length {
+                        if let pEnd = storage.attribute(.paragraphStyle, at: endPos, effectiveRange: nil) as? NSParagraphStyle {
+                            debugLines += "  -> pStyle END[\(endPos)]: before=\(pEnd.paragraphSpacingBefore) after=\(pEnd.paragraphSpacing)\n"
+                        }
+                    }
+                }
+            }
+            try? debugLines.write(toFile: outputDir + "/blocks_debug.txt", atomically: true, encoding: .utf8)
+        }
+
+        // Save markdown before bullet substitution changes it
+        let markdown = storage.string
+
+        // 1. Wait for async bullet substitution to complete, then capture NSTextView
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            // Force light mode on the editor for capture
+            editor.appearance = NSAppearance(named: .aqua)
+            editor.window?.appearance = NSAppearance(named: .aqua)
+            editor.enclosingScrollView?.appearance = NSAppearance(named: .aqua)
+            // Force re-display with light appearance
+            editor.needsDisplay = true
+            editor.display()
+
+            let nstextviewPNG = self.captureNSTextView(editor: editor, outputDir: outputDir)
+
+            // 2. Capture MPreview rendering
+            self.captureMPreview(markdown: markdown, outputDir: outputDir, viewController: viewController) {
+            // 3. Compare the two images
+            if let nsImg = NSImage(contentsOfFile: nstextviewPNG),
+               let mpImg = NSImage(contentsOfFile: outputDir + "/mpreview.png") {
+                self.compareImages(nsImage: nsImg, mpImage: mpImg, outputDir: outputDir)
+            }
+
+                NSLog("[RenderComparison] Done. Output in %@", outputDir)
+                NSLog("[RenderComparison] Open: open %@", outputDir)
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func captureNSTextView(editor: EditTextView, outputDir: String) -> String {
+        let path = outputDir + "/nstextview.png"
+
+        // Force complete layout
+        editor.layoutManager?.ensureLayout(for: editor.textContainer!)
+
+        // Get the full document size
+        let usedRect = editor.layoutManager?.usedRect(for: editor.textContainer!) ?? editor.bounds
+        let captureRect = NSRect(x: 0, y: 0, width: editor.bounds.width, height: usedRect.height + 20)
+
+        // Use cacheDisplay which handles flipped coordinates and Retina correctly
+        guard let bitmapRep = editor.bitmapImageRepForCachingDisplay(in: captureRect) else {
+            NSLog("[RenderComparison] Failed to create bitmap rep")
+            return path
+        }
+        editor.cacheDisplay(in: captureRect, to: bitmapRep)
+
+        if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+            try? pngData.write(to: URL(fileURLWithPath: path))
+            NSLog("[RenderComparison] Saved NSTextView: %@ (%dx%d)", path, bitmapRep.pixelsWide, bitmapRep.pixelsHigh)
+        }
+
+        return path
+    }
+
+    private func captureMPreview(markdown: String, outputDir: String, viewController: ViewController, completion: @escaping () -> Void) {
+        let path = outputDir + "/mpreview.png"
+
+        // Try both Bundle.main and the executable's Resources directory
+        let bundleURL: URL
+        if let url = Bundle.main.url(forResource: "MPreview", withExtension: "bundle") {
+            bundleURL = url
+        } else {
+            // Fallback: look relative to the executable
+            let execURL = Bundle.main.bundleURL
+            let resourcesURL = execURL.appendingPathComponent("Contents/Resources/MPreview.bundle")
+            if FileManager.default.fileExists(atPath: resourcesURL.path) {
+                bundleURL = resourcesURL
+            } else {
+                NSLog("[RenderComparison] MPreview.bundle not found at %@ or %@",
+                      Bundle.main.resourceURL?.path ?? "nil", resourcesURL.path)
+                completion()
+                return
+            }
+        }
+
+        // Use the ACTUAL MPreview template (index.html) — same as MPreviewView uses
+        guard let indexURL = bundleURL.appendingPathComponent("index.html") as URL?,
+              var template = try? String(contentsOf: indexURL, encoding: .utf8) else {
+            NSLog("[RenderComparison] index.html not found in MPreview.bundle")
+            completion()
+            return
+        }
+
+        // Convert markdown to HTML using cmark-gfm (same pipeline as MPreviewView)
+        let html = renderMarkdownToHTML(markdown)
+
+        // Replace template placeholders (same as MPreviewView.htmlFromTemplate)
+        template = template.replacingOccurrences(of: "{NOTE_BODY}", with: html)
+        template = template.replacingOccurrences(of: "{FSNOTES_APPEARANCE}", with: "")  // light mode
+        template = template.replacingOccurrences(of: "{FSNOTES_PLATFORM}", with: "macos")
+        template = template.replacingOccurrences(of: "{WEB_PATH}", with: "")
+        template = template.replacingOccurrences(of: "{TITLE}", with: "Comparison")
+        template = template.replacingOccurrences(of: "{INLINE_CSS}", with: "")
+        template = template.replacingOccurrences(of: "{MATH_JAX_JS}", with: "")
+
+        let fullHTML = template
+
+        // Match the editor width for fair comparison
+        let editorWidth = viewController.editor?.bounds.width ?? 800
+        let renderHeight: CGFloat = 3000
+
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: editorWidth, height: renderHeight))
+
+        // WKWebView must be in a window for takeSnapshot to work
+        // Use a visible (but offscreen) window on Retina display for 2x rendering
+        let offscreenWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: editorWidth, height: renderHeight),
+                                        styleMask: .borderless, backing: .buffered, defer: false)
+        offscreenWindow.contentView = webView
+        offscreenWindow.orderBack(nil)
+
+        webView.loadHTMLString(fullHTML, baseURL: bundleURL)
+
+        // Wait for load, then snapshot
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            let config = WKSnapshotConfiguration()
+            config.rect = NSRect(x: 0, y: 0, width: editorWidth, height: renderHeight)
+            // Force 2x scale for Retina-quality output
+            config.snapshotWidth = NSNumber(value: Int(editorWidth * 2))
+
+            webView.takeSnapshot(with: config) { image, error in
+                if let image = image, let tiffData = image.tiffRepresentation,
+                   let bitmapRep = NSBitmapImageRep(data: tiffData),
+                   let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                    try? pngData.write(to: URL(fileURLWithPath: path))
+                    NSLog("[RenderComparison] Saved MPreview: %@ (%dx%d)", path, bitmapRep.pixelsWide, bitmapRep.pixelsHigh)
+                } else {
+                    NSLog("[RenderComparison] MPreview snapshot failed: %@", error?.localizedDescription ?? "unknown")
+                }
+                completion()
+            }
+        }
+    }
+
+    private func renderMarkdownToHTML(_ markdown: String) -> String {
+        // Use cmark-gfm to convert markdown to HTML (same pipeline as MPreviewView)
+        guard let data = markdown.data(using: .utf8) else { return "" }
+        return data.withUnsafeBytes { rawBuf -> String in
+            guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: CChar.self) else { return "" }
+            let extensions = ["table", "autolink", "strikethrough", "tasklist"]
+            cmark_gfm_core_extensions_ensure_registered()
+
+            guard let parser = cmark_parser_new(CMARK_OPT_FOOTNOTES) else { return "" }
+            defer { cmark_parser_free(parser) }
+
+            for ext in extensions {
+                if let e = cmark_find_syntax_extension(ext) {
+                    cmark_parser_attach_syntax_extension(parser, e)
+                }
+            }
+
+            cmark_parser_feed(parser, ptr, data.count)
+            guard let node = cmark_parser_finish(parser) else { return "" }
+            defer { cmark_node_free(node) }
+
+            if let html = cmark_render_html(node, CMARK_OPT_HARDBREAKS | CMARK_OPT_FOOTNOTES, cmark_parser_get_syntax_extensions(parser)) {
+                return String(cString: html)
+            }
+            return ""
+        }
+    }
+
+    private func compareImages(nsImage: NSImage, mpImage: NSImage, outputDir: String) {
+        guard let nsRep = nsImage.tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) }),
+              let mpRep = mpImage.tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) }) else {
+            NSLog("[RenderComparison] Failed to get bitmap reps for comparison")
+            return
+        }
+
+        let width = min(nsRep.pixelsWide, mpRep.pixelsWide)
+        let height = min(nsRep.pixelsHigh, mpRep.pixelsHigh)
+
+        guard width > 0, height > 0 else { return }
+
+        // Create diff image
+        let diffRep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false,
+            colorSpaceName: .calibratedRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        )!
+
+        var diffPixels = 0
+        let totalPixels = width * height
+        let threshold: Int = 32 // per-channel tolerance
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let nsColor = nsRep.colorAt(x: x, y: y) ?? .black
+                let mpColor = mpRep.colorAt(x: x, y: y) ?? .black
+
+                let dr = abs(Int(nsColor.redComponent * 255) - Int(mpColor.redComponent * 255))
+                let dg = abs(Int(nsColor.greenComponent * 255) - Int(mpColor.greenComponent * 255))
+                let db = abs(Int(nsColor.blueComponent * 255) - Int(mpColor.blueComponent * 255))
+
+                if dr > threshold || dg > threshold || db > threshold {
+                    diffPixels += 1
+                    diffRep.setColor(.red, atX: x, y: y)
+                } else {
+                    // Show dimmed version of the MPreview pixel
+                    let dimmed = NSColor(
+                        red: mpColor.redComponent * 0.3 + 0.7,
+                        green: mpColor.greenComponent * 0.3 + 0.7,
+                        blue: mpColor.blueComponent * 0.3 + 0.7,
+                        alpha: 1.0
+                    )
+                    diffRep.setColor(dimmed, atX: x, y: y)
+                }
+            }
+        }
+
+        let diffPercent = Double(diffPixels) / Double(totalPixels) * 100.0
+
+        if let pngData = diffRep.representation(using: .png, properties: [:]) {
+            try? pngData.write(to: URL(fileURLWithPath: outputDir + "/diff.png"))
+        }
+
+        NSLog("[RenderComparison] Pixel difference: %.2f%% (%d/%d pixels)", diffPercent, diffPixels, totalPixels)
+        NSLog("[RenderComparison] Threshold: 5.0%% — %@", diffPercent <= 5.0 ? "PASS" : "FAIL")
     }
 }
