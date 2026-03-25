@@ -295,14 +295,12 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let lineFragRect = self.lineFragmentRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil)
             if lineFragRect.isEmpty { continue }
 
-            // MPreview CSS: h1:not(.no-border), h2 { padding-bottom: .3em; border-bottom: 1px solid #eee }
-            // .3em relative to the header's font-size:
-            //   H1 (1.8em = 25.2pt): .3em = 7.6pt
-            //   H2 (1.6em = 22.4pt): .3em = 6.7pt
-            let headerFontSize = level == 1 ? baseSize * 1.8 : baseSize * 1.6
-            let paddingBottom = headerFontSize * 0.3
+            // Draw the border line just below the text glyphs, not at the bottom
+            // of the line fragment (which includes paragraphSpacing).
+            // lineFragmentUsedRect gives the area occupied by actual glyphs.
             let containerWidth = textContainer.size.width
-            let lineY = lineFragRect.maxY + origin.y + paddingBottom
+            let usedRect = self.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            let lineY = usedRect.maxY + origin.y + 1  // 1pt below text bottom
 
             context.saveGState()
             // #eeeeee = rgb(238,238,238) = 0.933
@@ -329,12 +327,12 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let currentFont = font(for: glyphRange)
         let fontLineHeight = layoutManager.defaultLineHeight(for: currentFont)
         let standardLineHeight = fontLineHeight * lineHeightMultiple
-        
+
         let attachmentInfo = hasAttachment(in: glyphRange)
-        
+
         var finalLineHeight: CGFloat
         var baselineNudge: CGFloat
-        
+
         if attachmentInfo.hasAttachment && attachmentInfo.maxAttachmentHeight > 0 {
             if attachmentInfo.maxAttachmentHeight > standardLineHeight {
                 finalLineHeight = attachmentInfo.maxAttachmentHeight
@@ -351,10 +349,15 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
 
         var rect = lineFragmentRect.pointee
-        rect.size.height = ceil(finalLineHeight)
+        // CRITICAL: use max() to preserve paragraph spacing that NSLayoutManager added.
+        // Setting height = finalLineHeight directly discards paragraphSpacing/paragraphSpacingBefore.
+        rect.size.height = max(ceil(finalLineHeight), rect.size.height)
 
         var usedRect = lineFragmentUsedRect.pointee
-        usedRect.size.height = max(rect.size.height, ceil(usedRect.size.height))
+        // Keep usedRect at least as tall as the font line height, but do NOT
+        // inflate it to match lineFragmentRect (which includes paragraph spacing).
+        // This way: lineFragmentRect drives layout spacing, usedRect drives glyph area.
+        usedRect.size.height = max(ceil(finalLineHeight), ceil(usedRect.size.height))
 
         lineFragmentRect.pointee = rect
         lineFragmentUsedRect.pointee = usedRect

@@ -299,22 +299,30 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                 //   p { margin-bottom: 16px }  hr { margin: 16px 0 }
                 switch block.type {
                 case .heading(let level), .headingSetext(let level):
-                    // CSS: h1,h2,...,h6 { margin-top: 1em; margin-bottom: 16px }
-                    //      h1 { font-size: 1.8em; margin: .67em 0 }
-                    //      h1:not(.no-border), h2 { padding-bottom: .3em; border-bottom: 1px solid #eee }
-                    //      h2 { font-size: 1.6em }  h3 { font-size: 1.4em }
-                    //      h4 { font-size: 1.2em }  h5,h6 { font-size: 1em }
-                    if level == 1 {
+                    // MPreview CSS: h1-h6 { margin-top: 1em; margin-bottom: 16px }
+                    //   h1 { margin: .67em 0 }; h1,h2 { padding-bottom: .3em; border-bottom }
+                    // NOTE: .3em padding is handled visually by drawHeaderBottomBorders —
+                    // do NOT include it in paragraphSpacing (that would double-count).
+                    // Progressive spacing: larger headers get more bottom margin.
+                    switch level {
+                    case 1:
                         if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.67 }
-                        // .67em bottom margin + .3em border padding (relative to h1 size 1.8em)
-                        paragraph.paragraphSpacing = baseSize * 0.67 + baseSize * 1.8 * 0.3
-                    } else if level == 2 {
-                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize }  // margin-top: 1em
-                        // 16px margin + .3em padding (relative to h2 size 1.6em)
-                        paragraph.paragraphSpacing = 16 + baseSize * 1.6 * 0.3
-                    } else {
-                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize }  // margin-top: 1em
+                        paragraph.paragraphSpacing = baseSize * 0.67  // .67em margin-bottom
+                    case 2:
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize }
                         paragraph.paragraphSpacing = 16  // margin-bottom: 16px
+                    case 3:
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.8 }
+                        paragraph.paragraphSpacing = 12
+                    case 4:
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.6 }
+                        paragraph.paragraphSpacing = 10
+                    case 5:
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.5 }
+                        paragraph.paragraphSpacing = 8
+                    default: // h6
+                        if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.4 }
+                        paragraph.paragraphSpacing = 6
                     }
 
                 case .unorderedList, .orderedList:

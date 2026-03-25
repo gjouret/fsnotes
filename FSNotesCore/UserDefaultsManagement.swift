@@ -1261,7 +1261,7 @@ public class UserDefaultsManagement {
             if let result = shared?.object(forKey: Constants.WysiwygMode) as? Bool {
                 return result
             }
-            return false // Default to source mode; users opt in to WYSIWYG
+            return true // Default to WYSIWYG mode
         }
         set {
             shared?.set(newValue, forKey: Constants.WysiwygMode)
