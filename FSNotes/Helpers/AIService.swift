@@ -166,6 +166,7 @@ class SSEDelegate: NSObject, URLSessionDataDelegate {
     private var format: SSEFormat
     private var buffer = ""
     private var fullResponse = ""
+    private var hasCompleted = false
 
     init(onToken: @escaping (String) -> Void, onComplete: @escaping (Result<String, Error>) -> Void, format: SSEFormat) {
         self.onToken = onToken
@@ -186,6 +187,8 @@ class SSEDelegate: NSObject, URLSessionDataDelegate {
 
             if jsonStr == "[DONE]" {
                 DispatchQueue.main.async {
+                    guard !self.hasCompleted else { return }
+                    self.hasCompleted = true
                     self.onComplete(.success(self.fullResponse))
                 }
                 return
@@ -205,6 +208,8 @@ class SSEDelegate: NSObject, URLSessionDataDelegate {
                         token = text
                     } else if type == "message_stop" {
                         DispatchQueue.main.async {
+                            guard !self.hasCompleted else { return }
+                            self.hasCompleted = true
                             self.onComplete(.success(self.fullResponse))
                         }
                         return
@@ -212,6 +217,8 @@ class SSEDelegate: NSObject, URLSessionDataDelegate {
                               let error = json["error"] as? [String: Any],
                               let message = error["message"] as? String {
                         DispatchQueue.main.async {
+                            guard !self.hasCompleted else { return }
+                            self.hasCompleted = true
                             self.onComplete(.failure(AIError.apiError(message)))
                         }
                         return
@@ -236,12 +243,12 @@ class SSEDelegate: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error {
-            DispatchQueue.main.async {
+        DispatchQueue.main.async {
+            guard !self.hasCompleted else { return }
+            self.hasCompleted = true
+            if let error = error {
                 self.onComplete(.failure(error))
-            }
-        } else if !fullResponse.isEmpty {
-            DispatchQueue.main.async {
+            } else if !self.fullResponse.isEmpty {
                 self.onComplete(.success(self.fullResponse))
             }
         }

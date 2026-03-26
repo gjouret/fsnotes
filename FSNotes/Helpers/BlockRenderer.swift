@@ -83,13 +83,15 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 
         let html = generateHTML(source: source, type: type, maxWidth: maxWidth)
 
-        // Write HTML to a temp file inside the bundle directory so loadFileURL
-        // can access both the HTML and the JS files with a single access grant
+        // ⚠️ CRITICAL: Temp file MUST be inside MPreview.bundle (same directory as mermaid.min.js).
+        // WKWebView in sandboxed macOS apps can only access files within the allowingReadAccessTo
+        // directory tree. Moving this to NSTemporaryDirectory() or any path outside the bundle
+        // WILL break mermaid/math rendering because the JS files become inaccessible.
+        // This has been broken and fixed TWICE — do not move this file path.
         let tempFile = bundleURL.appendingPathComponent("_render_\(UUID().uuidString).html")
         do {
             try html.write(to: tempFile, atomically: true, encoding: .utf8)
             self.tempFile = tempFile
-            NSLog("[BlockRenderer] Loading temp file: \(tempFile.path)")
             webView?.loadFileURL(tempFile, allowingReadAccessTo: bundleURL)
         } catch {
             NSLog("[BlockRenderer] ERROR writing temp file: \(error)")

@@ -7,12 +7,20 @@
 //
 
 import Cocoa
+import ObjectiveC
 import WebKit
+
+private struct EditorViewControllerSharingKeys {
+    static var activePDFExporter: UInt8 = 0
+}
 
 extension EditorViewController: NSSharingServicePickerDelegate {
 
     // Retained reference to keep PDFExporter alive during async export
-    private static var activePDFExporter: AnyObject?
+    private var activePDFExporter: AnyObject? {
+        get { objc_getAssociatedObject(self, &EditorViewControllerSharingKeys.activePDFExporter) as AnyObject? }
+        set { objc_setAssociatedObject(self, &EditorViewControllerSharingKeys.activePDFExporter, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
 
     func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, sharingServicesForItems items: [Any], proposedSharingServices proposedServices: [NSSharingService]) -> [NSSharingService] {
         var share = proposedServices
@@ -98,7 +106,7 @@ extension EditorViewController: NSSharingServicePickerDelegate {
             .appendingPathComponent("\(safeName).pdf")
 
         let exporter = PDFExporter(indexURL: indexURL, outputURL: outputURL) { [weak self] pdfURL in
-            EditorViewController.activePDFExporter = nil
+            self?.activePDFExporter = nil
             guard let pdfURL = pdfURL else { return }
 
             let picker = NSSharingServicePicker(items: [pdfURL])
@@ -106,7 +114,7 @@ extension EditorViewController: NSSharingServicePickerDelegate {
                 picker.show(relativeTo: NSZeroRect, of: button, preferredEdge: .minY)
             }
         }
-        EditorViewController.activePDFExporter = exporter
+        self.activePDFExporter = exporter
         exporter.export()
     }
 

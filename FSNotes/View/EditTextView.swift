@@ -12,10 +12,34 @@ import PDFKit
 import QuickLookThumbnailing
 
 class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelegate {
-    
+
     public var editorViewController: EditorViewController?
     public var textStorageProcessor: TextStorageProcessor?
     // retainedTableEditorVC removed — table editing is now inline via InlineTableView
+
+    /// Collect cell data from all live InlineTableViews and update their
+    /// .renderedBlockOriginalMarkdown attributes on the attachment.
+    /// Called from save() and EditorViewController.saveContent() BEFORE reading
+    /// the text storage for saving. NOT called from attributedString() to avoid
+    /// re-entrancy (attributedString() should be a pure read).
+    func syncAllTableData() {
+        guard let storage = textStorage else { return }
+        for subview in subviews {
+            guard let tableView = subview as? InlineTableView else { continue }
+            tableView.collectCellData()
+            let markdown = tableView.generateMarkdown()
+            // Find this table's attachment in the text storage
+            let fullRange = NSRange(location: 0, length: storage.length)
+            storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, stop in
+                guard let att = value as? NSTextAttachment,
+                      let cell = att.attachmentCell as? InlineTableAttachmentCell,
+                      cell.inlineTableView === tableView else { return }
+                storage.addAttribute(.renderedBlockOriginalMarkdown, value: markdown, range: range)
+                storage.addAttribute(.renderedBlockSource, value: markdown, range: range)
+                stop.pointee = true
+            }
+        }
+    }
     public var note: Note?
     public var viewDelegate: ViewController?
 
@@ -431,13 +455,50 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return false
         }
 
-        // Tables are interactive — don't restore to markdown on click
+        // CLICK-OUTSIDE-TABLE FIX (do not break this — it was fixed after many iterations):
+        //
+        // Problem: Table attachment occupies a visual area in NSTextView. Clicks ANYWHERE
+        // in that area map to the attachment character. Without this check, clicking to the
+        // right of the table (outside cells) would re-focus the table instead of placing
+        // the cursor after it.
+        //
+        // Solution: Two-layer defense:
+        // 1. InlineTableView.hitTest() returns nil for points outside cells → click passes to EditTextView
+        // 2. HERE: check if the click is within any cell/handle. If not, return false.
+        //    This prevents re-focusing the table from clicks that map to the attachment
+        //    character but are visually outside the table grid.
+        //
+        // Both layers are needed because hitTest works on the NSView frame, while this
+        // check works on the character index → attachment mapping in the text storage.
         if let blockType = storage.attribute(.renderedBlockType, at: index, effectiveRange: nil) as? String,
            blockType == RenderedBlockType.table.rawValue {
-            // Focus the table view instead
             if let att = storage.attribute(.attachment, at: index, effectiveRange: nil) as? NSTextAttachment,
-               let cell = att.attachmentCell as? InlineTableAttachmentCell {
-                cell.inlineTableView.isFocused = true
+               let attCell = att.attachmentCell as? InlineTableAttachmentCell {
+                let tableView = attCell.inlineTableView
+                let tablePoint = tableView.convert(event.locationInWindow, from: nil)
+
+                // Check if click is within any cell
+                let hitCell = tableView.cellPool.contains(where: { !$0.isHidden && $0.frame.contains(tablePoint) })
+                let hitHandle = tableView.subviews.contains(where: { $0 is NSVisualEffectView && $0.frame.contains(tablePoint) })
+
+                if !hitCell && !hitHandle {
+                    // Click is outside the table grid — don't capture
+                    return false
+                }
+
+                tableView.focusState = .editing
+                DispatchQueue.main.async {
+                    let deferredPoint = tableView.convert(event.locationInWindow, from: nil)
+                    for cell in tableView.cellPool where !cell.isHidden {
+                        if cell.frame.contains(deferredPoint) {
+                            tableView.window?.makeFirstResponder(cell)
+                            return
+                        }
+                    }
+                    if let first = tableView.headerCells.first {
+                        tableView.window?.makeFirstResponder(first)
+                    }
+                }
             }
             return true
         }
@@ -922,6 +983,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public func save() {
         guard let note = self.note else { return }
 
+        syncAllTableData()
         note.save(attributed: self.attributedString())
     }
 
@@ -994,10 +1056,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {
             textStorageProcessor?.detector = CodeBlockDetector()
 
-            // Clear stale code block ranges BEFORE replacing storage content
-            // to prevent LayoutManager.drawBackground from accessing out-of-bounds ranges
+            // Clear stale state BEFORE replacing storage content
             note.codeBlockRangesCache = []
             pendingRenderBlockRange = nil
+            removeAllInlineTableViews()
 
             storage.setAttributedString(content)
         } else {
@@ -1027,6 +1089,15 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
                         processor.hideSyntaxRange(closingLineRange, in: storage)
                     }
                 }
+            }
+        }
+
+        // In WYSIWYG mode, render table markdown as interactive InlineTableViews.
+        // Defer to next run loop iteration so layout manager has computed glyph positions.
+        // Without this, InlineTableAttachmentCell.draw() gets cellFrame at (0,0).
+        if NotesTextProcessor.hideSyntax {
+            DispatchQueue.main.async { [weak self] in
+                self?.renderTables()
             }
         }
 
@@ -1566,8 +1637,14 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     }
 
     func saveSelectedRange() {
-        guard let note = self.note else { return }
-        note.setSelectedRange(range: selectedRange)
+        // Defer to the next run loop iteration to avoid Swift exclusivity violations.
+        // When deleting table attachments, keyDown triggers text storage mutations
+        // that re-enter self.note access. By deferring, the access happens after
+        // keyDown's call stack has unwound completely.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let note = self.note else { return }
+            note.setSelectedRange(range: self.selectedRange)
+        }
     }
 
     /// Returns the cursor's vertical position as a fraction (0.0 to 1.0) of the document
@@ -1811,8 +1888,12 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     private func focusFirstInlineTableCell() {
         for subview in subviews.reversed() {
             if let tableView = subview as? InlineTableView {
-                tableView.isFocused = true
+                tableView.focusState = .editing
                 tableView.focusFirstCell()
+                // Invalidate layout so the attachment cell picks up the new (editing) size
+                if let storage = textStorage, let lm = layoutManager {
+                    lm.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
+                }
                 break
             }
         }
@@ -1827,8 +1908,27 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
     }
 
-    /// Remove all inline table view subviews (called on source mode toggle or note switch)
+    /// Remove all inline table view subviews (called on source mode toggle or note switch).
+    /// First collects any pending cell edits and restores table attachments to markdown
+    /// so the note content reflects the latest edits.
     func removeAllInlineTableViews() {
+        // Collect pending cell values into the data model (does NOT fire callbacks).
+        // Do NOT call notifyChanged() here — it fires onMarkdownChanged which can
+        // trigger saves. During fill(), self.note already points to the NEW note
+        // and the text storage is EMPTY, so a save would write 0 bytes.
+        for subview in subviews {
+            if let tableView = subview as? InlineTableView {
+                tableView.collectCellData()
+            }
+        }
+
+        // Do NOT call storage.restoreRenderedBlocks() here!
+        // Modifying the text storage during note switching triggers auto-save
+        // which writes empty/corrupt content to the PREVIOUS note's file.
+        // Rendered blocks are restored in the save path (Note.save(content:)
+        // calls unloadAttachments() which calls restoreRenderedBlocks()).
+
+        // Remove the table subviews only
         for subview in subviews {
             if subview is InlineTableView {
                 subview.removeFromSuperview()
@@ -1867,6 +1967,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             tableView.configure(with: data)
             tableView.containerWidth = maxWidth
             tableView.isFocused = false
+
+            // NO onMarkdownChanged callback needed. Table data is synced to
+            // attributes in attributedString() override, called by the save path.
+            // This matches how mermaid works: zero custom callbacks.
+
             tableView.rebuild()
 
             // Create attachment
@@ -1899,22 +2004,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             // Add the table view as a subview
             addSubview(tableView)
 
-            // Set up the markdown changed callback
-            tableView.onMarkdownChanged = { [weak storage] (newMarkdown: String) in
-                guard let storage = storage else { return }
-                let fullRange = NSRange(location: 0, length: storage.length)
-                storage.enumerateAttribute(.renderedBlockType, in: fullRange, options: []) { value, range, stop in
-                    if let type = value as? String, type == RenderedBlockType.table.rawValue, range.length == 1 {
-                        if let att = storage.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment,
-                           let attCell = att.attachmentCell as? InlineTableAttachmentCell,
-                           attCell.inlineTableView === tableView {
-                            storage.addAttribute(.renderedBlockOriginalMarkdown, value: newMarkdown, range: range)
-                            storage.addAttribute(.renderedBlockSource, value: newMarkdown, range: range)
-                            stop.pointee = true
-                        }
-                    }
-                }
-            }
+            // NO onMarkdownChanged callback. Table data is synced to attributes
+            // in the attributedString() override, which the save path calls.
+            // This eliminates the data loss bug caused by callbacks firing during fill().
         }
     }
 

@@ -13,6 +13,7 @@ class PDFExporter: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     private var outputURL: URL
     private var completion: (URL?) -> Void
     private var webView: WKWebView?
+    private var offscreenWindow: NSWindow?
 
     init(indexURL: URL, outputURL: URL, completion: @escaping (URL?) -> Void) {
         self.indexURL = indexURL
@@ -87,10 +88,17 @@ class PDFExporter: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
 
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 595, height: 842), configuration: config)
-        webView?.navigationDelegate = self
+        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 595, height: 842), configuration: config)
+        wv.navigationDelegate = self
+        webView = wv
+
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 595, height: 842),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = wv
+        window.orderBack(nil)
+        offscreenWindow = window
 
         let accessURL = indexURL.deletingLastPathComponent()
-        webView?.loadFileURL(indexURL, allowingReadAccessTo: accessURL)
+        wv.loadFileURL(indexURL, allowingReadAccessTo: accessURL)
     }
 }

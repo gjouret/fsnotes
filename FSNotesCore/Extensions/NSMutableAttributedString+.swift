@@ -165,6 +165,8 @@ extension NSMutableAttributedString {
             }
         }
 
+        // replacements are already in reverse order (from .reverse enumeration).
+        // Apply back-to-front so earlier ranges aren't shifted by later replacements.
         for (range, markdown) in replacements {
             replaceCharacters(in: range, with: markdown)
         }

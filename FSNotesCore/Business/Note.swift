@@ -1026,6 +1026,7 @@ public class Note: NSObject  {
             }
             
             let mutable = NSMutableAttributedString(attributedString: copy)
+            mutable.restoreRenderedBlocks()
             self.save(content: mutable)
             usleep(1000000)
             

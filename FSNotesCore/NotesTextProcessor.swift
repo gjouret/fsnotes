@@ -375,9 +375,13 @@ public class NotesTextProcessor {
             guard NotesTextProcessor.hideSyntax else { return }
 
             let r = range()
+            guard r.length > 0 else { return }
             attributedString.addAttribute(.foregroundColor, value: hiddenColor, range: r)
 
-            // Collapse each hidden character's width via negative kern
+            // Collapse each character's width via negative kern.
+            // Each character gets its own kern = -itsWidth so all hidden chars occupy zero space.
+            // NOTE: applying kern only to the last char doesn't work because intermediate
+            // chars retain their natural width, causing progressive indentation on headers.
             let nsString = attributedString.string as NSString
             for i in 0..<r.length {
                 let charPos = r.location + i
@@ -964,25 +968,19 @@ public class NotesTextProcessor {
 
         // Horizontal rules: hide syntax and mark for LayoutManager drawing
         if NotesTextProcessor.hideSyntax {
-            let hrPattern = "^[ ]{0,3}([-*_])[ ]{0,2}(\\1[ ]{0,2}){2,}[ \\t]*$"
-            if let hrRegex = try? NSRegularExpression(pattern: hrPattern, options: .anchorsMatchLines) {
-                hrRegex.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
-                    guard let range = result?.range else { return }
-                    hideSyntaxIfNecessary(range: range)
-                    attributedString.addAttribute(.horizontalRule, value: true, range: range)
-                }
+            NotesTextProcessor.hrRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
+                guard let range = result?.range else { return }
+                hideSyntaxIfNecessary(range: range)
+                attributedString.addAttribute(.horizontalRule, value: true, range: range)
             }
         }
 
         // Blockquote left border marker (indent is handled by addTabStops)
         if NotesTextProcessor.hideSyntax {
-            let bqPattern = "^>\\s?"
-            if let bqRegex = try? NSRegularExpression(pattern: bqPattern, options: .anchorsMatchLines) {
-                bqRegex.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
-                    guard let range = result?.range else { return }
-                    let paraRange = (string as NSString).paragraphRange(for: range)
-                    attributedString.addAttribute(.blockquote, value: true, range: paraRange)
-                }
+            NotesTextProcessor.bqRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
+                guard let range = result?.range else { return }
+                let paraRange = (string as NSString).paragraphRange(for: range)
+                attributedString.addAttribute(.blockquote, value: true, range: paraRange)
             }
         }
 
@@ -1337,6 +1335,10 @@ public class NotesTextProcessor {
 
     // Static compiled regex for underline tags — avoids recompiling on every highlight call
     public static let underlineRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<u>(.*?)</u>", options: [])
+
+    // Static compiled regexes for horizontal rules and blockquotes — avoids recompiling on every highlight call
+    public static let hrRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^[ ]{0,3}([-*_])[ ]{0,2}(\\1[ ]{0,2}){2,}[ \\t]*$", options: .anchorsMatchLines)
+    public static let bqRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^>\\s?", options: .anchorsMatchLines)
 
     fileprivate static let blockQuoteOpeningPattern = [
         "(^\\p{Z}*>\\p{Z})"

@@ -1237,8 +1237,27 @@ public class UserDefaultsManagement {
     }
 
     static var aiAPIKey: String {
-        get { shared?.string(forKey: Constants.AIAPIKey) ?? "" }
-        set { shared?.set(newValue, forKey: Constants.AIAPIKey) }
+        get {
+            // Migrate from UserDefaults to Keychain on first read
+            if let legacyKey = shared?.string(forKey: Constants.AIAPIKey), !legacyKey.isEmpty {
+                let item = KeychainPasswordItem(service: KeychainConfiguration.serviceName, account: "aiAPIKey")
+                try? item.savePassword(legacyKey)
+                shared?.removeObject(forKey: Constants.AIAPIKey)
+                return legacyKey
+            }
+            let item = KeychainPasswordItem(service: KeychainConfiguration.serviceName, account: "aiAPIKey")
+            return (try? item.readPassword()) ?? ""
+        }
+        set {
+            let item = KeychainPasswordItem(service: KeychainConfiguration.serviceName, account: "aiAPIKey")
+            if newValue.isEmpty {
+                try? item.deleteItem()
+            } else {
+                try? item.savePassword(newValue)
+            }
+            // Remove any legacy UserDefaults entry
+            shared?.removeObject(forKey: Constants.AIAPIKey)
+        }
     }
 
     static var aiProvider: String {

@@ -1537,6 +1537,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         if editor.isEditable {
             note.isBlocked = true
 
+            editor.syncAllTableData()
             editor.textStorage?.removeHighlight()
             note.save(attributed: editor.attributedString())
 

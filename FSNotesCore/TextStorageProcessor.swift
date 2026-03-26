@@ -88,8 +88,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
     /// the cursor inherits correct height. Mirrors the approach in
     /// NotesTextProcessor.highlightMarkdown's hideSyntaxIfNecessary.
     func hideSyntaxRange(_ range: NSRange, in textStorage: NSTextStorage) {
+        guard range.length > 0 else { return }
         let nsString = textStorage.string as NSString
         textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: range)
+
+        // Collapse each character's width via per-character negative kern.
+        // NOTE: applying kern only to the last char doesn't work because intermediate
+        // chars retain their natural width, causing progressive indentation on headers.
         for i in 0..<range.length {
             let charPos = range.location + i
             guard charPos < nsString.length else { break }
@@ -636,12 +641,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                 guard let image = image, let self = self else { return }
 
                 DispatchQueue.main.async {
-                    guard codeRange.location < textStorage.length,
-                          NSMaxRange(codeRange) <= textStorage.length else { return }
-
-                    // Verify the text hasn't changed under us
-                    let currentText = (textStorage.string as NSString).substring(with: codeRange)
-                    guard currentText.contains(source.prefix(20)) else { return }
+                    // Re-find the code block by searching for the original markdown.
+                    // The captured codeRange may be stale if other blocks were rendered first.
+                    let currentString = textStorage.string as NSString
+                    let searchRange = NSRange(location: 0, length: currentString.length)
+                    let foundRange = currentString.range(of: originalMarkdown, range: searchRange)
+                    guard foundRange.location != NSNotFound else { return }
+                    let codeRange = foundRange
 
                     // Replace the entire code block with a centered rendered image
                     let scale = min(maxWidth / image.size.width, 1.0)
@@ -673,8 +679,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                     if replacedRange.location + replacedRange.length <= textStorage.length {
                         textStorage.removeAttribute(.backgroundColor, range: replacedRange)
                     }
-                    textStorage.endEditing()
+                    // Set flag false BEFORE endEditing so the delegate callback sees it correctly
                     self.isRendering = false
+                    textStorage.endEditing()
 
                     // Remove the rendered code block from the cache so LayoutManager
                     // doesn't draw a gray background behind the image

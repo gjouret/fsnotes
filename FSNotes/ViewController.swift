@@ -2114,11 +2114,13 @@ class ViewController: EditorViewController,
     // MARK: - AI Chat Panel
 
     public var aiChatPanel: AIChatPanelView?
+    private var aiChatEditorTrailingConstraint: NSLayoutConstraint?
 
     @objc public func toggleAIChat(_ sender: Any) {
         if let panel = aiChatPanel, !panel.isHidden {
             // Hide panel
-            panel.isHidden = true
+            aiChatEditorTrailingConstraint?.isActive = false
+            aiChatEditorTrailingConstraint = nil
             panel.removeFromSuperview()
             aiChatPanel = nil
         } else {
@@ -2138,7 +2140,9 @@ class ViewController: EditorViewController,
             ])
 
             // Shrink editor to make room
-            editAreaScroll.trailingAnchor.constraint(equalTo: panel.leadingAnchor).isActive = true
+            let trailing = editAreaScroll.trailingAnchor.constraint(equalTo: panel.leadingAnchor)
+            trailing.isActive = true
+            aiChatEditorTrailingConstraint = trailing
 
             aiChatPanel = panel
         }
