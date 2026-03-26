@@ -109,35 +109,20 @@ class FormattingToolbar: NSView {
 
     // MARK: - Button Creation
 
-    private func addButton(id: String, symbol: String, tooltip: String, action: Selector) {
+    private func addButton(id: String, symbol: String? = nil, title: String? = nil, tooltip: String, action: Selector) {
         let button = NSButton()
         button.bezelStyle = .accessoryBarAction
         button.isBordered = true
         button.setButtonType(.momentaryPushIn)
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
-        button.imagePosition = .imageOnly
-        button.toolTip = tooltip
-        button.target = nil // routes through first responder chain
-        button.action = action
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.refusesFirstResponder = true // keep focus on EditTextView
 
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 28),
-            button.heightAnchor.constraint(equalToConstant: 24)
-        ])
+        if let symbol = symbol {
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
+            button.imagePosition = .imageOnly
+        } else if let title = title {
+            button.title = title
+            button.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        }
 
-        stackView.addArrangedSubview(button)
-        buttons[id] = button
-    }
-
-    private func addButton(id: String, title: String, tooltip: String, action: Selector) {
-        let button = NSButton()
-        button.bezelStyle = .accessoryBarAction
-        button.isBordered = true
-        button.setButtonType(.momentaryPushIn)
-        button.title = title
-        button.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         button.toolTip = tooltip
         button.target = nil // routes through first responder chain
         button.action = action

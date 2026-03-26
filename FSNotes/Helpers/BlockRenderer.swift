@@ -30,16 +30,13 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     static func render(source: String, type: BlockType, maxWidth: CGFloat = 480, completion: @escaping (NSImage?) -> Void) {
         let cacheKey = "\(type):\(source)" as NSString
         if let cached = cache.object(forKey: cacheKey) {
-            NSLog("[BlockRenderer] Cache hit for \(type)")
             completion(cached)
             return
         }
 
-        NSLog("[BlockRenderer] Starting render for \(type), source length: \(source.count)")
         let renderer = BlockRenderer()
         renderer.blockType = type
         renderer.completion = { [weak renderer] image in
-            NSLog("[BlockRenderer] Completion called, image: \(image != nil ? "YES \(image!.size)" : "nil")")
             if let image = image {
                 cache.setObject(image, forKey: cacheKey)
             }
@@ -74,12 +71,10 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         }
 
         guard let bundleURL = Bundle.main.url(forResource: "MPreview", withExtension: "bundle") else {
-            NSLog("[BlockRenderer] ERROR: MPreview.bundle not found")
             completion?(nil)
             cleanup()
             return
         }
-        NSLog("[BlockRenderer] Bundle URL: \(bundleURL.path)")
 
         let html = generateHTML(source: source, type: type, maxWidth: maxWidth)
 
@@ -94,7 +89,6 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             self.tempFile = tempFile
             webView?.loadFileURL(tempFile, allowingReadAccessTo: bundleURL)
         } catch {
-            NSLog("[BlockRenderer] ERROR writing temp file: \(error)")
             completion?(nil)
             cleanup()
         }
@@ -194,17 +188,14 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     // MARK: - WKScriptMessageHandler
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        NSLog("[BlockRenderer] Message received: \(message.name) body: \(message.body)")
         guard message.name == "renderComplete",
               let body = message.body as? [String: Any] else {
-            NSLog("[BlockRenderer] ERROR: unexpected message format")
             completion?(nil)
             cleanup()
             return
         }
 
-        if let error = body["error"] {
-            NSLog("[BlockRenderer] ERROR from JS: \(error)")
+        if body["error"] != nil {
             completion?(nil)
             cleanup()
             return
@@ -243,17 +234,15 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        NSLog("[BlockRenderer] Navigation finished successfully")
+        // Navigation succeeded — waiting for JS renderComplete callback
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        NSLog("[BlockRenderer] Navigation FAILED: \(error)")
         completion?(nil)
         cleanup()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        NSLog("[BlockRenderer] Provisional navigation FAILED: \(error)")
         completion?(nil)
         cleanup()
     }

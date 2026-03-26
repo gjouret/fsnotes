@@ -925,10 +925,10 @@ class ViewController: EditorViewController,
             if let webView = editor.markdownView?.webView {
                 switch Int(event.keyCode) {
                 case kVK_UpArrow:
-                    webView.evaluateJavaScript("window.scrollBy(0, -40)", completionHandler: nil)
+                    scrollPreview(webView, by: -40)
                     return false
                 case kVK_DownArrow:
-                    webView.evaluateJavaScript("window.scrollBy(0, 40)", completionHandler: nil)
+                    scrollPreview(webView, by: 40)
                     return false
                 case kVK_LeftArrow:
                     previewHasFocus = false
@@ -936,10 +936,10 @@ class ViewController: EditorViewController,
                     NSApp.mainWindow?.makeFirstResponder(notesTableView)
                     return false
                 case kVK_PageUp:
-                    webView.evaluateJavaScript("window.scrollBy(0, -window.innerHeight)", completionHandler: nil)
+                    scrollPreview(webView, by: "window.innerHeight", negate: true)
                     return false
                 case kVK_PageDown:
-                    webView.evaluateJavaScript("window.scrollBy(0, window.innerHeight)", completionHandler: nil)
+                    scrollPreview(webView, by: "window.innerHeight", negate: false)
                     return false
                 case kVK_Home:
                     webView.evaluateJavaScript("window.scrollTo(0, 0)", completionHandler: nil)
@@ -948,11 +948,7 @@ class ViewController: EditorViewController,
                     webView.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)", completionHandler: nil)
                     return false
                 case kVK_Space:
-                    if event.modifierFlags.contains(.shift) {
-                        webView.evaluateJavaScript("window.scrollBy(0, -window.innerHeight)", completionHandler: nil)
-                    } else {
-                        webView.evaluateJavaScript("window.scrollBy(0, window.innerHeight)", completionHandler: nil)
-                    }
+                    scrollPreview(webView, by: "window.innerHeight", negate: event.modifierFlags.contains(.shift))
                     return false
                 case kVK_Escape:
                     previewHasFocus = false
@@ -2115,6 +2111,19 @@ class ViewController: EditorViewController,
 
     public var aiChatPanel: AIChatPanelView?
     private var aiChatEditorTrailingConstraint: NSLayoutConstraint?
+
+    // MARK: - Preview Scroll Helpers
+
+    /// Scroll preview webview by a fixed pixel amount.
+    private func scrollPreview(_ webView: WKWebView, by pixels: Int) {
+        webView.evaluateJavaScript("window.scrollBy(0, \(pixels))", completionHandler: nil)
+    }
+
+    /// Scroll preview webview by a JS expression (e.g. "window.innerHeight").
+    private func scrollPreview(_ webView: WKWebView, by jsExpr: String, negate: Bool) {
+        let sign = negate ? "-" : ""
+        webView.evaluateJavaScript("window.scrollBy(0, \(sign)\(jsExpr))", completionHandler: nil)
+    }
 
     @objc public func toggleAIChat(_ sender: Any) {
         if let panel = aiChatPanel, !panel.isHidden {

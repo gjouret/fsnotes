@@ -9,18 +9,13 @@ import Cocoa
 
 class BlockSourceEditor {
 
-    enum BlockType {
-        case mermaid
-        case math
-    }
-
     /// Show a source editor sheet for a rendered block.
     /// - Parameters:
     ///   - source: Current source text
-    ///   - type: Block type (mermaid or math)
+    ///   - type: Block type (mermaid or math) -- uses BlockRenderer.BlockType
     ///   - window: Parent window for the sheet
     ///   - completion: Called with updated source, or nil if cancelled
-    static func show(source: String, type: BlockType, in window: NSWindow, completion: @escaping (String?) -> Void) {
+    static func show(source: String, type: BlockRenderer.BlockType, in window: NSWindow, completion: @escaping (String?) -> Void) {
         let alert = NSAlert()
         alert.messageText = type == .mermaid ? "Edit Mermaid Diagram" : "Edit Math Expression"
         alert.addButton(withTitle: "Update")

@@ -28,6 +28,22 @@ protocol AIProvider {
     )
 }
 
+// MARK: - Shared System Prompt
+
+private func aiSystemPrompt(noteContent: String) -> String {
+    return """
+    You are a helpful writing assistant integrated into a note-taking app (FSNotes). \
+    The user is editing a markdown note. You can help them review, edit, summarize, \
+    translate, or transform the note content. When suggesting edits, provide the updated \
+    text clearly. Be concise and helpful.
+
+    Current note content:
+    ---
+    \(noteContent)
+    ---
+    """
+}
+
 // MARK: - Anthropic (Claude) Provider
 
 class AnthropicProvider: AIProvider {
@@ -47,17 +63,7 @@ class AnthropicProvider: AIProvider {
             return
         }
 
-        let systemPrompt = """
-        You are a helpful writing assistant integrated into a note-taking app (FSNotes). \
-        The user is editing a markdown note. You can help them review, edit, summarize, \
-        translate, or transform the note content. When suggesting edits, provide the updated \
-        text clearly. Be concise and helpful.
-
-        Current note content:
-        ---
-        \(noteContent)
-        ---
-        """
+        let systemPrompt = aiSystemPrompt(noteContent: noteContent)
 
         // Build messages array for Anthropic API
         var apiMessages: [[String: String]] = []
@@ -112,17 +118,7 @@ class OpenAIProvider: AIProvider {
 
         let systemMessage: [String: String] = [
             "role": "system",
-            "content": """
-            You are a helpful writing assistant integrated into a note-taking app (FSNotes). \
-            The user is editing a markdown note. You can help them review, edit, summarize, \
-            translate, or transform the note content. When suggesting edits, provide the updated \
-            text clearly. Be concise and helpful.
-
-            Current note content:
-            ---
-            \(noteContent)
-            ---
-            """
+            "content": aiSystemPrompt(noteContent: noteContent)
         ]
 
         var apiMessages: [[String: String]] = [systemMessage]
@@ -243,6 +239,7 @@ class SSEDelegate: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        session.finishTasksAndInvalidate()
         DispatchQueue.main.async {
             guard !self.hasCompleted else { return }
             self.hasCompleted = true

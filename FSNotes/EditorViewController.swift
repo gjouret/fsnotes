@@ -1123,32 +1123,25 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 textView.markdownView = nil
                 textView.subviews.removeAll(where: { $0.isKind(of: MPreviewView.self) })
 
-                self.refillEditArea()
-
-                // Restore cursor position from our captured copy
-                // (note.selectedRange was overwritten by textViewDidChangeSelection during fill)
-                if let range = savedRange,
-                   let storage = textView.textStorage,
-                   range.upperBound <= storage.length {
-                    textView.setSelectedRange(range)
-                    textView.scrollToCursor()
-                }
-                // Skip loadSelectedRange in becomeFirstResponder since we just restored it
-                textView.skipLoadSelectedRange = true
-                self.applyEditModeFocus()
+                self.restoreAfterPreviewDisable(textView: textView, savedRange: savedRange)
             }
         } else {
             textView.subviews.removeAll(where: { $0.isKind(of: MPreviewView.self) })
-            refillEditArea()
-            if let range = savedRange,
-               let storage = textView.textStorage,
-               range.upperBound <= storage.length {
-                textView.setSelectedRange(range)
-                textView.scrollToCursor()
-            }
-            textView.skipLoadSelectedRange = true
-            applyEditModeFocus()
+            restoreAfterPreviewDisable(textView: textView, savedRange: savedRange)
         }
+    }
+
+    /// Shared restore logic after preview is disabled: refill editor, restore cursor, apply focus.
+    private func restoreAfterPreviewDisable(textView: EditTextView, savedRange: NSRange?) {
+        refillEditArea()
+        if let range = savedRange,
+           let storage = textView.textStorage,
+           range.upperBound <= storage.length {
+            textView.setSelectedRange(range)
+            textView.scrollToCursor()
+        }
+        textView.skipLoadSelectedRange = true
+        applyEditModeFocus()
     }
     
     /// Apply focus to the editor pane after switching from preview to edit mode.

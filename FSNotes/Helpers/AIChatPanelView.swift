@@ -224,7 +224,7 @@ class AIChatPanelView: NSView {
         isStreaming = true
         sendButton.isEnabled = false
 
-        let streamingLabel = createStreamingBubble()
+        let streamingLabel = addMessageBubble(text: "", isUser: false)
         currentStreamingLabel = streamingLabel
 
         provider.sendMessage(messages: messages, noteContent: noteContent, onToken: { [weak self] token in
@@ -252,7 +252,9 @@ class AIChatPanelView: NSView {
 
     // MARK: - Message Bubbles
 
-    private func addMessageBubble(text: String, isUser: Bool, isError: Bool = false) {
+    /// Add a message bubble to the chat. Returns the label for streaming use.
+    @discardableResult
+    private func addMessageBubble(text: String, isUser: Bool, isError: Bool = false) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = NSFont.systemFont(ofSize: 13)
         label.isSelectable = true
@@ -287,31 +289,6 @@ class AIChatPanelView: NSView {
             bubble.trailingAnchor.constraint(equalTo: messagesStack.trailingAnchor).isActive = true
         }
 
-        scrollToBottom()
-    }
-
-    private func createStreamingBubble() -> NSTextField {
-        let label = NSTextField(wrappingLabelWithString: "")
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.isSelectable = true
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        let bubble = NSView()
-        bubble.wantsLayer = true
-        bubble.layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.05).cgColor
-        bubble.layer?.cornerRadius = 8
-        bubble.translatesAutoresizingMaskIntoConstraints = false
-
-        bubble.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 6),
-            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -6),
-            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -8),
-            label.widthAnchor.constraint(lessThanOrEqualToConstant: AIChatPanelView.panelWidth - 40),
-        ])
-
-        messagesStack.addArrangedSubview(bubble)
         scrollToBottom()
         return label
     }

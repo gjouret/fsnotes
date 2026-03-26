@@ -365,33 +365,10 @@ public class NotesTextProcessor {
         let pointSize = UserDefaultsManagement.noteFont.pointSize
         let codeFont = UserDefaultsManagement.codeFont
 
-        let hiddenColor = Color.clear
-
-        /// Hide syntax characters by making them invisible (clear color) and
-        /// collapsing their width (negative kern). Preserves the existing font
-        /// so the cursor inherits the correct height when positioned nearby.
-        /// Using 0.1pt font instead would break cursor visibility/sizing.
+        /// Hide syntax characters via the shared static method.
         func hideSyntaxIfNecessary(range: @autoclosure () -> NSRange) {
             guard NotesTextProcessor.hideSyntax else { return }
-
-            let r = range()
-            guard r.length > 0 else { return }
-            attributedString.addAttribute(.foregroundColor, value: hiddenColor, range: r)
-
-            // Collapse each character's width via negative kern.
-            // Each character gets its own kern = -itsWidth so all hidden chars occupy zero space.
-            // NOTE: applying kern only to the last char doesn't work because intermediate
-            // chars retain their natural width, causing progressive indentation on headers.
-            let nsString = attributedString.string as NSString
-            for i in 0..<r.length {
-                let charPos = r.location + i
-                guard charPos < nsString.length else { break }
-                let charStr = nsString.substring(with: NSRange(location: charPos, length: 1))
-                if let charFont = attributedString.attribute(.font, at: charPos, effectiveRange: nil) as? PlatformFont {
-                    let charWidth = (charStr as NSString).size(withAttributes: [.font: charFont]).width
-                    attributedString.addAttribute(.kern, value: -charWidth, range: NSRange(location: charPos, length: 1))
-                }
-            }
+            NotesTextProcessor.applySyntaxHiding(in: attributedString, range: range())
         }
 
         attributedString.enumerateAttribute(.link, in: paragraphRange,  options: []) { (value, range, stop) -> Void in
@@ -1339,6 +1316,33 @@ public class NotesTextProcessor {
     // Static compiled regexes for horizontal rules and blockquotes — avoids recompiling on every highlight call
     public static let hrRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^[ ]{0,3}([-*_])[ ]{0,2}(\\1[ ]{0,2}){2,}[ \\t]*$", options: .anchorsMatchLines)
     public static let bqRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^>\\s?", options: .anchorsMatchLines)
+
+    // MARK: - Shared Syntax Hiding
+
+    /// Hide syntax characters by making them invisible (clear color) and
+    /// collapsing their width via negative kern. Measures the full substring
+    /// at once (O(1) font measurement) and applies a single negative kern
+    /// on the last character equal to the total width.
+    ///
+    /// Shared between `highlightMarkdown`'s inline `hideSyntaxIfNecessary` and
+    /// `TextStorageProcessor.hideSyntaxRange`.
+    public static func applySyntaxHiding(in attributedString: NSMutableAttributedString, range: NSRange) {
+        guard range.length > 0 else { return }
+        let nsString = attributedString.string as NSString
+        guard range.location + range.length <= nsString.length else { return }
+
+        attributedString.addAttribute(.foregroundColor, value: Color.clear, range: range)
+
+        // Measure the full substring width at once using the font at the range start.
+        // All syntax characters within a single hiding range share the same font,
+        // so one measurement suffices instead of N per-character measurements.
+        guard let font = attributedString.attribute(.font, at: range.location, effectiveRange: nil) as? PlatformFont else { return }
+        let substring = nsString.substring(with: range)
+        let totalWidth = (substring as NSString).size(withAttributes: [.font: font]).width
+        // Apply a single negative kern on the last character to collapse the entire range
+        let lastCharRange = NSRange(location: range.location + range.length - 1, length: 1)
+        attributedString.addAttribute(.kern, value: -totalWidth, range: lastCharRange)
+    }
 
     fileprivate static let blockQuoteOpeningPattern = [
         "(^\\p{Z}*>\\p{Z})"

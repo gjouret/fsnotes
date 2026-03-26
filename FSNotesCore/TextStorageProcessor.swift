@@ -83,27 +83,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
         return blocks[idx]
     }
 
-    /// Hide syntax characters by making them invisible (clear color) and
-    /// collapsing their width (negative kern). Preserves existing font so
-    /// the cursor inherits correct height. Mirrors the approach in
-    /// NotesTextProcessor.highlightMarkdown's hideSyntaxIfNecessary.
+    /// Hide syntax characters by delegating to the shared static method.
     func hideSyntaxRange(_ range: NSRange, in textStorage: NSTextStorage) {
-        guard range.length > 0 else { return }
-        let nsString = textStorage.string as NSString
-        textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: range)
-
-        // Collapse each character's width via per-character negative kern.
-        // NOTE: applying kern only to the last char doesn't work because intermediate
-        // chars retain their natural width, causing progressive indentation on headers.
-        for i in 0..<range.length {
-            let charPos = range.location + i
-            guard charPos < nsString.length else { break }
-            let charStr = nsString.substring(with: NSRange(location: charPos, length: 1))
-            if let charFont = textStorage.attribute(.font, at: charPos, effectiveRange: nil) as? NSFont {
-                let charWidth = (charStr as NSString).size(withAttributes: [.font: charFont]).width
-                textStorage.addAttribute(.kern, value: -charWidth, range: NSRange(location: charPos, length: 1))
-            }
-        }
+        NotesTextProcessor.applySyntaxHiding(in: textStorage, range: range)
     }
 
 #if os(iOS)

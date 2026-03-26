@@ -1410,23 +1410,7 @@ public class TextFormatter {
 
     // MARK: - WYSIWYG Toolbar Methods
 
-    public func numberedList() {
-        orderedList()
-    }
-
     public func horizontalRule() {
         insertText("\n---\n")
-    }
-
-    public func insertTable() {
-        let table = """
-
-        | Header | Header |
-        |--------|--------|
-        | Cell   | Cell   |
-        | Cell   | Cell   |
-
-        """
-        insertText(table)
     }
 }
