@@ -92,8 +92,7 @@ class PDFExporter: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         wv.navigationDelegate = self
         webView = wv
 
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 595, height: 842),
-                              styleMask: .borderless, backing: .buffered, defer: false)
+        let window = NSWindow.makeOffscreen(width: 595, height: 842)
         window.contentView = wv
         window.orderBack(nil)
         offscreenWindow = window

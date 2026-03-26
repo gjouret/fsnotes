@@ -22,18 +22,6 @@ class MPreviewContainerView: NSView {
     private var totalMatches = 0
     public var isFindPanelVisible = false
     
-    // MARK: - Focus Border
-
-    public func showFocusBorder() {
-        wantsLayer = true
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.keyboardFocusIndicatorColor.cgColor
-    }
-
-    public func hideFocusBorder() {
-        layer?.borderWidth = 0
-    }
-
     // MARK: - Initialization
     init(frame: NSRect, note: Note, closure: MPreviewViewClosure?, force: Bool = false) {
         super.init(frame: frame)

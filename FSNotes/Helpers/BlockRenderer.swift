@@ -64,8 +64,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         // WKWebView requires being in a window hierarchy to render content on recent macOS.
         // Add it to a hidden offscreen window.
         if let wv = webView {
-            let offscreenWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: maxWidth, height: 100),
-                                           styleMask: .borderless, backing: .buffered, defer: false)
+            let offscreenWindow = NSWindow.makeOffscreen(width: maxWidth, height: 100)
             offscreenWindow.contentView?.addSubview(wv)
             self.offscreenWindow = offscreenWindow
         }

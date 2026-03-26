@@ -46,6 +46,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// Range of a code block that was restored from a rendered image and needs re-rendering
     /// when the cursor moves outside it
     public var pendingRenderBlockRange: NSRange?
+
+    /// Storage length at the last call to triggerCodeBlockRenderingIfNeeded.
+    /// Used to skip re-scanning when only the cursor moved and no edit occurred.
+    private var codeBlockScanLength: Int = -1
     
     let storage = Storage.shared()
     let caretWidth: CGFloat = 2
@@ -400,12 +404,16 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         triggerCodeBlockRenderingIfNeeded()
     }
 
-    /// Trigger rendering of mermaid/math code blocks if cursor is outside all code blocks
+    /// Trigger rendering of mermaid/math code blocks if cursor is outside all code blocks.
+    /// Skips re-scanning when only the cursor moved and no edit occurred (text length unchanged).
     public func triggerCodeBlockRenderingIfNeeded() {
         #if os(OSX)
         guard NotesTextProcessor.hideSyntax,
               let processor = self.textStorageProcessor,
               let storage = self.textStorage else { return }
+
+        let currentLength = storage.length
+        let textEdited = (currentLength != codeBlockScanLength)
 
         // If there's a specific pending block, check if cursor left it
         if let pendingRange = pendingRenderBlockRange {
@@ -416,8 +424,15 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
                 // Cursor left the pending block — render it
                 pendingRenderBlockRange = nil
 
-                let freshRanges = processor.detector.findCodeBlocks(in: storage)
-                self.note?.codeBlockRangesCache = freshRanges
+                // Re-scan only if the text has changed since the last scan
+                let freshRanges: [NSRange]
+                if textEdited || note?.codeBlockRangesCache == nil {
+                    freshRanges = processor.detector.findCodeBlocks(in: storage)
+                    self.note?.codeBlockRangesCache = freshRanges
+                    codeBlockScanLength = currentLength
+                } else {
+                    freshRanges = note?.codeBlockRangesCache ?? []
+                }
 
                 if !freshRanges.isEmpty {
                     processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: freshRanges)
@@ -426,9 +441,22 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return
         }
 
+        // Skip full re-scan when only the cursor moved (no edit occurred)
+        guard textEdited || note?.codeBlockRangesCache == nil else {
+            // Use cached ranges to decide whether to render
+            let cachedRanges = note?.codeBlockRangesCache ?? []
+            let cursorLoc = selectedRange().location
+            let isInCodeBlock = cachedRanges.contains { NSLocationInRange(cursorLoc, $0) }
+            if !isInCodeBlock && !cachedRanges.isEmpty {
+                processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: cachedRanges)
+            }
+            return
+        }
+
         // Also check for any unrendered mermaid/math blocks or tables (e.g., on initial note load)
         let freshRanges = processor.detector.findCodeBlocks(in: storage)
         self.note?.codeBlockRangesCache = freshRanges
+        codeBlockScanLength = currentLength
 
         let cursorLoc = selectedRange().location
         let isInCodeBlock = !freshRanges.isEmpty && freshRanges.contains { NSLocationInRange(cursorLoc, $0) }
@@ -1059,6 +1087,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             // Clear stale state BEFORE replacing storage content
             note.codeBlockRangesCache = []
             pendingRenderBlockRange = nil
+            codeBlockScanLength = -1
             removeAllInlineTableViews()
 
             storage.setAttributedString(content)
@@ -1075,6 +1104,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         if NotesTextProcessor.hideSyntax, let storage = textStorage, let processor = textStorageProcessor {
             let codeBlockRanges = processor.detector.findCodeBlocks(in: storage)
             note.codeBlockRangesCache = codeBlockRanges
+            codeBlockScanLength = storage.length
             let string = storage.string as NSString
             for codeRange in codeBlockRanges {
                 guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }
@@ -2263,9 +2293,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         if let cgImage = thumbnail?.cgImage {
             // Convert thumbnail to PNG and save
             let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-            if let tiffData = nsImage.tiffRepresentation,
-               let bitmapRep = NSBitmapImageRep(data: tiffData),
-               let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+            if let pngData = nsImage.PNGRepresentation {
 
                 let thumbName = (preferredName as NSString).deletingPathExtension + "_thumb.png"
                 if let (thumbRelPath, thumbURL) = note.save(data: pngData, preferredName: thumbName) {
@@ -2291,9 +2319,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             let ext = (preferredName as NSString).pathExtension
             let fileIcon = NSWorkspace.shared.icon(forFileType: ext)
             fileIcon.size = NSSize(width: 128, height: 128)
-            if let tiffData = fileIcon.tiffRepresentation,
-               let bitmapRep = NSBitmapImageRep(data: tiffData),
-               let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+            if let pngData = fileIcon.PNGRepresentation {
                 let iconName = (preferredName as NSString).deletingPathExtension + "_icon.png"
                 if let (iconRelPath, iconURL) = note.save(data: pngData, preferredName: iconName) {
                     let encodedIconPath = iconRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? iconRelPath

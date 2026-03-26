@@ -739,8 +739,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // WKWebView must be in a window for takeSnapshot to work
         // Use a visible (but offscreen) window on Retina display for 2x rendering
-        let offscreenWindow = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: editorWidth, height: renderHeight),
-                                        styleMask: .borderless, backing: .buffered, defer: false)
+        let offscreenWindow = NSWindow.makeOffscreen(width: editorWidth, height: renderHeight)
         offscreenWindow.contentView = webView
         offscreenWindow.orderBack(nil)
 
@@ -754,11 +753,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             config.snapshotWidth = NSNumber(value: Int(editorWidth * 2))
 
             webView.takeSnapshot(with: config) { image, error in
-                if let image = image, let tiffData = image.tiffRepresentation,
-                   let bitmapRep = NSBitmapImageRep(data: tiffData),
-                   let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                if let image = image, let pngData = image.PNGRepresentation {
                     try? pngData.write(to: URL(fileURLWithPath: path))
-                    NSLog("[RenderComparison] Saved MPreview: %@ (%dx%d)", path, bitmapRep.pixelsWide, bitmapRep.pixelsHigh)
+                    NSLog("[RenderComparison] Saved MPreview: %@", path)
                 } else {
                     NSLog("[RenderComparison] MPreview snapshot failed: %@", error?.localizedDescription ?? "unknown")
                 }

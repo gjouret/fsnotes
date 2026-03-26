@@ -890,43 +890,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Markdown Generation
 
     func generateMarkdown() -> String {
-        let colCount = headers.count
-        let hdrs = headers.map { $0.isEmpty ? " " : $0 }
-        let dataRows = rows.map { row in
-            (0..<colCount).map { col in
-                col < row.count ? (row[col].isEmpty ? " " : row[col]) : " "
-            }
-        }
-
-        var widths = hdrs.map { $0.count }
-        for row in dataRows {
-            for (i, cell) in row.enumerated() where i < widths.count {
-                widths[i] = max(widths[i], cell.count)
-            }
-        }
-        widths = widths.map { max($0, 3) }
-
-        let headerLine = "| " + hdrs.enumerated().map { i, h in
-            h.padding(toLength: widths[i], withPad: " ", startingAt: 0)
-        }.joined(separator: " | ") + " |"
-
-        let sepLine = "| " + (0..<colCount).map { i in
-            let w = widths[i]
-            switch (i < alignments.count ? alignments[i] : .left) {
-            case .center: return ":" + String(repeating: "-", count: max(w - 2, 1)) + ":"
-            case .right: return String(repeating: "-", count: max(w - 1, 1)) + ":"
-            default: return String(repeating: "-", count: w)
-            }
-        }.joined(separator: " | ") + " |"
-
-        let rowLines = dataRows.map { row -> String in
-            "| " + row.enumerated().map { i, cell in
-                let w = i < widths.count ? widths[i] : cell.count
-                return cell.padding(toLength: w, withPad: " ", startingAt: 0)
-            }.joined(separator: " | ") + " |"
-        }
-
-        return ([headerLine, sepLine] + rowLines).joined(separator: "\n")
+        return TableUtility.generate(headers: headers, rows: rows, alignments: alignments)
     }
 
     // MARK: - Notify

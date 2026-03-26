@@ -11,16 +11,6 @@ import Cocoa
 class EditorScrollView: NSScrollView {
     private var initialHeight: CGFloat?
 
-    func showFocusBorder() {
-        wantsLayer = true
-        layer?.borderColor = NSColor.controlAccentColor.cgColor
-        layer?.borderWidth = 1.0
-    }
-
-    func hideFocusBorder() {
-        layer?.borderWidth = 0
-    }
-
     override var isFindBarVisible: Bool {
         set {
             // macOS 10.14 margin hack
