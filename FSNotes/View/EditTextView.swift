@@ -24,20 +24,62 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// re-entrancy (attributedString() should be a pure read).
     func syncAllTableData() {
         guard let storage = textStorage else { return }
-        for subview in subviews {
-            guard let tableView = subview as? InlineTableView else { continue }
+        // DEBUG: count how many renderedBlockOriginalMarkdown attributes exist
+        var blockCount = 0
+        storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
+            if value != nil { blockCount += 1 }
+        }
+        if blockCount > 0 || !subviews.contains(where: { $0 is InlineTableView }) {
+            let dbgPath = NSHomeDirectory() + "/fsnotes_table_sync_debug.log"
+            // Dump the full text storage content and attribute values
+            var attrDump = ""
+            storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
+                if let md = value as? String {
+                    attrDump += "  attr at (\(range.location),\(range.length)): \(md.prefix(80).replacingOccurrences(of: "\n", with: "\\n"))...\n"
+                }
+            }
+            let storageText = storage.string.prefix(200).replacingOccurrences(of: "\n", with: "\\n")
+            let msg = "\(Date()): syncAllTableData — \(blockCount) attrs, \(subviews.filter { $0 is InlineTableView }.count) tables, len=\(storage.length)\n  storage: \(storageText)\n\(attrDump)\n"
+            if let fh = FileHandle(forWritingAtPath: dbgPath) {
+                fh.seekToEndOfFile(); fh.write(msg.data(using: .utf8)!); fh.closeFile()
+            } else {
+                FileManager.default.createFile(atPath: dbgPath, contents: msg.data(using: .utf8))
+            }
+        }
+        // First, clean up any "spread" rendered-block attributes from non-attachment chars.
+        // NSTextStorage inherits attributes from the preceding character when the user types,
+        // causing .renderedBlockOriginalMarkdown to spread beyond the attachment character.
+        // This spread causes restoreRenderedBlocks() to duplicate the markdown on save.
+        let fullCleanRange = NSRange(location: 0, length: storage.length)
+        let string = storage.string as NSString
+        var cleanRanges: [NSRange] = []
+        storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: fullCleanRange, options: []) { value, range, _ in
+            guard value != nil else { return }
+            // Keep the attribute ONLY on attachment characters (\u{FFFC})
+            for i in range.location..<NSMaxRange(range) {
+                if i < string.length && string.character(at: i) != 0xFFFC {
+                    cleanRanges.append(NSRange(location: i, length: 1))
+                }
+            }
+        }
+        for r in cleanRanges.reversed() {
+            storage.removeAttribute(.renderedBlockOriginalMarkdown, range: r)
+            storage.removeAttribute(.renderedBlockSource, range: r)
+            storage.removeAttribute(.renderedBlockType, range: r)
+        }
+
+        // Update each table attachment with current cell data.
+        // Find tables via attachment cells (not subviews) — tables outside the viewport
+        // may not have been added as subviews yet.
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, stop in
+            guard let att = value as? NSTextAttachment,
+                  let cell = att.attachmentCell as? InlineTableAttachmentCell else { return }
+            let tableView = cell.inlineTableView
             tableView.collectCellData()
             let markdown = tableView.generateMarkdown()
-            // Find this table's attachment in the text storage
-            let fullRange = NSRange(location: 0, length: storage.length)
-            storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, stop in
-                guard let att = value as? NSTextAttachment,
-                      let cell = att.attachmentCell as? InlineTableAttachmentCell,
-                      cell.inlineTableView === tableView else { return }
-                storage.addAttribute(.renderedBlockOriginalMarkdown, value: markdown, range: range)
-                storage.addAttribute(.renderedBlockSource, value: markdown, range: range)
-                stop.pointee = true
-            }
+            storage.addAttribute(.renderedBlockOriginalMarkdown, value: markdown, range: range)
+            storage.addAttribute(.renderedBlockSource, value: markdown, range: range)
         }
     }
     public var note: Note?
@@ -1221,27 +1263,12 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         formatter.italic()
     }
 
-    /// Normalize a URL string: if it looks like a bare domain (no scheme),
-    /// prepend https://
-    private static func normalizeURL(_ input: String) -> String {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Already has a scheme
-        if trimmed.contains("://") || trimmed.hasPrefix("mailto:") {
-            return trimmed
-        }
-        // Looks like a domain name (contains a dot, no spaces)
-        if trimmed.contains(".") && !trimmed.contains(" ") {
-            return "https://" + trimmed
-        }
-        return trimmed
-    }
-
     @IBAction func linkMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
         // Check clipboard for a URL
         if let clipboardString = NSPasteboard.general.string(forType: .string) {
-            let normalized = EditTextView.normalizeURL(clipboardString)
+            let normalized = clipboardString.normalizedAsURL()
             if let url = URL(string: normalized),
                let scheme = url.scheme, ["http", "https", "ftp", "ftps", "mailto"].contains(scheme.lowercased()) {
                 // Clipboard has a URL — insert link directly
@@ -1276,7 +1303,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             if response == .alertFirstButtonReturn {
                 let rawInput = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !rawInput.isEmpty else { return }
-                let urlString = EditTextView.normalizeURL(rawInput)
+                let urlString = rawInput.normalizedAsURL()
 
                 let selectedText = self.attributedSubstring(forProposedRange: self.selectedRange(), actualRange: nil)?.string ?? ""
                 let displayText = selectedText.isEmpty ? urlString : selectedText
@@ -2011,19 +2038,31 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             attachment.attachmentCell = cell
             attachment.bounds = NSRect(origin: .zero, size: cellSize)
 
+            // Store markdown WITHOUT trailing \n (matches the trimmed replaceRange)
+            let trimmedMarkdown = tableMarkdown.hasSuffix("\n")
+                ? String(tableMarkdown.dropLast())
+                : tableMarkdown
+
             let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
             let attRange = NSRange(location: 0, length: attachmentString.length)
             attachmentString.addAttributes([
-                .renderedBlockSource: tableMarkdown,
+                .renderedBlockSource: trimmedMarkdown,
                 .renderedBlockType: RenderedBlockType.table.rawValue,
-                .renderedBlockOriginalMarkdown: tableMarkdown
+                .renderedBlockOriginalMarkdown: trimmedMarkdown
             ], range: attRange)
             attachmentString.removeAttribute(.backgroundColor, range: attRange)
 
-            // Replace table markdown with attachment
+            // Replace table markdown with attachment.
+            // Trim trailing \n from the replacement range so blank lines between
+            // tables are preserved. findAllTableRanges includes the trailing \n
+            // (from paragraphRange), but consuming it swallows the blank line.
+            var replaceRange = tableRange
+            if replaceRange.length > 0 && string.character(at: NSMaxRange(replaceRange) - 1) == 0x0A {
+                replaceRange.length -= 1
+            }
             processor.isRendering = true
             storage.beginEditing()
-            storage.replaceCharacters(in: tableRange, with: attachmentString)
+            storage.replaceCharacters(in: replaceRange, with: attachmentString)
             let replacedRange = NSRange(location: tableRange.location, length: attachmentString.length)
             if replacedRange.location + replacedRange.length <= storage.length {
                 storage.removeAttribute(.backgroundColor, range: replacedRange)
@@ -2031,8 +2070,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             storage.endEditing()
             processor.isRendering = false
 
-            // Add the table view as a subview
-            addSubview(tableView)
+            // Do NOT addSubview here. InlineTableAttachmentCell.draw() adds the
+            // subview when the layout manager computes a valid frame. This prevents
+            // tables outside the viewport from being positioned at (0,0).
 
             // NO onMarkdownChanged callback. Table data is synced to attributes
             // in the attributedString() override, which the save path calls.
@@ -2575,6 +2615,12 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     }
     
     public func isPreviewEnabled() -> Bool {
+        // In WYSIWYG mode, MPreview is never used for production rendering.
+        // The NSTextView WYSIWYG renderer handles all display, so preview (MPreview)
+        // must always be disabled when hideSyntax is active.
+        if NotesTextProcessor.hideSyntax {
+            return false
+        }
         return preview
     }
     

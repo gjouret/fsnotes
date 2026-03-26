@@ -159,17 +159,34 @@ extension NSMutableAttributedString {
         let fullRange = NSRange(location: 0, length: length)
         var replacements = [(NSRange, String)]()
 
+        // Only restore ATTACHMENT characters (length 1, contains \u{FFFC}).
+        // The .renderedBlockOriginalMarkdown attribute can "spread" to adjacent
+        // characters when the user types after the attachment (NSTextStorage
+        // inherits attributes from the preceding character). We must only
+        // replace the actual attachment, not the spread range.
         enumerateAttribute(.renderedBlockOriginalMarkdown, in: fullRange, options: [.reverse]) { value, range, _ in
-            if let originalMarkdown = value as? String {
-                replacements.append((range, originalMarkdown))
+            guard let originalMarkdown = value as? String else { return }
+            // Find the attachment character within this (possibly spread) range
+            let str = self.string as NSString
+            for i in range.location..<NSMaxRange(range) {
+                if i < str.length && str.character(at: i) == 0xFFFC {
+                    // Replace only the attachment character
+                    replacements.append((NSRange(location: i, length: 1), originalMarkdown))
+                    break
+                }
             }
         }
 
-        // replacements are already in reverse order (from .reverse enumeration).
-        // Apply back-to-front so earlier ranges aren't shifted by later replacements.
+        // Apply back-to-front so earlier ranges aren't shifted.
         for (range, markdown) in replacements {
             replaceCharacters(in: range, with: markdown)
         }
+
+        // Clean up any spread attributes on non-attachment characters
+        let cleanRange = NSRange(location: 0, length: length)
+        removeAttribute(.renderedBlockOriginalMarkdown, range: cleanRange)
+        removeAttribute(.renderedBlockSource, range: cleanRange)
+        removeAttribute(.renderedBlockType, range: cleanRange)
 
         return self
     }

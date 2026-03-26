@@ -1333,15 +1333,20 @@ public class NotesTextProcessor {
 
         attributedString.addAttribute(.foregroundColor, value: Color.clear, range: range)
 
-        // Measure the full substring width at once using the font at the range start.
-        // All syntax characters within a single hiding range share the same font,
-        // so one measurement suffices instead of N per-character measurements.
-        guard let font = attributedString.attribute(.font, at: range.location, effectiveRange: nil) as? PlatformFont else { return }
-        let substring = nsString.substring(with: range)
-        let totalWidth = (substring as NSString).size(withAttributes: [.font: font]).width
-        // Apply a single negative kern on the last character to collapse the entire range
-        let lastCharRange = NSRange(location: range.location + range.length - 1, length: 1)
-        attributedString.addAttribute(.kern, value: -totalWidth, range: lastCharRange)
+        // Apply per-character negative kern to zero out each glyph's advance width.
+        // This ensures intermediate hidden characters don't shift visible text rightward.
+        // Single-kern-on-last-char was tried (O(1)) but broke header indentation because
+        // intermediate glyphs kept their advance widths, causing progressive indent.
+        // Per-char kern is O(N) but N is always small (2-6 chars for syntax markers).
+        for i in 0..<range.length {
+            let charIndex = range.location + i
+            guard charIndex < nsString.length else { break }
+            let charFont = attributedString.attribute(.font, at: charIndex, effectiveRange: nil) as? PlatformFont
+                ?? UserDefaultsManagement.noteFont
+            let charStr = nsString.substring(with: NSRange(location: charIndex, length: 1))
+            let charWidth = (charStr as NSString).size(withAttributes: [.font: charFont]).width
+            attributedString.addAttribute(.kern, value: -charWidth, range: NSRange(location: charIndex, length: 1))
+        }
     }
 
     fileprivate static let blockQuoteOpeningPattern = [

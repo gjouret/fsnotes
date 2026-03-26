@@ -374,3 +374,19 @@ private extension String {
     index(startIndex, offsetBy: offset)
   }
 }
+
+public extension String {
+    /// Normalize a URL string: if it looks like a bare domain (no scheme), prepend https://.
+    func normalizedAsURL() -> String {
+        let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Already has a scheme
+        if trimmed.contains("://") || trimmed.hasPrefix("mailto:") {
+            return trimmed
+        }
+        // Looks like a domain name (contains a dot, no spaces)
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            return "https://" + trimmed
+        }
+        return trimmed
+    }
+}

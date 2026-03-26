@@ -264,6 +264,14 @@ class NotesTableView: NSTableView,
                 return
             }
             
+            // Save the current note's table data before switching
+            // (table cell edits don't modify the text storage, so textDidChange
+            // never fires — we must explicitly sync before switching notes)
+            if let oldNote = vc.editor.note, oldNote.isMarkdown() {
+                vc.editor.syncAllTableData()
+                oldNote.save(attributed: vc.editor.attributedString())
+            }
+
             vc.editor.changePreviewState(note.previewState)
             vc.editor.fill(note: note, highlight: true)
             vc.pushNoteHistory(note)

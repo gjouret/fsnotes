@@ -8,19 +8,8 @@
 
 import Cocoa
 import ObjectiveC
-import WebKit
-
-private struct EditorViewControllerSharingKeys {
-    static var activePDFExporter: UInt8 = 0
-}
 
 extension EditorViewController: NSSharingServicePickerDelegate {
-
-    // Retained reference to keep PDFExporter alive during async export
-    private var activePDFExporter: AnyObject? {
-        get { objc_getAssociatedObject(self, &EditorViewControllerSharingKeys.activePDFExporter) as AnyObject? }
-        set { objc_setAssociatedObject(self, &EditorViewControllerSharingKeys.activePDFExporter, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
 
     func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, sharingServicesForItems items: [Any], proposedSharingServices proposedServices: [NSSharingService]) -> [NSSharingService] {
         var share = proposedServices
@@ -92,30 +81,20 @@ extension EditorViewController: NSSharingServicePickerDelegate {
         }
     }
 
-    @available(macOS 11.0, *)
     public func shareAsPDF() {
-        guard let note = vcEditor?.note else { return }
-
-        let pdfDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("SharePDF")
-        try? FileManager.default.removeItem(at: pdfDir)
-
-        guard let indexURL = MPreviewView.buildPage(for: note, at: pdfDir, print: true) else { return }
+        guard let note = vcEditor?.note,
+              let textView = vcEditor else { return }
 
         let safeName = note.title.replacingOccurrences(of: "/", with: "-")
         let outputURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("\(safeName).pdf")
 
-        let exporter = PDFExporter(indexURL: indexURL, outputURL: outputURL) { [weak self] pdfURL in
-            self?.activePDFExporter = nil
-            guard let pdfURL = pdfURL else { return }
+        guard let pdfURL = PDFExporter.export(textView: textView, to: outputURL) else { return }
 
-            let picker = NSSharingServicePicker(items: [pdfURL])
-            if let button = self?.findShareButton() {
-                picker.show(relativeTo: NSZeroRect, of: button, preferredEdge: .minY)
-            }
+        let picker = NSSharingServicePicker(items: [pdfURL])
+        if let button = findShareButton() {
+            picker.show(relativeTo: NSZeroRect, of: button, preferredEdge: .minY)
         }
-        self.activePDFExporter = exporter
-        exporter.export()
     }
 
     public func shareNoteFile() {

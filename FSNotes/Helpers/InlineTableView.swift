@@ -79,7 +79,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Layout Constants
 
-    private let minCellHeight: CGFloat = 28
+    private let minCellHeight: CGFloat = 32
     private let lineHeight: CGFloat = 17  // Approximate line height for 13pt font
     private let handleSize: CGFloat = 20
     private let edgeButtonSize: CGFloat = 16
@@ -267,9 +267,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Build (Stable Cell Pool)
 
-    func rebuild() {
-        // Collect current data before rebuilding
-        collectCellData()
+    func rebuild(skipCollect: Bool = false) {
+        // Collect current data before rebuilding (skip when data was just modified directly, e.g. moveColumn/moveRow)
+        if !skipCollect {
+            collectCellData()
+        }
 
         let colCount = headers.count
         let rowCount = rows.count
@@ -392,7 +394,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     }
 
     private func configureCell(_ cell: NSTextField, text: String, frame: NSRect, isHeader: Bool, isEditing: Bool, row: Int, col: Int) {
-        cell.frame = frame.insetBy(dx: 1, dy: 1)
+        // Asymmetric padding: 5pt top for visual centering, 2pt bottom to leave room for descenders
+        cell.frame = NSRect(x: frame.minX + 4, y: frame.minY + 2, width: frame.width - 8, height: frame.height - 7)
         // Convert <br> from markdown to newlines for display
         cell.stringValue = text.replacingOccurrences(of: "<br>", with: "\n")
         cell.isHidden = false
@@ -596,17 +599,158 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Drag-to-Reorder
 
     private func startColumnDrag(column: Int) {
-        dragType = .column
-        dragSourceIndex = column
-        isDragging = true
-        // TODO: Phase 3 — create floating snapshot with lift animation
+        collectCellData()
+        let colCount = headers.count
+        guard column >= 0, column < colCount else { return }
+
+        let colWidths = contentBasedColumnWidths()
+        let hasHandles = (focusState == .hovered || focusState == .editing)
+        let leftMargin: CGFloat = hasHandles ? handleBarWidth : 0
+
+        // Run a mouse tracking loop until mouseUp
+        guard let window = self.window else { return }
+        var targetIndex = column
+        var indicator: NSView? = nil
+
+        // Create insertion indicator (blue line)
+        let ind = NSView()
+        ind.wantsLayer = true
+        ind.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        addSubview(ind)
+        indicator = ind
+
+        var keepTracking = true
+        while keepTracking {
+            guard let event = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { continue }
+            let loc = convert(event.locationInWindow, from: nil)
+
+            if event.type == .leftMouseUp {
+                keepTracking = false
+            } else {
+                // Find which column gap the cursor is nearest
+                var x = leftMargin
+                var bestGap = 0
+                var bestDist: CGFloat = .greatestFiniteMagnitude
+                for i in 0...colCount {
+                    let dist = abs(loc.x - x)
+                    if dist < bestDist {
+                        bestDist = dist
+                        bestGap = i
+                    }
+                    if i < colCount { x += colWidths[i] }
+                }
+                targetIndex = bestGap
+
+                // Position indicator
+                var indX = leftMargin
+                for i in 0..<targetIndex {
+                    if i < colWidths.count { indX += colWidths[i] }
+                }
+                indicator?.frame = NSRect(x: indX - 1, y: 0, width: 2, height: bounds.height)
+            }
+        }
+
+        indicator?.removeFromSuperview()
+
+        // Calculate destination: after removing source, where should we insert?
+        let dst = targetIndex > column ? targetIndex - 1 : targetIndex
+
+        if dst != column {
+            moveColumn(from: column, to: dst)
+        }
     }
 
     private func startRowDrag(row: Int) {
-        dragType = .row
-        dragSourceIndex = row
-        isDragging = true
-        // TODO: Phase 3 — create floating snapshot with lift animation
+        // Row handle indices: 0 = header (not draggable), 1+ = data rows
+        guard row >= 1 else { return }  // Can't drag header
+        let dataRow = row - 1  // Convert handle index to data row index
+
+        collectCellData()
+        let dataRowCount = rows.count
+        guard dataRow >= 0, dataRow < dataRowCount else { return }
+
+        let rHeights = rowHeights()
+        let gridHeight = rHeights.reduce(0, +)
+        let hasHandles = (focusState == .hovered || focusState == .editing)
+
+        guard let window = self.window else { return }
+        var targetDataRow = dataRow
+        var indicator: NSView? = nil
+
+        let ind = NSView()
+        ind.wantsLayer = true
+        ind.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        addSubview(ind)
+        indicator = ind
+
+        let leftMargin: CGFloat = hasHandles ? handleBarWidth : 0
+
+        var keepTracking = true
+        while keepTracking {
+            guard let event = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { continue }
+            let loc = convert(event.locationInWindow, from: nil)
+
+            if event.type == .leftMouseUp {
+                keepTracking = false
+            } else {
+                // Find which data row gap the cursor is nearest
+                // rHeights[0] = header, rHeights[1] = data row 0, etc.
+                var y = gridHeight - rHeights[0]  // Start below header
+                var bestGap = 0
+                var bestDist: CGFloat = .greatestFiniteMagnitude
+
+                for i in 0...dataRowCount {
+                    let dist = abs(loc.y - y)
+                    if dist < bestDist {
+                        bestDist = dist
+                        bestGap = i
+                    }
+                    if i < dataRowCount && (i + 1) < rHeights.count {
+                        y -= rHeights[i + 1]
+                    }
+                }
+                targetDataRow = bestGap
+
+                // Position indicator below header + above the target gap
+                var indY = gridHeight - rHeights[0]
+                for i in 0..<targetDataRow {
+                    if (i + 1) < rHeights.count { indY -= rHeights[i + 1] }
+                }
+                indicator?.frame = NSRect(x: leftMargin, y: indY - 1, width: bounds.width - leftMargin, height: 2)
+            }
+        }
+
+        indicator?.removeFromSuperview()
+
+        let dst = targetDataRow > dataRow ? targetDataRow - 1 : targetDataRow
+        if dst != dataRow {
+            moveRow(from: dataRow, to: dst)
+        }
+    }
+
+    private func moveColumn(from src: Int, to dst: Int) {
+        guard src >= 0, src < headers.count, dst >= 0, dst < headers.count, src != dst else { return }
+        let h = headers.remove(at: src)
+        headers.insert(h, at: dst)
+        let a = alignments.remove(at: src)
+        alignments.insert(a, at: dst)
+        for r in 0..<rows.count {
+            if src < rows[r].count && dst <= rows[r].count {
+                let v = rows[r].remove(at: src)
+                rows[r].insert(v, at: dst)
+            }
+        }
+
+        rebuild(skipCollect: true)  // Data already swapped — don't read from old cells
+        notifyChanged()
+    }
+
+    private func moveRow(from src: Int, to dst: Int) {
+        guard src >= 0, src < rows.count, dst >= 0, dst < rows.count, src != dst else { return }
+        let r = rows.remove(at: src)
+        rows.insert(r, at: dst)
+        rebuild(skipCollect: true)  // Data already swapped — don't read from old cells
+        notifyChanged()
     }
 
     // MARK: - Data Collection
@@ -693,7 +837,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         var x = leftMargin
         for col in 0..<min(colCount, headerCells.count) {
             let w = colWidths[col]
-            headerCells[col].frame = NSRect(x: x, y: gridHeight - headerH, width: w, height: headerH).insetBy(dx: 1, dy: 1)
+            let hf = NSRect(x: x, y: gridHeight - headerH, width: w, height: headerH)
+            headerCells[col].frame = NSRect(x: hf.minX + 4, y: hf.minY + 2, width: hf.width - 8, height: hf.height - 7)
             x += w
         }
 
@@ -705,7 +850,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             x = leftMargin
             for col in 0..<min(colCount, rowCellArray.count) {
                 let w = colWidths[col]
-                rowCellArray[col].frame = NSRect(x: x, y: yBottom, width: w, height: rowH).insetBy(dx: 1, dy: 1)
+                rowCellArray[col].frame = NSRect(x: x, y: yBottom, width: w, height: rowH).insetBy(dx: 4, dy: 6)
                 x += w
             }
         }
@@ -1146,29 +1291,27 @@ class InlineTableAttachmentCell: NSTextAttachmentCell {
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
-        // Don't position at (0,0) — that's a stale/uncomputed frame from initial layout.
-        // The layout manager will call draw again with the correct frame once layout completes.
-        if cellFrame.origin == .zero,
-           let textView = controlView as? NSTextView,
-           textView.textStorage?.length ?? 0 > 1 {
-            return
-        }
-
-        // Draw a light placeholder — the live view covers this
-        NSColor.controlBackgroundColor.withAlphaComponent(0.3).setFill()
-        let path = NSBezierPath(roundedRect: cellFrame.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
-        path.fill()
-
-        // Position the live view
-        if let textView = controlView as? NSTextView {
-            inlineTableView.frame = cellFrame
-            if inlineTableView.superview !== textView {
-                textView.addSubview(inlineTableView)
-            }
-        }
+        // No-op: wait for the characterIndex variant which can validate the position.
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
-        draw(withFrame: cellFrame, in: controlView)
+        guard let textView = controlView as? NSTextView else { return }
+
+        // Only add and position the live view when the layout manager provides a
+        // valid frame. For tables outside the viewport (non-contiguous layout),
+        // the frame will be wrong (near 0,0 for a late-document attachment).
+        // The layout manager will call draw again when the area becomes visible.
+        let hasContentBefore = charIndex > 10
+        let frameNearTop = cellFrame.origin.y < 50
+        if hasContentBefore && frameNearTop {
+            // Frame not yet computed for this position — don't render
+            return
+        }
+
+        // Position the live table view
+        inlineTableView.frame = cellFrame
+        if inlineTableView.superview !== textView {
+            textView.addSubview(inlineTableView)
+        }
     }
 }

@@ -688,6 +688,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return path
     }
 
+    // WARNING: DEBUG ONLY — captureMPreview uses WKWebView/MPreview solely for the
+    // --render-comparison visual test. It is not called in normal app operation.
+    // All production rendering uses NSTextView (WYSIWYG mode). Do not add new
+    // production code paths that invoke this method.
     private func captureMPreview(markdown: String, outputDir: String, viewController: ViewController, completion: @escaping () -> Void) {
         let path = outputDir + "/mpreview.png"
 
@@ -718,9 +722,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // Convert markdown to HTML using cmark-gfm (same pipeline as MPreviewView)
-        let html = renderMarkdownToHTML(markdown)
+        let html = renderMarkdownHTML(markdown: markdown) ?? ""
 
-        // Replace template placeholders (same as MPreviewView.htmlFromTemplate)
+        // Replace template placeholders inline below.
+        // NOTE: This intentionally duplicates MPreviewView.htmlFromTemplate. This is a
+        // DEBUG-only render-comparison path that must not depend on MPreviewView's full
+        // initialization (note context, appearance prefs, etc.), so the substitutions
+        // are kept explicit and self-contained here.
         template = template.replacingOccurrences(of: "{NOTE_BODY}", with: html)
         template = template.replacingOccurrences(of: "{FSNOTES_APPEARANCE}", with: "")  // light mode
         template = template.replacingOccurrences(of: "{FSNOTES_PLATFORM}", with: "macos")
@@ -761,34 +769,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 completion()
             }
-        }
-    }
-
-    private func renderMarkdownToHTML(_ markdown: String) -> String {
-        // Use cmark-gfm to convert markdown to HTML (same pipeline as MPreviewView)
-        guard let data = markdown.data(using: .utf8) else { return "" }
-        return data.withUnsafeBytes { rawBuf -> String in
-            guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: CChar.self) else { return "" }
-            let extensions = ["table", "autolink", "strikethrough", "tasklist"]
-            cmark_gfm_core_extensions_ensure_registered()
-
-            guard let parser = cmark_parser_new(CMARK_OPT_FOOTNOTES) else { return "" }
-            defer { cmark_parser_free(parser) }
-
-            for ext in extensions {
-                if let e = cmark_find_syntax_extension(ext) {
-                    cmark_parser_attach_syntax_extension(parser, e)
-                }
-            }
-
-            cmark_parser_feed(parser, ptr, data.count)
-            guard let node = cmark_parser_finish(parser) else { return "" }
-            defer { cmark_node_free(node) }
-
-            if let html = cmark_render_html(node, CMARK_OPT_HARDBREAKS | CMARK_OPT_FOOTNOTES, cmark_parser_get_syntax_extensions(parser)) {
-                return String(cString: html)
-            }
-            return ""
         }
     }
 

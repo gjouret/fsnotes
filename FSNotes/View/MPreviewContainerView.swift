@@ -6,6 +6,11 @@
 //  Copyright © 2025 Oleksandr Hlushchenko. All rights reserved.
 //
 
+// WARNING: DEBUG ONLY — MPreview (WKWebView renderer) is retained solely for the
+// visual comparison test (--render-comparison). It is NOT used for normal note
+// rendering, PDF export, or sharing. All production rendering uses NSTextView
+// (WYSIWYG mode). Do not add new production code paths that use MPreview.
+
 import AppKit
 
 class MPreviewContainerView: NSView {
