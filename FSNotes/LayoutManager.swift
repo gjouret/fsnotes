@@ -120,7 +120,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             return false
         }
         
-        guard let codeBlocks = processor?.editor?.note?.codeBlockRangesCache else { return false }
+        guard let codeBlocks = processor?.codeBlockRanges, !codeBlocks.isEmpty else { return false }
         return codeBlocks.contains { NSLocationInRange(characterIndex, $0) }
     }
     
@@ -153,7 +153,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
 
         let storageFullRange = NSRange(location: 0, length: textStorage.length)
-        guard let allCodeBlocks = processor?.editor?.note?.codeBlockRangesCache else { return }
+        guard let allCodeBlocks = processor?.codeBlockRanges, !allCodeBlocks.isEmpty else { return }
         guard let textContainer = self.textContainers.first else { return }
         
         let visibleCharRange = self.characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
@@ -274,6 +274,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let baseSize = UserDefaultsManagement.noteFont.pointSize
 
         // Use the block model to find H1/H2 headers
+        var drawnHeaderRanges = Set<Int>()  // Track drawn headers by location to avoid duplicates
         for block in blocks {
             let level: Int
             switch block.type {
@@ -282,10 +283,12 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             default: continue
             }
 
-            // Only process blocks that intersect the visible range
+            // Only process blocks that intersect the visible range, and skip duplicates
             guard NSIntersectionRange(block.range, safeRange).length > 0 else { continue }
             guard block.range.location < textStorage.length,
                   NSMaxRange(block.range) <= textStorage.length else { continue }
+            guard !drawnHeaderRanges.contains(block.range.location) else { continue }
+            drawnHeaderRanges.insert(block.range.location)
 
             let glyphRange = self.glyphRange(forCharacterRange: block.range, actualCharacterRange: nil)
             if glyphRange.length == 0 { continue }
@@ -295,11 +298,10 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let lineFragRect = self.lineFragmentRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil)
             if lineFragRect.isEmpty { continue }
 
-            // Draw the border line just below the text glyphs, not at the bottom
-            // of the line fragment (which includes paragraphSpacing).
-            // lineFragmentUsedRect gives the area occupied by actual glyphs.
+            // Draw the border line just below the LAST line of the header.
+            // Use lastGlyphIndex (not glyphRange.location) to handle wrapped headers.
             let containerWidth = textContainer.size.width
-            let usedRect = self.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            let usedRect = self.lineFragmentUsedRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil)
             let lineY = usedRect.maxY + origin.y + 1  // 1pt below text bottom
 
             context.saveGState()

@@ -541,38 +541,51 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             }
         }
 
-        // Re-detect code blocks after restoration (cache is stale)
-        if let processor = editor.textStorageProcessor {
-            let codeBlockRanges = processor.detector.findCodeBlocks(in: storage)
-            editor.note?.codeBlockRangesCache = codeBlockRanges
-        }
+        // Block model auto-populates code block ranges during process()
+        // which fires when highlightMarkdown modifies the text storage below.
 
         // Re-highlight the entire document with fresh code block ranges
         let fullRange = NSRange(location: 0, length: storage.length)
         if fullRange.length > 0 {
+            let codeBlockRanges = editor.textStorageProcessor?.codeBlockRanges
             storage.beginEditing()
             NotesTextProcessor.highlightMarkdown(
                 attributedString: storage,
                 paragraphRange: fullRange,
-                codeBlockRanges: editor.note?.codeBlockRangesCache
+                codeBlockRanges: codeBlockRanges
             )
 
             // Also apply code block syntax coloring (highlightMarkdown doesn't do this —
             // it's normally handled by TextStorageProcessor.process() via getHighlighter)
-            if let codeRanges = editor.note?.codeBlockRangesCache {
+            if let codeRanges = codeBlockRanges {
                 for range in codeRanges {
                     NotesTextProcessor.getHighlighter().highlight(in: storage, fullRange: range)
                 }
             }
 
             storage.endEditing()
-            storage.updateParagraphStyle(range: fullRange)
+
+            // CRITICAL: process() skips Phase 4/5 for attribute-only changes
+            // (guard editedMask != .editedAttributes). Since highlightMarkdown only
+            // changes attributes, we must explicitly run Phase 4 (syntax hiding)
+            // and Phase 5 (paragraph styles) here.
+            if let processor = editor.textStorageProcessor {
+                if !processor.blocks.isEmpty {
+                    processor.phase4_hideSyntax(textStorage: storage, range: fullRange)
+                    processor.phase5_paragraphStyles(textStorage: storage, range: fullRange)
+                } else {
+                    storage.updateParagraphStyle(range: fullRange)
+                }
+            } else {
+                storage.updateParagraphStyle(range: fullRange)
+            }
         }
 
         // When switching to WYSIWYG mode, render any mermaid/math blocks and tables
         if NotesTextProcessor.hideSyntax,
            let processor = editor.textStorageProcessor {
-            if let codeRanges = editor.note?.codeBlockRangesCache {
+            let codeRanges = processor.codeBlockRanges
+            if !codeRanges.isEmpty {
                 processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
             }
             editor.renderTables()

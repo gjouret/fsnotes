@@ -41,7 +41,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         set { focusState = newValue ? .editing : .unfocused }
     }
 
-    var onMarkdownChanged: ((String) -> Void)?
     var containerWidth: CGFloat = 400
 
     // MARK: - Cell Pool
@@ -441,6 +440,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         for row in 0..<rowCount {
             let rowH = row < rHeights.count ? rHeights[row] : minCellHeight
             yBottom -= rowH
+            // Skip header row (row 0) — it can't be reordered or deleted
+            if row == 0 { continue }
             let handleFrame = NSRect(x: 0, y: yBottom, width: handleBarWidth, height: rowH)
             let handle = GlassHandleView(frame: handleFrame, orientation: .vertical, index: row)
             handle.onRightClick = { [weak self] index in
@@ -464,20 +465,24 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         menu.addItem(withTitle: "Insert Column Right", action: #selector(contextInsertColumnRight(_:)), keyEquivalent: "").tag = column
         if headers.count > 1 {
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Delete Column", action: #selector(contextDeleteColumn(_:)), keyEquivalent: "").tag = column
+            let deleteItem = menu.addItem(withTitle: "Delete Column", action: #selector(contextDeleteColumn(_:)), keyEquivalent: "\u{8}")  // ⌫
+            deleteItem.tag = column
         }
         menu.addItem(.separator())
 
-        let leftItem = menu.addItem(withTitle: "Align Left", action: #selector(contextAlignLeft(_:)), keyEquivalent: "")
+        let leftItem = menu.addItem(withTitle: "Align Left", action: #selector(contextAlignLeft(_:)), keyEquivalent: "l")
         leftItem.tag = column
+        leftItem.keyEquivalentModifierMask = .command
         if column < alignments.count && alignments[column] == .left { leftItem.state = .on }
 
-        let centerItem = menu.addItem(withTitle: "Align Center", action: #selector(contextAlignCenter(_:)), keyEquivalent: "")
+        let centerItem = menu.addItem(withTitle: "Align Center", action: #selector(contextAlignCenter(_:)), keyEquivalent: "e")
         centerItem.tag = column
+        centerItem.keyEquivalentModifierMask = .command
         if column < alignments.count && alignments[column] == .center { centerItem.state = .on }
 
-        let rightItem = menu.addItem(withTitle: "Align Right", action: #selector(contextAlignRight(_:)), keyEquivalent: "")
+        let rightItem = menu.addItem(withTitle: "Align Right", action: #selector(contextAlignRight(_:)), keyEquivalent: "r")
         rightItem.tag = column
+        rightItem.keyEquivalentModifierMask = .command
         if column < alignments.count && alignments[column] == .right { rightItem.state = .on }
 
         for item in menu.items { item.target = self }
@@ -490,7 +495,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         menu.addItem(withTitle: "Insert Row Below", action: #selector(contextInsertRowBelow(_:)), keyEquivalent: "").tag = row
         if row > 0 && rows.count > 1 {
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Delete Row", action: #selector(contextDeleteRow(_:)), keyEquivalent: "").tag = row
+            let deleteItem = menu.addItem(withTitle: "Delete Row", action: #selector(contextDeleteRow(_:)), keyEquivalent: "\u{8}")  // ⌫
+            deleteItem.tag = row
         }
         for item in menu.items { item.target = self }
         NSMenu.popUpContextMenu(menu, with: NSApp.currentEvent!, for: self)
@@ -505,7 +511,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         alignments.insert(.left, at: col)
         for i in 0..<rows.count { rows[i].insert("", at: min(col, rows[i].count)) }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -516,7 +522,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         alignments.insert(.left, at: col)
         for i in 0..<rows.count { rows[i].insert("", at: min(col, rows[i].count)) }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -530,7 +536,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             if col < rows[i].count { rows[i].remove(at: col) }
         }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -542,7 +548,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard column < alignments.count else { return }
         collectCellData()
         alignments[column] = alignment
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -555,7 +561,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         } else {
             rows.insert(newRow, at: min(dataRow, rows.count))
         }
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -564,7 +570,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let dataRow = sender.tag  // insert after this row (tag includes header offset)
         let newRow = Array(repeating: "", count: headers.count)
         rows.insert(newRow, at: min(dataRow, rows.count))
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -573,7 +579,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard dataRow >= 0, dataRow < rows.count, rows.count > 1 else { return }
         collectCellData()
         rows.remove(at: dataRow)
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -585,14 +591,14 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         alignments.append(.left)
         for i in 0..<rows.count { rows[i].append("") }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
     private func addRowAtEnd() {
         collectCellData()
         rows.append(Array(repeating: "", count: headers.count))
-        rebuild()
+        rebuild(skipCollect: true)
         notifyChanged()
     }
 
@@ -604,6 +610,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard column >= 0, column < colCount else { return }
 
         let colWidths = contentBasedColumnWidths()
+        let rHeights = rowHeights()
+        let gridHeight = gridHeightFromRows(rHeights)
         let hasHandles = (focusState == .hovered || focusState == .editing)
         let leftMargin: CGFloat = hasHandles ? handleBarWidth : 0
 
@@ -618,6 +626,19 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         ind.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         addSubview(ind)
         indicator = ind
+
+        // Create source column highlight (blue border)
+        let sourceHighlight = NSView()
+        sourceHighlight.wantsLayer = true
+        sourceHighlight.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        sourceHighlight.layer?.borderWidth = 2
+        sourceHighlight.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
+        var srcX = leftMargin
+        for i in 0..<column { srcX += colWidths[i] }
+        // Include the column handle above the grid for visual symmetry
+        let topMargin: CGFloat = hasHandles ? handleBarHeight : 0
+        sourceHighlight.frame = NSRect(x: srcX, y: 0, width: colWidths[column], height: gridHeight + topMargin)
+        addSubview(sourceHighlight)
 
         var keepTracking = true
         while keepTracking {
@@ -641,16 +662,18 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 }
                 targetIndex = bestGap
 
-                // Position indicator
+                // Position indicator — clamp to stay within bounds
                 var indX = leftMargin
                 for i in 0..<targetIndex {
                     if i < colWidths.count { indX += colWidths[i] }
                 }
-                indicator?.frame = NSRect(x: indX - 1, y: 0, width: 2, height: bounds.height)
+                let clampedX = min(indX - 1, bounds.width - 2)
+                indicator?.frame = NSRect(x: clampedX, y: 0, width: 2, height: bounds.height)
             }
         }
 
         indicator?.removeFromSuperview()
+        sourceHighlight.removeFromSuperview()
 
         // Calculate destination: after removing source, where should we insert?
         let dst = targetIndex > column ? targetIndex - 1 : targetIndex
@@ -684,6 +707,22 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         indicator = ind
 
         let leftMargin: CGFloat = hasHandles ? handleBarWidth : 0
+
+        // Create source row highlight (blue border)
+        let sourceHighlight = NSView()
+        sourceHighlight.wantsLayer = true
+        sourceHighlight.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        sourceHighlight.layer?.borderWidth = 2
+        sourceHighlight.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
+        // Row index in rHeights: 0=header, dataRow+1=our row
+        var srcY = gridHeight - rHeights[0]  // below header
+        for i in 0..<dataRow {
+            if (i + 1) < rHeights.count { srcY -= rHeights[i + 1] }
+        }
+        let srcRowH = (dataRow + 1) < rHeights.count ? rHeights[dataRow + 1] : minCellHeight
+        // Include the row handle on the left for visual symmetry
+        sourceHighlight.frame = NSRect(x: 0, y: srcY - srcRowH, width: bounds.width, height: srcRowH)
+        addSubview(sourceHighlight)
 
         var keepTracking = true
         while keepTracking {
@@ -721,6 +760,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
 
         indicator?.removeFromSuperview()
+        sourceHighlight.removeFromSuperview()
 
         let dst = targetDataRow > dataRow ? targetDataRow - 1 : targetDataRow
         if dst != dataRow {
@@ -1042,7 +1082,29 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     func notifyChanged() {
         let md = generateMarkdown()
-        onMarkdownChanged?(md)
+        guard let editTextView = findParentEditTextView(),
+              let storage = editTextView.textStorage else { return }
+        // Update the attachment attribute so the save path picks up current table state
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, stop in
+            guard let att = value as? NSTextAttachment,
+                  let cell = att.attachmentCell as? InlineTableAttachmentCell,
+                  cell.inlineTableView === self else { return }
+            storage.addAttribute(.renderedBlockOriginalMarkdown, value: md, range: range)
+            storage.addAttribute(.renderedBlockSource, value: md, range: range)
+            stop.pointee = true
+        }
+        // Trigger save — table cell edits don't fire textDidChange on the main editor
+        editTextView.save()
+    }
+
+    private func findParentEditTextView() -> EditTextView? {
+        var view: NSView? = superview
+        while let v = view {
+            if let etv = v as? EditTextView { return etv }
+            view = v.superview
+        }
+        return nil
     }
 
     // MARK: - Drawing
@@ -1174,6 +1236,11 @@ class GlassHandleView: NSVisualEffectView {
 
     override func rightMouseDown(with event: NSEvent) {
         onRightClick?(index)
+        // Don't call super — prevents system context menu from appearing
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        return nil  // Suppress system context menu
     }
 
     override func mouseDown(with event: NSEvent) {

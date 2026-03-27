@@ -335,8 +335,6 @@ public class NotesTextProcessor {
     
     public static func resetFont(attributedString: NSMutableAttributedString, paragraphRange: NSRange) {
         attributedString.addAttribute(.font, value: font, range: paragraphRange)
-        // Remove negative kern from previous WYSIWYG pass so characters
-        // don't collapse when re-highlighted or when switching to source mode
         attributedString.removeAttribute(.kern, range: paragraphRange)
         attributedString.fixAttributes(in: paragraphRange)
     }
@@ -345,9 +343,6 @@ public class NotesTextProcessor {
         let paragraphRange = paragraphRange ?? NSRange(0..<attributedString.length)
         
         attributedString.beginEditing()
-        // Always remove kern from previous WYSIWYG pass before re-highlighting.
-        // Without this, negative kern persists and collapses text when switching
-        // to source mode or when the paragraph is re-highlighted.
         attributedString.removeAttribute(.kern, range: paragraphRange)
 
         if paragraphRange.length == attributedString.length {

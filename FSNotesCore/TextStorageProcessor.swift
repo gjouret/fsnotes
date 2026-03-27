@@ -69,7 +69,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
     public var blocks: [MarkdownBlock] = []
 
     /// All code block ranges derived from the block model.
-    /// Replaces Note.codeBlockRangesCache once fully wired up.
     public var codeBlockRanges: [NSRange] {
         return blocks.compactMap { block in
             if case .codeBlock = block.type { return block.range }
@@ -154,8 +153,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
             // Phase 5 (paragraph styles) run from the defer block using this model
             updateBlockModel(textStorage: textStorage, editedRange: editedRange, delta: delta)
 
-            // Also update legacy cache for code blocks (still used by some consumers)
-            note.codeBlockRangesCache = codeBlockRanges
             return
         }
 
@@ -166,7 +163,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
 
         // Code block founds
         var result = detector.codeBlocks(textStorage: textStorage, editedRange: editedRange, delta: delta, newRanges: codeBlockRanges)
-        note.codeBlockRangesCache = codeBlockRanges
 
         // In WYSIWYG mode, code blocks show all content as-is (no syntax hiding).
         // Fences (```), language names, and code are all visible.
@@ -665,9 +661,12 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                     self.isRendering = false
                     textStorage.endEditing()
 
-                    // Remove the rendered code block from the cache so LayoutManager
+                    // Remove the rendered code block from the block model so LayoutManager
                     // doesn't draw a gray background behind the image
-                    self.editor?.note?.codeBlockRangesCache?.removeAll { $0 == codeRange }
+                    self.blocks.removeAll { block in
+                        if case .codeBlock = block.type { return block.range == codeRange }
+                        return false
+                    }
                 }
             }
         }

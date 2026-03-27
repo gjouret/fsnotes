@@ -466,15 +466,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
                 // Cursor left the pending block — render it
                 pendingRenderBlockRange = nil
 
-                // Re-scan only if the text has changed since the last scan
-                let freshRanges: [NSRange]
-                if textEdited || note?.codeBlockRangesCache == nil {
-                    freshRanges = processor.detector.findCodeBlocks(in: storage)
-                    self.note?.codeBlockRangesCache = freshRanges
-                    codeBlockScanLength = currentLength
-                } else {
-                    freshRanges = note?.codeBlockRangesCache ?? []
-                }
+                // Use block model as single source of truth for code block ranges.
+                // No need to re-scan with CodeBlockDetector — blocks are already
+                // updated by process() on every edit.
+                let freshRanges = processor.codeBlockRanges
 
                 if !freshRanges.isEmpty {
                     processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: freshRanges)
@@ -484,9 +479,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
 
         // Skip full re-scan when only the cursor moved (no edit occurred)
-        guard textEdited || note?.codeBlockRangesCache == nil else {
-            // Use cached ranges to decide whether to render
-            let cachedRanges = note?.codeBlockRangesCache ?? []
+        guard textEdited || processor.codeBlockRanges.isEmpty else {
+            // Use block model ranges to decide whether to render
+            let cachedRanges = processor.codeBlockRanges
             let cursorLoc = selectedRange().location
             let isInCodeBlock = cachedRanges.contains { NSLocationInRange(cursorLoc, $0) }
             if !isInCodeBlock && !cachedRanges.isEmpty {
@@ -495,10 +490,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return
         }
 
-        // Also check for any unrendered mermaid/math blocks or tables (e.g., on initial note load)
-        let freshRanges = processor.detector.findCodeBlocks(in: storage)
-        self.note?.codeBlockRangesCache = freshRanges
-        codeBlockScanLength = currentLength
+        // Use block model for code block ranges (single source of truth)
+        let freshRanges = processor.codeBlockRanges
 
         let cursorLoc = selectedRange().location
         let isInCodeBlock = !freshRanges.isEmpty && freshRanges.contains { NSLocationInRange(cursorLoc, $0) }
@@ -1127,7 +1120,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             textStorageProcessor?.detector = CodeBlockDetector()
 
             // Clear stale state BEFORE replacing storage content
-            note.codeBlockRangesCache = []
             pendingRenderBlockRange = nil
             codeBlockScanLength = -1
             removeAllInlineTableViews()
@@ -1144,9 +1136,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         // In WYSIWYG mode, ensure code fences are hidden after fill
         // (process() may not always run the fence-hiding path on setAttributedString)
         if NotesTextProcessor.hideSyntax, let storage = textStorage, let processor = textStorageProcessor {
-            let codeBlockRanges = processor.detector.findCodeBlocks(in: storage)
-            note.codeBlockRangesCache = codeBlockRanges
-            codeBlockScanLength = storage.length
+            let codeBlockRanges = processor.codeBlockRanges
             let string = storage.string as NSString
             for codeRange in codeBlockRanges {
                 guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }

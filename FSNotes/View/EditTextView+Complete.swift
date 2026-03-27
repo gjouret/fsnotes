@@ -38,7 +38,7 @@ extension EditTextView {
         
         
         // Disable completion in code blocks
-        guard let ranges = note?.codeBlockRangesCache,
+        guard let ranges = textStorageProcessor?.codeBlockRanges,
               !ranges.contains(where: { $0.contains(location) }) else { return .none }
                 
         if let tagContext = detectTagContext(at: location, in: text) {
@@ -54,7 +54,7 @@ extension EditTextView {
     
     private func detectCodeBlockContext(at location: Int, in text: NSString) -> CompletionContext? {
         guard location >= 3 else { return nil }
-        guard let ranges = note?.codeBlockRangesCache,
+        guard let ranges = textStorageProcessor?.codeBlockRanges,
             ranges.contains(where: { $0.contains(location) })
                 || (
                     // Allow if no code block before
@@ -354,7 +354,7 @@ extension EditTextView {
             : "\(word)\n\n```"
 
         // Inside code block without ```
-        if let ranges = note?.codeBlockRangesCache {
+        if let ranges = textStorageProcessor?.codeBlockRanges {
             for r in ranges where r.contains(startPos) {
                 completion = word
                 break
