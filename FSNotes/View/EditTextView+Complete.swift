@@ -340,16 +340,30 @@ extension EditTextView {
     
     private func insertCodeBlockCompletion(_ word: String, startPos: Int) {
         let currentPos = selectedRange().location
+        let text = self.string as NSString
         let replaceRange = NSRange(location: startPos, length: currentPos - startPos)
-        
-        let nextLineRange = NSRange(location: currentPos + 1, length: 3)
-        let nextLine = (self.string as NSString)
-            .safeSubstring(with: nextLineRange)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let nextLineHasBackticks = (nextLine == "```")
+        // Check if a closing ``` already exists on a subsequent line (within a few lines).
+        // The insertCodeBlock template inserts "```\n\n```\n" — the closing fence is 2 lines ahead.
+        var hasClosingFence = false
+        var searchPos = currentPos
+        var linesChecked = 0
+        while searchPos < text.length && linesChecked < 4 {
+            let lineRange = text.paragraphRange(for: NSRange(location: searchPos, length: 0))
+            let line = text.substring(with: lineRange).trimmingCharacters(in: .whitespacesAndNewlines)
+            if line == "```" {
+                hasClosingFence = true
+                break
+            }
+            if !line.isEmpty && line != "```" && linesChecked > 0 {
+                break  // Non-empty, non-fence content — stop looking
+            }
+            searchPos = NSMaxRange(lineRange)
+            if searchPos <= lineRange.location { break }
+            linesChecked += 1
+        }
 
-        var completion = nextLineHasBackticks
+        var completion = hasClosingFence
             ? "\(word)\n"
             : "\(word)\n\n```"
 

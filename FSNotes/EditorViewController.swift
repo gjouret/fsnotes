@@ -523,12 +523,19 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         UserDefaultsManagement.wysiwygMode = NotesTextProcessor.hideSyntax
 
         // When switching to source mode, restore all rendered block attachments
-        // (mermaid/math) back to their original markdown source
+        // (mermaid/math/tables) back to their original markdown source.
+        // Suppress process() during bulk restoration — the incremental updater
+        // can't handle multiple attachment→markdown replacements in sequence
+        // (each intermediate state has attachment chars that corrupt the parser).
+        // One clean full parse after all restorations is correct and efficient.
         if !NotesTextProcessor.hideSyntax {
+            let processor = editor.textStorageProcessor
+            // Batch all replacements into one editing session so textDidChange
+            // fires once (not per-replacement), preventing intermediate saves.
+            processor?.isRendering = true
+            storage.beginEditing()
             storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: NSRange(location: 0, length: storage.length), options: .reverse) { value, range, _ in
                 if let originalMarkdown = value as? String {
-                    // Replace with an attributed string that has left-aligned paragraph style
-                    // (the attachment had centered alignment which would persist otherwise)
                     let leftStyle = NSMutableParagraphStyle()
                     leftStyle.alignment = .left
                     let attrs: [NSAttributedString.Key: Any] = [
@@ -539,10 +546,14 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                     storage.replaceCharacters(in: range, with: restored)
                 }
             }
+            storage.endEditing()
+            processor?.isRendering = false
+            // Single clean parse of the fully restored document
+            if var blocks = processor?.blocks {
+                MarkdownBlockParser.parsePreservingRendered(&blocks, string: storage.string as NSString)
+                processor?.blocks = blocks
+            }
         }
-
-        // Block model auto-populates code block ranges during process()
-        // which fires when highlightMarkdown modifies the text storage below.
 
         // Re-highlight the entire document with fresh code block ranges
         let fullRange = NSRange(location: 0, length: storage.length)

@@ -68,10 +68,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
     /// Populated by MarkdownBlockParser during process().
     public var blocks: [MarkdownBlock] = []
 
-    /// All code block ranges derived from the block model.
+    /// Code block ranges in source mode (excludes rendered mermaid/math images).
+    /// Used by LayoutManager for gray background and by triggerCodeBlockRenderingIfNeeded.
     public var codeBlockRanges: [NSRange] {
         return blocks.compactMap { block in
-            if case .codeBlock = block.type { return block.range }
+            if case .codeBlock = block.type, block.renderMode == .source { return block.range }
             return nil
         }
     }
@@ -217,8 +218,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
         }
 
         if editedRange.length == textStorage.length || blocks.isEmpty {
-            // Full parse (initial load or first time)
-            blocks = MarkdownBlockParser.parse(string: string)
+            // Full parse (initial load or first time).
+            MarkdownBlockParser.parsePreservingRendered(&blocks, string: string)
         } else {
             // Incremental: adjust existing blocks, re-parse dirty ones
             var dirtyIndices = MarkdownBlockParser.adjustBlocks(&blocks, forEditAt: editedRange.location, delta: delta)
@@ -369,8 +370,12 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                     paragraph.paragraphSpacing = 16
 
                 case .codeBlock:
-                    // pre: margin-bottom 16px
-                    paragraph.paragraphSpacing = 16
+                    // pre: margin-bottom 16px — only on the LAST line (closing fence).
+                    // Internal lines should have tight spacing (code style).
+                    paragraph.lineSpacing = 0
+                    let isLastLine = (NSMaxRange(parRange) >= NSMaxRange(block.range))
+                    paragraph.paragraphSpacing = isLastLine ? 16 : 0
+                    paragraph.paragraphSpacingBefore = 0
 
                 case .paragraph:
                     // p: margin-bottom 16px
@@ -605,9 +610,22 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
 
             guard !source.isEmpty else { continue }
 
-            // Check if already rendered (avoid re-rendering on every keystroke)
-            if textStorage.attribute(.renderedBlockSource, at: codeRange.location, effectiveRange: nil) as? String == source {
+            // Check if already rendered or rendering — use block model as source of truth,
+            // not text attributes (which persist across save/reload and cause false dedup)
+            if let blockIdx = blocks.firstIndex(where: {
+                if case .codeBlock = $0.type { return $0.range == codeRange }
+                return false
+            }), blocks[blockIdx].renderMode == .rendered {
                 continue
+            }
+
+            // Mark as rendering immediately in the block model to prevent duplicate
+            // async renders (triggerCodeBlockRenderingIfNeeded can fire from multiple sources)
+            if let blockIdx = blocks.firstIndex(where: {
+                if case .codeBlock = $0.type { return $0.range == codeRange }
+                return false
+            }) {
+                blocks[blockIdx].renderMode = .rendered
             }
 
             let maxWidth = getImageMaxWidth()
@@ -661,11 +679,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                     self.isRendering = false
                     textStorage.endEditing()
 
-                    // Remove the rendered code block from the block model so LayoutManager
-                    // doesn't draw a gray background behind the image
-                    self.blocks.removeAll { block in
+                    // Mark the block as rendered (not removed). The block stays in the
+                    // model with updated range. codeBlockRanges filters it out so
+                    // LayoutManager won't draw a gray background behind the image.
+                    if let idx = self.blocks.firstIndex(where: { block in
                         if case .codeBlock = block.type { return block.range == codeRange }
                         return false
+                    }) {
+                        self.blocks[idx].renderMode = .rendered
+                        self.blocks[idx].range = replacedRange
+                        self.blocks[idx].contentRange = replacedRange
+                        self.blocks[idx].syntaxRanges = []
                     }
                 }
             }

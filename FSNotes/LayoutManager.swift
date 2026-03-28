@@ -127,6 +127,15 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     // MARK: - Drawing
     
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        // Validate glyph range before any custom drawing — stale block model
+        // ranges after note switches can cause out-of-bounds crashes in
+        // NSLayoutManager._fillLayoutHoleForCharacterRange.
+        guard let ts = textStorage, glyphsToShow.location + glyphsToShow.length <= numberOfGlyphs,
+              numberOfGlyphs > 0, ts.length > 0 else {
+            super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+            return
+        }
+
         drawCodeBlockBackground(forGlyphRange: glyphsToShow, at: origin)
         drawHorizontalRules(forGlyphRange: glyphsToShow, at: origin)
         drawBlockquoteBorders(forGlyphRange: glyphsToShow, at: origin)

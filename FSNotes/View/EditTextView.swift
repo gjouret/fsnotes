@@ -91,7 +91,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     /// Storage length at the last call to triggerCodeBlockRenderingIfNeeded.
     /// Used to skip re-scanning when only the cursor moved and no edit occurred.
-    private var codeBlockScanLength: Int = -1
     
     let storage = Storage.shared()
     let caretWidth: CGFloat = 2
@@ -454,23 +453,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
               let processor = self.textStorageProcessor,
               let storage = self.textStorage else { return }
 
-        let currentLength = storage.length
-        let textEdited = (currentLength != codeBlockScanLength)
+        let cursorLoc = selectedRange().location
+
+        // Use block model for code block ranges (single source of truth)
+        let freshRanges = processor.codeBlockRanges
+        let isInCodeBlock = freshRanges.contains { NSLocationInRange(cursorLoc, $0) }
 
         // If there's a specific pending block, check if cursor left it
         if let pendingRange = pendingRenderBlockRange {
-            let cursorLoc = selectedRange().location
             let isInsidePending = NSLocationInRange(cursorLoc, pendingRange)
 
             if !isInsidePending {
-                // Cursor left the pending block — render it
                 pendingRenderBlockRange = nil
-
-                // Use block model as single source of truth for code block ranges.
-                // No need to re-scan with CodeBlockDetector — blocks are already
-                // updated by process() on every edit.
-                let freshRanges = processor.codeBlockRanges
-
                 if !freshRanges.isEmpty {
                     processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: freshRanges)
                 }
@@ -478,23 +472,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return
         }
 
-        // Skip full re-scan when only the cursor moved (no edit occurred)
-        guard textEdited || processor.codeBlockRanges.isEmpty else {
-            // Use block model ranges to decide whether to render
-            let cachedRanges = processor.codeBlockRanges
-            let cursorLoc = selectedRange().location
-            let isInCodeBlock = cachedRanges.contains { NSLocationInRange(cursorLoc, $0) }
-            if !isInCodeBlock && !cachedRanges.isEmpty {
-                processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: cachedRanges)
-            }
-            return
-        }
-
-        // Use block model for code block ranges (single source of truth)
-        let freshRanges = processor.codeBlockRanges
-
-        let cursorLoc = selectedRange().location
-        let isInCodeBlock = !freshRanges.isEmpty && freshRanges.contains { NSLocationInRange(cursorLoc, $0) }
+        // Render if cursor is outside all code blocks
         if !isInCodeBlock && !freshRanges.isEmpty {
             processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: freshRanges)
         }
@@ -569,6 +547,14 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         // Restore the original markdown code block inline (replacing the attachment)
         let attachmentRange = NSRange(location: index, length: 1)
         guard NSMaxRange(attachmentRange) <= storage.length else { return false }
+
+        // Flip the block's render mode to .source BEFORE replacing text,
+        // so the incremental update in process() will reparse it correctly.
+        if let processor = self.textStorageProcessor {
+            if let idx = processor.blocks.firstIndex(where: { $0.renderMode == .rendered && $0.range.location == index }) {
+                processor.blocks[idx].renderMode = .source
+            }
+        }
 
         // Ensure the restored markdown ends with \n so the code block regex can
         // match the closing fence (requires \n or end-of-string after ```)
@@ -1052,11 +1038,15 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     func fill(note: Note, highlight: Bool = false, force: Bool = false) {
         isScrollPositionSaverLocked = true
-        
+
+        // Clear block model before loading new note — rendered blocks from the
+        // previous note have stale ranges that can crash the LayoutManager.
+        textStorageProcessor?.blocks = []
+
         if !note.isLoaded {
             note.load()
         }
-        
+
         viewDelegate?.updateCounters(note: note)
 
         textStorage?.setAttributedString(NSAttributedString(string: ""))
@@ -1095,6 +1085,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
     
         self.note = note
+        // Clear cache hash so process() repopulates the block model.
+        // fill() clears blocks to [], but the cacheHash guard in process()
+        // skips updateBlockModel if the content hasn't changed — leaving
+        // blocks empty and mermaid/table rendering unable to find them.
+        note.cacheHash = nil
         UserDefaultsManagement.lastSelectedURL = note.url
 
         editorViewController?.updateTitle(note: note)
@@ -1121,7 +1116,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
             // Clear stale state BEFORE replacing storage content
             pendingRenderBlockRange = nil
-            codeBlockScanLength = -1
             removeAllInlineTableViews()
 
             storage.setAttributedString(content)
@@ -1154,12 +1148,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             }
         }
 
-        // In WYSIWYG mode, render table markdown as interactive InlineTableViews.
+        // In WYSIWYG mode, render mermaid/math blocks and table markdown.
         // Defer to next run loop iteration so layout manager has computed glyph positions.
-        // Without this, InlineTableAttachmentCell.draw() gets cellFrame at (0,0).
         if NotesTextProcessor.hideSyntax {
             DispatchQueue.main.async { [weak self] in
-                self?.renderTables()
+                guard let self = self,
+                      let storage = self.textStorage,
+                      let processor = self.textStorageProcessor else { return }
+                let codeRanges = processor.codeBlockRanges
+                if !codeRanges.isEmpty {
+                    processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
+                }
+                self.renderTables()
             }
         }
 
@@ -2050,7 +2050,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             if replaceRange.length > 0 && string.character(at: NSMaxRange(replaceRange) - 1) == 0x0A {
                 replaceRange.length -= 1
             }
-            processor.isRendering = true
+            // Mark the table block as .rendered BEFORE replacing text.
+            // This way process() (fired by replaceCharacters) adjusts all block
+            // positions via delta but skips reparsing the rendered block.
+            if let idx = processor.blocks.firstIndex(where: {
+                if case .table = $0.type, $0.renderMode == .source {
+                    return NSIntersectionRange($0.range, replaceRange).length > 0
+                }
+                return false
+            }) {
+                processor.blocks[idx].renderMode = .rendered
+            }
+
             storage.beginEditing()
             storage.replaceCharacters(in: replaceRange, with: attachmentString)
             let replacedRange = NSRange(location: tableRange.location, length: attachmentString.length)
@@ -2058,7 +2069,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
                 storage.removeAttribute(.backgroundColor, range: replacedRange)
             }
             storage.endEditing()
-            processor.isRendering = false
 
             // Do NOT addSubview here. InlineTableAttachmentCell.draw() adds the
             // subview when the layout manager computes a valid frame. This prevents

@@ -26,6 +26,15 @@ public enum MarkdownBlockType: Equatable {
     case empty                          // Blank lines
 }
 
+// MARK: - Block Render Mode
+
+/// Controls how a block is displayed in the editor.
+/// `.source` shows raw markdown text; `.rendered` shows an image or widget.
+public enum BlockRenderMode {
+    case source     // Show as markdown text (default)
+    case rendered   // Show as image/widget (mermaid graphic, table widget, etc.)
+}
+
 // MARK: - Block Model
 
 public struct MarkdownBlock {
@@ -34,6 +43,7 @@ public struct MarkdownBlock {
     public var contentRange: NSRange        // Range of visible content (excludes syntax delimiters)
     public var syntaxRanges: [NSRange]      // Ranges of syntax chars to hide in WYSIWYG
     public var collapsed: Bool = false      // For future expand/collapse feature
+    public var renderMode: BlockRenderMode = .source  // Current display mode
 
     public init(type: MarkdownBlockType, range: NSRange, contentRange: NSRange, syntaxRanges: [NSRange] = []) {
         self.type = type
@@ -85,6 +95,18 @@ public class MarkdownBlockParser {
         return parser.parseDocument(string: string)
     }
 
+    /// Full reparse preserving rendered blocks. Rendered blocks contain attachment
+    /// characters that the parser can't handle — they're extracted before parsing
+    /// and re-inserted at their correct positions afterward.
+    public static func parsePreservingRendered(_ blocks: inout [MarkdownBlock], string: NSString) {
+        let rendered = blocks.filter { $0.renderMode == .rendered }
+        blocks = parse(string: string)
+        for r in rendered {
+            let insertIdx = blocks.firstIndex(where: { $0.range.location > r.range.location }) ?? blocks.endIndex
+            blocks.insert(r, at: insertIdx)
+        }
+    }
+
     /// Parse a range of the document. Used for incremental updates.
     /// The range should be expanded to full line boundaries before calling.
     public static func parseRange(string: NSString, range: NSRange) -> [MarkdownBlock] {
@@ -105,7 +127,7 @@ public class MarkdownBlockParser {
             if NSMaxRange(block.range) <= editLocation {
                 // Block is entirely before the edit — unchanged
                 continue
-            } else if block.range.location >= editLocation {
+            } else if block.range.location > editLocation {
                 // Block is entirely after the edit — shift
                 blocks[i].range.location += delta
                 blocks[i].contentRange.location += delta
@@ -113,39 +135,44 @@ public class MarkdownBlockParser {
                     NSRange(location: $0.location + delta, length: $0.length)
                 }
             } else {
-                // Block contains the edit — dirty
-                blocks[i].range.length += delta
-                dirtyIndices.insert(i)
+                // Block contains the edit — dirty (unless rendered: frozen blocks
+                // must not be re-parsed since their text is an attachment character)
+                blocks[i].range.length = max(0, blocks[i].range.length + delta)
+                if block.renderMode == .source {
+                    dirtyIndices.insert(i)
+                }
             }
         }
 
         return dirtyIndices
     }
 
-    /// Re-parse dirty blocks and their neighbors, splicing results into the array.
+    /// Re-parse dirty blocks and their source-mode neighbors, splicing results in.
+    /// Rendered blocks are never included in the reparse range (their text is an
+    /// attachment character that the parser can't handle).
     public static func reparseBlocks(_ blocks: inout [MarkdownBlock], dirtyIndices: IndexSet, string: NSString) {
         guard !dirtyIndices.isEmpty else { return }
 
-        // Extend to neighbors
-        let minIdx = max(0, (dirtyIndices.first ?? 0) - 1)
-        let maxIdx = min(blocks.count - 1, (dirtyIndices.last ?? 0) + 1)
-        guard minIdx <= maxIdx else {
-            // Full reparse needed
-            blocks = parse(string: string)
-            return
-        }
+        // Find the splice range: dirty blocks + one source-mode neighbor on each side.
+        guard let firstDirty = dirtyIndices.first, let lastDirty = dirtyIndices.last else { return }
+
+        // Expand to neighbors, but only if they're source-mode blocks
+        let prevIdx = firstDirty > 0 && blocks[firstDirty - 1].renderMode == .source ? firstDirty - 1 : firstDirty
+        let nextIdx = lastDirty < blocks.count - 1 && blocks[lastDirty + 1].renderMode == .source ? lastDirty + 1 : lastDirty
+        let minIdx = prevIdx
+        let maxIdx = nextIdx
 
         let startLoc = blocks[minIdx].range.location
         let endLoc = min(NSMaxRange(blocks[maxIdx].range), string.length)
         guard startLoc < endLoc else {
-            blocks = parse(string: string)
+            parsePreservingRendered(&blocks, string: string)
             return
         }
 
         let reparseRange = NSRange(location: startLoc, length: endLoc - startLoc)
         let newBlocks = parseRange(string: string, range: reparseRange)
 
-        // Splice: remove old blocks [minIdx...maxIdx], insert new ones
+        // Splice: remove old source blocks in [minIdx...maxIdx], insert new ones.
         let replaceRange = minIdx...maxIdx
         blocks.replaceSubrange(replaceRange, with: newBlocks)
     }
