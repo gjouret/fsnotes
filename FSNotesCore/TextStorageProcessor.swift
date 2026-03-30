@@ -58,7 +58,16 @@ class CenteredImageCell: NSTextAttachmentCell {
 #endif
 
 class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvider {
-    public var editor: EditTextView?
+    /// Protocol-based reference — breaks concrete dependency on EditTextView.
+    public weak var editorDelegate: EditorDelegate?
+
+    /// Legacy accessor — callers that need the concrete type use this.
+    /// Each caller should migrate to editorDelegate over time.
+    public var editor: EditTextView? {
+        get { return editorDelegate as? EditTextView }
+        set { editorDelegate = newValue }
+    }
+
     public var detector = CodeBlockDetector()
     public var isRendering = false
 

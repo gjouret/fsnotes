@@ -11,7 +11,15 @@ import Carbon.HIToolbox
 import PDFKit
 import QuickLookThumbnailing
 
-class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelegate {
+class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelegate, EditorDelegate {
+
+    // MARK: - EditorDelegate conformance
+    public var currentNote: Note? { return self.note }
+    public func setNeedsDisplay() { self.needsDisplay = true }
+    public var editorLayoutManager: NSLayoutManager? { return self.layoutManager }
+    public var editorTextContainer: NSTextContainer? { return self.textContainer }
+    public var editorContentWidth: CGFloat { return enclosingScrollView?.contentView.bounds.width ?? 400 }
+    // imagesLoaderQueue already declared as public property
 
     public var editorViewController: EditorViewController?
     public var textStorageProcessor: TextStorageProcessor?

@@ -8,10 +8,28 @@
 //
 
 import Foundation
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// Provides mutable access to the isRendering flag for processors that need async dispatch.
 public protocol RenderingFlagProvider: AnyObject {
     var isRendering: Bool { get set }
+}
+
+// MARK: - Editor Delegate Protocol
+
+/// Decouples TextStorageProcessor from the concrete EditTextView type.
+/// FSNotesCore depends on this protocol; the app target provides the implementation.
+public protocol EditorDelegate: AnyObject {
+    var currentNote: Note? { get }
+    func setNeedsDisplay()
+    var editorLayoutManager: NSLayoutManager? { get }
+    var editorTextContainer: NSTextContainer? { get }
+    var editorContentWidth: CGFloat { get }
+    var imagesLoaderQueue: OperationQueue { get }
 }
 
 /// Processes a block during Phase 4 (syntax hiding + attribute marking).
