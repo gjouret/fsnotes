@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8852B50A2749E42226C8379 /* EditorPreferences.swift */; };
 		C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */; };
 		432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 568C7270DF4C1784CFDD100B /* NoteSerializer.swift */; };
 		1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65ABACC3555B97D4FC743685 /* BlockParserTests.swift */; };
@@ -946,6 +947,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B8852B50A2749E42226C8379 /* EditorPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPreferences.swift; sourceTree = "<group>"; };
 		62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializerTests.swift; sourceTree = "<group>"; };
 		568C7270DF4C1784CFDD100B /* NoteSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializer.swift; sourceTree = "<group>"; };
 		65ABACC3555B97D4FC743685 /* BlockParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockParserTests.swift; sourceTree = "<group>"; };
@@ -1397,6 +1399,7 @@
 				CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */,
 				4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */,
 				568C7270DF4C1784CFDD100B /* NoteSerializer.swift */,
+				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
 			);
 			path = Rendering;
 			sourceTree = "<group>";
@@ -2987,6 +2990,7 @@
 				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
 				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
 				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
+				1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */,
 
 
 				D73BCCAA28EB5EC3008B3BBC /* OID.swift in Sources */,
