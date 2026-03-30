@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65ABACC3555B97D4FC743685 /* BlockParserTests.swift */; };
+		D7943F68EBB8151E96B1C82B /* FoldRangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */; };
+		E11F2025EB7C1D78425F04FD /* InlineTagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78B5B2781DDA166A7A32DEE5 /* InlineTagTests.swift */; };
+		BC277B6CBFEFDB637D0533C3 /* TableLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7352CFC6737F3FBDE485957A /* TableLayoutTests.swift */; };
 		4B8F17CEB746492878496ADF /* InlineTagRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */; };
 		A55520A7B95E5FE26FE360A8 /* BlockProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593E5F031A986B6F265DD161 /* BlockProcessor.swift */; };
 		C64BEA6AA09DA35C8EB3B6F5 /* BlockquoteProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */; };
@@ -940,6 +944,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		65ABACC3555B97D4FC743685 /* BlockParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockParserTests.swift; sourceTree = "<group>"; };
+		E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldRangeTests.swift; sourceTree = "<group>"; };
+		78B5B2781DDA166A7A32DEE5 /* InlineTagTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTagTests.swift; sourceTree = "<group>"; };
+		7352CFC6737F3FBDE485957A /* TableLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableLayoutTests.swift; sourceTree = "<group>"; };
 		C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTagRegistry.swift; sourceTree = "<group>"; };
 		593E5F031A986B6F265DD161 /* BlockProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockProcessor.swift; sourceTree = "<group>"; };
 		D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteProcessor.swift; sourceTree = "<group>"; };
@@ -2121,6 +2129,11 @@
 			isa = PBXGroup;
 			children = (
 				TEST00000000000000000002 /* RendererComparisonTests.swift */,
+				65ABACC3555B97D4FC743685 /* BlockParserTests.swift */,
+				E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */,
+				78B5B2781DDA166A7A32DEE5 /* InlineTagTests.swift */,
+				7352CFC6737F3FBDE485957A /* TableLayoutTests.swift */,
+
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -3448,6 +3461,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */,
+				D7943F68EBB8151E96B1C82B /* FoldRangeTests.swift in Sources */,
+				E11F2025EB7C1D78425F04FD /* InlineTagTests.swift in Sources */,
+				BC277B6CBFEFDB637D0533C3 /* TableLayoutTests.swift in Sources */,
 				TEST00000000000000000004 /* RendererComparisonTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -3920,6 +3937,7 @@
 		};
 		TEST00000000000000000008 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 365935BA74CEA7B5CAFAB536 /* Pods-FSNotes.debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -3953,7 +3971,13 @@
 		};
 		TEST00000000000000000009 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9EA62EEDB6BE9BF8727E66E0 /* Pods-FSNotes.release.xcconfig */;
 			buildSettings = {
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)",
+					"${PODS_CONFIGURATION_BUILD_DIR}",
+				);
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;

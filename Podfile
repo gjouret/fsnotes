@@ -30,6 +30,10 @@ target 'FSNotes' do
 
     mac_pods
     common_pods
+
+    target 'FSNotesTests' do
+        inherit! :search_paths
+    end
 end
 
 target 'FSNotes (iCloud)' do

@@ -103,7 +103,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     }
 
     /// Inset a column/row rect to produce the cell frame.
-    private func cellFrame(from rect: NSRect) -> NSRect {
+    func cellFrame(from rect: NSRect) -> NSRect {
         NSRect(x: rect.minX + cellPaddingH,
                y: rect.minY + cellPaddingBot,
                width: rect.width - cellPaddingH * 2,
@@ -111,7 +111,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     }
 
     /// Compute all frame geometry from current data. Every layout path calls this.
-    private func computeLayout() -> TableLayout {
+    func computeLayout() -> TableLayout {
         let colWidths = contentBasedColumnWidths()
         let rHeights = rowHeights()
         let leftMargin = currentLeftMargin
