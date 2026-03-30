@@ -88,6 +88,131 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
         NotesTextProcessor.applySyntaxHiding(in: textStorage, range: range)
     }
 
+    // MARK: - Header Fold/Unfold
+
+    /// Toggle fold state for the header block at the given index in `blocks`.
+    public func toggleFold(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
+        guard idx < blocks.count else { return }
+        let header = blocks[idx]
+
+        let headerLevel: Int
+        switch header.type {
+        case .heading(let l): headerLevel = l
+        case .headingSetext(let l): headerLevel = l
+        default: return
+        }
+
+        let foldRange = foldRangeForHeader(at: idx, level: headerLevel, in: textStorage)
+        guard foldRange.length > 0 else { return }
+
+        isRendering = true
+        textStorage.beginEditing()
+
+        if header.collapsed {
+            // Unfold: restore visibility
+            textStorage.removeAttribute(.foldedContent, range: foldRange)
+            textStorage.removeAttribute(.foregroundColor, range: foldRange)
+            blocks[idx].collapsed = false
+            textStorage.endEditing()
+            isRendering = false
+            // Re-highlight only the unfolded range to restore proper colors
+            let paragraphRange = (textStorage.string as NSString).paragraphRange(for: foldRange)
+            NotesTextProcessor.highlightMarkdown(
+                attributedString: textStorage,
+                paragraphRange: paragraphRange,
+                codeBlockRanges: codeBlockRanges)
+            editor?.needsDisplay = true
+        } else {
+            // Fold: hide content
+            textStorage.addAttribute(.foldedContent, value: true, range: foldRange)
+            textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
+            blocks[idx].collapsed = true
+            textStorage.endEditing()
+            isRendering = false
+        }
+
+        // Invalidate layout so zero-height lines take effect
+        textStorage.layoutManagers.first?.invalidateLayout(
+            forCharacterRange: foldRange, actualCharacterRange: nil)
+    }
+
+    /// Find the range to fold: from end of header line to start of next same-level-or-higher header.
+    private func foldRangeForHeader(at idx: Int, level: Int, in textStorage: NSTextStorage) -> NSRange {
+        let header = blocks[idx]
+        let string = textStorage.string as NSString
+
+        // Fold starts after the header's line (including newline)
+        let headerLineRange = string.paragraphRange(for: NSRange(location: header.range.location, length: 0))
+        let foldStart = NSMaxRange(headerLineRange)
+        guard foldStart < string.length else { return NSRange(location: foldStart, length: 0) }
+
+        // Find next ATX header at equal or higher level (lower number).
+        // Only match .heading (ATX: # through ######), NOT .headingSetext — because
+        // --- after a paragraph is classified as headingSetext(2) but it's really a
+        // horizontal rule in most user intent. Folding should not stop at HR lines.
+        var foldEnd = string.length
+        findEnd: for i in (idx + 1)..<blocks.count {
+            switch blocks[i].type {
+            case .heading(let l) where l <= level:
+                foldEnd = blocks[i].range.location
+                break findEnd
+            default:
+                continue
+            }
+        }
+
+        return NSRange(location: foldStart, length: foldEnd - foldStart)
+    }
+
+    /// Fold all headers in the note.
+    /// Process deepest headers first (highest level number) so nested fold ranges
+    /// are calculated before their parent headers fold over them.
+    public func foldAll(textStorage: NSTextStorage) {
+        // Collect header indices with their levels
+        var headers: [(index: Int, level: Int)] = []
+        for i in 0..<blocks.count {
+            switch blocks[i].type {
+            case .heading(let l): headers.append((i, l))
+            case .headingSetext(let l): headers.append((i, l))
+            default: break
+            }
+        }
+        // Sort by level descending (deepest first), then by position descending
+        headers.sort { ($0.level, -$0.index) > ($1.level, -$1.index) }
+        for h in headers {
+            if !blocks[h.index].collapsed {
+                toggleFold(headerBlockIndex: h.index, textStorage: textStorage)
+            }
+        }
+    }
+
+    /// Unfold all headers in the note.
+    public func unfoldAll(textStorage: NSTextStorage) {
+        for i in 0..<blocks.count {
+            switch blocks[i].type {
+            case .heading, .headingSetext:
+                if blocks[i].collapsed {
+                    toggleFold(headerBlockIndex: i, textStorage: textStorage)
+                }
+            default: break
+            }
+        }
+    }
+
+    /// Find the header block index for a character position.
+    public func headerBlockIndex(at charIndex: Int) -> Int? {
+        for (i, block) in blocks.enumerated() {
+            switch block.type {
+            case .heading, .headingSetext:
+                if block.range.contains(charIndex) || block.range.location == charIndex {
+                    return i
+                }
+            default: break
+            }
+        }
+        return nil
+    }
+
 #if os(iOS)
     public func textStorage(
         _ textStorage: NSTextStorage,

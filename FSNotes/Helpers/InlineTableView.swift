@@ -76,16 +76,79 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private var resizeStartX: CGFloat = 0
     private var columnWidthRatios: [CGFloat] = []
 
-    // MARK: - Layout Constants
+    // MARK: - Layout Constants (single source of truth for all geometry)
 
     private let minCellHeight: CGFloat = 32
-    private let lineHeight: CGFloat = 17  // Approximate line height for 13pt font
+    private let lineHeight: CGFloat = 17
     private let handleSize: CGFloat = 20
     private let edgeButtonSize: CGFloat = 16
     private let minColumnWidth: CGFloat = 80
     private let gridLineWidth: CGFloat = 0.5
     private let handleBarHeight: CGFloat = 22
     private let handleBarWidth: CGFloat = 22
+    private let cellPaddingH: CGFloat = 4    // Horizontal inset each side
+    private let cellPaddingTop: CGFloat = 3  // Top inset
+    private let cellPaddingBot: CGFloat = 3  // Bottom inset
+    private let focusRingPadding: CGFloat = 8
+    private let columnTextPadding: CGFloat = 20  // Extra width per column for text measurement
+
+    // MARK: - Computed Layout
+
+    /// Margins based on current focus state.
+    private var currentLeftMargin: CGFloat {
+        (focusState == .hovered || focusState == .editing) ? handleBarWidth : 0
+    }
+    private var currentTopMargin: CGFloat {
+        (focusState == .hovered || focusState == .editing) ? handleBarHeight : 0
+    }
+
+    /// Inset a column/row rect to produce the cell frame.
+    private func cellFrame(from rect: NSRect) -> NSRect {
+        NSRect(x: rect.minX + cellPaddingH,
+               y: rect.minY + cellPaddingBot,
+               width: rect.width - cellPaddingH * 2,
+               height: rect.height - cellPaddingTop - cellPaddingBot)
+    }
+
+    /// Compute all frame geometry from current data. Every layout path calls this.
+    private func computeLayout() -> TableLayout {
+        let colWidths = contentBasedColumnWidths()
+        let rHeights = rowHeights()
+        let leftMargin = currentLeftMargin
+        let topMargin = currentTopMargin
+        let gridWidth = colWidths.reduce(0, +)
+        let gridHeight = gridHeightFromRows(rHeights)
+        let scrollWidth = min(gridWidth + leftMargin + focusRingPadding, containerWidth)
+        let docWidth = gridWidth + leftMargin + focusRingPadding
+        let totalHeight = gridHeight + topMargin
+        return TableLayout(colWidths: colWidths, rHeights: rHeights,
+                           leftMargin: leftMargin, topMargin: topMargin,
+                           gridWidth: gridWidth, gridHeight: gridHeight,
+                           scrollWidth: scrollWidth, docWidth: docWidth,
+                           totalHeight: totalHeight)
+    }
+
+    /// All computed geometry values — eliminates ad-hoc recomputation.
+    struct TableLayout {
+        let colWidths: [CGFloat]
+        let rHeights: [CGFloat]
+        let leftMargin: CGFloat
+        let topMargin: CGFloat
+        let gridWidth: CGFloat
+        let gridHeight: CGFloat
+        let scrollWidth: CGFloat   // min(gridWidth + leftMargin + focusRingPadding, containerWidth)
+        let docWidth: CGFloat      // gridWidth + leftMargin + focusRingPadding
+        let totalHeight: CGFloat   // gridHeight + topMargin
+
+        var colCount: Int { colWidths.count }
+        var rowCount: Int { max(0, rHeights.count - 1) }  // Excludes header
+        var totalRows: Int { rHeights.count }
+        var headerHeight: CGFloat { rHeights.isEmpty ? 32 : rHeights[0] }
+
+        func dataRowHeight(_ row: Int) -> CGFloat {
+            (row + 1) < rHeights.count ? rHeights[row + 1] : 32
+        }
+    }
 
     // MARK: - Scroll View (for wide tables)
 
@@ -290,7 +353,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
         let font = NSFont.systemFont(ofSize: 13)
         let boldFont = NSFont.boldSystemFont(ofSize: 13)
-        let padding: CGFloat = 20  // left + right cell padding
+        let padding: CGFloat = columnTextPadding
 
         var widths = Array(repeating: minColumnWidth, count: colCount)
         for col in 0..<colCount {
@@ -321,96 +384,57 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Build (Stable Cell Pool)
 
     func rebuild(skipCollect: Bool = false) {
-        // Collect current data before rebuilding (skip when data was just modified directly, e.g. moveColumn/moveRow)
-        if !skipCollect {
-            collectCellData()
-        }
+        if !skipCollect { collectCellData() }
 
-        let colCount = headers.count
-        let rowCount = rows.count
-        let totalRows = 1 + rowCount
-
-        // Ensure width ratios match column count
-        if columnWidthRatios.count != colCount {
-            columnWidthRatios = Array(repeating: 1.0 / CGFloat(colCount), count: colCount)
-        }
-
-        // Calculate layout
+        let L = computeLayout()
         let showHandles = (focusState == .hovered || focusState == .editing)
-        let leftMargin: CGFloat = showHandles ? handleBarWidth : 0
-        // Column handles go ABOVE the grid; they need space in the frame
-        let topMargin: CGFloat = showHandles ? handleBarHeight : 0
 
-        // Column widths and row heights from content
-        let columnWidths = contentBasedColumnWidths()
-        let gridWidth = columnWidths.reduce(0, +)
-        let rHeights = rowHeights()
-        let gridHeight = gridHeightFromRows(rHeights)
+        if columnWidthRatios.count != L.colCount {
+            columnWidthRatios = Array(repeating: 1.0 / CGFloat(L.colCount), count: L.colCount)
+        }
 
-        // Frame: clamp to containerWidth, but grid can be wider (scroll view handles overflow)
-        let visibleWidth = min(gridWidth + leftMargin, containerWidth)
-        let totalHeight = gridHeight + topMargin
-        // Add scroller height if table is wider than container
-        self.frame.size = NSSize(width: visibleWidth, height: totalHeight)
+        // Apply frames from single layout computation
+        applyFrames(L)
 
-        // Position scroll view to cover the grid area (below column handles).
-        // Overlay scroller style means no extra height needed for the scrollbar.
-        scrollView.frame = NSRect(x: 0, y: 0, width: visibleWidth, height: gridHeight)
-        // Document view = full grid width + padding for cell focus ring on trailing edge
-        let focusRingPadding: CGFloat = 8
-        gridDocumentView.frame = NSRect(x: 0, y: 0, width: gridWidth + leftMargin + focusRingPadding, height: gridHeight)
-
-        // Remove old handles/buttons (they're recreated based on state)
+        // Remove old handles
         columnHandles.forEach { $0.removeFromSuperview() }
         rowHandles.forEach { $0.removeFromSuperview() }
         columnHandles = []
         rowHandles = []
 
-        // -- Build cells using pool --
-        let neededCells = totalRows * colCount
+        // Build cells using pool
+        let neededCells = L.totalRows * L.colCount
         ensureCellPool(count: neededCells)
-
-        // Reset header/data cell arrays
         headerCells = []
-        dataCells = Array(repeating: [], count: rowCount)
+        dataCells = Array(repeating: [], count: L.rowCount)
 
         var cellIndex = 0
         let isEditing = (focusState == .editing)
 
-        // Header row — grid occupies y=0 to y=gridHeight (bottom-up NSView coords)
-        // Header is the TOP row. Calculate Y from cumulative row heights.
-        let headerHeight = rHeights.isEmpty ? minCellHeight : rHeights[0]
-        var xOffset = leftMargin
-        for col in 0..<colCount {
-            let cell = cellPool[cellIndex]
-            cellIndex += 1
-            configureCell(cell,
-                text: headers[col],
-                frame: NSRect(x: xOffset, y: gridHeight - headerHeight, width: columnWidths[col], height: headerHeight),
-                isHeader: true, isEditing: isEditing,
-                row: 0, col: col)
+        // Header row
+        var xOffset = L.leftMargin
+        for col in 0..<L.colCount {
+            let cell = cellPool[cellIndex]; cellIndex += 1
+            let colRect = NSRect(x: xOffset, y: L.gridHeight - L.headerHeight, width: L.colWidths[col], height: L.headerHeight)
+            configureCell(cell, text: headers[col], frame: colRect, isHeader: true, isEditing: isEditing, row: 0, col: col)
             headerCells.append(cell)
-            xOffset += columnWidths[col]
+            xOffset += L.colWidths[col]
         }
 
-        // Data rows — positioned below header, using per-row heights
-        var yBottom = gridHeight - headerHeight  // Bottom of header row
-        for row in 0..<rowCount {
-            let rowH = (row + 1) < rHeights.count ? rHeights[row + 1] : minCellHeight
+        // Data rows
+        var yBottom = L.gridHeight - L.headerHeight
+        for row in 0..<L.rowCount {
+            let rowH = L.dataRowHeight(row)
             yBottom -= rowH
-            xOffset = leftMargin
+            xOffset = L.leftMargin
             var rowCellArray: [NSTextField] = []
-            for col in 0..<colCount {
-                let cell = cellPool[cellIndex]
-                cellIndex += 1
+            for col in 0..<L.colCount {
+                let cell = cellPool[cellIndex]; cellIndex += 1
                 let value = col < rows[row].count ? rows[row][col] : ""
-                configureCell(cell,
-                    text: value,
-                    frame: NSRect(x: xOffset, y: yBottom, width: columnWidths[col], height: rowH),
-                    isHeader: false, isEditing: isEditing,
-                    row: row + 1, col: col)
+                let colRect = NSRect(x: xOffset, y: yBottom, width: L.colWidths[col], height: rowH)
+                configureCell(cell, text: value, frame: colRect, isHeader: false, isEditing: isEditing, row: row + 1, col: col)
                 rowCellArray.append(cell)
-                xOffset += columnWidths[col]
+                xOffset += L.colWidths[col]
             }
             dataCells[row] = rowCellArray
         }
@@ -431,15 +455,20 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
 
         // -- Glass UI Handles --
-        // Handles sit above the scroll view; use scrollView top as the base Y
-        let handleBaseY = gridHeight
         if showHandles {
-            buildColumnHandles(colCount: colCount, columnWidths: columnWidths, leftMargin: leftMargin, gridHeight: handleBaseY, topMargin: topMargin)
-            buildRowHandles(rowCount: totalRows, leftMargin: leftMargin, gridHeight: gridHeight, topMargin: topMargin, rowHeights: rHeights)
+            buildColumnHandles(colCount: L.colCount, columnWidths: L.colWidths, leftMargin: L.leftMargin, gridHeight: L.gridHeight, topMargin: L.topMargin)
+            buildRowHandles(rowCount: L.totalRows, leftMargin: L.leftMargin, gridHeight: L.gridHeight, topMargin: L.topMargin, rowHeights: L.rHeights)
         }
 
         gridDocumentView.needsDisplay = true
         invalidateIntrinsicContentSize()
+    }
+
+    /// Apply outer frame, scroll view, and document view frames from a layout computation.
+    private func applyFrames(_ L: TableLayout) {
+        self.frame.size = NSSize(width: L.scrollWidth, height: L.totalHeight)
+        scrollView.frame = NSRect(x: 0, y: 0, width: L.scrollWidth, height: L.gridHeight)
+        gridDocumentView.frame = NSRect(x: 0, y: 0, width: L.docWidth, height: L.gridHeight)
     }
 
     // MARK: - Cell Pool Management
@@ -456,8 +485,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     }
 
     private func configureCell(_ cell: NSTextField, text: String, frame: NSRect, isHeader: Bool, isEditing: Bool, row: Int, col: Int) {
-        // Asymmetric padding: 5pt top for visual centering, 2pt bottom to leave room for descenders
-        cell.frame = NSRect(x: frame.minX + 4, y: frame.minY + 2, width: frame.width - 8, height: frame.height - 7)
+        cell.frame = cellFrame(from: frame)
 
         let cellFont = isHeader ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13)
         let cellAlignment = col < alignments.count ? alignments[col] : NSTextAlignment.left
@@ -937,77 +965,53 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     /// Recalculate column widths from content and resize the table frame.
     /// Columns expand to fit content; the table grows (up to containerWidth).
     private func recalculateAndResize() {
-        let colWidths = contentBasedColumnWidths()
-        guard !colWidths.isEmpty else { return }
-
-        let leftMargin: CGFloat = (focusState == .unfocused) ? 0 : handleBarWidth
-        let gridWidth = colWidths.reduce(0, +)
-        let totalWidth = min(gridWidth + leftMargin, containerWidth)
-
-        // Resize the frame to fit content
-        let newSize = NSSize(width: totalWidth, height: frame.height)
-        if abs(frame.width - newSize.width) > 1 {
-            setFrameSize(newSize)
-        }
-
-        // Update cell AND handle frames without full rebuild (avoids losing first responder)
-        layoutCells(colWidths: colWidths, leftMargin: leftMargin)
+        let L = computeLayout()
+        guard L.colCount > 0 else { return }
+        applyFrames(L)
+        layoutCells(L)
+        gridDocumentView.needsDisplay = true
+        invalidateIntrinsicContentSize()
     }
 
-    /// Update cell AND handle frames in-place without rebuilding (preserves first responder).
-    /// Uses the SAME coordinate system as rebuild():
-    ///   - Grid occupies y=0 to y=gridHeight (NSView Y=0 is at bottom)
-    ///   - Header row at y = gridHeight - headerHeight (top of grid)
-    ///   - Data rows at y = cumulative from top using per-row heights
-    ///   - Column handles at y = gridHeight (above grid)
-    private func layoutCells(colWidths: [CGFloat], leftMargin: CGFloat) {
-        let colCount = headers.count
-        guard colCount > 0 else { return }
-
-        let rHeights = rowHeights()
-        let gridHeight = gridHeightFromRows(rHeights)
+    /// Update cell AND handle frames in-place from a TableLayout (preserves first responder).
+    private func layoutCells(_ L: TableLayout) {
+        guard L.colCount > 0 else { return }
 
         // Header row — top of grid
-        let headerH = rHeights.isEmpty ? minCellHeight : rHeights[0]
-        var x = leftMargin
-        for col in 0..<min(colCount, headerCells.count) {
-            let w = colWidths[col]
-            let hf = NSRect(x: x, y: gridHeight - headerH, width: w, height: headerH)
-            headerCells[col].frame = NSRect(x: hf.minX + 4, y: hf.minY + 2, width: hf.width - 8, height: hf.height - 7)
-            x += w
+        var x = L.leftMargin
+        for col in 0..<min(L.colCount, headerCells.count) {
+            let colRect = NSRect(x: x, y: L.gridHeight - L.headerHeight, width: L.colWidths[col], height: L.headerHeight)
+            headerCells[col].frame = cellFrame(from: colRect)
+            x += L.colWidths[col]
         }
 
-        // Data rows — below header, using per-row heights
-        var yBottom = gridHeight - headerH
+        // Data rows
+        var yBottom = L.gridHeight - L.headerHeight
         for (rowIdx, rowCellArray) in dataCells.enumerated() {
-            let rowH = (rowIdx + 1) < rHeights.count ? rHeights[rowIdx + 1] : minCellHeight
+            let rowH = L.dataRowHeight(rowIdx)
             yBottom -= rowH
-            x = leftMargin
-            for col in 0..<min(colCount, rowCellArray.count) {
-                let w = colWidths[col]
-                rowCellArray[col].frame = NSRect(x: x, y: yBottom, width: w, height: rowH).insetBy(dx: 4, dy: 6)
-                x += w
+            x = L.leftMargin
+            for col in 0..<min(L.colCount, rowCellArray.count) {
+                let colRect = NSRect(x: x, y: yBottom, width: L.colWidths[col], height: rowH)
+                rowCellArray[col].frame = cellFrame(from: colRect)
+                x += L.colWidths[col]
             }
         }
 
         // Column handles — above grid
-        x = leftMargin
-        for col in 0..<min(colCount, columnHandles.count) {
-            let w = colWidths[col]
-            columnHandles[col].frame = NSRect(x: x, y: gridHeight, width: w, height: handleBarHeight)
-            x += w
+        x = L.leftMargin
+        for col in 0..<min(L.colCount, columnHandles.count) {
+            columnHandles[col].frame = NSRect(x: x, y: L.gridHeight, width: L.colWidths[col], height: handleBarHeight)
+            x += L.colWidths[col]
         }
 
-        // Row handles — left of grid, matching row heights
-        yBottom = gridHeight
+        // Row handles — left of grid, skip header (row 0)
+        var handleY = L.gridHeight - L.headerHeight
         for (idx, handle) in rowHandles.enumerated() {
-            let rowH = idx < rHeights.count ? rHeights[idx] : minCellHeight
-            yBottom -= rowH
-            handle.frame = NSRect(x: 0, y: yBottom, width: handleBarWidth, height: rowH)
+            let rowH = L.dataRowHeight(idx)
+            handleY -= rowH
+            handle.frame = NSRect(x: 0, y: handleY, width: handleBarWidth, height: rowH)
         }
-
-        gridDocumentView.needsDisplay = true
-        invalidateIntrinsicContentSize()
     }
 
     // Handle Tab / Return for keyboard navigation
@@ -1280,61 +1284,54 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Drawing
 
-    /// Draws grid lines and header background inside the gridDocumentView (scrollable).
+    /// Draws grid lines, header background, and alternating row colors.
     private func drawGridLines(in context: CGContext) {
-        let showHandles = (focusState == .hovered || focusState == .editing)
-        let leftMargin: CGFloat = showHandles ? handleBarWidth : 0
-        let colCount = headers.count
-        let totalRows = 1 + rows.count
-        let columnWidths = contentBasedColumnWidths()
-        let gridWidth = columnWidths.reduce(0, +)
-        let rHeights = rowHeights()
-        let gridHeight = gridHeightFromRows(rHeights)
+        let L = computeLayout()
 
         context.setStrokeColor(NSColor.separatorColor.cgColor)
         context.setLineWidth(gridLineWidth)
 
-        // Horizontal lines using per-row heights
+        // Horizontal lines
         var lineY: CGFloat = 0
-        for i in 0...totalRows {
-            context.move(to: CGPoint(x: leftMargin, y: lineY))
-            context.addLine(to: CGPoint(x: leftMargin + gridWidth, y: lineY))
-            if i < rHeights.count {
-                lineY += rHeights[rHeights.count - 1 - i]
+        for i in 0...L.totalRows {
+            context.move(to: CGPoint(x: L.leftMargin, y: lineY))
+            context.addLine(to: CGPoint(x: L.leftMargin + L.gridWidth, y: lineY))
+            if i < L.rHeights.count {
+                lineY += L.rHeights[L.rHeights.count - 1 - i]
             }
         }
 
         // Vertical lines
-        var xOffset = leftMargin
-        for i in 0...colCount {
+        var xOffset = L.leftMargin
+        for i in 0...L.colCount {
             context.move(to: CGPoint(x: xOffset, y: 0))
-            context.addLine(to: CGPoint(x: xOffset, y: gridHeight))
-            if i < colCount {
-                xOffset += columnWidths[i]
-            }
+            context.addLine(to: CGPoint(x: xOffset, y: L.gridHeight))
+            if i < L.colCount { xOffset += L.colWidths[i] }
         }
-
         context.strokePath()
 
-        // Header background — header is the top row of the grid
-        let headerH = rHeights.isEmpty ? minCellHeight : rHeights[0]
-        let headerRect = NSRect(x: leftMargin, y: gridHeight - headerH, width: gridWidth, height: headerH)
+        // Header background
+        let headerRect = NSRect(x: L.leftMargin, y: L.gridHeight - L.headerHeight, width: L.gridWidth, height: L.headerHeight)
         NSColor.controlBackgroundColor.withAlphaComponent(0.5).setFill()
         NSBezierPath(rect: headerRect).fill()
+
+        // Alternating row backgrounds
+        var rowY = L.gridHeight - L.headerHeight
+        for row in 0..<L.rowCount {
+            let rowH = L.dataRowHeight(row)
+            rowY -= rowH
+            if row % 2 == 1 {
+                NSColor.controlBackgroundColor.withAlphaComponent(0.25).setFill()
+                NSBezierPath(rect: NSRect(x: L.leftMargin, y: rowY, width: L.gridWidth, height: rowH)).fill()
+            }
+        }
     }
 
     // MARK: - Intrinsic Size
 
     override var intrinsicContentSize: NSSize {
-        let showHandles = (focusState == .hovered || focusState == .editing)
-        let leftMargin: CGFloat = showHandles ? handleBarWidth : 0
-        let topMargin: CGFloat = showHandles ? handleBarHeight : 0
-
-        let colWidths = contentBasedColumnWidths()
-        let gridWidth = colWidths.reduce(0, +)
-        let gridHeight = gridHeightFromRows(rowHeights())
-        let visibleWidth = min(gridWidth + leftMargin, containerWidth)
-        return NSSize(width: visibleWidth, height: gridHeight + topMargin)
+        let L = computeLayout()
+        return NSSize(width: L.scrollWidth, height: L.totalHeight)
     }
 }
 

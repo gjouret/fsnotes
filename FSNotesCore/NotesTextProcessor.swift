@@ -867,6 +867,21 @@ public class NotesTextProcessor {
             hideSyntaxIfNecessary(range: closeTagRange)
         }
 
+        // We detect and process highlight (<mark>...</mark>)
+        NotesTextProcessor.markRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
+            guard let fullRange = result?.range, let contentRange = result?.range(at: 1) else { return }
+            // Yellow highlight background matching MPreview CSS
+            attributedString.addAttribute(.backgroundColor, value: NSColor(red: 1.0, green: 0.95, blue: 0.0, alpha: 0.3), range: contentRange)
+
+            // Hide the <mark> and </mark> tags
+            let openTagRange = NSRange(location: fullRange.location, length: 6) // <mark>
+            let closeTagRange = NSRange(location: NSMaxRange(contentRange), length: 7) // </mark>
+            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: openTagRange)
+            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: closeTagRange)
+            hideSyntaxIfNecessary(range: openTagRange)
+            hideSyntaxIfNecessary(range: closeTagRange)
+        }
+
 //        NotesTextProcessor.italicRegex.matches(string, range: paragraphRange) { (result) -> Void in
 //            guard let range = result?.range else { return }
 //            addFontTraits([.italic], range: range, attributedString: attributedString)
@@ -1346,6 +1361,9 @@ public class NotesTextProcessor {
 
     // Static compiled regex for kbd tags — renders as keyboard key style
     public static let kbdRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<kbd>(.*?)</kbd>", options: [])
+
+    // Static compiled regex for mark (highlight) tags
+    public static let markRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<mark>(.*?)</mark>", options: [])
 
     // Static compiled regexes for horizontal rules and blockquotes — avoids recompiling on every highlight call
     public static let hrRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^[ ]{0,3}([-*_])[ ]{0,2}(\\1[ ]{0,2}){2,}[ \\t]*$", options: .anchorsMatchLines)

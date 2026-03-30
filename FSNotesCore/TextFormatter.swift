@@ -845,8 +845,10 @@ public class TextFormatter {
                 if textView.window?.firstResponder != textView {
                     textView.window?.makeFirstResponder(textView)
                 }
+                // Save scroll position to prevent jump on paragraph replacement
+                let savedVisibleRect = textView.enclosingScrollView?.contentView.bounds
             #endif
-            
+
             guard let paragraph = getParagraphRange(for: location) else { return }
             let paragraphTextNonMutable = storage.attributedSubstring(from: paragraph)
             let paragraphText = NSMutableAttributedString(attributedString: paragraphTextNonMutable)
@@ -866,9 +868,11 @@ public class TextFormatter {
                 textView.typingAttributes.removeValue(forKey: .strikethroughStyle)
             }
 
-            // Ensure consistent line height across the whole paragraph after toggle
+            // Preserve headIndent for proper text wrapping + consistent line height
             let parStyle = NSMutableParagraphStyle()
             parStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+            let markerWidth = ("- [ ] " as NSString).size(withAttributes: [.font: NotesTextProcessor.font]).width
+            parStyle.headIndent = markerWidth
             paragraphText.addAttribute(.paragraphStyle, value: parStyle, range: NSRange(location: 0, length: paragraphText.length))
 
             insertText(paragraphText, replacementRange: paragraph)
@@ -876,7 +880,15 @@ public class TextFormatter {
             if todoAttr == 1 {
                 storage.removeAttribute(.strikethroughStyle, range: paragraph)
             }
-            
+
+            #if os(OSX)
+                // Restore scroll position after paragraph replacement
+                if let rect = savedVisibleRect {
+                    textView.enclosingScrollView?.contentView.scroll(to: rect.origin)
+                    textView.enclosingScrollView?.reflectScrolledClipView(textView.enclosingScrollView!.contentView)
+                }
+            #endif
+
             updateCurrentParagraph()
             
             return

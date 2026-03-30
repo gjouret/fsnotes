@@ -646,6 +646,23 @@ CA
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="iip-ri-cBa"/>
+                                        <menuItem title="Toggle Fold" keyEquivalent="'" id="fld-tg-001">
+                                            <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                                            <connections>
+                                                <action selector="toggleFold:" target="L4m-js-agn" id="fld-tg-act"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Fold All Headers" id="fld-al-001">
+                                            <connections>
+                                                <action selector="foldAllHeaders:" target="L4m-js-agn" id="fld-al-act"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Unfold All Headers" id="fld-ua-001">
+                                            <connections>
+                                                <action selector="unfoldAllHeaders:" target="L4m-js-agn" id="fld-ua-act"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="fld-sp-001"/>
                                         <menuItem title="Move Down in the Notes List" image="arrowshape.down" catalog="system" keyEquivalent="j" id="BtV-Z4-7Vq">
                                             <connections>
                                                 <action selector="noteDown:" target="Ady-hI-5gd" id="WHy-qc-OvH"/>

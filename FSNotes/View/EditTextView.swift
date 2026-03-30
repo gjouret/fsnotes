@@ -139,6 +139,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
+        // Draw gutter icons (fold carets, H-level badges) in the text view's coordinate space.
+        // Must be here (not in LayoutManager.drawBackground) because the gutter is OUTSIDE
+        // the text container bounds and would be clipped by the layout manager.
+        if NotesTextProcessor.hideSyntax {
+            drawGutterIcons(in: dirtyRect)
+        }
+
         guard UserDefaultsManagement.inlineTags else { return }
 
         if #available(OSX 10.16, *) {
@@ -395,6 +402,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             self.isEditable = true
         }
 
+        // Check for click in the gutter (fold/unfold toggle)
+        if NotesTextProcessor.hideSyntax, handleGutterClick(event) {
+            return
+        }
+
         // Check for click on rendered block (mermaid/math) — open source editor
         // But NOT tables — those are handled as interactive views
         if NotesTextProcessor.hideSyntax, handleRenderedBlockClick(event) {
@@ -496,6 +508,63 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         #endif
     }
     
+    // MARK: - Gutter Click (Fold/Unfold)
+
+    private func handleGutterClick(_ event: NSEvent) -> Bool {
+        let point = convert(event.locationInWindow, from: nil)
+        let gutterWidth = EditTextView.gutterWidth
+
+        // Gutter occupies the space from (insetWidth - gutterWidth) to insetWidth,
+        // which is the reserved area left of the text container origin
+        let gutterRight = textContainerInset.width
+        let gutterLeft = gutterRight - gutterWidth
+        guard point.x >= gutterLeft, point.x < gutterRight else { return false }
+
+        guard let manager = self.layoutManager,
+              let container = self.textContainer,
+              let storage = self.textStorage,
+              let processor = self.textStorageProcessor else { return false }
+
+        // Map click Y to a character index
+        let textPoint = NSPoint(x: textContainerInset.width + 1, y: point.y)
+        let charIndex = manager.characterIndex(for: textPoint, in: container,
+                                                fractionOfDistanceBetweenInsertionPoints: nil)
+        guard charIndex < storage.length else { return false }
+
+        // Find the header block at this position
+        if let blockIdx = processor.headerBlockIndex(at: charIndex) {
+            processor.toggleFold(headerBlockIndex: blockIdx, textStorage: storage)
+            needsDisplay = true
+            return true
+        }
+        return false
+    }
+
+    @objc public func toggleFoldAtCursor() {
+        guard let storage = textStorage,
+              let processor = textStorageProcessor else { return }
+        let cursorPos = selectedRange().location
+        // Find the header at cursor, or the nearest header above cursor
+        if let idx = processor.headerBlockIndex(at: cursorPos) {
+            processor.toggleFold(headerBlockIndex: idx, textStorage: storage)
+            needsDisplay = true
+        }
+    }
+
+    @objc public func foldAllHeaders() {
+        guard let storage = textStorage,
+              let processor = textStorageProcessor else { return }
+        processor.foldAll(textStorage: storage)
+        needsDisplay = true
+    }
+
+    @objc public func unfoldAllHeaders() {
+        guard let storage = textStorage,
+              let processor = textStorageProcessor else { return }
+        processor.unfoldAll(textStorage: storage)
+        needsDisplay = true
+    }
+
     private func handleRenderedBlockClick(_ event: NSEvent) -> Bool {
         guard let storage = textStorage,
               let container = self.textContainer,
@@ -1788,6 +1857,90 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         return NSPoint(x: origin.x, y: origin.y - 7)
     }
 
+    private func drawGutterIcons(in dirtyRect: NSRect) {
+        guard let storage = textStorage,
+              let lm = layoutManager as? LayoutManager,
+              let container = textContainer,
+              let processor = textStorageProcessor else { return }
+        guard !processor.blocks.isEmpty else { return }
+
+        let origin = textContainerOrigin
+        let gutterWidth = EditTextView.gutterWidth
+        let gutterLeft = origin.x - gutterWidth
+        let gutterRight = origin.x
+
+        // Only draw if dirtyRect overlaps the gutter area
+        guard dirtyRect.minX < gutterRight else { return }
+
+        // Visible glyph range
+        let visibleRect = enclosingScrollView?.contentView.bounds ?? bounds
+        let visibleGlyphRange = lm.glyphRange(forBoundingRect: visibleRect, in: container)
+        let visibleCharRange = lm.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
+
+        let cursorParagraphRange: NSRange? = {
+            let idx = lm.cursorCharIndex
+            guard idx >= 0, idx < storage.length else { return nil }
+            return (storage.string as NSString).paragraphRange(for: NSRange(location: idx, length: 0))
+        }()
+
+        for block in processor.blocks {
+            let level: Int
+            switch block.type {
+            case .heading(let l): level = l
+            case .headingSetext(let l): level = l
+            default: continue
+            }
+
+            guard NSIntersectionRange(block.range, visibleCharRange).length > 0 else { continue }
+            guard block.range.location < storage.length,
+                  NSMaxRange(block.range) <= storage.length else { continue }
+
+            let glyphRange = lm.glyphRange(forCharacterRange: block.range, actualCharacterRange: nil)
+            if glyphRange.length == 0 { continue }
+            let lineFragRect = lm.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            if lineFragRect.isEmpty { continue }
+
+            let midY = lineFragRect.midY + origin.y
+
+            // Fold caret
+            let isCollapsed = block.collapsed
+            let caretStr = isCollapsed ? "▸" : "▾"
+            let caretFont = NSFont.systemFont(ofSize: 10, weight: .regular)
+            let caretAttrs: [NSAttributedString.Key: Any] = [
+                .font: caretFont,
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            let caretSize = (caretStr as NSString).size(withAttributes: caretAttrs)
+            let caretX = gutterRight - caretSize.width - 4
+            let caretY = midY - caretSize.height / 2
+            (caretStr as NSString).draw(at: NSPoint(x: caretX, y: caretY), withAttributes: caretAttrs)
+
+            // H-level badge when cursor is on this line
+            let cursorOnThisLine = cursorParagraphRange.map { NSIntersectionRange($0, block.range).length > 0 } ?? false
+            if cursorOnThisLine {
+                let badge = "H\(level)"
+                let badgeAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+                    .foregroundColor: NSColor.secondaryLabelColor
+                ]
+                let badgeSize = (badge as NSString).size(withAttributes: badgeAttrs)
+                (badge as NSString).draw(at: NSPoint(x: gutterLeft + 2, y: midY - badgeSize.height / 2), withAttributes: badgeAttrs)
+            }
+
+            // "⋯" after collapsed header
+            if isCollapsed {
+                let ellipsis = " ⋯"
+                let ellipsisAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 12),
+                    .foregroundColor: NSColor.tertiaryLabelColor
+                ]
+                let usedRect = lm.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+                let ellipsisSize = (ellipsis as NSString).size(withAttributes: ellipsisAttrs)
+                (ellipsis as NSString).draw(at: NSPoint(x: usedRect.maxX + origin.x + 4, y: midY - ellipsisSize.height / 2), withAttributes: ellipsisAttrs)
+            }
+        }
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let note = self.note, let storage = textStorage else { return false }
 
@@ -1987,8 +2140,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         // In WYSIWYG mode, immediately render as InlineTableView
         if NotesTextProcessor.hideSyntax {
             renderTables()
-            // Focus the first cell of the new table
-            focusFirstInlineTableCell()
+            // Focus the first cell after a brief delay so the table is fully laid out
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.focusFirstInlineTableCell()
+            }
         }
     }
 
@@ -2454,20 +2609,25 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         textContainerInset.width = getInsetWidth()
     }
 
+    /// Width of the left-hand gutter for header fold/unfold controls.
+    public static let gutterWidth: CGFloat = 32
+
     public func getInsetWidth() -> CGFloat {
         let lineWidth = UserDefaultsManagement.lineWidth
         let margin = UserDefaultsManagement.marginSize
         let width = frame.width
+        // Reserve extra space for the header gutter in WYSIWYG mode
+        let gutter: Float = NotesTextProcessor.hideSyntax ? Float(EditTextView.gutterWidth) : 0
 
         if lineWidth == 1000 {
-            return CGFloat(margin)
+            return CGFloat(margin + gutter)
         }
 
         guard Float(width) - margin * 2 > lineWidth else {
-            return CGFloat(margin)
+            return CGFloat(margin + gutter)
         }
 
-        return CGFloat((Float(width) - lineWidth) / 2)
+        return CGFloat((Float(width) - lineWidth) / 2 + gutter)
     }
 
     private func deleteUnusedImages(checkRange: NSRange) {

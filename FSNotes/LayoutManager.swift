@@ -22,6 +22,9 @@ fileprivate extension NSRange {
 
 class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     weak var processor: TextStorageProcessor?
+
+    /// Current cursor character index — updated by textViewDidChangeSelection for gutter drawing.
+    var cursorCharIndex: Int = 0
     
     override init() {
         super.init()
@@ -311,11 +314,13 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             context.setLineWidth(1.0)
             context.addPath(path)
             context.strokePath()
-            // Bottom shadow — inset 0 -1px 0 #bbb (slightly darker bottom edge)
-            let bottomY = kbdRect.maxY - 1
+            // Bottom shadow — below the rounded rect, inset 1pt on each side
+            let shadowInset: CGFloat = 1
+            let shadowY = kbdRect.maxY + 0.5
             context.setStrokeColor(NSColor(red: 0.733, green: 0.733, blue: 0.733, alpha: 1.0).cgColor)
-            context.move(to: CGPoint(x: kbdRect.minX + cornerRadius, y: bottomY))
-            context.addLine(to: CGPoint(x: kbdRect.maxX - cornerRadius, y: bottomY))
+            context.setLineWidth(1.0)
+            context.move(to: CGPoint(x: kbdRect.minX + shadowInset, y: shadowY))
+            context.addLine(to: CGPoint(x: kbdRect.maxX - shadowInset, y: shadowY))
             context.strokePath()
             context.restoreGState()
         }
@@ -386,6 +391,21 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             baselineOffset: UnsafeMutablePointer<CGFloat>,
             in textContainer: NSTextContainer,
             forGlyphRange glyphRange: NSRange) -> Bool {
+
+        // Collapse folded content to zero height
+        if let ts = textStorage {
+            let charRange = self.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            if charRange.location < ts.length,
+               ts.attribute(.foldedContent, at: charRange.location, effectiveRange: nil) != nil {
+                var rect = lineFragmentRect.pointee
+                rect.size.height = 0.01
+                lineFragmentRect.pointee = rect
+                var used = lineFragmentUsedRect.pointee
+                used.size.height = 0.01
+                lineFragmentUsedRect.pointee = used
+                return true
+            }
+        }
 
         // Get the font for the current range of glyphs
         let currentFont = font(for: glyphRange)
