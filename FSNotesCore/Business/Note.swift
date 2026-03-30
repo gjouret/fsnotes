@@ -1006,37 +1006,34 @@ public class Note: NSObject  {
         return fileName
     }
 
+    /// Per-note pending write operation. Cancelling this only affects THIS note's save.
+    private var pendingWriteOperation: BlockOperation?
+
     public func save(attributed: NSAttributedString) {
         if container == .encryptedTextPack { return }
-        
+
         guard let copy = attributed.copy() as? NSAttributedString else {
             return
         }
-        
+
         modifiedLocalAt = Date()
-        
+
+        // Cancel only THIS note's pending save — not all notes' saves
+        pendingWriteOperation?.cancel()
+
         let operation = BlockOperation()
         operation.addExecutionBlock { [weak self] in
-            guard let self = self else {
-                return
-            }
-            
-            if operation.isCancelled {
-                return
-            }
-            
+            guard let self = self, !operation.isCancelled else { return }
+
             let mutable = NSMutableAttributedString(attributedString: copy)
-            // save(content:) calls NoteSerializer.prepareForSave() which handles
-            // restoreRenderedBlocks + restoreBulletMarkers + unloadAttachments
             self.save(content: mutable)
-            usleep(1000000)
-            
+
             if !operation.isCancelled {
                 self.isBlocked = false
             }
         }
-        
-        Storage.shared().plainWriter.cancelAllOperations()
+
+        pendingWriteOperation = operation
         Storage.shared().plainWriter.addOperation(operation)
     }
 
