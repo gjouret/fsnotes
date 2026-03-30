@@ -437,7 +437,11 @@ class RendererComparisonTests: XCTestCase {
         let mpreviewImage = try renderMPreview(markdown: sampleMarkdown, bundlePath: bundlePath)
         XCTAssertNotNil(mpreviewImage, "MPreview rendering should produce an image")
 
-        let mpreviewSaved = saveImage(mpreviewImage!, to: "\(outputDir)/mpreview.png")
+        guard let mpreviewImg = mpreviewImage else {
+            XCTFail("MPreview rendering returned nil")
+            return
+        }
+        let mpreviewSaved = saveImage(mpreviewImg, to: "\(outputDir)/mpreview.png")
         XCTAssertTrue(mpreviewSaved, "Should save MPreview image to \(outputDir)/mpreview.png")
 
         // --- Step 3: Render through NSTextView ---
