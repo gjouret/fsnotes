@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */; };
 		1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8852B50A2749E42226C8379 /* EditorPreferences.swift */; };
 		C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */; };
 		432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 568C7270DF4C1784CFDD100B /* NoteSerializer.swift */; };
@@ -947,6 +948,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		B8852B50A2749E42226C8379 /* EditorPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPreferences.swift; sourceTree = "<group>"; };
 		62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializerTests.swift; sourceTree = "<group>"; };
 		568C7270DF4C1784CFDD100B /* NoteSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializer.swift; sourceTree = "<group>"; };
@@ -1400,6 +1402,7 @@
 				4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */,
 				568C7270DF4C1784CFDD100B /* NoteSerializer.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
+				5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */,
 			);
 			path = Rendering;
 			sourceTree = "<group>";
@@ -2991,6 +2994,7 @@
 				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
 				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
 				1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */,
+				4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */,
 
 
 				D73BCCAA28EB5EC3008B3BBC /* OID.swift in Sources */,
