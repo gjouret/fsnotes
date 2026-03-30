@@ -7,6 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4B8F17CEB746492878496ADF /* InlineTagRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */; };
+		A55520A7B95E5FE26FE360A8 /* BlockProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593E5F031A986B6F265DD161 /* BlockProcessor.swift */; };
+		C64BEA6AA09DA35C8EB3B6F5 /* BlockquoteProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */; };
+		B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */; };
+		3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */; };
+		8DD5A19ACC1F3603CFB8A270 /* InlineTagRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */; };
+		39719F73DD2051FF45F54FBC /* BlockProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593E5F031A986B6F265DD161 /* BlockProcessor.swift */; };
+		7D8EC60DA5D573D718B18802 /* BlockquoteProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */; };
+		E2D617D3F6BA668F7A67C4C5 /* HorizontalRuleProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */; };
+		C28A9498BBE0A2A31D13F0DB /* BulletProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */; };
+		2152B725855467CFB329F670 /* AttributeDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */; };
+		C347F26CE5C1E0AB82880BBF /* HorizontalRuleDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */; };
+		41A9498C821A6134CF66697B /* BlockquoteBorderDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2581E31D96188E843F4C07C9 /* BlockquoteBorderDrawer.swift */; };
+		4CDB5D1C50CCB3DEEEC869E7 /* KbdBoxDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D50FD865403E5655FDA7CB1 /* KbdBoxDrawer.swift */; };
 		1102DDB12EE4C280005029A6 /* EditTextView+Complete.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1102DDB02EE4C277005029A6 /* EditTextView+Complete.swift */; };
 		1102DDB22EE4C280005029A6 /* EditTextView+Complete.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1102DDB02EE4C277005029A6 /* EditTextView+Complete.swift */; };
 		110BE0112EE86B4A00C5E456 /* Clojure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110BE0102EE86B4600C5E456 /* Clojure.swift */; };
@@ -926,6 +940,15 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTagRegistry.swift; sourceTree = "<group>"; };
+		593E5F031A986B6F265DD161 /* BlockProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockProcessor.swift; sourceTree = "<group>"; };
+		D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteProcessor.swift; sourceTree = "<group>"; };
+		CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleProcessor.swift; sourceTree = "<group>"; };
+		4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BulletProcessor.swift; sourceTree = "<group>"; };
+		B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributeDrawer.swift; sourceTree = "<group>"; };
+		D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleDrawer.swift; sourceTree = "<group>"; };
+		2581E31D96188E843F4C07C9 /* BlockquoteBorderDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteBorderDrawer.swift; sourceTree = "<group>"; };
+		2D50FD865403E5655FDA7CB1 /* KbdBoxDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KbdBoxDrawer.swift; sourceTree = "<group>"; };
 		1102DDB02EE4C277005029A6 /* EditTextView+Complete.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Complete.swift"; sourceTree = "<group>"; };
 		110BE0102EE86B4600C5E456 /* Clojure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Clojure.swift; sourceTree = "<group>"; };
 		110BE0142EE8C1C600C5E456 /* Html.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Html.swift; sourceTree = "<group>"; };
@@ -1353,6 +1376,29 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		5D24978FE7733F5A6D850523 /* Rendering */ = {
+			isa = PBXGroup;
+			children = (
+				C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */,
+				593E5F031A986B6F265DD161 /* BlockProcessor.swift */,
+				D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */,
+				CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */,
+				4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */,
+			);
+			path = Rendering;
+			sourceTree = "<group>";
+		};
+		6BA7249E78448E4743FAB3AB /* Rendering */ = {
+			isa = PBXGroup;
+			children = (
+				B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */,
+				D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */,
+				2581E31D96188E843F4C07C9 /* BlockquoteBorderDrawer.swift */,
+				2D50FD865403E5655FDA7CB1 /* KbdBoxDrawer.swift */,
+			);
+			path = Rendering;
+			sourceTree = "<group>";
+		};
 		111013172EC9B46800B6CF1B /* SourceCodePro */ = {
 			isa = PBXGroup;
 			children = (
@@ -1472,6 +1518,7 @@
 		6F13BB2320FEDE230005E120 /* FSNotesCore */ = {
 			isa = PBXGroup;
 			children = (
+				5D24978FE7733F5A6D850523 /* Rendering */,
 				D7C52B8028C7A8C2001B2065 /* Git */,
 				11D943172E643ECF0010CC2B /* SwiftHighlighter */,
 				D7218944210211B800FE3AF2 /* Business */,
@@ -1820,6 +1867,7 @@
 		D7793C711F211C6000CA39B7 /* FSNotes */ = {
 			isa = PBXGroup;
 			children = (
+				6BA7249E78448E4743FAB3AB /* Rendering */,
 				D75C903C223EF727002A9CAD /* Preferences */,
 				D7CD5F6A1F51184A006AA35D /* Extensions */,
 				D7E6D9D520808652003ECAFC /* Helpers */,
@@ -2637,6 +2685,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8DD5A19ACC1F3603CFB8A270 /* InlineTagRegistry.swift in Sources */,
+				39719F73DD2051FF45F54FBC /* BlockProcessor.swift in Sources */,
+				7D8EC60DA5D573D718B18802 /* BlockquoteProcessor.swift in Sources */,
+				E2D617D3F6BA668F7A67C4C5 /* HorizontalRuleProcessor.swift in Sources */,
+				C28A9498BBE0A2A31D13F0DB /* BulletProcessor.swift in Sources */,
+
 				11F2D4F72F104322002E4E47 /* Project+Date.swift in Sources */,
 				11598DA42EDCB9B40036E387 /* UIFont+.swift in Sources */,
 				D730BD38222DB11E00E69C93 /* TextBundleInfo.swift in Sources */,
@@ -2904,6 +2958,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2152B725855467CFB329F670 /* AttributeDrawer.swift in Sources */,
+				C347F26CE5C1E0AB82880BBF /* HorizontalRuleDrawer.swift in Sources */,
+				41A9498C821A6134CF66697B /* BlockquoteBorderDrawer.swift in Sources */,
+				4CDB5D1C50CCB3DEEEC869E7 /* KbdBoxDrawer.swift in Sources */,
+				4B8F17CEB746492878496ADF /* InlineTagRegistry.swift in Sources */,
+				A55520A7B95E5FE26FE360A8 /* BlockProcessor.swift in Sources */,
+				C64BEA6AA09DA35C8EB3B6F5 /* BlockquoteProcessor.swift in Sources */,
+				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
+				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
+
+
 				D73BCCAA28EB5EC3008B3BBC /* OID.swift in Sources */,
 				D7D97F3C290437A200C651D4 /* NSWindowController+.swift in Sources */,
 				D7DA9E1E21031901001CF0BE /* OutlineHeaderView.swift in Sources */,

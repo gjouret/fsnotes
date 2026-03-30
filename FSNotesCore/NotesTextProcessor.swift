@@ -834,53 +834,17 @@ public class NotesTextProcessor {
             hideSyntaxIfNecessary(range: postRange)
         }
 
-        // We detect and process underline (<u>...</u>)
-        NotesTextProcessor.underlineRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
-            guard let fullRange = result?.range, let contentRange = result?.range(at: 1) else { return }
-            attributedString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: contentRange)
-
-            // Hide the <u> and </u> tags
-            let openTagRange = NSRange(location: fullRange.location, length: 3) // <u>
-            let closeTagRange = NSRange(location: NSMaxRange(contentRange), length: 4) // </u>
-            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: openTagRange)
-            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: closeTagRange)
-            hideSyntaxIfNecessary(range: openTagRange)
-            hideSyntaxIfNecessary(range: closeTagRange)
-        }
-
-        // We detect and process keyboard (<kbd>...</kbd>)
-        NotesTextProcessor.kbdRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
-            guard let fullRange = result?.range, let contentRange = result?.range(at: 1) else { return }
-            // Style: monospace font, keyboard-key appearance (border drawn by LayoutManager)
-            // MPreview CSS: font 11px Consolas/monospace, color #555
-            let monoFont = NSFont.monospacedSystemFont(ofSize: NotesTextProcessor.font.pointSize * 0.85, weight: .medium)
-            attributedString.addAttribute(.font, value: monoFont, range: contentRange)
-            attributedString.addAttribute(.foregroundColor, value: NSColor(red: 0.333, green: 0.333, blue: 0.333, alpha: 1.0), range: contentRange)
-            attributedString.addAttribute(.kbdTag, value: true, range: contentRange)
-
-            // Hide the <kbd> and </kbd> tags
-            let openTagRange = NSRange(location: fullRange.location, length: 5) // <kbd>
-            let closeTagRange = NSRange(location: NSMaxRange(contentRange), length: 6) // </kbd>
-            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: openTagRange)
-            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: closeTagRange)
-            hideSyntaxIfNecessary(range: openTagRange)
-            hideSyntaxIfNecessary(range: closeTagRange)
-        }
-
-        // We detect and process highlight (<mark>...</mark>)
-        NotesTextProcessor.markRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
-            guard let fullRange = result?.range, let contentRange = result?.range(at: 1) else { return }
-            // Yellow highlight background matching MPreview CSS
-            attributedString.addAttribute(.backgroundColor, value: NSColor(red: 1.0, green: 0.95, blue: 0.0, alpha: 0.3), range: contentRange)
-
-            // Hide the <mark> and </mark> tags
-            let openTagRange = NSRange(location: fullRange.location, length: 6) // <mark>
-            let closeTagRange = NSRange(location: NSMaxRange(contentRange), length: 7) // </mark>
-            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: openTagRange)
-            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: closeTagRange)
-            hideSyntaxIfNecessary(range: openTagRange)
-            hideSyntaxIfNecessary(range: closeTagRange)
-        }
+        // Process all inline HTML tags via the registry (u, kbd, mark, etc.)
+        // Adding a new tag = one entry in buildInlineTagDefinitions(). Zero changes here.
+        processInlineTags(
+            definitions: buildInlineTagDefinitions(baseFont: NotesTextProcessor.font),
+            in: attributedString,
+            string: string,
+            range: paragraphRange,
+            syntaxColor: NotesTextProcessor.syntaxColor,
+            hideSyntax: NotesTextProcessor.hideSyntax,
+            hideSyntaxFunc: { hideSyntaxIfNecessary(range: $0) }
+        )
 
 //        NotesTextProcessor.italicRegex.matches(string, range: paragraphRange) { (result) -> Void in
 //            guard let range = result?.range else { return }
@@ -1356,14 +1320,8 @@ public class NotesTextProcessor {
     
     public static let blockQuoteRegex = MarklightRegex(pattern: blockQuotePattern, options: [.allowCommentsAndWhitespace, .anchorsMatchLines])
 
-    // Static compiled regex for underline tags — avoids recompiling on every highlight call
-    public static let underlineRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<u>(.*?)</u>", options: [])
-
-    // Static compiled regex for kbd tags — renders as keyboard key style
-    public static let kbdRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<kbd>(.*?)</kbd>", options: [])
-
-    // Static compiled regex for mark (highlight) tags
-    public static let markRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<mark>(.*?)</mark>", options: [])
+    // Inline tag regexes now live in InlineTagRegistry.swift (buildInlineTagDefinitions).
+    // underlineRegex, kbdRegex, markRegex removed — single source of truth.
 
     // Static compiled regexes for horizontal rules and blockquotes — avoids recompiling on every highlight call
     public static let hrRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^[ ]{0,3}([-*_])[ ]{0,2}(\\1[ ]{0,2}){2,}[ \\t]*$", options: .anchorsMatchLines)

@@ -57,10 +57,17 @@ class CenteredImageCell: NSTextAttachmentCell {
 }
 #endif
 
-class TextStorageProcessor: NSObject, NSTextStorageDelegate {
+class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvider {
     public var editor: EditTextView?
     public var detector = CodeBlockDetector()
     public var isRendering = false
+
+    /// Registered block processors. Adding a new block visual = one new BlockProcessor file + one entry here.
+    static let blockProcessors: [BlockProcessor] = [
+        BulletProcessor(),
+        BlockquoteProcessor(),
+        HorizontalRuleProcessor(),
+    ]
 
     // MARK: - Block Model (Phase A: shadow mode — populated alongside existing code)
 
@@ -537,101 +544,28 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
         let affectedBlocks = MarkdownBlockParser.blocks(in: blocks, intersecting: range)
 
         for block in affectedBlocks {
-            // Skip syntax hiding for list items — bullets use character substitution,
-            // ordered lists show numbers as-is (they're already the correct display format)
-            let skipHiding: Bool
-            switch block.type {
-            case .unorderedList, .orderedList:
-                skipHiding = true
-            default:
-                skipHiding = false
+            // Dispatch to registered block processors.
+            // Adding a new block visual = one new BlockProcessor file + one entry in blockProcessors.
+            var handled = false
+            for proc in Self.blockProcessors where proc.handles(block.type) {
+                if !proc.skipSyntaxHiding {
+                    for syntaxRange in block.syntaxRanges {
+                        guard syntaxRange.location < textStorage.length,
+                              NSMaxRange(syntaxRange) <= textStorage.length else { continue }
+                        hideSyntaxRange(syntaxRange, in: textStorage)
+                    }
+                }
+                proc.process(block: block, textStorage: textStorage, flagProvider: self)
+                handled = true
             }
 
-            if !skipHiding {
+            // Default: hide syntax for blocks with no registered processor
+            if !handled {
                 for syntaxRange in block.syntaxRanges {
                     guard syntaxRange.location < textStorage.length,
                           NSMaxRange(syntaxRange) <= textStorage.length else { continue }
                     hideSyntaxRange(syntaxRange, in: textStorage)
                 }
-            }
-
-            // Block-specific visual replacements
-            switch block.type {
-            case .unorderedList:
-                // Schedule bullet character substitution outside didProcessEditing
-                // (NSTextStorage doesn't allow replaceCharacters inside the delegate callback)
-                let syntaxRanges = block.syntaxRanges
-                DispatchQueue.main.async { [weak textStorage] in
-                    guard let ts = textStorage else { return }
-                    self.isRendering = true
-                    ts.beginEditing()
-                    // Process in reverse order to avoid range invalidation
-                    for syntaxRange in syntaxRanges.reversed() {
-                        guard syntaxRange.location < ts.length,
-                              NSMaxRange(syntaxRange) <= ts.length,
-                              syntaxRange.length >= 2 else { continue }
-                        let marker = (ts.string as NSString).substring(with: NSRange(location: syntaxRange.location, length: 1))
-                        if marker == "-" || marker == "*" || marker == "+" || marker == "\u{2022}" {
-                            let bulletRange = NSRange(location: syntaxRange.location, length: 1)
-                            if marker != "\u{2022}" {
-                                // First time: substitute dash/star/plus with bullet
-                                ts.replaceCharacters(in: bulletRange, with: "\u{2022}")
-                            }
-                            // Mark for save-path reversal (use original marker if known, else "-")
-                            let originalMarker = (marker == "\u{2022}") ? (ts.attribute(.listBullet, at: bulletRange.location, effectiveRange: nil) as? String ?? "-") : marker
-                            ts.addAttribute(.listBullet, value: originalMarker, range: bulletRange)
-                            ts.addAttribute(.foregroundColor, value: NSColor.textColor, range: bulletRange)
-                            // Slightly larger font for bullet to match MPreview's disc style
-                            let fontSize = CGFloat(UserDefaultsManagement.fontSize)
-                            let bulletFont = NSFont.systemFont(ofSize: fontSize * 0.8)
-                            ts.addAttribute(.font, value: bulletFont, range: bulletRange)
-                            ts.removeAttribute(.kern, range: bulletRange)
-                            // Also ensure the full syntax range (bullet + space) has visible color
-                            ts.addAttribute(.foregroundColor, value: NSColor.textColor, range: syntaxRange)
-                            ts.removeAttribute(.kern, range: syntaxRange)
-                        }
-                    }
-                    ts.endEditing()
-                    self.isRendering = false
-                }
-
-            case .blockquote:
-                // Set .blockquote with nesting level per-line for LayoutManager border drawing.
-                // Count `>` prefixes per line to determine depth.
-                let nsStr = textStorage.string as NSString
-                var lineStart = block.range.location
-                let blockEnd = NSMaxRange(block.range)
-                while lineStart < blockEnd {
-                    let lineRange = nsStr.paragraphRange(for: NSRange(location: lineStart, length: 0))
-                    let line = nsStr.substring(with: lineRange).trimmingCharacters(in: .newlines)
-                    var depth = 0
-                    for ch in line {
-                        if ch == ">" { depth += 1 }
-                        else if ch == " " { continue }
-                        else { break }
-                    }
-                    if depth > 0 {
-                        let charRange = NSIntersectionRange(lineRange, block.range)
-                        if charRange.length > 0 {
-                            textStorage.addAttribute(.blockquote, value: depth, range: charRange)
-                        }
-                    }
-                    lineStart = NSMaxRange(lineRange)
-                    if lineStart <= lineRange.location { break }
-                }
-
-            case .horizontalRule:
-                // Set .horizontalRule for LayoutManager line drawing
-                textStorage.addAttribute(.horizontalRule, value: true, range: block.range)
-
-            case .heading(let level) where level <= 2:
-                // Existing highlightMarkdown sets the header font; we just need
-                // the attribute for LayoutManager to draw bottom borders.
-                // The header regex already handles this.
-                break
-
-            default:
-                break
             }
         }
     }
