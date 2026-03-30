@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */; };
+		432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 568C7270DF4C1784CFDD100B /* NoteSerializer.swift */; };
 		1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65ABACC3555B97D4FC743685 /* BlockParserTests.swift */; };
 		D7943F68EBB8151E96B1C82B /* FoldRangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */; };
 		E11F2025EB7C1D78425F04FD /* InlineTagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78B5B2781DDA166A7A32DEE5 /* InlineTagTests.swift */; };
@@ -944,6 +946,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializerTests.swift; sourceTree = "<group>"; };
+		568C7270DF4C1784CFDD100B /* NoteSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializer.swift; sourceTree = "<group>"; };
 		65ABACC3555B97D4FC743685 /* BlockParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockParserTests.swift; sourceTree = "<group>"; };
 		E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldRangeTests.swift; sourceTree = "<group>"; };
 		78B5B2781DDA166A7A32DEE5 /* InlineTagTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTagTests.swift; sourceTree = "<group>"; };
@@ -1392,6 +1396,7 @@
 				D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */,
 				CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */,
 				4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */,
+				568C7270DF4C1784CFDD100B /* NoteSerializer.swift */,
 			);
 			path = Rendering;
 			sourceTree = "<group>";
@@ -2129,6 +2134,7 @@
 			isa = PBXGroup;
 			children = (
 				TEST00000000000000000002 /* RendererComparisonTests.swift */,
+				62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */,
 				65ABACC3555B97D4FC743685 /* BlockParserTests.swift */,
 				E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */,
 				78B5B2781DDA166A7A32DEE5 /* InlineTagTests.swift */,
@@ -2980,6 +2986,7 @@
 				C64BEA6AA09DA35C8EB3B6F5 /* BlockquoteProcessor.swift in Sources */,
 				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
 				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
+				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
 
 
 				D73BCCAA28EB5EC3008B3BBC /* OID.swift in Sources */,
@@ -3461,6 +3468,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */,
 				1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */,
 				D7943F68EBB8151E96B1C82B /* FoldRangeTests.swift in Sources */,
 				E11F2025EB7C1D78425F04FD /* InlineTagTests.swift in Sources */,
