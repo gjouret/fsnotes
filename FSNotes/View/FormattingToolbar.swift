@@ -75,6 +75,7 @@ class FormattingToolbar: NSView {
         addButton(id: "italic", symbol: "italic", tooltip: "Italic (Cmd+I)", action: #selector(EditTextView.italicMenu(_:)))
         addButton(id: "underline", symbol: "underline", tooltip: "Underline (Cmd+U)", action: #selector(EditTextView.underlineMenu(_:)))
         addButton(id: "strikethrough", symbol: "strikethrough", tooltip: "Strikethrough", action: #selector(EditTextView.strikeMenu(_:)))
+        addButton(id: "highlight", symbol: "highlighter", tooltip: "Highlight", action: #selector(EditTextView.highlightMenu(_:)))
 
         addSeparator()
 
@@ -139,16 +140,26 @@ class FormattingToolbar: NSView {
     }
 
     private func addSeparator() {
+        // Left spacer
+        let leftSpacer = NSView()
+        leftSpacer.translatesAutoresizingMaskIntoConstraints = false
+        leftSpacer.widthAnchor.constraint(equalToConstant: 4).isActive = true
+        stackView.addArrangedSubview(leftSpacer)
+
         let separator = NSBox()
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
-
         NSLayoutConstraint.activate([
             separator.widthAnchor.constraint(equalToConstant: 1),
             separator.heightAnchor.constraint(equalToConstant: 18)
         ])
-
         stackView.addArrangedSubview(separator)
+
+        // Right spacer
+        let rightSpacer = NSView()
+        rightSpacer.translatesAutoresizingMaskIntoConstraints = false
+        rightSpacer.widthAnchor.constraint(equalToConstant: 4).isActive = true
+        stackView.addArrangedSubview(rightSpacer)
     }
 
     // MARK: - Button State Updates

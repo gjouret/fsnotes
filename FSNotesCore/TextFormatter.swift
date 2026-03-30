@@ -253,6 +253,19 @@ public class TextFormatter {
         insertText("~~" + string + "~~", selectRange: selectRange)
     }
     
+    /// Wrap the current selection with open/close markers. Generic for any tag.
+    public func wrapSelection(with open: String, close: String) {
+        let string = attributedString.string
+        let length = string.count
+
+        var selectRange = NSMakeRange(range.location + open.count, 0)
+        if length != 0 {
+            selectRange = NSMakeRange(range.location, length + open.count + close.count)
+        }
+
+        insertText(open + string + close, selectRange: selectRange)
+    }
+
     public func tab() {
         guard let pRange = getParagraphRange() else { return }
         

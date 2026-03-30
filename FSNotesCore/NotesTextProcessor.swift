@@ -973,14 +973,15 @@ public class NotesTextProcessor {
 
         guard UserDefaultsManagement.codeBlockHighlight else { return }
 
-        // Code span removed
+        // Reset code span backgrounds (only remove backgrounds matching the code span color,
+        // NOT backgrounds set by <mark> or other inline tags)
+        let codeSpanBg = NotesTextProcessor.codeSpanBackground
         attributedString.enumerateAttribute(.backgroundColor, in: paragraphRange) { (value, innerRange, _) in
-            if value != nil {
-                let font = UserDefaultsManagement.noteFont
-                attributedString.removeAttribute(.backgroundColor, range: innerRange)
-                attributedString.addAttribute(.font, value: font, range: innerRange)
-                attributedString.fixAttributes(in: innerRange)
-            }
+            guard let bg = value as? PlatformColor, bg == codeSpanBg else { return }
+            let font = UserDefaultsManagement.noteFont
+            attributedString.removeAttribute(.backgroundColor, range: innerRange)
+            attributedString.addAttribute(.font, value: font, range: innerRange)
+            attributedString.fixAttributes(in: innerRange)
         }
 
         NotesTextProcessor.codeSpanRegex.matches(string, range: paragraphRange) { (result) -> Void in

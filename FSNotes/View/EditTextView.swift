@@ -1343,6 +1343,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.bold()
+        deselectAfterFormatting()
     }
 
     @IBAction func italicMenu(_ sender: Any) {
@@ -1352,6 +1353,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.italic()
+        deselectAfterFormatting()
     }
 
     /// If an InlineTableView cell is being edited, wrap the selection (or insert markers at cursor).
@@ -1459,6 +1461,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.underline()
+        deselectAfterFormatting()
     }
 
     @IBAction func strikeMenu(_ sender: Any) {
@@ -1466,6 +1469,23 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.strike()
+        deselectAfterFormatting()
+    }
+
+    @IBAction func highlightMenu(_ sender: Any) {
+        guard let note = self.note, isEditable, note.isMarkdown() else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.wrapSelection(with: "<mark>", close: "</mark>")
+        deselectAfterFormatting()
+    }
+
+    /// Collapse selection to cursor at end so the user can see the applied formatting.
+    private func deselectAfterFormatting() {
+        let sel = selectedRange()
+        if sel.length > 0 {
+            setSelectedRange(NSRange(location: NSMaxRange(sel), length: 0))
+        }
     }
 
     @IBAction func headerMenu(_ sender: NSMenuItem) {
