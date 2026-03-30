@@ -27,6 +27,10 @@ class MPreviewView: WKWebView, WKUIDelegate, WKNavigationDelegate {
 
     private var editorVC: EditorViewController?
     private weak var note: Note?
+    /// Protocol-based delegate — replaces ViewController.shared() calls.
+    public weak var previewDelegate: PreviewDelegate?
+    /// Static delegate for static methods that need editor info. Set once at app launch.
+    public static weak var sharedPreviewDelegate: PreviewDelegate?
     private var closure: MPreviewViewClosure?
     public static var template: String?
 
@@ -172,7 +176,7 @@ class MPreviewView: WKWebView, WKUIDelegate, WKNavigationDelegate {
             // Resolve against the note's actual directory instead.
             // self.note is a weak reference and may be nil, so fall back to the
             // currently selected note from ViewController.
-            let activeNote = self.note ?? ViewController.shared()?.notesTableView.getSelectedNote()
+            let activeNote = self.note ?? previewDelegate?.activeNote
             if url.isFileURL, !FileManager.default.fileExists(atPath: url.path), let note = activeNote {
                 let filename = url.lastPathComponent
                 let baseURL = note.isTextBundle() ? note.getURL() : note.project.url
@@ -222,25 +226,17 @@ class MPreviewView: WKWebView, WKUIDelegate, WKNavigationDelegate {
 
                 guard !imageURL.isImage && !imageURL.isVideo else { continue }
 
-                #if os(iOS)
-                let editor = UIApplication.getEVC().editArea
-                #else
-                let editor = ViewController.shared()?.editor
-                #endif
+                let attachment = NoteAttachment(url: imageURL)
 
-                if let editor = editor {
-                    let attachment = NoteAttachment(url: imageURL)
+                if let imageData = attachment.getAttachmentImage()?.jpgData {
+                    let base64 = imageData.base64EncodedString()
+                    var imPath = "<img class=\"attachment\" data-url=\"" + imageURL.path + "\" src=\"" + "data:image;base64," + base64 + "\""
 
-                    if let imageData = attachment.getAttachmentImage()?.jpgData {
-                        let base64 = imageData.base64EncodedString()
-                        var imPath = "<img class=\"attachment\" data-url=\"" + imageURL.path + "\" src=\"" + "data:image;base64," + base64 + "\""
-
-                        if !showButton {
-                            imPath = "<img "
-                        }
-
-                        htmlString = htmlString.replacingOccurrences(of: image, with: imPath)
+                    if !showButton {
+                        imPath = "<img "
                     }
+
+                    htmlString = htmlString.replacingOccurrences(of: image, with: imPath)
                 }
             }
         } catch let error {
@@ -736,7 +732,7 @@ class MPreviewView: WKWebView, WKUIDelegate, WKNavigationDelegate {
         #if os(iOS)
             var width = 10
         #else
-            var width = Int(ViewController.shared()!.editor.getInsetWidth())
+            var width = Int(MPreviewView.sharedPreviewDelegate?.editorInsetWidth ?? 40)
         #endif
 
         if fullScreen {

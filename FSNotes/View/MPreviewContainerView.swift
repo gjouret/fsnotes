@@ -50,6 +50,7 @@ class MPreviewContainerView: NSView {
     
     private func setupWebView(note: Note, closure: MPreviewViewClosure?, force: Bool) {
         webView = MPreviewView(frame: bounds, note: note, closure: closure, force: force)
+        webView.previewDelegate = ViewController.shared()
         webView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(webView)
     }

@@ -18,8 +18,17 @@ class ViewController: EditorViewController,
     NSOutlineViewDelegate,
     NSOutlineViewDataSource,
     NSTextFieldDelegate,
-    UNUserNotificationCenterDelegate {
-    
+    UNUserNotificationCenterDelegate,
+    PreviewDelegate {
+
+    // MARK: - PreviewDelegate conformance
+    public var activeNote: Note? {
+        return notesTableView.getSelectedNote()
+    }
+    public var editorInsetWidth: CGFloat {
+        return editor?.getInsetWidth() ?? 40
+    }
+
     // MARK: - Properties
     public var fsManager: FileSystemEventManager?
     public var projectSettingsViewController: ProjectSettingsViewController?
@@ -158,6 +167,9 @@ class ViewController: EditorViewController,
         }
 
         isPreLoaded = true
+
+        // Set protocol delegates to decouple Core from concrete app types
+        MPreviewView.sharedPreviewDelegate = self
 
         if #available(macOS 12.0, *) {
             let image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)

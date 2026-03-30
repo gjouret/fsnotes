@@ -19,10 +19,9 @@ public protocol RenderingFlagProvider: AnyObject {
     var isRendering: Bool { get set }
 }
 
-// MARK: - Editor Delegate Protocol
+// MARK: - Core Protocols (decouple Core from app-target types)
 
 /// Decouples TextStorageProcessor from the concrete EditTextView type.
-/// FSNotesCore depends on this protocol; the app target provides the implementation.
 public protocol EditorDelegate: AnyObject {
     var currentNote: Note? { get }
     func setNeedsDisplay()
@@ -30,6 +29,12 @@ public protocol EditorDelegate: AnyObject {
     var editorTextContainer: NSTextContainer? { get }
     var editorContentWidth: CGFloat { get }
     var imagesLoaderQueue: OperationQueue { get }
+}
+
+/// Decouples MPreviewView from the concrete ViewController type.
+public protocol PreviewDelegate: AnyObject {
+    var activeNote: Note? { get }
+    var editorInsetWidth: CGFloat { get }
 }
 
 /// Processes a block during Phase 4 (syntax hiding + attribute marking).
