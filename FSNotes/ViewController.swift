@@ -1917,38 +1917,11 @@ class ViewController: EditorViewController,
     }
 
     @IBAction func prevHistory(_ sender: NSMenuItem) {
-        guard let vc = ViewController.shared() else { return }
-
-        if vc.notesTableView.historyPosition > 0 {
-            let prev = vc.notesTableView.historyPosition - 1
-            let prevUrl = vc.notesTableView.history[prev]
-
-            if let note = Storage.shared().getBy(url: prevUrl) {
-                vc.notesTableView.saveNavigationHistory(note: note)
-                vc.cleanSearchAndEditArea(completion: { () -> Void in
-                    vc.notesTableView.selectRowAndSidebarItem(note: note)
-                })
-            }
-
-            vc.notesTableView.historyPosition = prev
-        }
+        navigateBack(sender)
     }
 
     @IBAction func nextHistory(_ sender: NSMenuItem) {
-        guard let vc = ViewController.shared() else { return }
-
-        if vc.notesTableView.historyPosition < vc.notesTableView.history.count - 1 {
-            let next = vc.notesTableView.historyPosition + 1
-            let nextUrl = vc.notesTableView.history[next]
-
-            if let note = Storage.shared().getBy(url: nextUrl) {
-                vc.cleanSearchAndEditArea(completion: { () -> Void in
-                    vc.notesTableView.selectRowAndSidebarItem(note: note)
-                })
-            }
-
-            vc.notesTableView.historyPosition = next
-        }
+        navigateForward(sender)
     }
 
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
@@ -2099,9 +2072,20 @@ class ViewController: EditorViewController,
     private func navigateToHistoryNote() {
         let note = noteHistory[noteHistoryIndex]
         isNavigatingHistory = true
-        notesTableView.select(note: note)
-        // Clear the flag after a brief delay to cover async callbacks from select()
-        DispatchQueue.main.async { [weak self] in
+        // Clear search so the note list shows the target note
+        if search.stringValue.count > 0 {
+            search.stringValue = ""
+            search.lastSearchQuery = ""
+            // Rebuild query and refresh table, then select note
+            buildSearchQuery()
+            updateTable {
+                self.notesTableView.select(note: note)
+            }
+        } else {
+            notesTableView.select(note: note)
+        }
+        // Clear flag AFTER the delayed select() fires (select uses 0.1s asyncAfter)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.isNavigatingHistory = false
         }
         formattingToolbar?.updateNavigationButtons(canGoBack: canGoBack(), canGoForward: canGoForward())

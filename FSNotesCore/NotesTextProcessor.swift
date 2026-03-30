@@ -453,12 +453,29 @@ public class NotesTextProcessor {
                     NotesTextProcessor.autolinkPrefixRegex.matches(string, range: range) { (innerResult) -> Void in
                         guard let innerRange = innerResult?.range else { return }
                         hideSyntaxIfNecessary(range: innerRange)
-                        attributedString.fixAttributes(in: innerRange)
+                        // Ensure kern doesn't bleed past the hidden prefix into visible URL text
+                        let afterPrefix = NSMaxRange(innerRange)
+                        if afterPrefix < attributedString.length {
+                            attributedString.addAttribute(.kern, value: 0, range: NSRange(location: afterPrefix, length: 1))
+                        }
                     }
                 }
             }
         }
         
+        // Detect bare www. URLs (without protocol prefix)
+        NotesTextProcessor.autolinkWwwRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
+            guard let range = result?.range else { return }
+            let substring = attributedString.mutableString.substring(with: range)
+            let urlString = "https://\(substring)"
+            if let url = URL(string: urlString) {
+                attributedString.addAttribute(.link, value: url, range: range)
+                if NotesTextProcessor.hideSyntax {
+                    attributedString.addAttribute(.foregroundColor, value: wysiwygLinkColor, range: range)
+                }
+            }
+        }
+
         FSParser.yamlBlockRegex.matches(string, range: NSRange(location: 0, length: attributedString.length)) { (result) -> Void in
             guard let range = result?.range(at: 1) else { return }
             attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.fontColor, range: range)
@@ -831,6 +848,25 @@ public class NotesTextProcessor {
             hideSyntaxIfNecessary(range: closeTagRange)
         }
 
+        // We detect and process keyboard (<kbd>...</kbd>)
+        NotesTextProcessor.kbdRegex?.enumerateMatches(in: string, range: paragraphRange) { result, _, _ in
+            guard let fullRange = result?.range, let contentRange = result?.range(at: 1) else { return }
+            // Style: monospace font, keyboard-key appearance (border drawn by LayoutManager)
+            // MPreview CSS: font 11px Consolas/monospace, color #555
+            let monoFont = NSFont.monospacedSystemFont(ofSize: NotesTextProcessor.font.pointSize * 0.85, weight: .medium)
+            attributedString.addAttribute(.font, value: monoFont, range: contentRange)
+            attributedString.addAttribute(.foregroundColor, value: NSColor(red: 0.333, green: 0.333, blue: 0.333, alpha: 1.0), range: contentRange)
+            attributedString.addAttribute(.kbdTag, value: true, range: contentRange)
+
+            // Hide the <kbd> and </kbd> tags
+            let openTagRange = NSRange(location: fullRange.location, length: 5) // <kbd>
+            let closeTagRange = NSRange(location: NSMaxRange(contentRange), length: 6) // </kbd>
+            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: openTagRange)
+            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: closeTagRange)
+            hideSyntaxIfNecessary(range: openTagRange)
+            hideSyntaxIfNecessary(range: closeTagRange)
+        }
+
 //        NotesTextProcessor.italicRegex.matches(string, range: paragraphRange) { (result) -> Void in
 //            guard let range = result?.range else { return }
 //            addFontTraits([.italic], range: range, attributedString: attributedString)
@@ -1092,11 +1128,11 @@ public class NotesTextProcessor {
      * Second element
      */
     
-    fileprivate static let _markerUL = "[*+-]"
+    fileprivate static let _markerUL = "[*+\\-\u{2022}]"
     fileprivate static let _markerOL = "[0-9-]+[.]"
 
     fileprivate static let _listMarker = "(?:\\p{Z}|\\t)*(?:\(_markerUL)|\(_markerOL))"
-    fileprivate static let _listSingleLinePattern = "^(?:\\p{Z}|\\t)*((?:[*+-]|\\d+[.]))\\p{Z}+"
+    fileprivate static let _listSingleLinePattern = "^(?:\\p{Z}|\\t)*((?:[*+\\-\u{2022}]|\\d+[.]))\\p{Z}+"
 
     public static let listRegex = MarklightRegex(pattern: _listSingleLinePattern, options: [.allowCommentsAndWhitespace, .anchorsMatchLines])
     public static let listOpeningRegex = MarklightRegex(pattern: _listMarker, options: [.allowCommentsAndWhitespace])
@@ -1308,6 +1344,9 @@ public class NotesTextProcessor {
     // Static compiled regex for underline tags — avoids recompiling on every highlight call
     public static let underlineRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<u>(.*?)</u>", options: [])
 
+    // Static compiled regex for kbd tags — renders as keyboard key style
+    public static let kbdRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "<kbd>(.*?)</kbd>", options: [])
+
     // Static compiled regexes for horizontal rules and blockquotes — avoids recompiling on every highlight call
     public static let hrRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^[ ]{0,3}([-*_])[ ]{0,2}(\\1[ ]{0,2}){2,}[ \\t]*$", options: .anchorsMatchLines)
     public static let bqRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^>\\s?", options: .anchorsMatchLines)
@@ -1391,9 +1430,14 @@ public class NotesTextProcessor {
     public static let italicRegex = MarklightRegex(pattern: italicPattern, options: [.allowCommentsAndWhitespace, .anchorsMatchLines])
 
     fileprivate static let autolinkPattern = "([\\(]*(https?|sftp|file|ftp):[^`\'\">\\s\\*]+)"
-    
+
     public static let autolinkRegex = MarklightRegex(pattern: autolinkPattern, options: [.allowCommentsAndWhitespace, .dotMatchesLineSeparators])
-    
+
+    // Detect bare www. URLs (without protocol prefix)
+    public static let autolinkWwwRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: "(?<=\\s|^)(www\\.[a-zA-Z0-9\\-]+\\.[a-zA-Z]{2,}(?:[/\\?#][^\\s]*)?)",
+        options: [.anchorsMatchLines])
+
     fileprivate static let autolinkPrefixPattern = "((https?|sftp|file|ftp)://)"
 
     public static let autolinkPrefixRegex = MarklightRegex(pattern: autolinkPrefixPattern, options: [.allowCommentsAndWhitespace, .dotMatchesLineSeparators])

@@ -866,6 +866,11 @@ public class TextFormatter {
                 textView.typingAttributes.removeValue(forKey: .strikethroughStyle)
             }
 
+            // Ensure consistent line height across the whole paragraph after toggle
+            let parStyle = NSMutableParagraphStyle()
+            parStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+            paragraphText.addAttribute(.paragraphStyle, value: parStyle, range: NSRange(location: 0, length: paragraphText.length))
+
             insertText(paragraphText, replacementRange: paragraph)
 
             if todoAttr == 1 {

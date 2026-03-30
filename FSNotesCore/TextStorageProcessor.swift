@@ -446,12 +446,15 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                               NSMaxRange(syntaxRange) <= ts.length,
                               syntaxRange.length >= 2 else { continue }
                         let marker = (ts.string as NSString).substring(with: NSRange(location: syntaxRange.location, length: 1))
-                        if marker == "-" || marker == "*" || marker == "+" {
+                        if marker == "-" || marker == "*" || marker == "+" || marker == "\u{2022}" {
                             let bulletRange = NSRange(location: syntaxRange.location, length: 1)
-                            // Use BLACK CIRCLE (●) for a larger, more visible bullet like MPreview
-                            ts.replaceCharacters(in: bulletRange, with: "\u{2022}")
-                            // Mark for save-path reversal and ensure bullet is visible
-                            ts.addAttribute(.listBullet, value: marker, range: bulletRange)
+                            if marker != "\u{2022}" {
+                                // First time: substitute dash/star/plus with bullet
+                                ts.replaceCharacters(in: bulletRange, with: "\u{2022}")
+                            }
+                            // Mark for save-path reversal (use original marker if known, else "-")
+                            let originalMarker = (marker == "\u{2022}") ? (ts.attribute(.listBullet, at: bulletRange.location, effectiveRange: nil) as? String ?? "-") : marker
+                            ts.addAttribute(.listBullet, value: originalMarker, range: bulletRange)
                             ts.addAttribute(.foregroundColor, value: NSColor.textColor, range: bulletRange)
                             // Slightly larger font for bullet to match MPreview's disc style
                             let fontSize = CGFloat(UserDefaultsManagement.fontSize)
@@ -468,8 +471,29 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate {
                 }
 
             case .blockquote:
-                // Set .blockquote on the full block range for LayoutManager border drawing
-                textStorage.addAttribute(.blockquote, value: true, range: block.range)
+                // Set .blockquote with nesting level per-line for LayoutManager border drawing.
+                // Count `>` prefixes per line to determine depth.
+                let nsStr = textStorage.string as NSString
+                var lineStart = block.range.location
+                let blockEnd = NSMaxRange(block.range)
+                while lineStart < blockEnd {
+                    let lineRange = nsStr.paragraphRange(for: NSRange(location: lineStart, length: 0))
+                    let line = nsStr.substring(with: lineRange).trimmingCharacters(in: .newlines)
+                    var depth = 0
+                    for ch in line {
+                        if ch == ">" { depth += 1 }
+                        else if ch == " " { continue }
+                        else { break }
+                    }
+                    if depth > 0 {
+                        let charRange = NSIntersectionRange(lineRange, block.range)
+                        if charRange.length > 0 {
+                            textStorage.addAttribute(.blockquote, value: depth, range: charRange)
+                        }
+                    }
+                    lineStart = NSMaxRange(lineRange)
+                    if lineStart <= lineRange.location { break }
+                }
 
             case .horizontalRule:
                 // Set .horizontalRule for LayoutManager line drawing

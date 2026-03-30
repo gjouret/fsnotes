@@ -356,7 +356,8 @@ public class MarkdownBlockParser {
 
     private func isUnorderedListItem(_ line: String) -> Bool {
         let stripped = line.trimmingCharacters(in: .whitespaces)
-        return (stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ")) &&
+        // Also match • (U+2022) — Phase 4 substitutes - with • for WYSIWYG display
+        return (stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") || stripped.hasPrefix("\u{2022} ")) &&
                !stripped.hasPrefix("- [ ") && !stripped.hasPrefix("- [x") && !stripped.hasPrefix("- [X")
     }
 
@@ -549,7 +550,8 @@ public class MarkdownBlockParser {
     }
 
     private func emitBlockquote(range: NSRange, string: NSString) {
-        // Parse each line's `> ` prefix as syntax range
+        // Parse ALL `>` prefixes per line as syntax ranges (supports nested blockquotes).
+        // Each `>` (with optional trailing space) is a separate syntax range to hide.
         var syntaxRanges: [NSRange] = []
         var lineStart = range.location
         let end = NSMaxRange(range)
@@ -559,17 +561,27 @@ public class MarkdownBlockParser {
             let line = string.substring(with: lineRange)
             let trimmed = line.trimmingCharacters(in: .newlines)
 
-            if trimmed.hasPrefix("> ") {
-                syntaxRanges.append(NSRange(location: lineRange.location, length: 2))
-            } else if trimmed.hasPrefix(">") {
-                syntaxRanges.append(NSRange(location: lineRange.location, length: 1))
+            // Count and record all `>` prefixes (with optional spaces between them)
+            var pos = 0
+            while pos < trimmed.count {
+                let idx = trimmed.index(trimmed.startIndex, offsetBy: pos)
+                if trimmed[idx] == ">" {
+                    // `>` followed by optional space
+                    let syntaxLen = (pos + 1 < trimmed.count && trimmed[trimmed.index(after: idx)] == " ") ? 2 : 1
+                    syntaxRanges.append(NSRange(location: lineRange.location + pos, length: syntaxLen))
+                    pos += syntaxLen
+                } else if trimmed[idx] == " " {
+                    // Skip leading spaces between `>` markers
+                    pos += 1
+                } else {
+                    break
+                }
             }
 
             lineStart = NSMaxRange(lineRange)
             if lineStart <= lineRange.location { break }
         }
 
-        // Content range excludes the `> ` prefixes (but we keep the full range for styling)
         emitBlock(type: .blockquote, range: range, contentRange: range, syntaxRanges: syntaxRanges)
     }
 
@@ -587,8 +599,8 @@ public class MarkdownBlockParser {
             let leadingSpaces = line.prefix(while: { $0 == " " || $0 == "\t" }).count
 
             if case .unorderedList = type {
-                // Find the marker (-, *, +) and space
-                if stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") {
+                // Find the marker (-, *, +, or • from Phase 4 substitution) and space
+                if stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") || stripped.hasPrefix("\u{2022} ") {
                     syntaxRanges.append(NSRange(location: lineRange.location + leadingSpaces, length: 2))
                 }
             } else if case .orderedList = type {

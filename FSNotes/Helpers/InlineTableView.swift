@@ -87,6 +87,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private let handleBarHeight: CGFloat = 22
     private let handleBarWidth: CGFloat = 22
 
+    // MARK: - Scroll View (for wide tables)
+
+    private var scrollView: NSScrollView!
+    private var gridDocumentView: GridDocumentView!
+
     // MARK: - Init
 
     override init(frame frameRect: NSRect) {
@@ -103,7 +108,56 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         layer?.cornerRadius = 4
         layer?.borderWidth = 0.5
         layer?.borderColor = NSColor.separatorColor.cgColor
+
+        // Set up scroll view for horizontal scrolling on wide tables
+        gridDocumentView = GridDocumentView()
+        gridDocumentView.wantsLayer = true
+        gridDocumentView.drawGrid = { [weak self] dirtyRect, context in
+            self?.drawGridLines(in: context)
+        }
+
+        scrollView = NSScrollView()
+        scrollView.documentView = gridDocumentView
+        scrollView.hasHorizontalScroller = true
+        scrollView.hasVerticalScroller = false
+        scrollView.scrollerStyle = .overlay  // Overlay scroller — no space allocation needed
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.horizontalScrollElasticity = .allowed
+        addSubview(scrollView)
+
+        // Sync column handle positions with horizontal scroll offset
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(scrollViewDidScroll(_:)),
+                                               name: NSView.boundsDidChangeNotification,
+                                               object: scrollView.contentView)
+
         updateTrackingAreas()
+    }
+
+    @objc private func scrollViewDidScroll(_ notification: Notification) {
+        let scrollX = scrollView.contentView.bounds.origin.x
+        for handle in columnHandles {
+            // Each handle stores its original X in its tag-derived position;
+            // shift by negative scroll offset so handles track the grid content
+            handle.frame.origin.x = handle.layer?.value(forKey: "originalX") as? CGFloat ?? handle.frame.origin.x
+        }
+        // Reposition all column handles based on scroll offset
+        updateColumnHandlePositions(scrollOffsetX: scrollX)
+    }
+
+    private func updateColumnHandlePositions(scrollOffsetX: CGFloat) {
+        let showHandles = (focusState == .hovered || focusState == .editing)
+        guard showHandles else { return }
+        let leftMargin: CGFloat = handleBarWidth
+        let columnWidths = contentBasedColumnWidths()
+        var xOffset = leftMargin
+        for (i, handle) in columnHandles.enumerated() {
+            if i < columnWidths.count {
+                handle.frame.origin.x = xOffset - scrollOffsetX
+                xOffset += columnWidths[i]
+            }
+        }
     }
 
     // MARK: - Configuration
@@ -293,15 +347,22 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let rHeights = rowHeights()
         let gridHeight = gridHeightFromRows(rHeights)
 
-        // Frame includes: left margin (row handles) + grid + top margin (column handles)
-        let totalWidth = min(gridWidth + leftMargin, containerWidth)
+        // Frame: clamp to containerWidth, but grid can be wider (scroll view handles overflow)
+        let visibleWidth = min(gridWidth + leftMargin, containerWidth)
         let totalHeight = gridHeight + topMargin
-        self.frame.size = NSSize(width: totalWidth, height: totalHeight)
+        // Add scroller height if table is wider than container
+        self.frame.size = NSSize(width: visibleWidth, height: totalHeight)
+
+        // Position scroll view to cover the grid area (below column handles).
+        // Overlay scroller style means no extra height needed for the scrollbar.
+        scrollView.frame = NSRect(x: 0, y: 0, width: visibleWidth, height: gridHeight)
+        // Document view = full grid width + padding for cell focus ring on trailing edge
+        let focusRingPadding: CGFloat = 8
+        gridDocumentView.frame = NSRect(x: 0, y: 0, width: gridWidth + leftMargin + focusRingPadding, height: gridHeight)
 
         // Remove old handles/buttons (they're recreated based on state)
         columnHandles.forEach { $0.removeFromSuperview() }
         rowHandles.forEach { $0.removeFromSuperview() }
-        // Edge buttons removed
         columnHandles = []
         rowHandles = []
 
@@ -370,12 +431,14 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
 
         // -- Glass UI Handles --
+        // Handles sit above the scroll view; use scrollView top as the base Y
+        let handleBaseY = gridHeight
         if showHandles {
-            buildColumnHandles(colCount: colCount, columnWidths: columnWidths, leftMargin: leftMargin, gridHeight: gridHeight, topMargin: topMargin)
+            buildColumnHandles(colCount: colCount, columnWidths: columnWidths, leftMargin: leftMargin, gridHeight: handleBaseY, topMargin: topMargin)
             buildRowHandles(rowCount: totalRows, leftMargin: leftMargin, gridHeight: gridHeight, topMargin: topMargin, rowHeights: rHeights)
         }
 
-        needsDisplay = true
+        gridDocumentView.needsDisplay = true
         invalidateIntrinsicContentSize()
     }
 
@@ -387,7 +450,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             cell.delegate = self
             cell.cell?.truncatesLastVisibleLine = false
             cell.cell?.lineBreakMode = .byClipping
-            addSubview(cell)
+            gridDocumentView.addSubview(cell)
             cellPool.append(cell)
         }
     }
@@ -395,16 +458,26 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private func configureCell(_ cell: NSTextField, text: String, frame: NSRect, isHeader: Bool, isEditing: Bool, row: Int, col: Int) {
         // Asymmetric padding: 5pt top for visual centering, 2pt bottom to leave room for descenders
         cell.frame = NSRect(x: frame.minX + 4, y: frame.minY + 2, width: frame.width - 8, height: frame.height - 7)
-        // Convert <br> from markdown to newlines for display
-        cell.stringValue = text.replacingOccurrences(of: "<br>", with: "\n")
+
+        let cellFont = isHeader ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13)
+        let cellAlignment = col < alignments.count ? alignments[col] : NSTextAlignment.left
+
+        // When not editing, render inline markdown (bold, italic, strikethrough).
+        // When editing, show raw markdown markers so the user can edit them.
+        if !isEditing && (text.contains("**") || text.contains("*") || text.contains("~~") || text.contains("__")) {
+            cell.attributedStringValue = parseInlineMarkdown(text, font: cellFont, alignment: cellAlignment)
+        } else {
+            cell.stringValue = text.replacingOccurrences(of: "<br>", with: "\n")
+            cell.font = cellFont
+            cell.alignment = cellAlignment
+        }
+
         cell.isHidden = false
         cell.isEditable = isEditing
         cell.isBordered = isEditing
         cell.bezelStyle = .squareBezel
         cell.drawsBackground = isEditing
         cell.backgroundColor = isHeader ? NSColor.controlBackgroundColor : NSColor.textBackgroundColor
-        cell.font = isHeader ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13)
-        cell.alignment = col < alignments.count ? alignments[col] : .left
         cell.tag = row * 1000 + col
         // Support multi-line cells (Return inserts newline, stored as <br> in markdown)
         cell.maximumNumberOfLines = 0
@@ -461,8 +534,12 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     private func showColumnContextMenu(column: Int, at point: NSPoint) {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Insert Column Left", action: #selector(contextInsertColumnLeft(_:)), keyEquivalent: "").tag = column
-        menu.addItem(withTitle: "Insert Column Right", action: #selector(contextInsertColumnRight(_:)), keyEquivalent: "").tag = column
+        let insertLeft = menu.addItem(withTitle: "Insert Column Left", action: #selector(contextInsertColumnLeft(_:)), keyEquivalent: "[")
+        insertLeft.keyEquivalentModifierMask = [.command, .option]
+        insertLeft.tag = column
+        let insertRight = menu.addItem(withTitle: "Insert Column Right", action: #selector(contextInsertColumnRight(_:)), keyEquivalent: "]")
+        insertRight.keyEquivalentModifierMask = [.command, .option]
+        insertRight.tag = column
         if headers.count > 1 {
             menu.addItem(.separator())
             let deleteItem = menu.addItem(withTitle: "Delete Column", action: #selector(contextDeleteColumn(_:)), keyEquivalent: "\u{8}")  // ⌫
@@ -470,20 +547,20 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
         menu.addItem(.separator())
 
-        let leftItem = menu.addItem(withTitle: "Align Left", action: #selector(contextAlignLeft(_:)), keyEquivalent: "l")
-        leftItem.tag = column
-        leftItem.keyEquivalentModifierMask = .command
-        if column < alignments.count && alignments[column] == .left { leftItem.state = .on }
+        let alignLeftItem = menu.addItem(withTitle: "Align Left", action: #selector(contextAlignLeft(_:)), keyEquivalent: "l")
+        alignLeftItem.tag = column
+        alignLeftItem.keyEquivalentModifierMask = .command
+        if column < alignments.count && alignments[column] == .left { alignLeftItem.state = .on }
 
         let centerItem = menu.addItem(withTitle: "Align Center", action: #selector(contextAlignCenter(_:)), keyEquivalent: "e")
         centerItem.tag = column
         centerItem.keyEquivalentModifierMask = .command
         if column < alignments.count && alignments[column] == .center { centerItem.state = .on }
 
-        let rightItem = menu.addItem(withTitle: "Align Right", action: #selector(contextAlignRight(_:)), keyEquivalent: "r")
-        rightItem.tag = column
-        rightItem.keyEquivalentModifierMask = .command
-        if column < alignments.count && alignments[column] == .right { rightItem.state = .on }
+        let alignRightItem = menu.addItem(withTitle: "Align Right", action: #selector(contextAlignRight(_:)), keyEquivalent: "r")
+        alignRightItem.tag = column
+        alignRightItem.keyEquivalentModifierMask = .command
+        if column < alignments.count && alignments[column] == .right { alignRightItem.state = .on }
 
         for item in menu.items { item.target = self }
         NSMenu.popUpContextMenu(menu, with: NSApp.currentEvent!, for: self)
@@ -491,8 +568,12 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     private func showRowContextMenu(row: Int, at point: NSPoint) {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Insert Row Above", action: #selector(contextInsertRowAbove(_:)), keyEquivalent: "").tag = row
-        menu.addItem(withTitle: "Insert Row Below", action: #selector(contextInsertRowBelow(_:)), keyEquivalent: "").tag = row
+        let aboveItem = menu.addItem(withTitle: "Insert Row Above", action: #selector(contextInsertRowAbove(_:)), keyEquivalent: "{")
+        aboveItem.keyEquivalentModifierMask = [.command, .option]
+        aboveItem.tag = row
+        let belowItem = menu.addItem(withTitle: "Insert Row Below", action: #selector(contextInsertRowBelow(_:)), keyEquivalent: "}")
+        belowItem.keyEquivalentModifierMask = [.command, .option]
+        belowItem.tag = row
         if row > 0 && rows.count > 1 {
             menu.addItem(.separator())
             let deleteItem = menu.addItem(withTitle: "Delete Row", action: #selector(contextDeleteRow(_:)), keyEquivalent: "\u{8}")  // ⌫
@@ -615,19 +696,17 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let hasHandles = (focusState == .hovered || focusState == .editing)
         let leftMargin: CGFloat = hasHandles ? handleBarWidth : 0
 
-        // Run a mouse tracking loop until mouseUp
+        let gridWidth = colWidths.reduce(0, +) + leftMargin
+
         guard let window = self.window else { return }
         var targetIndex = column
-        var indicator: NSView? = nil
 
-        // Create insertion indicator (blue line)
-        let ind = NSView()
-        ind.wantsLayer = true
-        ind.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        addSubview(ind)
-        indicator = ind
+        // Create indicator and highlight in the grid document view (scrollable)
+        let indicator = NSView()
+        indicator.wantsLayer = true
+        indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        gridDocumentView.addSubview(indicator)
 
-        // Create source column highlight (blue border)
         let sourceHighlight = NSView()
         sourceHighlight.wantsLayer = true
         sourceHighlight.layer?.borderColor = NSColor.controlAccentColor.cgColor
@@ -635,10 +714,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         sourceHighlight.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
         var srcX = leftMargin
         for i in 0..<column { srcX += colWidths[i] }
-        // Include the column handle above the grid for visual symmetry
-        let topMargin: CGFloat = hasHandles ? handleBarHeight : 0
-        sourceHighlight.frame = NSRect(x: srcX, y: 0, width: colWidths[column], height: gridHeight + topMargin)
-        addSubview(sourceHighlight)
+        sourceHighlight.frame = NSRect(x: srcX, y: 0, width: colWidths[column], height: gridHeight)
+        gridDocumentView.addSubview(sourceHighlight)
+
+        let autoScrollMargin: CGFloat = 30
+        let autoScrollStep: CGFloat = 20
 
         var keepTracking = true
         while keepTracking {
@@ -648,12 +728,27 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             if event.type == .leftMouseUp {
                 keepTracking = false
             } else {
-                // Find which column gap the cursor is nearest
+                // Auto-scroll when dragging near edges of the scroll view
+                let visibleRect = scrollView.contentView.bounds
+                if loc.x < autoScrollMargin {
+                    let newX = max(0, visibleRect.origin.x - autoScrollStep)
+                    scrollView.contentView.scroll(to: NSPoint(x: newX, y: visibleRect.origin.y))
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                } else if loc.x > scrollView.frame.width - autoScrollMargin {
+                    let maxX = max(0, gridWidth - scrollView.frame.width)
+                    let newX = min(maxX, visibleRect.origin.x + autoScrollStep)
+                    scrollView.contentView.scroll(to: NSPoint(x: newX, y: visibleRect.origin.y))
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                }
+
+                // Use document view coordinates for column gap detection
+                let docLoc = gridDocumentView.convert(event.locationInWindow, from: nil)
+
                 var x = leftMargin
                 var bestGap = 0
                 var bestDist: CGFloat = .greatestFiniteMagnitude
                 for i in 0...colCount {
-                    let dist = abs(loc.x - x)
+                    let dist = abs(docLoc.x - x)
                     if dist < bestDist {
                         bestDist = dist
                         bestGap = i
@@ -662,17 +757,16 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 }
                 targetIndex = bestGap
 
-                // Position indicator — clamp to stay within bounds
                 var indX = leftMargin
                 for i in 0..<targetIndex {
                     if i < colWidths.count { indX += colWidths[i] }
                 }
-                let clampedX = min(indX - 1, bounds.width - 2)
-                indicator?.frame = NSRect(x: clampedX, y: 0, width: 2, height: bounds.height)
+                let clampedX = min(indX - 1, gridWidth - 2)
+                indicator.frame = NSRect(x: clampedX, y: 0, width: 2, height: gridHeight)
             }
         }
 
-        indicator?.removeFromSuperview()
+        indicator.removeFromSuperview()
         sourceHighlight.removeFromSuperview()
 
         // Calculate destination: after removing source, where should we insert?
@@ -796,31 +890,32 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Data Collection
 
     func collectCellData() {
-        // Read current text from each cell. If a cell is being edited, its stringValue
-        // is stale — the live text is in the shared field editor. Read from the field
-        // editor for the active cell instead.
-        // Convert display newlines back to <br> for markdown storage.
+        // Only update the data model from cells that show raw markdown text.
+        // When not editing, cells may show formatted attributed text (bold/italic
+        // rendered, markers stripped). Reading stringValue from those cells would
+        // lose the markdown markers (**bold** → bold). The data model already has
+        // the correct values for non-edited cells.
         let fieldEditor = window?.fieldEditor(false, for: nil)
         let activeCell = fieldEditor?.delegate as? NSTextField
+        let isEditingMode = (focusState == .editing)
 
         for (i, cell) in headerCells.enumerated() where i < headers.count {
-            let text: String
             if cell === activeCell, let editor = fieldEditor {
-                text = editor.string
-            } else {
-                text = cell.stringValue
+                // Active cell: read live text from field editor
+                headers[i] = editor.string.replacingOccurrences(of: "\n", with: "<br>")
+            } else if isEditingMode {
+                // Editing mode: cells show raw markdown, safe to read
+                headers[i] = cell.stringValue.replacingOccurrences(of: "\n", with: "<br>")
             }
-            headers[i] = text.replacingOccurrences(of: "\n", with: "<br>")
+            // Non-editing mode: skip — data model already correct
         }
         for (r, rowCells) in dataCells.enumerated() where r < rows.count {
             for (c, cell) in rowCells.enumerated() where c < rows[r].count {
-                let text: String
                 if cell === activeCell, let editor = fieldEditor {
-                    text = editor.string
-                } else {
-                    text = cell.stringValue
+                    rows[r][c] = editor.string.replacingOccurrences(of: "\n", with: "<br>")
+                } else if isEditingMode {
+                    rows[r][c] = cell.stringValue.replacingOccurrences(of: "\n", with: "<br>")
                 }
-                rows[r][c] = text.replacingOccurrences(of: "\n", with: "<br>")
             }
         }
     }
@@ -911,7 +1006,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             handle.frame = NSRect(x: 0, y: yBottom, width: handleBarWidth, height: rowH)
         }
 
-        needsDisplay = true
+        gridDocumentView.needsDisplay = true
         invalidateIntrinsicContentSize()
     }
 
@@ -1072,6 +1167,82 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
     }
 
+    // MARK: - Inline Markdown Formatting
+
+    /// Parse inline markdown (bold, italic, strikethrough) into an NSAttributedString.
+    /// Used to render cell text in WYSIWYG style when not actively editing.
+    private func parseInlineMarkdown(_ text: String, font: NSFont, alignment: NSTextAlignment) -> NSAttributedString {
+        let displayText = text.replacingOccurrences(of: "<br>", with: "\n")
+        let result = NSMutableAttributedString(string: displayText, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.textColor
+        ])
+
+        let patterns: [(pattern: String, trait: NSFontDescriptor.SymbolicTraits)] = [
+            ("\\*\\*(.+?)\\*\\*", .bold),       // **bold**
+            ("__(.+?)__", .bold),                // __bold__
+            ("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)", .italic),  // *italic* (not **)
+            ("_(.+?)_", .italic),                // _italic_
+            ("~~(.+?)~~", []),                   // ~~strikethrough~~ (handled separately)
+        ]
+
+        // Collect ALL matches across all patterns first, then apply in one reverse pass.
+        // Applying per-pattern mutates `result`, making ranges from subsequent patterns invalid.
+        struct MatchInfo {
+            let fullRange: NSRange
+            let content: String
+            let attrs: [NSAttributedString.Key: Any]
+        }
+        var allMatches: [MatchInfo] = []
+
+        let fontManager = NSFontManager.shared
+        let nsText = displayText as NSString
+        for (pattern, trait) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let matches = regex.matches(in: displayText, range: NSRange(location: 0, length: nsText.length))
+            for match in matches {
+                let fullRange = match.range
+                let contentRange = match.range(at: 1)
+                let content = nsText.substring(with: contentRange)
+
+                var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.textColor]
+                if pattern.contains("~~") {
+                    attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+                    attrs[.font] = font
+                } else if trait == .bold {
+                    attrs[.font] = fontManager.convert(font, toHaveTrait: .boldFontMask)
+                } else if trait == .italic {
+                    attrs[.font] = fontManager.convert(font, toHaveTrait: .italicFontMask)
+                }
+
+                allMatches.append(MatchInfo(fullRange: fullRange, content: content, attrs: attrs))
+            }
+        }
+
+        // Sort by location descending so replacements don't invalidate earlier ranges.
+        // Also filter out overlapping matches (e.g., _ inside **bold_text**).
+        allMatches.sort { $0.fullRange.location > $1.fullRange.location }
+
+        var usedRanges: [NSRange] = []
+        allMatches = allMatches.filter { info in
+            let overlaps = usedRanges.contains { NSIntersectionRange($0, info.fullRange).length > 0 }
+            if !overlaps { usedRanges.append(info.fullRange) }
+            return !overlaps
+        }
+
+        for info in allMatches {
+            let styled = NSAttributedString(string: info.content, attributes: info.attrs)
+            result.replaceCharacters(in: info.fullRange, with: styled)
+        }
+
+        // Apply alignment as paragraph style
+        let para = NSMutableParagraphStyle()
+        para.alignment = alignment
+        result.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: result.length))
+
+        return result
+    }
+
     // MARK: - Markdown Generation
 
     func generateMarkdown() -> String {
@@ -1109,22 +1280,17 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Drawing
 
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-
+    /// Draws grid lines and header background inside the gridDocumentView (scrollable).
+    private func drawGridLines(in context: CGContext) {
         let showHandles = (focusState == .hovered || focusState == .editing)
         let leftMargin: CGFloat = showHandles ? handleBarWidth : 0
         let colCount = headers.count
         let totalRows = 1 + rows.count
-        // Use content-based widths (single source of truth) — NOT columnWidthRatios
         let columnWidths = contentBasedColumnWidths()
         let gridWidth = columnWidths.reduce(0, +)
         let rHeights = rowHeights()
         let gridHeight = gridHeightFromRows(rHeights)
 
-        // Grid border — grid occupies y=0 to y=gridHeight
         context.setStrokeColor(NSColor.separatorColor.cgColor)
         context.setLineWidth(gridLineWidth)
 
@@ -1134,7 +1300,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             context.move(to: CGPoint(x: leftMargin, y: lineY))
             context.addLine(to: CGPoint(x: leftMargin + gridWidth, y: lineY))
             if i < rHeights.count {
-                lineY += rHeights[rHeights.count - 1 - i]  // Bottom-up: start from bottom row
+                lineY += rHeights[rHeights.count - 1 - i]
             }
         }
 
@@ -1167,8 +1333,22 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let colWidths = contentBasedColumnWidths()
         let gridWidth = colWidths.reduce(0, +)
         let gridHeight = gridHeightFromRows(rowHeights())
-        let tableWidth = min(gridWidth + leftMargin, containerWidth)
-        return NSSize(width: tableWidth, height: gridHeight + topMargin)
+        let visibleWidth = min(gridWidth + leftMargin, containerWidth)
+        return NSSize(width: visibleWidth, height: gridHeight + topMargin)
+    }
+}
+
+// MARK: - Grid Document View
+
+/// The scrollable content view that draws grid lines (cell borders + header background).
+/// Lives inside the NSScrollView so lines scroll with the cells.
+private class GridDocumentView: NSView {
+    var drawGrid: ((NSRect, CGContext) -> Void)?
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        drawGrid?(dirtyRect, context)
     }
 }
 

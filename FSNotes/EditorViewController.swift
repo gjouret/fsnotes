@@ -228,13 +228,13 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                     break
                     
                 case "viewMenu.historyBack":
-                    if vc.notesTableView.historyPosition == 0 {
+                    if !vc.canGoBack() {
                         return false
                     }
                     break
-                    
+
                 case "viewMenu.historyForward":
-                    if vc.notesTableView.historyPosition == vc.notesTableView.history.count - 1 {
+                    if !vc.canGoForward() {
                         return false
                     }
                     break
@@ -1548,6 +1548,9 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         guard let editor = vcEditor,
               let note = editor.note,
               let vc = ViewController.shared() else { return }
+
+        // Skip save when the text change is from internal rendering (Phase 4 bullet substitution, etc.)
+        if editor.textStorageProcessor?.isRendering == true { return }
 
         vc.prevCommit = nil
 

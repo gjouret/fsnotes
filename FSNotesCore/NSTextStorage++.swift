@@ -257,13 +257,16 @@ extension NSTextStorage {
             for match in matches {
                 let subRange = match.range
                 guard subRange.location < self.length else { continue }
-                
+
                 if let currentBackgroundColor = self.attribute(.backgroundColor, at: subRange.location, effectiveRange: nil) {
                     self.addAttribute(.highlight, value: currentBackgroundColor, range: subRange)
                 } else {
                     self.addAttribute(.highlight, value: NSNull(), range: subRange)
                 }
                 self.addAttribute(.backgroundColor, value: self.highlightColor, range: subRange)
+                // Ensure highlighted text is visible even in hidden syntax regions
+                self.addAttribute(.foregroundColor, value: NSColor.textColor, range: subRange)
+                self.removeAttribute(.kern, range: subRange)
             }
             self.endEditing()
             

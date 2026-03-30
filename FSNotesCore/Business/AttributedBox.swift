@@ -46,6 +46,7 @@ class AttributedBox {
         let checkboxText = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
 
         checkboxText.addAttribute(.todo, value: 0, range: NSRange(0..<1))
+        checkboxText.addAttribute(.font, value: font, range: NSRange(0..<1))
 
         if #available(OSX 10.13, iOS 10.0, *) {
         } else {
@@ -71,6 +72,7 @@ class AttributedBox {
         let checkboxText = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
 
         checkboxText.addAttribute(.todo, value: 1, range: NSRange(0..<1))
+        checkboxText.addAttribute(.font, value: font, range: NSRange(0..<1))
 
         if #available(OSX 10.13, iOS 10.0, *) {
         } else {

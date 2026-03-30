@@ -54,37 +54,39 @@ extension EditTextView {
     
     private func detectCodeBlockContext(at location: Int, in text: NSString) -> CompletionContext? {
         guard location >= 3 else { return nil }
-        guard let ranges = textStorageProcessor?.codeBlockRanges,
-            ranges.contains(where: { $0.contains(location) })
-                || (
-                    // Allow if no code block before
-                    !ranges.contains(where: { $0.contains(location - 1) }) &&
-                    !ranges.contains(where: { $0.contains(location) })
-                )
-        else {
-            return nil
-        }
 
         let checkRange = NSRange(location: location - 3, length: 3)
         let lastChars = text.substring(with: checkRange)
-        
+
         guard lastChars == "```" else {
+            // Only offer language completions if we're on the opening fence line
+            // (not inside a code block at the closing fence)
             return detectCodeBlockLanguageInput(at: location, in: text)
         }
-        
+
+        // Verify this ``` is at the start of a line (only whitespace before it)
         let lineStart = findLineStart(at: location - 3, in: text)
-        
         if lineStart < location - 3 {
             let beforeRange = NSRange(location: lineStart, length: location - 3 - lineStart)
             let beforeText = text.substring(with: beforeRange)
-            
             for char in beforeText {
-                if char != " " && char != "\t" {
-                    return nil
-                }
+                if char != " " && char != "\t" { return nil }
             }
         }
-        
+
+        // Don't show language menu for a CLOSING fence.
+        // Count opening fences (``` at line start) before this position.
+        // Odd count means we're closing an open block → no completion.
+        let textBefore = text.substring(to: location - 3)
+        var fenceCount = 0
+        for line in textBefore.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+            if trimmed.hasPrefix("```") { fenceCount += 1 }
+        }
+        if fenceCount % 2 == 1 {
+            return nil  // Odd number = this ``` closes an open fence
+        }
+
         return .codeBlock(startPos: location)
     }
     
@@ -148,13 +150,24 @@ extension EditTextView {
     
     private func detectTagContext(at location: Int, in text: NSString) -> CompletionContext? {
         guard UserDefaultsManagement.inlineTags && location >= 1 else { return nil }
-        
+
         var searchPos = location - 1
-        
+
         while searchPos >= 0 && location - searchPos < 50 {
             let char = text.substring(with: NSRange(location: searchPos, length: 1))
-            
+
             if char == "#" {
+                // Skip if this is a header (multiple consecutive #'s at line start)
+                if searchPos + 1 < text.length {
+                    let nextChar = text.substring(with: NSRange(location: searchPos + 1, length: 1))
+                    if nextChar == "#" || nextChar == " " {
+                        // Could be a header (## or # followed by space)
+                        let lineStart = findLineStart(at: searchPos, in: text)
+                        if lineStart == searchPos {
+                            break  // Line starts with # — treat as header, not tag
+                        }
+                    }
+                }
                 if isValidTagStart(at: searchPos, in: text) {
                     return .tag(startPos: searchPos)
                 }
@@ -162,10 +175,10 @@ extension EditTextView {
             } else if isWhitespace(char) {
                 break
             }
-            
+
             searchPos -= 1
         }
-        
+
         return nil
     }
     

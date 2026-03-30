@@ -434,6 +434,23 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         
         dragDetected = false
         super.mouseDown(with: event)
+
+        // In WYSIWYG mode, snap cursor out of hidden syntax areas (e.g., ## prefix)
+        if NotesTextProcessor.hideSyntax, let storage = textStorage {
+            var loc = selectedRange().location
+            while loc < storage.length {
+                let color = storage.attribute(.foregroundColor, at: loc, effectiveRange: nil) as? NSColor
+                if color == NSColor.clear {
+                    loc += 1
+                } else {
+                    break
+                }
+            }
+            if loc != selectedRange().location {
+                setSelectedRange(NSRange(location: loc, length: 0))
+            }
+        }
+
         saveSelectedRange()
 
         if !self.dragDetected {
@@ -1132,16 +1149,27 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         if NotesTextProcessor.hideSyntax, let storage = textStorage, let processor = textStorageProcessor {
             let codeBlockRanges = processor.codeBlockRanges
             let string = storage.string as NSString
+            // Half-height paragraph style for hidden fence lines
+            let fenceParaStyle = NSMutableParagraphStyle()
+            fenceParaStyle.maximumLineHeight = CGFloat(UserDefaultsManagement.fontSize) * 0.5
+            fenceParaStyle.lineSpacing = 0
+            let fenceFont = NSFont.systemFont(ofSize: CGFloat(UserDefaultsManagement.fontSize) * 0.5)
+
             for codeRange in codeBlockRanges {
                 guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }
                 let openingLineRange = string.lineRange(for: NSRange(location: codeRange.location, length: 0))
                 if openingLineRange.length > 0 {
+                    // Set font BEFORE hiding — kern calculation uses the current font
+                    storage.addAttribute(.font, value: fenceFont, range: openingLineRange)
+                    storage.addAttribute(.paragraphStyle, value: fenceParaStyle, range: openingLineRange)
                     processor.hideSyntaxRange(openingLineRange, in: storage)
                 }
                 let endLoc = NSMaxRange(codeRange)
                 if endLoc > 0 {
                     let closingLineRange = string.lineRange(for: NSRange(location: endLoc - 1, length: 0))
                     if closingLineRange.length > 0, closingLineRange.location != openingLineRange.location {
+                        storage.addAttribute(.font, value: fenceFont, range: closingLineRange)
+                        storage.addAttribute(.paragraphStyle, value: fenceParaStyle, range: closingLineRange)
                         processor.hideSyntaxRange(closingLineRange, in: storage)
                     }
                 }
@@ -1242,6 +1270,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     @IBAction func boldMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
+        if applyInlineTableCellFormatting("**") { return }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.bold()
     }
@@ -1249,8 +1279,39 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     @IBAction func italicMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
+        if applyInlineTableCellFormatting("*") { return }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.italic()
+    }
+
+    /// If an InlineTableView cell is being edited, wrap the selection (or insert markers at cursor).
+    /// Returns true if formatting was applied to a cell, false if the caller should fall through.
+    private func applyInlineTableCellFormatting(_ marker: String) -> Bool {
+        guard let fieldEditor = window?.fieldEditor(false, for: nil),
+              let cell = fieldEditor.delegate as? NSTextField,
+              cell.superview is InlineTableView else { return false }
+
+        let sel = fieldEditor.selectedRange
+        let nsText = fieldEditor.string as NSString
+
+        if sel.length > 0 {
+            let selected = nsText.substring(with: sel)
+            if selected.hasPrefix(marker) && selected.hasSuffix(marker) && selected.count > marker.count * 2 {
+                let inner = String(selected.dropFirst(marker.count).dropLast(marker.count))
+                fieldEditor.replaceCharacters(in: sel, with: inner)
+                fieldEditor.selectedRange = NSRange(location: sel.location, length: inner.count)
+            } else {
+                let wrapped = marker + selected + marker
+                fieldEditor.replaceCharacters(in: sel, with: wrapped)
+                fieldEditor.selectedRange = NSRange(location: sel.location + marker.count, length: sel.length)
+            }
+        } else {
+            let doubleMarker = marker + marker
+            fieldEditor.replaceCharacters(in: sel, with: doubleMarker)
+            fieldEditor.selectedRange = NSRange(location: sel.location + marker.count, length: 0)
+        }
+        return true
     }
 
     @IBAction func linkMenu(_ sender: Any) {

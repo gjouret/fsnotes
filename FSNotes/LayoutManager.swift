@@ -140,6 +140,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         drawHorizontalRules(forGlyphRange: glyphsToShow, at: origin)
         drawBlockquoteBorders(forGlyphRange: glyphsToShow, at: origin)
         drawHeaderBottomBorders(forGlyphRange: glyphsToShow, at: origin)
+        drawKbdTags(forGlyphRange: glyphsToShow, at: origin)
 
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
@@ -254,16 +255,68 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
         textStorage.enumerateAttribute(.blockquote, in: visibleCharRange.clamped(to: storageFullRange)) { value, range, _ in
             guard value != nil else { return }
+            // Nesting level: Int depth (1 = single >, 2 = >>, etc.) or legacy Bool
+            let depth: Int
+            if let intVal = value as? Int { depth = intVal }
+            else if value is Bool { depth = 1 }
+            else { return }
+
             let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             if glyphRange.length == 0 { return }
             let rect = self.boundingRect(forGlyphRange: glyphRange, in: textContainer)
             if rect.isEmpty { return }
 
-            // MPreview CSS: border-left 4px solid #ddd, padding 0 15px
-            let barX = origin.x + textContainer.lineFragmentPadding + 2
+            // Draw one bar per nesting level, spaced 10pt apart
+            let baseX = origin.x + textContainer.lineFragmentPadding + 2
+            let barSpacing: CGFloat = 10
             context.saveGState()
             context.setFillColor(NSColor(red: 0.867, green: 0.867, blue: 0.867, alpha: 1.0).cgColor) // #ddd
-            context.fill(CGRect(x: barX, y: rect.minY + origin.y, width: 4, height: rect.height))
+            for i in 0..<depth {
+                context.fill(CGRect(x: baseX + CGFloat(i) * barSpacing, y: rect.minY + origin.y, width: 4, height: rect.height))
+            }
+            context.restoreGState()
+        }
+    }
+
+    private func drawKbdTags(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        guard NotesTextProcessor.hideSyntax else { return }
+        guard let textStorage = self.textStorage,
+              let context = NSGraphicsContext.current?.cgContext,
+              let textContainer = self.textContainers.first else { return }
+
+        let visibleCharRange = self.characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        let storageFullRange = NSRange(location: 0, length: textStorage.length)
+
+        textStorage.enumerateAttribute(.kbdTag, in: visibleCharRange.clamped(to: storageFullRange)) { value, range, _ in
+            guard value != nil else { return }
+            let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            if glyphRange.length == 0 { return }
+            let rect = self.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            if rect.isEmpty { return }
+
+            let kbdRect = CGRect(x: rect.minX + origin.x - 2, y: rect.minY + origin.y - 1,
+                                 width: rect.width + 4, height: rect.height + 2)
+            let cornerRadius: CGFloat = 3
+            let path = CGPath(roundedRect: kbdRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+
+            // MPreview CSS: background #fcfcfc, border 1px solid #ccc, border-bottom #bbb,
+            // border-radius 3px, box-shadow inset 0 -1px 0 #bbb, color #555
+            context.saveGState()
+            // Background fill — #fcfcfc
+            context.setFillColor(NSColor(red: 0.988, green: 0.988, blue: 0.988, alpha: 1.0).cgColor)
+            context.addPath(path)
+            context.fillPath()
+            // Border — #ccc
+            context.setStrokeColor(NSColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1.0).cgColor)
+            context.setLineWidth(1.0)
+            context.addPath(path)
+            context.strokePath()
+            // Bottom shadow — inset 0 -1px 0 #bbb (slightly darker bottom edge)
+            let bottomY = kbdRect.maxY - 1
+            context.setStrokeColor(NSColor(red: 0.733, green: 0.733, blue: 0.733, alpha: 1.0).cgColor)
+            context.move(to: CGPoint(x: kbdRect.minX + cornerRadius, y: bottomY))
+            context.addLine(to: CGPoint(x: kbdRect.maxX - cornerRadius, y: bottomY))
+            context.strokePath()
             context.restoreGState()
         }
     }
