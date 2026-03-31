@@ -71,26 +71,26 @@ class FormattingToolbar: NSView {
         // EditTextView has @IBAction methods for each of these selectors.
 
         // Style group
-        addButton(id: "bold", symbol: "bold", tooltip: "Bold (Cmd+B)", action: #selector(EditTextView.boldMenu(_:)))
-        addButton(id: "italic", symbol: "italic", tooltip: "Italic (Cmd+I)", action: #selector(EditTextView.italicMenu(_:)))
-        addButton(id: "underline", symbol: "underline", tooltip: "Underline (Cmd+U)", action: #selector(EditTextView.underlineMenu(_:)))
-        addButton(id: "strikethrough", symbol: "strikethrough", tooltip: "Strikethrough", action: #selector(EditTextView.strikeMenu(_:)))
-        addButton(id: "highlight", symbol: "highlighter", tooltip: "Highlight", action: #selector(EditTextView.highlightMenu(_:)))
+        addButton(id: "bold", symbol: "bold", tooltip: "Bold (Cmd+B)", action: #selector(EditTextView.boldMenu(_:)), isToggle: true)
+        addButton(id: "italic", symbol: "italic", tooltip: "Italic (Cmd+I)", action: #selector(EditTextView.italicMenu(_:)), isToggle: true)
+        addButton(id: "underline", symbol: "underline", tooltip: "Underline (Cmd+U)", action: #selector(EditTextView.underlineMenu(_:)), isToggle: true)
+        addButton(id: "strikethrough", symbol: "strikethrough", tooltip: "Strikethrough", action: #selector(EditTextView.strikeMenu(_:)), isToggle: true)
+        addButton(id: "highlight", symbol: "highlighter", tooltip: "Highlight", action: #selector(EditTextView.highlightMenu(_:)), isToggle: true)
 
         addSeparator()
 
         // Heading group
-        addButton(id: "h1", title: "H1", tooltip: "Heading 1", action: #selector(EditTextView.headerMenu1(_:)))
-        addButton(id: "h2", title: "H2", tooltip: "Heading 2", action: #selector(EditTextView.headerMenu2(_:)))
-        addButton(id: "h3", title: "H3", tooltip: "Heading 3", action: #selector(EditTextView.headerMenu3(_:)))
+        addButton(id: "h1", title: "H1", tooltip: "Heading 1", action: #selector(EditTextView.headerMenu1(_:)), isToggle: true)
+        addButton(id: "h2", title: "H2", tooltip: "Heading 2", action: #selector(EditTextView.headerMenu2(_:)), isToggle: true)
+        addButton(id: "h3", title: "H3", tooltip: "Heading 3", action: #selector(EditTextView.headerMenu3(_:)), isToggle: true)
 
         addSeparator()
 
         // Block group
-        addButton(id: "quote", symbol: "text.quote", tooltip: "Quote", action: #selector(EditTextView.quoteMenu(_:)))
-        addButton(id: "bulletList", symbol: "list.bullet", tooltip: "Bullet List", action: #selector(EditTextView.bulletListMenu(_:)))
-        addButton(id: "numberedList", symbol: "list.number", tooltip: "Numbered List", action: #selector(EditTextView.numberedListMenu(_:)))
-        addButton(id: "checkbox", symbol: "checkmark.square", tooltip: "Checkbox", action: #selector(EditTextView.todo(_:)))
+        addButton(id: "quote", symbol: "text.quote", tooltip: "Quote", action: #selector(EditTextView.quoteMenu(_:)), isToggle: true)
+        addButton(id: "bulletList", symbol: "list.bullet", tooltip: "Bullet List", action: #selector(EditTextView.bulletListMenu(_:)), isToggle: true)
+        addButton(id: "numberedList", symbol: "list.number", tooltip: "Numbered List", action: #selector(EditTextView.numberedListMenu(_:)), isToggle: true)
+        addButton(id: "checkbox", symbol: "checkmark.square", tooltip: "Checkbox", action: #selector(EditTextView.todo(_:)), isToggle: true)
 
         addSeparator()
 
@@ -110,11 +110,11 @@ class FormattingToolbar: NSView {
 
     // MARK: - Button Creation
 
-    private func addButton(id: String, symbol: String? = nil, title: String? = nil, tooltip: String, action: Selector) {
+    private func addButton(id: String, symbol: String? = nil, title: String? = nil, tooltip: String, action: Selector, isToggle: Bool = false) {
         let button = NSButton()
         button.bezelStyle = .accessoryBarAction
         button.isBordered = true
-        button.setButtonType(.momentaryPushIn)
+        button.setButtonType(isToggle ? .pushOnPushOff : .momentaryPushIn)
 
         if let symbol = symbol {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
@@ -177,15 +177,36 @@ class FormattingToolbar: NSView {
             return
         }
 
+        // Determine heading level from block model (reliable) instead of font size (fragile).
+        // Use paragraph range intersection — the cursor at end-of-line is past block.range
+        // but still logically on the heading line.
+        var headingLevel = 0
+        let paragraphRange = (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: 0))
+        if let processor = editor.textStorageProcessor {
+            for block in processor.blocks {
+                guard NSIntersectionRange(paragraphRange, block.range).length > 0 else { continue }
+                switch block.type {
+                case .heading(let level): headingLevel = level
+                case .headingSetext(let level): headingLevel = level
+                default: break
+                }
+                if headingLevel > 0 { break }
+            }
+        }
+
+        setButtonState("h1", active: headingLevel == 1)
+        setButtonState("h2", active: headingLevel == 2)
+        setButtonState("h3", active: headingLevel >= 3)
+
+        // Inline formatting — suppress bold/italic when inside a heading
+        // (headings are rendered bold by definition, not because user toggled bold)
         if let font = storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont {
             let traits = font.fontDescriptor.symbolicTraits
-            setButtonState("bold", active: traits.contains(.bold))
-            setButtonState("italic", active: traits.contains(.italic))
-
-            let baseSize = UserDefaultsManagement.noteFont.pointSize
-            setButtonState("h1", active: font.pointSize >= baseSize * 2)
-            setButtonState("h2", active: font.pointSize >= baseSize * 1.5 && font.pointSize < baseSize * 2)
-            setButtonState("h3", active: font.pointSize >= baseSize * 1.17 && font.pointSize < baseSize * 1.5)
+            setButtonState("bold", active: headingLevel == 0 && traits.contains(.bold))
+            setButtonState("italic", active: headingLevel == 0 && traits.contains(.italic))
+        } else {
+            setButtonState("bold", active: false)
+            setButtonState("italic", active: false)
         }
 
         let hasStrike = storage.attribute(.strikethroughStyle, at: location, effectiveRange: nil) != nil
@@ -201,7 +222,6 @@ class FormattingToolbar: NSView {
             setButtonState("highlight", active: false)
         }
 
-        let paragraphRange = (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: 0))
         let paragraphText = (storage.string as NSString).substring(with: paragraphRange).trimmingCharacters(in: .whitespaces)
 
         setButtonState("quote", active: paragraphText.hasPrefix(">"))

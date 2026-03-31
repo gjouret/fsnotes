@@ -272,8 +272,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
         guard editedMask != .editedAttributes else { return }
         process(textStorage: textStorage, range: editedRange, changeInLength: delta)
-            
-        if editedMask.contains(.editedCharacters), delta < 0 {
+
+        // Force redraw after any character edit so gutter icons update
+        // (previously only triggered on deletions, missing new headers)
+        if editedMask.contains(.editedCharacters) {
             if let layoutManager = textStorage.layoutManagers.first,
                let textContainer = layoutManager.textContainers.first,
                let textView = textContainer.textView {
@@ -382,22 +384,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             return
         }
 
-        if editedRange.length == textStorage.length || blocks.isEmpty {
-            // Full parse (initial load or first time).
-            MarkdownBlockParser.parsePreservingRendered(&blocks, string: string)
-        } else {
-            // Incremental: adjust existing blocks, re-parse dirty ones
-            var dirtyIndices = MarkdownBlockParser.adjustBlocks(&blocks, forEditAt: editedRange.location, delta: delta)
-
-            // Also mark the block at the edit location as dirty
-            if let editIdx = MarkdownBlockParser.blockIndex(in: blocks, containing: min(editedRange.location, string.length - 1)) {
-                dirtyIndices.insert(editIdx)
-            }
-
-            if !dirtyIndices.isEmpty {
-                MarkdownBlockParser.reparseBlocks(&blocks, dirtyIndices: dirtyIndices, string: string)
-            }
-        }
+        // Always do a full reparse — ensures heading detection is correct on every keystroke.
+        // parsePreservingRendered keeps rendered blocks (mermaid/math) intact.
+        MarkdownBlockParser.parsePreservingRendered(&blocks, string: string)
     }
 
     // MARK: - Phase 5: Block-Aware Paragraph Styles

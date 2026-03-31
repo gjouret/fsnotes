@@ -778,6 +778,14 @@ public class Note: NSObject  {
         // Full serialization pipeline: bullet restore + rendered block restore + attachment unload
         let copy = NSMutableAttributedString(attributedString: content)
         _ = NoteSerializer.prepareForSave(copy)
+
+        // SAFETY: If serialization produced empty content from non-empty input, abort.
+        // This catches bugs in the serialization pipeline that would wipe the file.
+        if copy.length == 0 && content.length > 0 {
+            NSLog("SAVE BLOCKED: serialization produced empty content from \(content.length)-char input for: \(title)")
+            return
+        }
+
         modifiedLocalAt = Date()
 
         if write(attributedString: copy) {
@@ -811,9 +819,9 @@ public class Note: NSObject  {
     private func write(attributedString: NSAttributedString) -> Bool {
         let url = getURL()
         let attributes = getFileAttributes()
-        
+
         do {
-            let fileWrapper = getFileWrapper(attributedString: attributedString)
+            let fileWrapper = try getFileWrapper(attributedString: attributedString)
 
             if isTextBundle() {
                 let jsonUrl = url.appendingPathComponent("info.json")
@@ -847,7 +855,7 @@ public class Note: NSObject  {
                 }
             }
         } catch {
-            NSLog("Write error \(error)")
+            NSLog("SAVE ERROR (content preserved on disk): \(error)")
             return false
         }
 
@@ -976,17 +984,13 @@ public class Note: NSObject  {
         return attributes
     }
     
-    func getFileWrapper(attributedString: NSAttributedString, forcePlain: Bool = false) -> FileWrapper {
-        do {
-            let range = NSRange(location: 0, length: attributedString.length)
+    func getFileWrapper(attributedString: NSAttributedString, forcePlain: Bool = false) throws -> FileWrapper {
+        let range = NSRange(location: 0, length: attributedString.length)
 
-            return try attributedString.fileWrapper(from: range, documentAttributes: [
-                .documentType : NSAttributedString.DocumentType.plain,
-                .characterEncoding : NSNumber(value: String.Encoding.utf8.rawValue)
-            ])
-        } catch {
-            return FileWrapper()
-        }
+        return try attributedString.fileWrapper(from: range, documentAttributes: [
+            .documentType : NSAttributedString.DocumentType.plain,
+            .characterEncoding : NSNumber(value: String.Encoding.utf8.rawValue)
+        ])
     }
         
     func getTitleWithoutLabel() -> String {
