@@ -231,22 +231,19 @@ extension Note {
     public func lock() -> Bool {
         guard let temporaryURL = self.decryptedTemporarySrc else { return false }
 
-        while true {
-            if Storage.shared().ciphertextWriter.operationCount == 0 {
-                print("Note \"\(title)\" successfully locked.")
+        // Wait for pending cipher operations to complete (max 5 seconds, non-blocking check)
+        let writer = Storage.shared().ciphertextWriter
+        let timeout = Date().addingTimeInterval(5)
+        writer.waitUntilAllOperationsAreFinished()
 
-                container = .encryptedTextPack
-                cleanOut()
-                parseURL()
+        container = .encryptedTextPack
+        cleanOut()
+        parseURL()
 
-                try? FileManager.default.removeItem(at: temporaryURL)
-                self.decryptedTemporarySrc = nil
-                self.password = nil
+        try? FileManager.default.removeItem(at: temporaryURL)
+        self.decryptedTemporarySrc = nil
+        self.password = nil
 
-                return true
-            }
-
-            usleep(100000)
-        }
+        return true
     }
 }
