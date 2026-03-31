@@ -47,6 +47,12 @@ class AttributedBox {
 
         checkboxText.addAttribute(.todo, value: 0, range: NSRange(0..<1))
         checkboxText.addAttribute(.font, value: font, range: NSRange(0..<1))
+        // Ensure no stale syntax-hiding attributes (negative kern, clear color)
+        // leak onto the checkbox from previous text at the insertion point.
+        checkboxText.removeAttribute(.kern, range: NSRange(0..<1))
+        #if os(macOS)
+        checkboxText.addAttribute(.foregroundColor, value: NSColor.textColor, range: NSRange(0..<1))
+        #endif
 
         if #available(OSX 10.13, iOS 10.0, *) {
         } else {
@@ -54,9 +60,8 @@ class AttributedBox {
             checkboxText.addAttribute(.baselineOffset, value: offset, range: NSRange(0..<1))
         }
 
-        let parStyle = NSMutableParagraphStyle()
-        parStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
-        checkboxText.addAttribute(.paragraphStyle, value: parStyle, range: NSRange(0..<1))
+        // Do NOT set .paragraphStyle here — phase5 is the single source of truth
+        // for paragraph styles (headIndent, firstLineHeadIndent, spacing, etc.).
 
         return checkboxText
     }
@@ -73,6 +78,10 @@ class AttributedBox {
 
         checkboxText.addAttribute(.todo, value: 1, range: NSRange(0..<1))
         checkboxText.addAttribute(.font, value: font, range: NSRange(0..<1))
+        checkboxText.removeAttribute(.kern, range: NSRange(0..<1))
+        #if os(macOS)
+        checkboxText.addAttribute(.foregroundColor, value: NSColor.textColor, range: NSRange(0..<1))
+        #endif
 
         if #available(OSX 10.13, iOS 10.0, *) {
         } else {
@@ -80,9 +89,8 @@ class AttributedBox {
             checkboxText.addAttribute(.baselineOffset, value: offset, range: NSRange(0..<1))
         }
 
-        let parStyle = NSMutableParagraphStyle()
-        parStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
-        checkboxText.addAttribute(.paragraphStyle, value: parStyle, range: NSRange(0..<1))
+        // Do NOT set .paragraphStyle here — phase5 is the single source of truth
+        // for paragraph styles (headIndent, firstLineHeadIndent, spacing, etc.).
 
         return checkboxText
     }

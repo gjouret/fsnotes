@@ -579,14 +579,23 @@ public class TextFormatter {
             && paragraphRange.upperBound - 2 < cursorLocation
 
         // --- 1. Checkbox (todo) ---
-        if cursorNearEnd && paragraph.length >= 2 {
-            // Check if character before cursor has .todo attribute (empty checkbox case)
-            if cursorLocation > 1 && cursorLocation - 2 < paragraph.length {
-                let localIdx = cursorLocation - paragraphRange.location - 2
-                if localIdx >= 0 && localIdx < paragraph.length {
-                    if paragraph.attribute(.todo, at: localIdx, effectiveRange: nil) != nil {
-                        return .exitTodo(paragraphRange: paragraphRange)
-                    }
+        if paragraph.length >= 2 {
+            // Check if paragraph has a todo attribute (checkbox)
+            var hasTodo = false
+            paragraph.enumerateAttribute(.todo, in: NSRange(0..<paragraph.length), options: []) { value, _, stop in
+                if value != nil { hasTodo = true; stop.pointee = true }
+            }
+
+            if hasTodo {
+                // Check if the line is empty (only checkbox + space, no text content).
+                // Same pattern as bullet/numbered lists: empty marker → exit list.
+                let content = paragraphString
+                    .replacingOccurrences(of: "\u{FFFC}", with: "")  // Remove attachment char
+                    .replacingOccurrences(of: "- [ ] ", with: "")     // Remove raw markdown
+                    .replacingOccurrences(of: "- [x] ", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if content.isEmpty {
+                    return .exitTodo(paragraphRange: paragraphRange)
                 }
             }
 
@@ -782,6 +791,14 @@ public class TextFormatter {
             let insertRange = NSRange(location: pRange.location + offset, length: 0)
             let selectRange = NSRange(location: range.location + 2, length: range.length)
             insertText(AttributedBox.getUnChecked()!, replacementRange: insertRange, selectRange: selectRange)
+            #if os(OSX)
+            // Set clean typing attributes so text typed after the checkbox
+            // doesn't inherit stale attributes (negative kern, wrong color).
+            textView.typingAttributes = [
+                .font: prefs.noteFont,
+                .foregroundColor: NotesTextProcessor.fontColor
+            ]
+            #endif
             return
         }
 

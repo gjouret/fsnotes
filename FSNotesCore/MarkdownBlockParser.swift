@@ -124,7 +124,7 @@ public class MarkdownBlockParser {
         for i in 0..<blocks.count {
             let block = blocks[i]
 
-            if NSMaxRange(block.range) <= editLocation {
+            if NSMaxRange(block.range) < editLocation {
                 // Block is entirely before the edit — unchanged
                 continue
             } else if block.range.location > editLocation {
@@ -432,13 +432,28 @@ public class MarkdownBlockParser {
                 state = .inBlockquote(start: lineRange.location)
 
             case .todoItem(let checked):
-                let markerLen = checked ? 6 : 6 // "- [ ] " or "- [x] "
-                let syntaxRange = NSRange(location: lineRange.location, length: min(markerLen, lineRange.length))
-                let contentStart = lineRange.location + min(markerLen, lineRange.length)
-                let contentLen = max(0, lineRange.length - markerLen)
-                emitBlock(type: .todoItem(checked: checked), range: lineRange,
-                         contentRange: NSRange(location: contentStart, length: contentLen),
-                         syntaxRanges: [syntaxRange])
+                // If line starts with attachment char (rendered checkbox), there's no
+                // markdown syntax to hide — the attachment IS the rendered form.
+                // Only hide syntax for raw markdown "- [ ] ".
+                let lineText = string.substring(with: lineRange)
+                if lineText.hasPrefix("\u{FFFC}") {
+                    // Rendered checkbox: attachment (1 char) + space (1 char) = 2
+                    let markerLen = 2
+                    let contentStart = lineRange.location + min(markerLen, lineRange.length)
+                    let contentLen = max(0, lineRange.length - markerLen)
+                    emitBlock(type: .todoItem(checked: checked), range: lineRange,
+                             contentRange: NSRange(location: contentStart, length: contentLen),
+                             syntaxRanges: [])  // No syntax to hide
+                } else {
+                    // Raw markdown: "- [ ] " = 6 chars
+                    let markerLen = 6
+                    let syntaxRange = NSRange(location: lineRange.location, length: min(markerLen, lineRange.length))
+                    let contentStart = lineRange.location + min(markerLen, lineRange.length)
+                    let contentLen = max(0, lineRange.length - markerLen)
+                    emitBlock(type: .todoItem(checked: checked), range: lineRange,
+                             contentRange: NSRange(location: contentStart, length: contentLen),
+                             syntaxRanges: [syntaxRange])
+                }
 
             case .unorderedListItem:
                 state = .inUnorderedList(start: lineRange.location)

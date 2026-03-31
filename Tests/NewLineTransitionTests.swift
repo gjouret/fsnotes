@@ -437,14 +437,115 @@ class NewLineTransitionTests: XCTestCase {
                 XCTAssertLessThan(p.firstLineHeadIndent, p.headIndent,
                                   "\(name): firstLineHeadIndent (\(p.firstLineHeadIndent)) must be < headIndent (\(p.headIndent))")
 
-                // All list types should have the same headIndent (consistent alignment)
-                if referenceHeadIndent < 0 {
-                    referenceHeadIndent = p.headIndent
-                } else {
-                    XCTAssertEqual(p.headIndent, referenceHeadIndent, accuracy: 2.0,
-                                   "\(name): headIndent (\(p.headIndent)) should match bullet (\(referenceHeadIndent))")
+                // Bullet and numbered lists should have the same headIndent.
+                // Todo items may differ (checkbox attachment has different width than • marker).
+                if name != "todo" {
+                    if referenceHeadIndent < 0 {
+                        referenceHeadIndent = p.headIndent
+                    } else {
+                        XCTAssertEqual(p.headIndent, referenceHeadIndent, accuracy: 2.0,
+                                       "\(name): headIndent (\(p.headIndent)) should match bullet (\(referenceHeadIndent))")
+                    }
                 }
             }
+        }
+    }
+
+    /// Simulate CMD+T on a blank line then type characters — all should be visible.
+    func test_cmdT_then_type_characters_visible() {
+        let outputDir = NSHomeDirectory() + "/unit-tests"
+        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+
+        let savedHideSyntax = NotesTextProcessor.hideSyntax
+        NotesTextProcessor.hideSyntax = true
+        defer { NotesTextProcessor.hideSyntax = savedHideSyntax }
+
+        let editor = makeFullPipelineEditor()
+        editor.textStorage?.setAttributedString(NSMutableAttributedString(string: "Some text\n"))
+        runFullPipeline(editor)
+
+        // Place cursor at end (blank area after \n)
+        editor.setSelectedRange(NSRange(location: editor.textStorage!.length, length: 0))
+
+        // Press CMD+T — calls todo() which inserts checkbox
+        let formatter = TextFormatter(textView: editor, note: editor.note!)
+        formatter.todo()
+
+        // Pump run loop for async operations
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+
+        let afterTodo = editor.textStorage!.string
+        let cursorAfterTodo = editor.selectedRange().location
+        print("After CMD+T: storage=\"\(afterTodo.debugDescription)\" cursor=\(cursorAfterTodo)")
+
+        // Log blocks after CMD+T
+        if let proc = editor.textStorageProcessor {
+            print("Blocks after CMD+T:")
+            for (i, b) in proc.blocks.enumerated() {
+                print("  block[\(i)]: \(b.type) range=\(b.range)")
+            }
+        }
+
+        // Now type "Hello" one character at a time
+        for (i, ch) in "Hello".enumerated() {
+            editor.insertText(String(ch), replacementRange: editor.selectedRange())
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+
+            let cursorNow = editor.selectedRange().location
+            let storageStr = editor.textStorage!.string
+
+            // The typed character should be in the storage
+            let typed = String("Hello".prefix(i + 1))
+            XCTAssertTrue(storageStr.contains(typed),
+                          "After typing '\(ch)' (char \(i+1)): storage should contain \"\(typed)\" but got \"\(storageStr.debugDescription)\"")
+
+            print("  typed '\(ch)': cursor=\(cursorNow) storage=\"\(storageStr.prefix(30).debugDescription)\"")
+        }
+
+        // Force layout and snapshot
+        editor.layoutSubtreeIfNeeded()
+        editor.display()
+        saveSnapshot(editor, to: "\(outputDir)/cmdT_type.png")
+
+        // Verify all characters are visible by checking line fragment width
+        if let lm = editor.layoutManager {
+            let todoLineStart = (editor.textStorage!.string as NSString).range(of: "Hello").location
+            if todoLineStart != NSNotFound {
+                let glyphIdx = lm.glyphIndexForCharacter(at: todoLineStart)
+                let usedRect = lm.lineFragmentUsedRect(forGlyphAt: glyphIdx, effectiveRange: nil)
+                print("Todo line usedRect: \(usedRect)")
+                // Width should be at least the width of "Hello" in the current font
+                let expectedMinWidth = ("Hello" as NSString).size(withAttributes: [.font: UserDefaultsManagement.noteFont]).width
+                XCTAssertGreaterThan(usedRect.width, expectedMinWidth * 0.8,
+                                     "Todo line should have visible width for 'Hello' text, got \(usedRect.width) (expected >\(expectedMinWidth * 0.8))")
+            } else {
+                XCTFail("'Hello' not found in storage after typing")
+            }
+        }
+
+        // Check attributes on the checkbox AND first few text characters
+        let todoStart = (editor.textStorage!.string as NSString).range(of: "\u{FFFC}").location
+        if todoStart != NSNotFound {
+            for offset in 0..<min(7, editor.textStorage!.length - todoStart) {
+                let idx = todoStart + offset
+                let attrs = editor.textStorage!.attributes(at: idx, effectiveRange: nil)
+                let ch = (editor.textStorage!.string as NSString).substring(with: NSRange(location: idx, length: 1))
+                let escaped = ch == "\u{FFFC}" ? "□" : (ch == " " ? "SPC" : ch)
+                var summary = ""
+                for (key, val) in attrs {
+                    if key == .foregroundColor || key == .kern || key == .font || key == .paragraphStyle {
+                        summary += " \(key.rawValue)=\(val)"
+                    }
+                }
+                print("  [\(idx)] '\(escaped)'\(summary)")
+            }
+        }
+
+        // Check paragraph style on the todo line
+        let helloLoc = (editor.textStorage!.string as NSString).range(of: "Hello").location
+        if helloLoc != NSNotFound {
+            let para = editor.textStorage!.attribute(.paragraphStyle, at: helloLoc, effectiveRange: nil) as? NSParagraphStyle
+            print("Todo line paragraph: headIndent=\(para?.headIndent ?? -1) firstLine=\(para?.firstLineHeadIndent ?? -1)")
         }
     }
 

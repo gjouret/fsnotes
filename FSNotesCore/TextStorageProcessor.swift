@@ -560,8 +560,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                         markerWidth = rawMarker.widthOfString(usingFont: font, tabs: tabs)
                     }
 
-                    paragraph.headIndent = max(markerWidth, listIndent)
-                    paragraph.firstLineHeadIndent = paragraph.headIndent - markerWidth
+                    // Checkbox at left margin, wrapped text indents to after checkbox.
+                    // Unlike bullet text (where firstLineHeadIndent offsets the marker),
+                    // the checkbox is an attachment that renders inline — text flows after it.
+                    paragraph.firstLineHeadIndent = 0
+                    paragraph.headIndent = markerWidth
                     paragraph.lineSpacing = 7
                     let prevIsTodo = prevBlock.map { self.isListBlock($0.type) } ?? false
                     let nextIsTodo = nextBlock.map { self.isListBlock($0.type) } ?? false
