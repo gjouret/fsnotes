@@ -346,12 +346,17 @@ public class MarkdownBlockParser {
 
     private func isTodoItem(_ line: String) -> Bool? {
         let stripped = line.trimmingCharacters(in: .whitespaces)
+        // Raw markdown checkboxes
         if stripped.hasPrefix("- [ ] ") || stripped.hasPrefix("* [ ] ") || stripped.hasPrefix("+ [ ] ") {
             return false
         }
         if stripped.hasPrefix("- [x] ") || stripped.hasPrefix("* [x] ") || stripped.hasPrefix("+ [x] ") ||
            stripped.hasPrefix("- [X] ") || stripped.hasPrefix("* [X] ") || stripped.hasPrefix("+ [X] ") {
             return true
+        }
+        // Rendered checkbox: attachment character (U+FFFC) replaces "- [ ] " after loadTasks()
+        if stripped.hasPrefix("\u{FFFC}") {
+            return false  // treat as unchecked by default; actual state is in the attachment
         }
         return nil
     }

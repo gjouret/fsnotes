@@ -347,11 +347,14 @@ class NewLineTransitionTests: XCTestCase {
         return editor
     }
 
-    /// Simulate fill(): set note.content, set textStorage, let didProcessEditing run.
-    /// Pumps the main run loop so async operations (BulletProcessor) complete.
+    /// Simulate fill(): load tasks (checkbox attachments), set note.content,
+    /// trigger didProcessEditing pipeline, pump run loop for async BulletProcessor.
     /// Caller must set NotesTextProcessor.hideSyntax before calling.
     private func runFullPipeline(_ editor: EditTextView) {
         guard let storage = editor.textStorage, let note = editor.note else { return }
+
+        // Load checkbox attachments (converts "- [ ] " → checkbox NSTextAttachment)
+        storage.loadTasks()
 
         // Set note.content to match storage (prevents hash-based early return in process())
         let content = NSMutableAttributedString(attributedString: storage)
@@ -389,6 +392,59 @@ class NewLineTransitionTests: XCTestCase {
         if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
             try? pngData.write(to: URL(fileURLWithPath: path))
             print("Saved: \(path)")
+        }
+    }
+
+    /// All list types (bullet, numbered, todo) should have consistent indentation.
+    /// Parameterized: checks headIndent > 0 and firstLineHeadIndent < headIndent for each.
+    func test_all_list_types_indent_consistently() {
+        let outputDir = NSHomeDirectory() + "/unit-tests"
+        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+
+        let savedHideSyntax = NotesTextProcessor.hideSyntax
+        NotesTextProcessor.hideSyntax = true
+        defer { NotesTextProcessor.hideSyntax = savedHideSyntax }
+
+        let listCases: [(name: String, markdown: String)] = [
+            ("bullet", "- Bullet item with long text that wraps to next line for indent test"),
+            ("numbered", "1. Numbered item with long text that wraps to next line for indent test"),
+            ("todo", "- [ ] Task item with long text that wraps to next line for indent test"),
+        ]
+
+        var referenceHeadIndent: CGFloat = -1
+
+        for (name, markdown) in listCases {
+            let editor = makeFullPipelineEditor()
+            editor.textStorage?.setAttributedString(NSMutableAttributedString(string: markdown))
+            runFullPipeline(editor)
+            saveSnapshot(editor, to: "\(outputDir)/list_\(name).png")
+
+            guard let storage = editor.textStorage, storage.length > 0 else {
+                XCTFail("\(name): empty storage")
+                continue
+            }
+
+            // Log
+            let para = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+            let blocks = editor.textStorageProcessor?.blocks ?? []
+            print("[\(name)] headIndent=\(para?.headIndent ?? -1) firstLine=\(para?.firstLineHeadIndent ?? -1) blocks=\(blocks.map { "\($0.type)" }) string=\"\(storage.string.prefix(20))\"")
+
+            // Assert: must be indented
+            XCTAssertNotNil(para, "\(name): should have paragraph style")
+            if let p = para {
+                XCTAssertGreaterThan(p.headIndent, 0,
+                                     "\(name): headIndent (\(p.headIndent)) must be > 0 (indented)")
+                XCTAssertLessThan(p.firstLineHeadIndent, p.headIndent,
+                                  "\(name): firstLineHeadIndent (\(p.firstLineHeadIndent)) must be < headIndent (\(p.headIndent))")
+
+                // All list types should have the same headIndent (consistent alignment)
+                if referenceHeadIndent < 0 {
+                    referenceHeadIndent = p.headIndent
+                } else {
+                    XCTAssertEqual(p.headIndent, referenceHeadIndent, accuracy: 2.0,
+                                   "\(name): headIndent (\(p.headIndent)) should match bullet (\(referenceHeadIndent))")
+                }
+            }
         }
     }
 

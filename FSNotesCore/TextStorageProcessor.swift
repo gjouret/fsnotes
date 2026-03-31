@@ -538,12 +538,35 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     paragraph.paragraphSpacing = isLastLine ? 16 : 0
 
                 case .todoItem:
-                    let markerWidth = "- [ ] ".widthOfString(usingFont: font, tabs: tabs)
-                    paragraph.headIndent = markerWidth
+                    // Same indent pattern as bullet/numbered lists.
+                    // Detect the marker: either raw "- [ ] " or attachment char (U+FFFC) + space.
+                    let listIndent = baseSize * 2
+                    var markerWidth: CGFloat = 0
+
+                    // Check if the line starts with attachment character (rendered checkbox)
+                    let lineStr = (textStorage.string as NSString).substring(with: parRange)
+                    if lineStr.hasPrefix("\u{FFFC}") {
+                        // Attachment: measure the attachment cell's width
+                        if parRange.location < textStorage.length,
+                           let attachment = textStorage.attribute(.attachment, at: parRange.location, effectiveRange: nil) as? NSTextAttachment,
+                           let cell = attachment.attachmentCell as? NSCell {
+                            markerWidth = cell.cellSize.width + 4  // + padding
+                        } else {
+                            markerWidth = 22  // fallback
+                        }
+                    } else {
+                        // Raw markdown "- [ ] " — measure text width
+                        let rawMarker = "- [ ] "
+                        markerWidth = rawMarker.widthOfString(usingFont: font, tabs: tabs)
+                    }
+
+                    paragraph.headIndent = max(markerWidth, listIndent)
+                    paragraph.firstLineHeadIndent = paragraph.headIndent - markerWidth
+                    paragraph.lineSpacing = 7
                     let prevIsTodo = prevBlock.map { self.isListBlock($0.type) } ?? false
                     let nextIsTodo = nextBlock.map { self.isListBlock($0.type) } ?? false
-                    paragraph.paragraphSpacingBefore = prevIsTodo ? 4 : 8
-                    paragraph.paragraphSpacing = nextIsTodo ? 4 : 16
+                    paragraph.paragraphSpacingBefore = prevIsTodo ? 2 : 0
+                    paragraph.paragraphSpacing = nextIsTodo ? 0 : 16
 
                 case .blockquote:
                     // blockquote: margin 0, padding 0 15px, border-left 4px #ddd
