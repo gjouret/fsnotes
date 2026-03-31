@@ -358,8 +358,11 @@ public class MarkdownBlockParser {
 
     private func isUnorderedListItem(_ line: String) -> Bool {
         let stripped = line.trimmingCharacters(in: .whitespaces)
-        // Also match • (U+2022) — Phase 4 substitutes - with • for WYSIWYG display
-        return (stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") || stripped.hasPrefix("\u{2022} ")) &&
+        // Check for marker + space (has content) OR bare marker (empty bullet, e.g. after Return).
+        // Also match • (U+2022) — Phase 4 substitutes - with • for WYSIWYG display.
+        let hasMarkerWithContent = stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") || stripped.hasPrefix("\u{2022} ")
+        let isBareMarker = stripped == "-" || stripped == "*" || stripped == "+" || stripped == "\u{2022}"
+        return (hasMarkerWithContent || isBareMarker) &&
                !stripped.hasPrefix("- [ ") && !stripped.hasPrefix("- [x") && !stripped.hasPrefix("- [X")
     }
 

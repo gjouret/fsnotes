@@ -295,10 +295,18 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             // Phase 5: Block-aware paragraph styles (replaces addTabStops)
             // Must run after block model is populated (updateBlockModel runs at end of process body)
             if !blocks.isEmpty {
-                // Expand to include the paragraph AFTER the edit — when inserting a newline,
-                // the new empty line is in the next paragraph and needs its own paragraph style.
+                // Expand to include neighboring paragraphs — edits at block boundaries
+                // (e.g., Return after heading, exit list) need adjacent paragraphs restyled.
                 let nsString = textStorage.string as NSString
                 var paragraphRange = nsString.paragraphRange(for: editedRange)
+
+                // Include previous paragraph (list exit needs last bullet restyled)
+                if paragraphRange.location > 0 {
+                    let prevParaRange = nsString.paragraphRange(for: NSRange(location: paragraphRange.location - 1, length: 0))
+                    paragraphRange = NSUnionRange(paragraphRange, prevParaRange)
+                }
+
+                // Include next paragraph (newline insertion needs new line styled)
                 let afterEdit = NSMaxRange(paragraphRange)
                 if afterEdit < nsString.length {
                     let nextParaRange = nsString.paragraphRange(for: NSRange(location: afterEdit, length: 0))
@@ -503,7 +511,16 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     // padding-left: 2em
                     let listIndent = baseSize * 2
                     if let mp = matchedPrefix {
-                        let markerWidth = mp.widthOfString(usingFont: font, tabs: tabs)
+                        // Use the bullet font (0.8x) for • markers — BulletProcessor
+                        // renders them at this size. Using body font here would miscalculate
+                        // the indent, causing the bullet text to be misaligned.
+                        let markerFont: PlatformFont
+                        if mp.hasPrefix("\u{2022}") || mp.contains("\u{2022}") {
+                            markerFont = PlatformFont.systemFont(ofSize: baseSize * 0.8)
+                        } else {
+                            markerFont = font
+                        }
+                        let markerWidth = mp.widthOfString(usingFont: markerFont, tabs: tabs)
                         paragraph.headIndent = max(markerWidth, listIndent)
                         paragraph.firstLineHeadIndent = paragraph.headIndent - markerWidth
                     } else {

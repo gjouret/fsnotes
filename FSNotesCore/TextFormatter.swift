@@ -664,19 +664,6 @@ public class TextFormatter {
         case .bodyText:
             #if os(OSX)
             (textView as? EditTextView)?.suppressCompletion = true
-            // Set typing attributes to body font/style BEFORE inserting newline.
-            // Phase5 and the highlighter handle all paragraph and font styling —
-            // we just need to ensure the new line starts with body attributes.
-            let bodyParagraph = NSMutableParagraphStyle()
-            bodyParagraph.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
-            bodyParagraph.paragraphSpacing = 0
-            bodyParagraph.paragraphSpacingBefore = 0
-
-            textView.typingAttributes = [
-                .font: prefs.noteFont,
-                .foregroundColor: NotesTextProcessor.fontColor,
-                .paragraphStyle: bodyParagraph
-            ]
             textView.insertNewline(nil)
             #else
             textView.insertText("\n")
@@ -740,6 +727,39 @@ public class TextFormatter {
             storageLength: storage.length
         )
         applyTransition(transition)
+
+        #if os(OSX)
+        // After the transition completes (including all synchronous didProcessEditing
+        // cycles), set typing attributes to match the target state. This is the state
+        // machine's final output — it defines what the cursor line looks like before
+        // the user types their first character.
+        //
+        // For "continue" transitions: copy paragraph style from the line we just left
+        // (it has the correct indent/spacing from the previous phase5+BulletProcessor cycle).
+        //
+        // For "exit" transitions: use body paragraph style.
+        let cursorPos = textView.selectedRange.location
+        switch transition {
+        case .bodyText, .exitList, .exitTodo:
+            let bodyParagraph = NSMutableParagraphStyle()
+            bodyParagraph.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+            bodyParagraph.paragraphSpacing = 0
+            bodyParagraph.paragraphSpacingBefore = 0
+            textView.typingAttributes = [
+                .font: prefs.noteFont,
+                .foregroundColor: NotesTextProcessor.fontColor,
+                .paragraphStyle: bodyParagraph
+            ]
+        case .continueUnorderedList, .continueNumberedList, .continueCheckbox, .continueIndent:
+            // The previous line has the correct style — copy it to typing attributes
+            if cursorPos > 1,
+               let paraStyle = storage.attribute(.paragraphStyle, at: cursorPos - 2, effectiveRange: nil) as? NSParagraphStyle {
+                var attrs = textView.typingAttributes
+                attrs[.paragraphStyle] = paraStyle
+                textView.typingAttributes = attrs
+            }
+        }
+        #endif
     }
 
     public func todo() {
