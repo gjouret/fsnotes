@@ -31,65 +31,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// the text storage for saving. NOT called from attributedString() to avoid
     /// re-entrancy (attributedString() should be a pure read).
     func syncAllTableData() {
-        guard let storage = textStorage else { return }
-        // DEBUG: count how many renderedBlockOriginalMarkdown attributes exist
-        var blockCount = 0
-        storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
-            if value != nil { blockCount += 1 }
-        }
-        if blockCount > 0 || !subviews.contains(where: { $0 is InlineTableView }) {
-            let dbgPath = NSHomeDirectory() + "/fsnotes_table_sync_debug.log"
-            // Dump the full text storage content and attribute values
-            var attrDump = ""
-            storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
-                if let md = value as? String {
-                    attrDump += "  attr at (\(range.location),\(range.length)): \(md.prefix(80).replacingOccurrences(of: "\n", with: "\\n"))...\n"
-                }
-            }
-            let storageText = storage.string.prefix(200).replacingOccurrences(of: "\n", with: "\\n")
-            let msg = "\(Date()): syncAllTableData — \(blockCount) attrs, \(subviews.filter { $0 is InlineTableView }.count) tables, len=\(storage.length)\n  storage: \(storageText)\n\(attrDump)\n"
-            if let fh = FileHandle(forWritingAtPath: dbgPath) {
-                fh.seekToEndOfFile(); fh.write(msg.data(using: .utf8)!); fh.closeFile()
-            } else {
-                FileManager.default.createFile(atPath: dbgPath, contents: msg.data(using: .utf8))
-            }
-        }
-        // First, clean up any "spread" rendered-block attributes from non-attachment chars.
-        // NSTextStorage inherits attributes from the preceding character when the user types,
-        // causing .renderedBlockOriginalMarkdown to spread beyond the attachment character.
-        // This spread causes restoreRenderedBlocks() to duplicate the markdown on save.
-        let fullCleanRange = NSRange(location: 0, length: storage.length)
-        let string = storage.string as NSString
-        var cleanRanges: [NSRange] = []
-        storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: fullCleanRange, options: []) { value, range, _ in
-            guard value != nil else { return }
-            // Keep the attribute ONLY on attachment characters (\u{FFFC})
-            for i in range.location..<NSMaxRange(range) {
-                if i < string.length && string.character(at: i) != 0xFFFC {
-                    cleanRanges.append(NSRange(location: i, length: 1))
-                }
-            }
-        }
-        for r in cleanRanges.reversed() {
-            storage.removeAttribute(.renderedBlockOriginalMarkdown, range: r)
-            storage.removeAttribute(.renderedBlockSource, range: r)
-            storage.removeAttribute(.renderedBlockType, range: r)
-        }
-
-        // Update each table attachment with current cell data.
-        // Find tables via attachment cells (not subviews) — tables outside the viewport
-        // may not have been added as subviews yet.
-        let fullRange = NSRange(location: 0, length: storage.length)
-        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, stop in
-            guard let att = value as? NSTextAttachment,
-                  let cell = att.attachmentCell as? InlineTableAttachmentCell else { return }
-            let tableView = cell.inlineTableView
-            tableView.collectCellData()
-            let markdown = tableView.generateMarkdown()
-            storage.addAttribute(.renderedBlockOriginalMarkdown, value: markdown, range: range)
-            storage.addAttribute(.renderedBlockSource, value: markdown, range: range)
-        }
+        tableController.syncAllTableData()
     }
+
     public var note: Note?
     public var viewDelegate: ViewController?
 
@@ -114,6 +58,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var imagesLoaderQueue = OperationQueue.init()
     public var attributesCachingQueue = OperationQueue.init()
     public lazy var gutterController = GutterController(textView: self)
+    public lazy var tableController = TableRenderController(textView: self)
 
     // preview flag removed — WYSIWYG is the only rendering mode
     
@@ -1292,30 +1237,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// If an InlineTableView cell is being edited, wrap the selection (or insert markers at cursor).
     /// Returns true if formatting was applied to a cell, false if the caller should fall through.
     private func applyInlineTableCellFormatting(_ marker: String) -> Bool {
-        guard let fieldEditor = window?.fieldEditor(false, for: nil),
-              let cell = fieldEditor.delegate as? NSTextField,
-              cell.superview is InlineTableView else { return false }
-
-        let sel = fieldEditor.selectedRange
-        let nsText = fieldEditor.string as NSString
-
-        if sel.length > 0 {
-            let selected = nsText.substring(with: sel)
-            if selected.hasPrefix(marker) && selected.hasSuffix(marker) && selected.count > marker.count * 2 {
-                let inner = String(selected.dropFirst(marker.count).dropLast(marker.count))
-                fieldEditor.replaceCharacters(in: sel, with: inner)
-                fieldEditor.selectedRange = NSRange(location: sel.location, length: inner.count)
-            } else {
-                let wrapped = marker + selected + marker
-                fieldEditor.replaceCharacters(in: sel, with: wrapped)
-                fieldEditor.selectedRange = NSRange(location: sel.location + marker.count, length: sel.length)
-            }
-        } else {
-            let doubleMarker = marker + marker
-            fieldEditor.replaceCharacters(in: sel, with: doubleMarker)
-            fieldEditor.selectedRange = NSRange(location: sel.location + marker.count, length: 0)
-        }
-        return true
+        return tableController.applyInlineTableCellFormatting(marker)
     }
 
     @IBAction func linkMenu(_ sender: Any) {
@@ -2036,26 +1958,12 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     /// Focus the first editable cell in the most recently added InlineTableView
     private func focusFirstInlineTableCell() {
-        for subview in subviews.reversed() {
-            if let tableView = subview as? InlineTableView {
-                tableView.focusState = .editing
-                tableView.focusFirstCell()
-                // Invalidate layout so the attachment cell picks up the new (editing) size
-                if let storage = textStorage, let lm = layoutManager {
-                    lm.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
-                }
-                break
-            }
-        }
+        tableController.focusFirstInlineTableCell()
     }
 
     /// Unfocus all inline table views (hide their controls)
     func unfocusAllInlineTableViews() {
-        for subview in subviews {
-            if let tableView = subview as? InlineTableView, tableView.isFocused {
-                tableView.isFocused = false
-            }
-        }
+        tableController.unfocusAllInlineTableViews()
     }
 
     /// Remove all inline table view subviews (called on source mode toggle or note switch).
@@ -2090,104 +1998,12 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     /// Render markdown tables as inline InlineTableView widgets in WYSIWYG mode
     func renderTables() {
-        guard NotesTextProcessor.hideSyntax,
-              let storage = textStorage,
-              let processor = textStorageProcessor else { return }
-
-        let tableRanges = TableUtility.findAllTableRanges(in: storage)
-        let string = storage.string as NSString
-
-        // Process in reverse so range offsets stay valid
-        for tableRange in tableRanges.reversed() {
-            guard tableRange.location < string.length, NSMaxRange(tableRange) <= string.length else { continue }
-
-            let tableMarkdown = string.substring(with: tableRange)
-
-            // Check if already rendered
-            if storage.attribute(.renderedBlockSource, at: tableRange.location, effectiveRange: nil) as? String == tableMarkdown {
-                continue
-            }
-
-            guard let data = TableUtility.parse(markdown: tableMarkdown) else { continue }
-
-            let maxWidth = getTableMaxWidth()
-
-            // Create the inline table view
-            let tableView = InlineTableView()
-            tableView.configure(with: data)
-            tableView.containerWidth = maxWidth
-            tableView.isFocused = false
-
-            // NO onMarkdownChanged callback needed. Table data is synced to
-            // attributes in attributedString() override, called by the save path.
-            // This matches how mermaid works: zero custom callbacks.
-
-            tableView.rebuild()
-
-            // Create attachment
-            let attachment = NSTextAttachment()
-            let cellSize = tableView.intrinsicContentSize
-            let cell = InlineTableAttachmentCell(tableView: tableView, size: cellSize)
-            attachment.attachmentCell = cell
-            attachment.bounds = NSRect(origin: .zero, size: cellSize)
-
-            // Store markdown WITHOUT trailing \n (matches the trimmed replaceRange)
-            let trimmedMarkdown = tableMarkdown.hasSuffix("\n")
-                ? String(tableMarkdown.dropLast())
-                : tableMarkdown
-
-            let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
-            let attRange = NSRange(location: 0, length: attachmentString.length)
-            attachmentString.addAttributes([
-                .renderedBlockSource: trimmedMarkdown,
-                .renderedBlockType: RenderedBlockType.table.rawValue,
-                .renderedBlockOriginalMarkdown: trimmedMarkdown
-            ], range: attRange)
-            attachmentString.removeAttribute(.backgroundColor, range: attRange)
-
-            // Replace table markdown with attachment.
-            // Trim trailing \n from the replacement range so blank lines between
-            // tables are preserved. findAllTableRanges includes the trailing \n
-            // (from paragraphRange), but consuming it swallows the blank line.
-            var replaceRange = tableRange
-            if replaceRange.length > 0 && string.character(at: NSMaxRange(replaceRange) - 1) == 0x0A {
-                replaceRange.length -= 1
-            }
-            // Mark the table block as .rendered BEFORE replacing text.
-            // This way process() (fired by replaceCharacters) adjusts all block
-            // positions via delta but skips reparsing the rendered block.
-            if let idx = processor.blocks.firstIndex(where: {
-                if case .table = $0.type, $0.renderMode == .source {
-                    return NSIntersectionRange($0.range, replaceRange).length > 0
-                }
-                return false
-            }) {
-                processor.blocks[idx].renderMode = .rendered
-            }
-
-            storage.beginEditing()
-            storage.replaceCharacters(in: replaceRange, with: attachmentString)
-            let replacedRange = NSRange(location: tableRange.location, length: attachmentString.length)
-            if replacedRange.location + replacedRange.length <= storage.length {
-                storage.removeAttribute(.backgroundColor, range: replacedRange)
-            }
-            storage.endEditing()
-
-            // Do NOT addSubview here. InlineTableAttachmentCell.draw() adds the
-            // subview when the layout manager computes a valid frame. This prevents
-            // tables outside the viewport from being positioned at (0,0).
-
-            // NO onMarkdownChanged callback. Table data is synced to attributes
-            // in the attributedString() override, which the save path calls.
-            // This eliminates the data loss bug caused by callbacks firing during fill().
-        }
+        tableController.renderTables()
     }
 
+
     private func getTableMaxWidth() -> CGFloat {
-        if let editorWidth = enclosingScrollView?.contentView.bounds.width {
-            return editorWidth - 40
-        }
-        return 400
+        return tableController.getTableMaxWidth()
     }
 
     @IBAction func horizontalRuleMenu(_ sender: Any) {
