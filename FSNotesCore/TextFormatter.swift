@@ -12,12 +12,12 @@ import Foundation
     import Cocoa
     import Carbon.HIToolbox
     typealias Font = NSFont
-    typealias TextView = EditTextView
+    typealias TextView = NSTextView  // Decoupled: no longer references concrete EditTextView
     typealias Color = NSColor
 #else
     import UIKit
     typealias Font = UIFont
-    typealias TextView = EditTextView
+    typealias TextView = UITextView  // Decoupled: no longer references concrete EditTextView
     typealias Color = UIColor
 #endif
 
