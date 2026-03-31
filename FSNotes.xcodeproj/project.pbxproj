@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B61B5F8CEAD35C13E9E11654 /* Note+Crypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E542E1FA50A721D79E9B2B9 /* Note+Crypto.swift */; };
 		B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */; };
 		40111EF2FC1CA108D2E96E72 /* FoldVisibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */; };
 		4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */; };
@@ -951,6 +952,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1E542E1FA50A721D79E9B2B9 /* Note+Crypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Note+Crypto.swift"; sourceTree = "<group>"; };
 		0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldSnapshotTests.swift; sourceTree = "<group>"; };
 		BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldVisibilityTests.swift; sourceTree = "<group>"; };
 		5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
@@ -1628,6 +1630,7 @@
 				D7B6E599207912E300FE0E20 /* Project.swift */,
 				11F2D4F32F1042F4002E4E47 /* Project+Date.swift */,
 				D79FE8A01F77D04A00113CFD /* Note.swift */,
+				1E542E1FA50A721D79E9B2B9 /* Note+Crypto.swift */,
 				113A319F2EEE2D3A009B50B0 /* Note+Preview.swift */,
 				D714749C279D7DBC001A8B29 /* SearchQuery.swift */,
 				D7BAC62E249D11F8008D29AA /* SettingsFilesNaming.swift */,
@@ -3002,6 +3005,7 @@
 				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
 				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
 				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
+				B61B5F8CEAD35C13E9E11654 /* Note+Crypto.swift in Sources */,
 				1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */,
 				4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */,
 
