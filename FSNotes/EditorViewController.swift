@@ -1169,7 +1169,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
     
     @objc private func reloadPreview() {
         DispatchQueue.main.async {
-            MPreviewView.template = nil
+            // MPreview template cache removed
             self.refillEditArea(force: true)
         }
     }

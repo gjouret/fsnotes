@@ -102,7 +102,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     
     let storage = Storage.shared()
     let caretWidth: CGFloat = 2
-    var downView: MPreviewView?
+    // downView (MPreviewView) removed — WYSIWYG only
     
     public var timer: Timer?
     public var tagsTimer: Timer?
@@ -2350,7 +2350,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         storage.resetCacheAttributes()
 
         // clear preview cache
-        MPreviewView.template = nil
+        // MPreview template cache removed
         let webkitPreview = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("wkPreview")
         try? FileManager.default.removeItem(at: webkitPreview)
 
@@ -2362,7 +2362,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let funcName = effectiveAppearance.isDark ? "switchToDarkMode" : "switchToLightMode"
         let switchScript = "if (typeof(\(funcName)) == 'function') { \(funcName)(); }"
 
-        downView?.evaluateJavaScript(switchScript)
+        // downView (MPreviewView) removed — WYSIWYG only
 
         viewDelegate?.refillEditArea(force: true)
     }

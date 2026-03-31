@@ -11,26 +11,16 @@ import WebKit
 extension EditorViewController {
 
     public func printMarkdownPreview() {
-        guard let note = vcEditor?.note else { return }
+        // Print directly from the WYSIWYG NSTextView — no MPreview HTML needed
+        guard let editor = vcEditor else { return }
 
-        let printDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Print")
-        try? FileManager.default.removeItem(at: printDir)
-        
-        guard let indexURL = MPreviewView.buildPage(for: note, at: printDir, print: true) else { return }
+        let printInfo = NSPrintInfo.shared
+        printInfo.horizontalPagination = .fit
+        printInfo.verticalPagination = .automatic
 
-        if #available(macOS 11.0, *) {
-            let pdfCreator = Printer(indexURL: indexURL)
-            pdfCreator.printWeb()
-        } else {
-            legacyPrint(indexURL: indexURL)
-        }
-    }
-
-    @available(*, deprecated, message: "Remove after macOS 10.15 is no longer supported")
-    public func legacyPrint(indexURL: URL) {
-        guard let vc = ViewController.shared() else { return }
-
-        vc.printerLegacy = PrinterLegacy(indexURL: indexURL)
-        vc.printerLegacy?.printWeb()
+        let printOp = NSPrintOperation(view: editor, printInfo: printInfo)
+        printOp.showsPrintPanel = true
+        printOp.showsProgressPanel = true
+        printOp.run()
     }
 }

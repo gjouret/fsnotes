@@ -68,7 +68,8 @@ extension EditorViewController {
         let dst = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Upload")
         try? FileManager.default.removeItem(at: dst)
         
-        guard let localURL = MPreviewView.buildPage(for: note, at: dst, web: true),
+        // TODO: Replace MPreviewView.buildPage with WYSIWYG HTML export
+        guard let localURL = URL(string: "about:blank"),  // Placeholder — web publish needs reimplementation
               let sftpPath = UserDefaultsManagement.sftpPath,
               let web = UserDefaultsManagement.sftpWeb else { return }
         

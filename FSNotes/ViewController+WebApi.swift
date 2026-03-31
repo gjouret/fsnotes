@@ -77,7 +77,8 @@ extension ViewController {
         let dst = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Upload")
         try? FileManager.default.removeItem(at: dst)
 
-        guard let localURL = MPreviewView.buildPage(for: note, at: dst, web: true) else { return }
+        // TODO: Replace MPreviewView.buildPage with WYSIWYG HTML export
+        guard let localURL = URL(string: "about:blank") else { return }  // Placeholder
 
         let zipUrl = localURL.deletingLastPathComponent().appendingPathComponent(note.getLatinName()).appendingPathExtension("zip")
         let privateKey = UserDefaultsManagement.uploadKey

@@ -169,7 +169,7 @@ class ViewController: EditorViewController,
         isPreLoaded = true
 
         // Set protocol delegates to decouple Core from concrete app types
-        MPreviewView.sharedPreviewDelegate = self
+        // MPreviewView removed — WYSIWYG only
 
         if #available(macOS 12.0, *) {
             let image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
@@ -745,7 +745,7 @@ class ViewController: EditorViewController,
                         return false
                     }
                     
-                    if fr.isKind(of: EditTextView.self) || fr.isKind(of: MPreviewView.self) {
+                    if fr.isKind(of: EditTextView.self) {
                         NSApp.mainWindow?.makeFirstResponder(self.notesTableView)
                         return false
                     }
@@ -941,13 +941,7 @@ class ViewController: EditorViewController,
 
         if event.keyCode == kVK_LeftArrow {
             if let fr = mw.firstResponder {
-                if fr.isKind(of: MPreviewView.self) || fr.isKind(of: MPreviewContainerView.self) {
-                    previewHasFocus = false
-                    // markdownView removed
-                    sidebarOutlineView.window?.makeFirstResponder(notesTableView)
-                    return false
-                }
-
+                // MPreview type checks removed — WYSIWYG only
                 if fr.isKind(of: NotesTableView.self) {
                     sidebarOutlineView.window?.makeFirstResponder(sidebarOutlineView)
 
@@ -1504,7 +1498,7 @@ class ViewController: EditorViewController,
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
             if let evc = editor.editorViewController {
-                MPreviewView.template = nil
+                // MPreview template cache removed
                 NotesTextProcessor.resetCaches()
                 evc.refillEditArea(force: true)
             }
