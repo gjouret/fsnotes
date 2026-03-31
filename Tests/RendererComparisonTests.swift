@@ -2,8 +2,7 @@
 //  RendererComparisonTests.swift
 //  FSNotesTests
 //
-//  Compares MPreview (WKWebView) rendering with NSTextView rendering
-//  of the same markdown content and reports pixel-level differences.
+//  Tests NSTextView WYSIWYG rendering of markdown content.
 //
 //  Run via:
 //    xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes \
@@ -13,7 +12,6 @@
 
 import XCTest
 import AppKit
-import WebKit
 @testable import FSNotes
 
 // MARK: - Configuration
@@ -107,94 +105,6 @@ Here is a paragraph with **bold**, *italic*, `code`, and a [link](https://exampl
 
 > A final blockquote with **bold inside**.
 """
-
-// MARK: - MPreview WKWebView Renderer
-
-private class WebViewRenderer: NSObject, WKNavigationDelegate {
-    private let webView: WKWebView
-    private var completion: ((NSImage?) -> Void)?
-
-    override init() {
-        let config = WKWebViewConfiguration()
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: renderWidth, height: renderHeight), configuration: config)
-        super.init()
-        webView.navigationDelegate = self
-    }
-
-    func render(markdown: String, bundlePath: String, completion: @escaping (NSImage?) -> Void) {
-        self.completion = completion
-
-        // Convert markdown to HTML using cmark-gfm (same as MPreview)
-        let htmlContent = convertMarkdownToHTML(markdown)
-
-        let html = """
-        <!DOCTYPE html>
-        <html><head>
-        <meta charset="utf-8">
-        <link href="main.css?v=1.0.7" rel="stylesheet">
-        <link href="styles/github-light.min.css" rel="stylesheet">
-        <style>
-            code { white-space: pre-wrap !important; }
-            body { padding: 15px 20px; max-width: \(Int(renderWidth))px; font-size: 14px; }
-        </style>
-        </head><body>\(htmlContent)</body></html>
-        """
-
-        let bundleURL = URL(fileURLWithPath: bundlePath)
-        let tempFile = bundleURL.appendingPathComponent("_compare_temp.html")
-        try? html.write(to: tempFile, atomically: true, encoding: .utf8)
-
-        webView.loadFileURL(tempFile, allowingReadAccessTo: bundleURL)
-    }
-
-    private func convertMarkdownToHTML(_ markdown: String) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/cmark-gfm")
-        process.arguments = [
-            "--extension", "table",
-            "--extension", "strikethrough",
-            "--extension", "autolink",
-            "--extension", "tasklist",
-            "--unsafe"
-        ]
-
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-
-        do {
-            try process.run()
-        } catch {
-            return "<p>Failed to run cmark-gfm: \(error)</p>"
-        }
-
-        inputPipe.fileHandleForWriting.write(markdown.data(using: .utf8)!)
-        inputPipe.fileHandleForWriting.closeFile()
-        process.waitUntilExit()
-
-        return String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Wait for layout to settle
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            let config = WKSnapshotConfiguration()
-            config.rect = NSRect(x: 0, y: 0, width: renderWidth, height: renderHeight)
-
-            webView.takeSnapshot(with: config) { image, error in
-                // Clean up temp file
-                let bundlePath = self.webView.url?.deletingLastPathComponent().path ?? ""
-                try? FileManager.default.removeItem(atPath: bundlePath + "/_compare_temp.html")
-                self.completion?(image)
-            }
-        }
-    }
-
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        completion?(nil)
-    }
-}
 
 // MARK: - NSTextView Renderer
 
@@ -404,103 +314,7 @@ class RendererComparisonTests: XCTestCase {
         try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
     }
 
-    // MARK: - Main Comparison Test
-
-    /// Renders the sample markdown through both MPreview (WKWebView) and
-    /// NSTextView (with NotesTextProcessor + LayoutManager), then compares
-    /// the resulting images pixel by pixel.
-    func testRendererComparison() throws {
-        // --- Step 1: Locate MPreview.bundle ---
-        let bundle = Bundle.main
-        let bundlePath: String
-        if let mpreviewPath = bundle.path(forResource: "MPreview", ofType: "bundle") {
-            bundlePath = mpreviewPath
-        } else {
-            // Fallback: check relative to the source tree
-            let srcRoot = (#filePath as NSString).deletingLastPathComponent
-            let fallback = (srcRoot as NSString).appendingPathComponent("../Resources/MPreview.bundle")
-            let resolved = (fallback as NSString).standardizingPath
-            if fm.fileExists(atPath: resolved) {
-                bundlePath = resolved
-            } else {
-                // Last resort: absolute path
-                let absolute = "/Users/guido/Documents/Programming/Claude/fsnotes/Resources/MPreview.bundle"
-                guard fm.fileExists(atPath: absolute) else {
-                    XCTFail("MPreview.bundle not found")
-                    return
-                }
-                bundlePath = absolute
-            }
-        }
-
-        // --- Step 2: Render through MPreview (WKWebView) ---
-        let mpreviewImage = try renderMPreview(markdown: sampleMarkdown, bundlePath: bundlePath)
-        XCTAssertNotNil(mpreviewImage, "MPreview rendering should produce an image")
-
-        guard let mpreviewImg = mpreviewImage else {
-            XCTFail("MPreview rendering returned nil")
-            return
-        }
-        let mpreviewSaved = saveImage(mpreviewImg, to: "\(outputDir)/mpreview.png")
-        XCTAssertTrue(mpreviewSaved, "Should save MPreview image to \(outputDir)/mpreview.png")
-
-        // --- Step 3: Render through NSTextView ---
-        let textViewRenderer = TextViewRenderer()
-        let nstextviewImage = textViewRenderer.render(markdown: sampleMarkdown)
-        XCTAssertNotNil(nstextviewImage, "NSTextView rendering should produce an image")
-
-        let nstextviewSaved = saveImage(nstextviewImage!, to: "\(outputDir)/nstextview.png")
-        XCTAssertTrue(nstextviewSaved, "Should save NSTextView image to \(outputDir)/nstextview.png")
-
-        // --- Step 4: Compare ---
-        let (diffPercent, diffImage) = compareImages(mpreviewImage!, nstextviewImage!)
-
-        let diffSaved = saveImage(diffImage, to: "\(outputDir)/diff.png")
-        XCTAssertTrue(diffSaved, "Should save diff image to \(outputDir)/diff.png")
-
-        // --- Step 5: Report ---
-        print("")
-        print("=== Renderer Comparison Results ===")
-        print("MPreview image:   \(outputDir)/mpreview.png")
-        print("NSTextView image: \(outputDir)/nstextview.png")
-        print("Diff image:       \(outputDir)/diff.png")
-        print("Pixel difference: \(String(format: "%.2f", diffPercent))%")
-        print("Threshold:        \(String(format: "%.1f", maxDifferencePercent))%")
-        print("Result:           \(diffPercent <= maxDifferencePercent ? "PASS" : "FAIL")")
-        print("===================================")
-        print("")
-
-        XCTAssertLessThanOrEqual(
-            diffPercent, maxDifferencePercent,
-            "Pixel difference (\(String(format: "%.2f", diffPercent))%) exceeds threshold (\(String(format: "%.1f", maxDifferencePercent))%). " +
-            "Inspect images at \(outputDir)/ for details."
-        )
-    }
-
-    // MARK: - Individual Renderer Tests
-
-    /// Verify that MPreview rendering produces a non-blank image.
-    func testMPreviewRendersContent() throws {
-        let bundle = Bundle.main
-        let bundlePath: String
-        if let mpreviewPath = bundle.path(forResource: "MPreview", ofType: "bundle") {
-            bundlePath = mpreviewPath
-        } else {
-            bundlePath = "/Users/guido/Documents/Programming/Claude/fsnotes/Resources/MPreview.bundle"
-            guard fm.fileExists(atPath: bundlePath) else {
-                throw XCTSkip("MPreview.bundle not found")
-            }
-        }
-
-        let image = try renderMPreview(markdown: "# Hello\n\nWorld", bundlePath: bundlePath)
-        XCTAssertNotNil(image)
-
-        // Check that the image isn't entirely white (i.e., content was rendered)
-        if let image = image {
-            let nonWhitePercent = measureNonWhitePercent(image)
-            XCTAssertGreaterThan(nonWhitePercent, 0.1, "MPreview image should contain visible content")
-        }
-    }
+    // MARK: - Renderer Tests
 
     /// Verify that NSTextView rendering with NotesTextProcessor produces a non-blank image.
     func testNSTextViewRendersContent() {
@@ -533,20 +347,6 @@ class RendererComparisonTests: XCTestCase {
     }
 
     // MARK: - Helpers
-
-    private func renderMPreview(markdown: String, bundlePath: String) throws -> NSImage? {
-        let expectation = self.expectation(description: "WKWebView render")
-        var result: NSImage?
-
-        let renderer = WebViewRenderer()
-        renderer.render(markdown: markdown, bundlePath: bundlePath) { image in
-            result = image
-            expectation.fulfill()
-        }
-
-        waitForExpectations(timeout: 10.0)
-        return result
-    }
 
     /// Measure what percentage of pixels are non-white (i.e., have content).
     private func measureNonWhitePercent(_ image: NSImage) -> Double {

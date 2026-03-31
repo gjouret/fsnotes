@@ -168,13 +168,9 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     private func setupView() {
         wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.cgColor
 
         // Set up scroll view for horizontal scrolling on wide tables
         gridDocumentView = GridDocumentView()
-        gridDocumentView.wantsLayer = true
         gridDocumentView.drawGrid = { [weak self] dirtyRect, context in
             self?.drawGridLines(in: context)
         }
@@ -183,7 +179,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         scrollView.documentView = gridDocumentView
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = false
-        scrollView.scrollerStyle = .overlay  // Overlay scroller — no space allocation needed
+        scrollView.scrollerStyle = .overlay
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.horizontalScrollElasticity = .allowed
@@ -733,7 +729,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let indicator = NSView()
         indicator.wantsLayer = true
         indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        gridDocumentView.addSubview(indicator)
+        addSubview(indicator)  // Parent view — draws on top of handles
 
         let sourceHighlight = NSView()
         sourceHighlight.wantsLayer = true
@@ -785,12 +781,14 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 }
                 targetIndex = bestGap
 
+                // Compute indicator x in document view coords, then convert to parent
                 var indX = leftMargin
                 for i in 0..<targetIndex {
                     if i < colWidths.count { indX += colWidths[i] }
                 }
-                let clampedX = min(indX - 1, gridWidth - 2)
-                indicator.frame = NSRect(x: clampedX, y: 0, width: 2, height: gridHeight)
+                let scrollOffset = scrollView.contentView.bounds.origin.x
+                let parentX = indX - scrollOffset - 1
+                indicator.frame = NSRect(x: parentX, y: 0, width: 2, height: gridHeight)
             }
         }
 
@@ -977,7 +975,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private func layoutCells(_ L: TableLayout) {
         guard L.colCount > 0 else { return }
 
-        // Header row — top of grid
+        // Header row
         var x = L.leftMargin
         for col in 0..<min(L.colCount, headerCells.count) {
             let colRect = NSRect(x: x, y: L.gridHeight - L.headerHeight, width: L.colWidths[col], height: L.headerHeight)
@@ -998,7 +996,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             }
         }
 
-        // Column handles — above grid
+        // Column handles — above grid, in parent view coordinates (leftMargin offset)
         x = L.leftMargin
         for col in 0..<min(L.colCount, columnHandles.count) {
             columnHandles[col].frame = NSRect(x: x, y: L.gridHeight, width: L.colWidths[col], height: handleBarHeight)
@@ -1349,6 +1347,7 @@ private class GridDocumentView: NSView {
     }
 }
 
+
 // MARK: - Glass Handle View
 
 /// A frosted-glass handle bar for column/row drag and context menu.
@@ -1382,10 +1381,12 @@ class GlassHandleView: NSVisualEffectView {
         blendingMode = .withinWindow
         state = .active
         wantsLayer = true
+        layer?.cornerRadius = 4
+        layer?.masksToBounds = true
         layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.15).cgColor
 
         gripLabel.font = NSFont.systemFont(ofSize: 9)
-        gripLabel.textColor = NSColor.secondaryLabelColor.withAlphaComponent(0.4)
+        gripLabel.textColor = NSColor.secondaryLabelColor.withAlphaComponent(0.7)
         gripLabel.alignment = .center
         gripLabel.sizeToFit()
         gripLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1400,14 +1401,14 @@ class GlassHandleView: NSVisualEffectView {
     override func mouseEntered(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1
-            gripLabel.animator().alphaValue = 0.7
+            gripLabel.animator().alphaValue = 1.0
         }
     }
 
     override func mouseExited(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1
-            gripLabel.animator().alphaValue = 0.4
+            gripLabel.animator().alphaValue = 0.7
         }
     }
 

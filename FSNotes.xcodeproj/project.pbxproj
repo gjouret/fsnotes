@@ -3857,7 +3857,8 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.4;
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = FSNotes;
+				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -3894,7 +3895,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 12.4;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = FSNotes;
+				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "MAS Distribution";
 				SDKROOT = macosx;
@@ -3933,7 +3935,8 @@
 				MARKETING_VERSION = 7.1.1;
 				OTHER_SWIFT_FLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
-				PRODUCT_NAME = FSNotes;
+				PRODUCT_MODULE_NAME = FSNotes;
+				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
@@ -3974,7 +3977,8 @@
 				MARKETING_VERSION = 7.1.1;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
-				PRODUCT_NAME = FSNotes;
+				PRODUCT_MODULE_NAME = FSNotes;
+				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
@@ -4015,7 +4019,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_INCLUDE_PATHS = "$(inherited)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FSNotes.app/Contents/MacOS/FSNotes";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FSNotes++.app/Contents/MacOS/FSNotes++";
 			};
 			name = Debug;
 		};
@@ -4045,7 +4049,7 @@
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FSNotes.app/Contents/MacOS/FSNotes";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FSNotes++.app/Contents/MacOS/FSNotes++";
 			};
 			name = Release;
 		};

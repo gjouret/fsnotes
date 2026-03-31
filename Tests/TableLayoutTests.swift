@@ -126,4 +126,71 @@ class TableLayoutTests: XCTestCase {
         let hovered = table.computeLayout()
         XCTAssertGreaterThan(hovered.totalHeight, hovered.gridHeight)
     }
+
+    // MARK: - Visual Snapshots
+
+    private func snapshotTable(_ table: InlineTableView, filename: String) {
+        let layout = table.computeLayout()
+        table.frame = NSRect(x: 0, y: 0, width: layout.scrollWidth, height: layout.totalHeight)
+
+        // Put in offscreen window so subviews render
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView?.addSubview(table)
+        table.layoutSubtreeIfNeeded()
+        table.display()
+
+        let width = Int(table.bounds.width)
+        let height = Int(table.bounds.height)
+        guard width > 0, height > 0 else {
+            print("Table has zero size: \(width)x\(height)")
+            return
+        }
+
+        guard let bitmapRep = table.bitmapImageRepForCachingDisplay(in: table.bounds) else { return }
+        table.cacheDisplay(in: table.bounds, to: bitmapRep)
+
+        let outputDir = NSHomeDirectory() + "/unit-tests"
+        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        let outputPath = "\(outputDir)/\(filename)"
+        if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+            try? pngData.write(to: URL(fileURLWithPath: outputPath))
+            print("Saved: \(outputPath) (\(width)x\(height))")
+        }
+
+        table.removeFromSuperview()
+    }
+
+    func test_tableWidget_unfocused() {
+        let table = makeTable(
+            headers: ["Feature", "Status"],
+            rows: [["Visual editor", "Yes"], ["Markdown", "Yes"], ["Fold/unfold", "Yes"]],
+            containerWidth: 400
+        )
+        table.focusState = .unfocused
+        table.rebuild(skipCollect: true)
+        snapshotTable(table, filename: "table_unfocused.png")
+    }
+
+    func test_tableWidget_editing() {
+        let table = makeTable(
+            headers: ["Feature", "Status"],
+            rows: [["Visual editor", "Yes"], ["Markdown", "Yes"], ["Fold/unfold", "Yes"]],
+            containerWidth: 400
+        )
+        table.focusState = .editing
+        table.rebuild(skipCollect: true)
+        snapshotTable(table, filename: "table_editing.png")
+    }
+
+    func test_tableWidget_hovered() {
+        let table = makeTable(
+            headers: ["Feature", "Status"],
+            rows: [["Visual editor", "Yes"], ["Markdown", "Yes"], ["Fold/unfold", "Yes"]],
+            containerWidth: 400
+        )
+        table.focusState = .hovered
+        table.rebuild(skipCollect: true)
+        snapshotTable(table, filename: "table_hovered.png")
+    }
 }

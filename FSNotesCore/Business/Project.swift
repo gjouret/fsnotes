@@ -497,7 +497,8 @@ public class Project: NSObject {
             return "Trash"
         }
         
-        return "FSNotes › \(label)"
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "FSNotes"
+        return "\(appName) › \(label)"
     }
 
     public func getRelativePath() -> String? {
