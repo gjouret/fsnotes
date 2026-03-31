@@ -21,7 +21,7 @@ public class Note: NSObject  {
 
     /// Injected storage reference — defaults to singleton during migration.
     /// Eventually all callers pass this explicitly at construction.
-    lazy var sharedStorage: Storage = sharedStorage
+    lazy var sharedStorage: Storage = Storage.shared()
 
     var content: NSMutableAttributedString = NSMutableAttributedString()
     var creationDate: Date? = Date()
