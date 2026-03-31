@@ -252,26 +252,23 @@ class NewLineTransitionTests: XCTestCase {
         let outputDir = NSHomeDirectory() + "/unit-tests"
         try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
 
-        // --- A: LOADED NOTE (known-good reference) ---
+        // Enable WYSIWYG mode for the entire test
+        let savedHideSyntax = NotesTextProcessor.hideSyntax
+        NotesTextProcessor.hideSyntax = true
+        defer { NotesTextProcessor.hideSyntax = savedHideSyntax }
+
+        // --- A: LOADED NOTE with body text after heading (known-good reference) ---
         let editorA = makeFullPipelineEditor()
-        editorA.textStorage?.setAttributedString(NSMutableAttributedString(string: "## My Heading\nBody text here"))
+        editorA.textStorage?.setAttributedString(NSMutableAttributedString(string: "## Bullets\nNow is the time"))
         runFullPipeline(editorA)
         let linesA = measureLineFragments(editorA)
         saveSnapshot(editorA, to: "\(outputDir)/h2_loaded.png")
 
-        // --- B: RETURN AFTER HEADING ---
+        // --- B: Same content but loaded with the RESULT of pressing Return ---
+        // This is what the markdown looks like after: heading, then Return, then typed text
         let editorB = makeFullPipelineEditor()
-        editorB.textStorage?.setAttributedString(NSMutableAttributedString(string: "## My Heading\nBody text here"))
+        editorB.textStorage?.setAttributedString(NSMutableAttributedString(string: "## Bullets\nI press return\nNow is the time"))
         runFullPipeline(editorB)
-        // Place cursor at end of heading content, press Return, type body text
-        editorB.setSelectedRange(NSRange(location: 13, length: 0))
-        let noteB = editorB.note!
-        let formatter = TextFormatter(textView: editorB, note: noteB)
-        formatter.newLine()
-        // Type "New body text" on the new line
-        editorB.insertText("New body text", replacementRange: editorB.selectedRange())
-        editorB.layoutSubtreeIfNeeded()
-        editorB.display()
         let linesB = measureLineFragments(editorB)
         saveSnapshot(editorB, to: "\(outputDir)/h2_return.png")
 
@@ -285,9 +282,9 @@ class NewLineTransitionTests: XCTestCase {
         log += "\nB lines:\n"
         for l in linesB { log += "  \(l)\n" }
 
-        // Find body text line in each
-        let bodyLineA = linesA.first { $0.text.contains("Body text") }
-        let bodyLineB = linesB.first { $0.text.contains("New body") }
+        // Find first body text line in each (the line right after heading)
+        let bodyLineA = linesA.first { $0.text.contains("Now is") }
+        let bodyLineB = linesB.first { $0.text.contains("I press") }
 
         if let a = bodyLineA, let b = bodyLineB {
             log += "\nBody line A: y=\(String(format: "%.1f", a.y)) height=\(String(format: "%.1f", a.height))\n"
@@ -298,8 +295,8 @@ class NewLineTransitionTests: XCTestCase {
                            "Body text Y position: loaded=\(a.y) vs return=\(b.y) — should match")
 
             // The gap between heading bottom and body top should be identical
-            let headingLineA = linesA.first { $0.text.contains("Heading") }
-            let headingLineB = linesB.first { $0.text.contains("Heading") }
+            let headingLineA = linesA.first { $0.text.contains("Bullets") }
+            let headingLineB = linesB.first { $0.text.contains("Bullets") }
             if let hA = headingLineA, let hB = headingLineB {
                 let gapA = a.y - (hA.y + hA.height)
                 let gapB = b.y - (hB.y + hB.height)
@@ -345,13 +342,19 @@ class NewLineTransitionTests: XCTestCase {
         return editor
     }
 
+    /// Simulate fill(): set note.content, set textStorage, let didProcessEditing run.
+    /// Caller must set NotesTextProcessor.hideSyntax before calling.
     private func runFullPipeline(_ editor: EditTextView) {
-        guard let storage = editor.textStorage else { return }
-        NotesTextProcessor.highlight(attributedString: storage)
-        if let processor = editor.textStorageProcessor {
-            processor.blocks = MarkdownBlockParser.parse(string: storage.string as NSString)
-            processor.phase5_paragraphStyles(textStorage: storage, range: NSRange(location: 0, length: storage.length))
-        }
+        guard let storage = editor.textStorage, let note = editor.note else { return }
+
+        // Set note.content to match storage (prevents hash-based early return in process())
+        let content = NSMutableAttributedString(attributedString: storage)
+        note.content = content
+        note.cacheHash = nil  // Force re-processing
+
+        // Re-set to trigger didProcessEditing → process() → highlight + phase4 + phase5
+        storage.setAttributedString(content)
+
         editor.layoutSubtreeIfNeeded()
         editor.display()
     }
