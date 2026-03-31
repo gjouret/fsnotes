@@ -32,21 +32,23 @@ public class TextFormatter {
     private var range: NSRange
     private var newSelectedRange: NSRange?
     private var cursor: Int?
-    
+    private let prefs: EditorPreferencesProvider
+
     private var prevSelectedString: NSAttributedString
     private var prevSelectedRange: NSRange
     
     private var isAutomaticQuoteSubstitutionEnabled: Bool = false
     private var isAutomaticDashSubstitutionEnabled: Bool = false
     
-    init(textView: TextView, note: Note) {
+    init(textView: TextView, note: Note, prefs: EditorPreferencesProvider = EditorPreferences()) {
+        self.prefs = prefs
         range = textView.selectedRange
-        
+
         #if os(OSX)
             storage = textView.textStorage!
             attributedSelected = textView.attributedString()
             if textView.typingAttributes[.font] == nil {
-                textView.typingAttributes[.font] = UserDefaultsManagement.noteFont
+                textView.typingAttributes[.font] = prefs.noteFont
             }
         #else
             storage = textView.textStorage
@@ -79,7 +81,7 @@ public class TextFormatter {
     func bold() {
         guard note.isMarkdown() else { return }
 
-        let marker = UserDefaultsManagement.bold  // "**" or "__"
+        let marker = prefs.boldMarker  // "**" or "__"
         let markerLen = marker.count
         let fullString = getAttributedString().string
         let nsStr = fullString as NSString
@@ -128,7 +130,7 @@ public class TextFormatter {
     func italic() {
         guard note.isMarkdown() else { return }
 
-        let marker = UserDefaultsManagement.italic  // "*" or "_"
+        let marker = prefs.italicMarker  // "*" or "_"
         let markerLen = marker.count
         let fullString = getAttributedString().string
         let nsStr = fullString as NSString
@@ -712,7 +714,7 @@ public class TextFormatter {
             // Reset typing attributes to body font so the new line doesn't
             // inherit header styling
             textView.typingAttributes = [
-                .font: UserDefaultsManagement.noteFont,
+                .font: prefs.noteFont,
                 .foregroundColor: NotesTextProcessor.fontColor
             ]
             #endif
@@ -893,7 +895,7 @@ public class TextFormatter {
 
             // Preserve headIndent for proper text wrapping + consistent line height
             let parStyle = NSMutableParagraphStyle()
-            parStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+            parStyle.lineSpacing = CGFloat(Float(prefs.editorLineSpacing))
             let markerWidth = ("- [ ] " as NSString).size(withAttributes: [.font: NotesTextProcessor.font]).width
             parStyle.headIndent = markerWidth
             paragraphText.addAttribute(.paragraphStyle, value: parStyle, range: NSRange(location: 0, length: paragraphText.length))
@@ -946,7 +948,7 @@ public class TextFormatter {
         if selectedRange.length > 0 {
             let text = storage.attributedSubstring(from: selectedRange).string
             let string = "`\(text)`"
-            let codeFont = UserDefaultsManagement.codeFont
+            let codeFont = prefs.codeFont
 
             let mutableString = NSMutableAttributedString(string: string)
             mutableString.addAttribute(.font, value: codeFont, range: NSRange(0..<string.count))
@@ -1079,7 +1081,7 @@ public class TextFormatter {
             textView.isAutomaticDashSubstitutionEnabled = self.isAutomaticDashSubstitutionEnabled
         #endif
 
-        setTypingAttributes(font: UserDefaultsManagement.noteFont)
+        setTypingAttributes(font: prefs.noteFont)
         var text: NSAttributedString?
 
         #if os(OSX)
@@ -1124,7 +1126,7 @@ public class TextFormatter {
                 return typingFont
             }
 
-            guard textView.textStorage.length > 0, textView.selectedRange.location > 0 else { return UserDefaultsManagement.noteFont }
+            guard textView.textStorage.length > 0, textView.selectedRange.location > 0 else { return prefs.noteFont }
 
             let i = textView.selectedRange.location - 1
             let upper = textView.selectedRange.upperBound
@@ -1134,7 +1136,7 @@ public class TextFormatter {
                 return prevFont
             }
 
-            return UserDefaultsManagement.noteFont
+            return prefs.noteFont
         #endif
     }
 
@@ -1203,7 +1205,7 @@ public class TextFormatter {
             let parRange = NSRange(location: range.location, length: replaceString.count)
             let parStyle = NSMutableParagraphStyle()
             parStyle.alignment = .left
-            parStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+            parStyle.lineSpacing = CGFloat(Float(prefs.editorLineSpacing))
             self.textView.textStorage.addAttribute(.paragraphStyle, value: parStyle, range: parRange)
         }
 
