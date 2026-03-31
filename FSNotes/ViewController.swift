@@ -2041,22 +2041,15 @@ class ViewController: EditorViewController,
             // Save position
             editor.note?.setSelectedRange(range: textView.selectedRange())
 
-            // Update gutter cursor position — only redraw affected header paragraphs
-            if let lm = textView.layoutManager as? LayoutManager, let ts = textView.textStorage {
+            // Update gutter cursor position and redraw gutter icons
+            if let lm = textView.layoutManager as? LayoutManager {
                 let oldCursor = lm.cursorCharIndex
                 let newCursor = textView.selectedRange().location
                 lm.cursorCharIndex = newCursor
-                let nsStr = ts.string as NSString
-                // Invalidate only the old and new paragraph rects (not the entire document)
                 if oldCursor != newCursor {
-                    let oldPara = oldCursor < nsStr.length ? nsStr.paragraphRange(for: NSRange(location: oldCursor, length: 0)) : NSRange(location: 0, length: 0)
-                    let newPara = newCursor < nsStr.length ? nsStr.paragraphRange(for: NSRange(location: newCursor, length: 0)) : NSRange(location: 0, length: 0)
-                    if oldPara.length > 0 {
-                        lm.invalidateDisplay(forGlyphRange: lm.glyphRange(forCharacterRange: oldPara, actualCharacterRange: nil))
-                    }
-                    if newPara.length > 0, newPara.location != oldPara.location {
-                        lm.invalidateDisplay(forGlyphRange: lm.glyphRange(forCharacterRange: newPara, actualCharacterRange: nil))
-                    }
+                    // Full redraw needed because gutter icons are outside the text container
+                    // and paragraph-level invalidation doesn't cover them
+                    textView.needsDisplay = true
                 }
             }
         }

@@ -128,6 +128,85 @@ class FoldRangeTests: XCTestCase {
         XCTAssertTrue(proc.blocks[idx].collapsed)
     }
 
+    func test_foldRange_coversFullContent_toEOF() {
+        // Verify the fold range calculation itself is correct for H2 with no subsequent H1/H2
+        let md = "## Section\nContent\n### Sub\nMore\n\n---\n\n| A | B |\n|--|--|\n| 1 | 2 |"
+        let (proc, storage) = makeProcessor(markdown: md)
+        guard let idx = headerIndex(proc, at: 0) else { XCTFail("No header"); return }
+
+        let nsStr = storage.string as NSString
+        let headerLineEnd = NSMaxRange(nsStr.paragraphRange(for: proc.blocks[idx].range))
+        let expectedFoldLength = nsStr.length - headerLineEnd
+
+        proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
+
+        // Count folded characters
+        var foldedCount = 0
+        storage.enumerateAttribute(.foldedContent, in: NSRange(location: headerLineEnd, length: expectedFoldLength)) { val, _, _ in
+            if val != nil { foldedCount += 1 }
+        }
+        // The entire range after the header should be folded (one contiguous run)
+        XCTAssertGreaterThan(foldedCount, 0, "No folded content found")
+        XCTAssertEqual(expectedFoldLength, nsStr.length - headerLineEnd, "Fold should extend to EOF")
+    }
+
+    func test_foldH2_inVisualTestNumber1_foldsToEOF() {
+        // Reproduces the exact bug: folding H2 in Visual Test Number 1
+        // should hide everything after H2 (H3-H6, bullets, HR, table, mermaid)
+        // because there is no other H1 or H2 in the note.
+        let md = """
+        # Visual Test Number 1
+        This is to compare the NSTextView and MPreview
+        ## This is a H2 header
+        This is more text.
+        ### This is a H3 header
+        This is more text
+        #### This is a H4 header
+        This is more text
+        ##### This is a H5 header
+        This is more text
+        ###### This is a H6 header
+        Now some bullets
+        - first bullet
+        - second bullet
+
+        ---
+
+        | Retirement places | Costa Rica |
+        |---|---|
+        | Go for it | Nice italics |
+        """
+        let (proc, storage) = makeProcessor(markdown: md)
+
+        // Find H2
+        var h2Idx: Int?
+        for (i, block) in proc.blocks.enumerated() {
+            if case .heading(2) = block.type { h2Idx = i; break }
+        }
+        guard let idx = h2Idx else { XCTFail("No H2 found"); return }
+
+        // Fold H2
+        proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
+        XCTAssertTrue(proc.blocks[idx].collapsed)
+
+        // The fold range should extend to EOF — everything after H2 line is folded
+        let nsStr = storage.string as NSString
+        let h2LineEnd = NSMaxRange(nsStr.paragraphRange(for: proc.blocks[idx].range))
+        let foldRange = NSRange(location: h2LineEnd, length: nsStr.length - h2LineEnd)
+
+        // Every character in the fold range should have .foldedContent attribute
+        var unfoldedChars: [Int] = []
+        for i in foldRange.location..<NSMaxRange(foldRange) {
+            if i < storage.length {
+                if storage.attribute(.foldedContent, at: i, effectiveRange: nil) == nil {
+                    unfoldedChars.append(i)
+                }
+            }
+        }
+        XCTAssertEqual(unfoldedChars.count, 0,
+            "Found \(unfoldedChars.count) unfolded characters after H2. First at index \(unfoldedChars.first ?? -1)")
+    }
+
     func test_headerBlockIndex_findsCorrectHeader() {
         let md = "# H1\n\n## H2\n\nText"
         let (proc, _) = makeProcessor(markdown: md)

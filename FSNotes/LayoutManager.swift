@@ -136,32 +136,64 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     
     // MARK: - Drawing
     
+    // MARK: - Fold Gate (single source of truth)
+
+    /// Returns the sub-ranges of `glyphRange` that are NOT folded.
+    /// This is the ONE place that decides what is visible. Every rendering
+    /// path (drawGlyphs, drawBackground) calls this before drawing.
+    private func unfoldedRanges(in glyphRange: NSRange) -> [NSRange] {
+        guard let ts = textStorage else { return [glyphRange] }
+        let charRange = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        guard charRange.length > 0 else { return [glyphRange] }
+
+        var result: [NSRange] = []
+        var currentStart = glyphRange.location
+        ts.enumerateAttribute(.foldedContent, in: charRange) { value, attrCharRange, _ in
+            if value != nil {
+                let foldedGlyphs = self.glyphRange(forCharacterRange: attrCharRange, actualCharacterRange: nil)
+                if currentStart < foldedGlyphs.location {
+                    result.append(NSRange(location: currentStart, length: foldedGlyphs.location - currentStart))
+                }
+                currentStart = NSMaxRange(foldedGlyphs)
+            }
+        }
+        let end = NSMaxRange(glyphRange)
+        if currentStart < end {
+            result.append(NSRange(location: currentStart, length: end - currentStart))
+        }
+
+        return result.isEmpty ? [glyphRange] : result
+    }
+
+    override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        for range in unfoldedRanges(in: glyphsToShow) {
+            super.drawGlyphs(forGlyphRange: range, at: origin)
+        }
+    }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
-        // Validate glyph range before any custom drawing — stale block model
-        // ranges after note switches can cause out-of-bounds crashes in
-        // NSLayoutManager._fillLayoutHoleForCharacterRange.
         guard let ts = textStorage, glyphsToShow.location + glyphsToShow.length <= numberOfGlyphs,
               numberOfGlyphs > 0, ts.length > 0 else {
             super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
             return
         }
 
-        drawCodeBlockBackground(forGlyphRange: glyphsToShow, at: origin)
-        drawHeaderBottomBorders(forGlyphRange: glyphsToShow, at: origin)
+        // Apply fold gate: only draw backgrounds for unfolded ranges
+        for range in unfoldedRanges(in: glyphsToShow) {
+            drawCodeBlockBackground(forGlyphRange: range, at: origin)
+            drawHeaderBottomBorders(forGlyphRange: range, at: origin)
 
-        // Attribute-based drawing via registry — replaces drawHorizontalRules,
-        // drawBlockquoteBorders, drawKbdTags. Adding a new visual = one new AttributeDrawer file.
-        if NotesTextProcessor.hideSyntax,
-           let ts = textStorage,
-           let ctx = NSGraphicsContext.current?.cgContext,
-           let tc = textContainers.first {
-            for drawer in Self.attributeDrawers {
-                drawAttributeRanges(drawer: drawer, forGlyphRange: glyphsToShow, at: origin,
-                                    layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
+            if NotesTextProcessor.hideSyntax,
+               let ctx = NSGraphicsContext.current?.cgContext,
+               let tc = textContainers.first {
+                for drawer in Self.attributeDrawers {
+                    drawAttributeRanges(drawer: drawer, forGlyphRange: range, at: origin,
+                                        layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
+                }
             }
-        }
 
-        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+            super.drawBackground(forGlyphRange: range, at: origin)
+        }
     }
 
     override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
@@ -201,13 +233,13 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         for codeBlockRange in relevantCodeBlocks {  // ← теперь только релевантные блоки!
             let safeCharRange = codeBlockRange.clamped(to: storageFullRange)
             if safeCharRange.length == 0 { continue }
-            
+
             let glyphRange = self.glyphRange(forCharacterRange: safeCharRange, actualCharacterRange: nil)
             if glyphRange.length == 0 { continue }
-            
+
             let boundingRect = self.boundingRect(forGlyphRange: glyphRange, in: textContainer)
             if boundingRect.isEmpty { continue }
-            
+
             // Padding left/right
             let horizontalPadding: CGFloat = 5.0
             let paddedRect = boundingRect
@@ -304,8 +336,21 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         // Collapse folded content to zero height
         if let ts = textStorage {
             let charRange = self.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
-            if charRange.location < ts.length,
-               ts.attribute(.foldedContent, at: charRange.location, effectiveRange: nil) != nil {
+            var intersectsFoldedContent = false
+
+            if charRange.length > 0 {
+                ts.enumerateAttribute(.foldedContent, in: charRange, options: []) { value, _, stop in
+                    if value != nil {
+                        intersectsFoldedContent = true
+                        stop.pointee = true
+                    }
+                }
+            } else if charRange.location < ts.length,
+                      ts.attribute(.foldedContent, at: charRange.location, effectiveRange: nil) != nil {
+                intersectsFoldedContent = true
+            }
+
+            if intersectsFoldedContent {
                 var rect = lineFragmentRect.pointee
                 rect.size.height = 0.01
                 lineFragmentRect.pointee = rect

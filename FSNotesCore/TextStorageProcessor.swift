@@ -48,6 +48,12 @@ class CenteredImageCell: NSTextAttachmentCell {
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
+        // Don't draw if this attachment is inside a folded region
+        if let ts = layoutManager.textStorage,
+           charIndex < ts.length,
+           ts.attribute(.foldedContent, at: charIndex, effectiveRange: nil) != nil {
+            return
+        }
         draw(withFrame: cellFrame, in: controlView)
     }
 
@@ -125,7 +131,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         textStorage.beginEditing()
 
         if header.collapsed {
-            // Unfold: restore visibility
+            // Unfold: remove fold marker. Rendering gate in LayoutManager handles the rest.
             textStorage.removeAttribute(.foldedContent, range: foldRange)
             textStorage.removeAttribute(.foregroundColor, range: foldRange)
             blocks[idx].collapsed = false
@@ -139,20 +145,35 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 codeBlockRanges: codeBlockRanges)
             editor?.needsDisplay = true
         } else {
-            // Fold: hide content
-            textStorage.addAttribute(.foldedContent, value: true, range: foldRange)
-            textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
             blocks[idx].collapsed = true
             textStorage.endEditing()
+            // Set fold attributes AFTER endEditing so process()/highlightMarkdown
+            // doesn't strip them during the editing session's processEditing callback.
+            isRendering = true
+            textStorage.addAttribute(.foldedContent, value: true, range: foldRange)
+            textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
             isRendering = false
+            // Hide live subviews (InlineTableView) — they draw independently of LayoutManager
+            if let textView = editor {
+                for subview in textView.subviews {
+                    guard let tv = subview as? InlineTableView, !tv.isHidden else { continue }
+                    tv.isHidden = true
+                }
+            }
         }
+
+        // Invalidate layout for the fold range so the rendering gate takes effect
+        textStorage.layoutManagers.first?.invalidateLayout(
+            forCharacterRange: foldRange, actualCharacterRange: nil)
+        editor?.needsDisplay = true
 
         // Invalidate layout so zero-height lines take effect
         textStorage.layoutManagers.first?.invalidateLayout(
             forCharacterRange: foldRange, actualCharacterRange: nil)
     }
 
-    /// Find the range to fold: from end of header line to start of next same-level-or-higher header.
+    /// Find the range to fold: from end of the header line to the next header
+    /// with the same level, matching the folding spec literally.
     private func foldRangeForHeader(at idx: Int, level: Int, in textStorage: NSTextStorage) -> NSRange {
         let header = blocks[idx]
         let string = textStorage.string as NSString
@@ -162,14 +183,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         let foldStart = NSMaxRange(headerLineRange)
         guard foldStart < string.length else { return NSRange(location: foldStart, length: 0) }
 
-        // Find next ATX header at equal or higher level (lower number).
-        // Only match .heading (ATX: # through ######), NOT .headingSetext — because
-        // --- after a paragraph is classified as headingSetext(2) but it's really a
-        // horizontal rule in most user intent. Folding should not stop at HR lines.
+        // Follow the folding spec literally:
+        // stop only at the next header with the same level, regardless of
+        // whether that header is ATX or Setext. Horizontal rules must not
+        // affect folding.
         var foldEnd = string.length
         findEnd: for i in (idx + 1)..<blocks.count {
             switch blocks[i].type {
-            case .heading(let l) where l <= level:
+            case .heading(let l) where l == level:
+                foldEnd = blocks[i].range.location
+                break findEnd
+            case .headingSetext(let l) where l == level:
                 foldEnd = blocks[i].range.location
                 break findEnd
             default:

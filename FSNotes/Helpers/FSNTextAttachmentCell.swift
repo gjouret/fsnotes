@@ -31,6 +31,16 @@ class FSNTextAttachmentCell: NSTextAttachmentCell {
         return NSSize(width: textContainer.size.width, height: size.height)
     }
 
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
+        // Don't draw if inside a folded region
+        if let ts = layoutManager.textStorage,
+           charIndex < ts.length,
+           ts.attribute(.foldedContent, at: charIndex, effectiveRange: nil) != nil {
+            return
+        }
+        super.draw(withFrame: cellFrame, in: controlView, characterIndex: charIndex, layoutManager: layoutManager)
+    }
+
     override nonisolated func cellBaselineOffset() -> NSPoint {
         return NSPoint(x: 0, y: -2)
     }

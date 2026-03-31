@@ -265,19 +265,21 @@ public class MarkdownBlockParser {
             // Could be HR — check below
         }
 
-        // Horizontal rule: 3+ of -, *, or _ (optionally with spaces)
-        if isHorizontalRule(trimmed) {
-            return .horizontalRule
-        }
-
         // ATX heading: # through ######
         if let level = atxHeadingLevel(trimmed) {
             return .heading(level: level, prefixLength: level + 1) // # + space
         }
 
-        // Setext underline: === or ---  (only if previous block is paragraph)
+        // Setext underline: === or ---  (only if previous block is paragraph).
+        // This must be checked before horizontalRule so "Title\n---" is parsed
+        // as a heading, not as a paragraph followed by <hr>.
         if isSetextUnderline(trimmed) {
             return .setextUnderline(level: trimmed.hasPrefix("=") ? 1 : 2)
+        }
+
+        // Horizontal rule: 3+ of -, *, or _ (optionally with spaces)
+        if isHorizontalRule(trimmed) {
+            return .horizontalRule
         }
 
         // Blockquote: > at start

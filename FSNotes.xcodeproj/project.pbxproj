@@ -7,9 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */; };
+		40111EF2FC1CA108D2E96E72 /* FoldVisibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */; };
 		4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */; };
 		1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8852B50A2749E42226C8379 /* EditorPreferences.swift */; };
 		C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */; };
+		C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */; };
 		432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 568C7270DF4C1784CFDD100B /* NoteSerializer.swift */; };
 		1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65ABACC3555B97D4FC743685 /* BlockParserTests.swift */; };
 		D7943F68EBB8151E96B1C82B /* FoldRangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */; };
@@ -948,6 +951,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldSnapshotTests.swift; sourceTree = "<group>"; };
+		BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldVisibilityTests.swift; sourceTree = "<group>"; };
 		5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		B8852B50A2749E42226C8379 /* EditorPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPreferences.swift; sourceTree = "<group>"; };
 		62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializerTests.swift; sourceTree = "<group>"; };
@@ -1338,6 +1343,7 @@
 		E73B6900CD2E14B0D5E51599 /* Pods-FSNotes iOS.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-FSNotes iOS.debug.xcconfig"; path = "Target Support Files/Pods-FSNotes iOS/Pods-FSNotes iOS.debug.xcconfig"; sourceTree = "<group>"; };
 		EF024607824ECBF0AE378D65 /* Pods-FSNotes (iCloud).release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-FSNotes (iCloud).release.xcconfig"; path = "Target Support Files/Pods-FSNotes (iCloud)/Pods-FSNotes (iCloud).release.xcconfig"; sourceTree = "<group>"; };
 		F616385FF783029192B97DF6 /* Pods_FSNotes.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_FSNotes.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderFoldingTests.swift; sourceTree = "<group>"; };
 		TEST00000000000000000002 /* RendererComparisonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererComparisonTests.swift; sourceTree = "<group>"; };
 		TEST00000000000000000001 /* FSNotesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FSNotesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -2139,7 +2145,10 @@
 		TEST00000000000000000003 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
 				TEST00000000000000000002 /* RendererComparisonTests.swift */,
+				0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */,
+				BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */,
 				62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */,
 				65ABACC3555B97D4FC743685 /* BlockParserTests.swift */,
 				E0312DEC91617A5FD91C4798 /* FoldRangeTests.swift */,
@@ -3476,6 +3485,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
+				40111EF2FC1CA108D2E96E72 /* FoldVisibilityTests.swift in Sources */,
+				C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */,
 				C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */,
 				1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */,
 				D7943F68EBB8151E96B1C82B /* FoldRangeTests.swift in Sources */,

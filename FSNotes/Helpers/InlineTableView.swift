@@ -1539,21 +1539,27 @@ class InlineTableAttachmentCell: NSTextAttachmentCell {
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
+        // Don't draw if this attachment is inside a folded region
+        if let ts = layoutManager.textStorage,
+           charIndex < ts.length,
+           ts.attribute(.foldedContent, at: charIndex, effectiveRange: nil) != nil {
+            inlineTableView.isHidden = true
+            return
+        }
         guard let textView = controlView as? NSTextView else { return }
 
         // Only add and position the live view when the layout manager provides a
         // valid frame. For tables outside the viewport (non-contiguous layout),
         // the frame will be wrong (near 0,0 for a late-document attachment).
-        // The layout manager will call draw again when the area becomes visible.
         let hasContentBefore = charIndex > 10
         let frameNearTop = cellFrame.origin.y < 50
         if hasContentBefore && frameNearTop {
-            // Frame not yet computed for this position — don't render
             return
         }
 
-        // Position the live table view
+        // Position the live table view and make it visible
         inlineTableView.frame = cellFrame
+        inlineTableView.isHidden = false
         if inlineTableView.superview !== textView {
             textView.addSubview(inlineTableView)
         }

@@ -787,6 +787,15 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
 
         let point = self.convert(event.locationInWindow, from: nil)
+
+        // Track gutter hover — fold carets only show when mouse is in the pipe area
+        if NotesTextProcessor.hideSyntax {
+            let inGutter = point.x < textContainerInset.width && point.x >= textContainerInset.width - EditTextView.gutterWidth
+            if inGutter != isMouseInGutter {
+                isMouseInGutter = inGutter
+                needsDisplay = true  // Redraw to show/hide fold carets
+            }
+        }
         let properPoint = NSPoint(
             x: point.x - textContainerInset.width,
             y: point.y - textContainerInset.height
@@ -1269,6 +1278,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
 
         viewDelegate?.restoreScrollPosition()
+
+        // Force full redraw so gutter icons (drawn outside text container bounds)
+        // render after block model is populated by process()
+        needsDisplay = true
     }
 
     private func loadMarkdownWebView(note: Note, force: Bool) {
@@ -1897,8 +1910,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let gutterLeft = origin.x - gutterWidth
         let gutterRight = origin.x
 
-        // Only draw if dirtyRect overlaps the gutter area
-        guard dirtyRect.minX < gutterRight else { return }
+        // Reset clip rect to the full view bounds so gutter area isn't clipped
+        NSGraphicsContext.current?.saveGraphicsState()
+        NSBezierPath(rect: bounds).setClip()
 
         // Visible glyph range
         let visibleRect = enclosingScrollView?.contentView.bounds ?? bounds
@@ -1922,6 +1936,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             guard NSIntersectionRange(block.range, visibleCharRange).length > 0 else { continue }
             guard block.range.location < storage.length,
                   NSMaxRange(block.range) <= storage.length else { continue }
+            // Skip blocks inside a folded region
+            if storage.attribute(.foldedContent, at: block.range.location, effectiveRange: nil) != nil { continue }
 
             let glyphRange = lm.glyphRange(forCharacterRange: block.range, actualCharacterRange: nil)
             if glyphRange.length == 0 { continue }
@@ -1930,26 +1946,31 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
             let midY = lineFragRect.midY + origin.y
 
-            // Fold caret
             let isCollapsed = block.collapsed
-            let caretStr = isCollapsed ? "▸" : "▾"
-            let caretFont = NSFont.systemFont(ofSize: 10, weight: .regular)
-            let caretAttrs: [NSAttributedString.Key: Any] = [
-                .font: caretFont,
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
-            let caretSize = (caretStr as NSString).size(withAttributes: caretAttrs)
-            let caretX = gutterRight - caretSize.width - 4
-            let caretY = midY - caretSize.height / 2
-            (caretStr as NSString).draw(at: NSPoint(x: caretX, y: caretY), withAttributes: caretAttrs)
 
-            // H-level badge when cursor is on this line
+            // Fold carets only visible when mouse hovers in the gutter, or when collapsed
+            if isMouseInGutter || isCollapsed {
+                let caretStr = isCollapsed ? "▶" : "▼"
+                let caretFont = NSFont.systemFont(ofSize: 16, weight: .regular)
+                let caretAttrs: [NSAttributedString.Key: Any] = [
+                    .font: caretFont,
+                    .foregroundColor: NSColor(calibratedWhite: 0.55, alpha: 1.0)
+                ]
+                let caretSize = (caretStr as NSString).size(withAttributes: caretAttrs)
+                let caretX = gutterRight - caretSize.width - 4
+                let caretY = midY - caretSize.height / 2
+                (caretStr as NSString).draw(at: NSPoint(x: caretX, y: caretY), withAttributes: caretAttrs)
+            }
+
+            // H-level badge: show when mouse hovers in gutter (for all headers),
+            // or when cursor is actively editing this specific header line
             let cursorOnThisLine = cursorParagraphRange.map { NSIntersectionRange($0, block.range).length > 0 } ?? false
-            if cursorOnThisLine {
+            let isEditing = window?.firstResponder === self
+            if isMouseInGutter || (cursorOnThisLine && isEditing) {
                 let badge = "H\(level)"
                 let badgeAttrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 9, weight: .bold),
-                    .foregroundColor: NSColor.secondaryLabelColor
+                    .foregroundColor: NSColor.gray
                 ]
                 let badgeSize = (badge as NSString).size(withAttributes: badgeAttrs)
                 (badge as NSString).draw(at: NSPoint(x: gutterLeft + 2, y: midY - badgeSize.height / 2), withAttributes: badgeAttrs)
@@ -1957,16 +1978,19 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
             // "⋯" after collapsed header
             if isCollapsed {
-                let ellipsis = " ⋯"
+                let ellipsis = " ⋯ "
                 let ellipsisAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 12),
-                    .foregroundColor: NSColor.tertiaryLabelColor
+                    .font: NSFont.systemFont(ofSize: 20, weight: .medium),
+                    .foregroundColor: NSColor(calibratedWhite: 0.5, alpha: 1.0),
+                    .backgroundColor: NSColor(calibratedWhite: 0.92, alpha: 1.0)
                 ]
                 let usedRect = lm.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
                 let ellipsisSize = (ellipsis as NSString).size(withAttributes: ellipsisAttrs)
                 (ellipsis as NSString).draw(at: NSPoint(x: usedRect.maxX + origin.x + 4, y: midY - ellipsisSize.height / 2), withAttributes: ellipsisAttrs)
             }
         }
+
+        NSGraphicsContext.current?.restoreGraphicsState()
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -2639,6 +2663,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     /// Width of the left-hand gutter for header fold/unfold controls.
     public static let gutterWidth: CGFloat = 32
+
+    /// Whether the mouse is currently hovering over the gutter (pipe) area.
+    /// Fold carets only appear on hover, matching Bear/Apple Notes behavior.
+    private var isMouseInGutter = false
 
     public func getInsetWidth() -> CGFloat {
         let lineWidth = UserDefaultsManagement.lineWidth
