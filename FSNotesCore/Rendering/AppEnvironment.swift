@@ -27,21 +27,26 @@ public final class AppEnvironment {
 
     // MARK: - Services
 
-    /// Editor preferences (font, margins, etc.)
     public let editorPreferences: EditorPreferencesProvider
-
-    /// Serialization pipeline for saving notes
     public let serializer: NoteSerializer.Type = NoteSerializer.self
+    public let noteStore: NoteStore
+    public let projectStore: ProjectStore
 
     // MARK: - Init
 
-    /// Production initializer: uses real services backed by UserDefaults.
+    /// Production initializer: uses real services backed by singletons (during migration).
     public init() {
         self.editorPreferences = EditorPreferences()
+        self.noteStore = NoteStore()
+        self.projectStore = ProjectStore()
     }
 
     /// Test initializer: inject mock services.
-    public init(editorPreferences: EditorPreferencesProvider) {
+    public init(editorPreferences: EditorPreferencesProvider,
+                noteStore: NoteStore = NoteStore(),
+                projectStore: ProjectStore = ProjectStore()) {
         self.editorPreferences = editorPreferences
+        self.noteStore = noteStore
+        self.projectStore = projectStore
     }
 }
