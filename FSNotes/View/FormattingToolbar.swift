@@ -194,6 +194,13 @@ class FormattingToolbar: NSView {
         let hasUnderline = storage.attribute(.underlineStyle, at: location, effectiveRange: nil) != nil
         setButtonState("underline", active: hasUnderline)
 
+        // Check for highlight (<mark> tag — sets backgroundColor with yellow)
+        if let bg = storage.attribute(.backgroundColor, at: location, effectiveRange: nil) as? NSColor {
+            setButtonState("highlight", active: bg.yellowComponent > 0.5)
+        } else {
+            setButtonState("highlight", active: false)
+        }
+
         let paragraphRange = (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: 0))
         let paragraphText = (storage.string as NSString).substring(with: paragraphRange).trimmingCharacters(in: .whitespaces)
 

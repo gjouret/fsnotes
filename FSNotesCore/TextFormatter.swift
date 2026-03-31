@@ -77,89 +77,99 @@ public class TextFormatter {
     }
     
     func bold() {
-        if note.isMarkdown() {
+        guard note.isMarkdown() else { return }
 
-            // UnBold if not selected
-            if range.length == 0 {
-                var resultFound = false
-                let string = getAttributedString().string
+        let marker = UserDefaultsManagement.bold  // "**" or "__"
+        let markerLen = marker.count
+        let fullString = getAttributedString().string
+        let nsStr = fullString as NSString
 
-                NotesTextProcessor.boldRegex.matches(string, range: NSRange(0..<string.count)) { (result) -> Void in
-                    guard let range = result?.range else { return }
+        // Check if cursor/selection is inside existing bold markers
+        // by looking for markers immediately before and after the range
+        let expandedStart = max(0, range.location - markerLen)
+        let expandedEnd = min(nsStr.length, NSMaxRange(range) + markerLen)
 
-                    if range.intersection(self.range) != nil {
-                        let boldAttributed = self.getAttributedString().attributedSubstring(from: range)
-
-                        self.unBold(attributedString: boldAttributed, range: range)
-                        resultFound = true
-                    }
-                }
-
-                if resultFound {
-                    return
-                }
-            }
-
-            // UnBold selected
-            if attributedString.string.contains("**") || attributedString.string.contains("__") {
-                unBold(attributedString: attributedString, range: range)
+        if expandedStart + markerLen <= range.location && expandedEnd >= NSMaxRange(range) + markerLen {
+            let before = nsStr.substring(with: NSRange(location: expandedStart, length: markerLen))
+            let after = nsStr.substring(with: NSRange(location: NSMaxRange(range), length: markerLen))
+            if (before == "**" && after == "**") || (before == "__" && after == "__") {
+                // Remove the markers around the selection
+                let fullBoldRange = NSRange(location: expandedStart, length: expandedEnd - expandedStart)
+                let content = nsStr.substring(with: range)
+                insertText(content, replacementRange: fullBoldRange, selectRange: NSRange(location: expandedStart, length: content.count))
                 return
             }
-
-            var selectRange = NSMakeRange(range.location + 2, 0)
-            let string = attributedString.string
-            let length = string.count
-
-            if length != 0 {
-                selectRange = NSMakeRange(range.location, length + 4)
-            }
-
-            let char = UserDefaultsManagement.bold
-            insertText(char + string + char, selectRange: selectRange)
         }
+
+        // Also try regex match for cursor-inside-bold (no selection)
+        if range.length == 0 {
+            var resultFound = false
+            NotesTextProcessor.boldRegex.matches(fullString, range: NSRange(0..<nsStr.length)) { (result) -> Void in
+                guard let matchRange = result?.range else { return }
+                if matchRange.intersection(self.range) != nil {
+                    let boldAttributed = self.getAttributedString().attributedSubstring(from: matchRange)
+                    self.unBold(attributedString: boldAttributed, range: matchRange)
+                    resultFound = true
+                }
+            }
+            if resultFound { return }
+        }
+
+        // Apply bold markers
+        var selectRange = NSMakeRange(range.location + markerLen, 0)
+        let string = attributedString.string
+        let length = string.count
+        if length != 0 {
+            selectRange = NSMakeRange(range.location, length + markerLen * 2)
+        }
+        insertText(marker + string + marker, selectRange: selectRange)
     }
     
     func italic() {
-        if note.isMarkdown() {
+        guard note.isMarkdown() else { return }
 
-            // UnItalic if not selected
-            if range.length == 0 {
-                var resultFound = false
-                let string = getAttributedString().string
+        let marker = UserDefaultsManagement.italic  // "*" or "_"
+        let markerLen = marker.count
+        let fullString = getAttributedString().string
+        let nsStr = fullString as NSString
 
-                NotesTextProcessor.italicRegex.matches(string, range: NSRange(0..<string.count)) { (result) -> Void in
-                    guard let range = result?.range else { return }
+        // Check if selection is inside existing italic markers
+        let expandedStart = max(0, range.location - markerLen)
+        let expandedEnd = min(nsStr.length, NSMaxRange(range) + markerLen)
 
-                    if range.intersection(self.range) != nil {
-                        let italicAttributed = self.getAttributedString().attributedSubstring(from: range)
-
-                        self.unItalic(attributedString: italicAttributed, range: range)
-                        resultFound = true
-                    }
-                }
-
-                if resultFound {
-                    return
-                }
-            }
-
-            // UnItalic
-            if attributedString.string.contains("*") || attributedString.string.contains("_") {
-                unItalic(attributedString: attributedString, range: range)
+        if expandedStart + markerLen <= range.location && expandedEnd >= NSMaxRange(range) + markerLen {
+            let before = nsStr.substring(with: NSRange(location: expandedStart, length: markerLen))
+            let after = nsStr.substring(with: NSRange(location: NSMaxRange(range), length: markerLen))
+            if before == marker && after == marker {
+                let fullItalicRange = NSRange(location: expandedStart, length: expandedEnd - expandedStart)
+                let content = nsStr.substring(with: range)
+                insertText(content, replacementRange: fullItalicRange, selectRange: NSRange(location: expandedStart, length: content.count))
                 return
             }
-
-            var selectRange = NSMakeRange(range.location + 1, 0)
-            let string = attributedString.string
-            let length = string.count
-
-            if length != 0 {
-                selectRange = NSMakeRange(range.location, length + 2)
-            }
-
-            let char = UserDefaultsManagement.italic
-            insertText(char + string + char, selectRange: selectRange)
         }
+
+        // Cursor inside italic (no selection)
+        if range.length == 0 {
+            var resultFound = false
+            NotesTextProcessor.italicRegex.matches(fullString, range: NSRange(0..<nsStr.length)) { (result) -> Void in
+                guard let matchRange = result?.range else { return }
+                if matchRange.intersection(self.range) != nil {
+                    let italicAttributed = self.getAttributedString().attributedSubstring(from: matchRange)
+                    self.unItalic(attributedString: italicAttributed, range: matchRange)
+                    resultFound = true
+                }
+            }
+            if resultFound { return }
+        }
+
+        // Apply italic markers
+        var selectRange = NSMakeRange(range.location + markerLen, 0)
+        let string = attributedString.string
+        let length = string.count
+        if length != 0 {
+            selectRange = NSMakeRange(range.location, length + markerLen * 2)
+        }
+        insertText(marker + string + marker, selectRange: selectRange)
     }
 
     private func unBold(attributedString: NSAttributedString, range: NSRange) {

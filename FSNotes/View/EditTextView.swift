@@ -1365,6 +1365,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let formatter = TextFormatter(textView: self, note: note)
         formatter.bold()
         deselectAfterFormatting()
+        updateToolbarAfterFormatting()
     }
 
     @IBAction func italicMenu(_ sender: Any) {
@@ -1375,6 +1376,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let formatter = TextFormatter(textView: self, note: note)
         formatter.italic()
         deselectAfterFormatting()
+        updateToolbarAfterFormatting()
     }
 
     /// If an InlineTableView cell is being edited, wrap the selection (or insert markers at cursor).
@@ -1483,6 +1485,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let formatter = TextFormatter(textView: self, note: note)
         formatter.underline()
         deselectAfterFormatting()
+        updateToolbarAfterFormatting()
     }
 
     @IBAction func strikeMenu(_ sender: Any) {
@@ -1491,6 +1494,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let formatter = TextFormatter(textView: self, note: note)
         formatter.strike()
         deselectAfterFormatting()
+        updateToolbarAfterFormatting()
     }
 
     @IBAction func highlightMenu(_ sender: Any) {
@@ -1499,13 +1503,27 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let formatter = TextFormatter(textView: self, note: note)
         formatter.wrapSelection(with: "<mark>", close: "</mark>")
         deselectAfterFormatting()
+        updateToolbarAfterFormatting()
     }
 
-    /// Collapse selection to cursor at end so the user can see the applied formatting.
+    /// Collapse selection to cursor inside the formatted text so the toolbar
+    /// reflects the applied formatting (bold/italic/etc. button shows active).
     private func deselectAfterFormatting() {
         let sel = selectedRange()
         if sel.length > 0 {
-            setSelectedRange(NSRange(location: NSMaxRange(sel), length: 0))
+            let mid = sel.location + sel.length / 2
+            setSelectedRange(NSRange(location: mid, length: 0))
+        }
+    }
+
+    /// Force toolbar button state update after formatting change.
+    /// Deferred slightly so the text storage has time to re-highlight.
+    private func updateToolbarAfterFormatting() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let vc = ViewController.shared() {
+                vc.formattingToolbar?.updateButtonStates(for: self)
+            }
         }
     }
 
