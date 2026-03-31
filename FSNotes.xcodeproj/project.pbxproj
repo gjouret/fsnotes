@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2B39BCAF9051872BCE028441 /* SyncPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */; };
+		613B083A6587CA8FA9EF6729 /* UIPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */; };
+		463B24C6CE8C9184874D1625 /* GitPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15E434ACD015C1730A4F944D /* GitPreferences.swift */; };
+		176046BB1EF4579F789F553C /* SecurityPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 756BB00C47E3A94DD4113CE0 /* SecurityPreferences.swift */; };
 		D152D6573B6DFE794A782009 /* ProjectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1A7AD903241437AC031214 /* ProjectStore.swift */; };
 		D716F3689020301237B6647A /* NoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB14DB1EEBC0E2F177E624CC /* NoteStore.swift */; };
 		E4D6559298D799CC2A02E105 /* TableRenderController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30771AB2D66780D2A4F71E3 /* TableRenderController.swift */; };
@@ -956,6 +960,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPreferences.swift; sourceTree = "<group>"; };
+		ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIPreferences.swift; sourceTree = "<group>"; };
+		15E434ACD015C1730A4F944D /* GitPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPreferences.swift; sourceTree = "<group>"; };
+		756BB00C47E3A94DD4113CE0 /* SecurityPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityPreferences.swift; sourceTree = "<group>"; };
 		DA1A7AD903241437AC031214 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
 		AB14DB1EEBC0E2F177E624CC /* NoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteStore.swift; sourceTree = "<group>"; };
 		D30771AB2D66780D2A4F71E3 /* TableRenderController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableRenderController.swift; sourceTree = "<group>"; };
@@ -1418,6 +1426,10 @@
 				4FADEFFDF5E4BF5B40836E1F /* BulletProcessor.swift */,
 				568C7270DF4C1784CFDD100B /* NoteSerializer.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
+				AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */,
+				ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */,
+				15E434ACD015C1730A4F944D /* GitPreferences.swift */,
+				756BB00C47E3A94DD4113CE0 /* SecurityPreferences.swift */,
 				5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */,
 			);
 			path = Rendering;
@@ -3017,6 +3029,10 @@
 				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
 				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
 				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
+				2B39BCAF9051872BCE028441 /* SyncPreferences.swift in Sources */,
+				613B083A6587CA8FA9EF6729 /* UIPreferences.swift in Sources */,
+				463B24C6CE8C9184874D1625 /* GitPreferences.swift in Sources */,
+				176046BB1EF4579F789F553C /* SecurityPreferences.swift in Sources */,
 				D152D6573B6DFE794A782009 /* ProjectStore.swift in Sources */,
 				D716F3689020301237B6647A /* NoteStore.swift in Sources */,
 				C40864C972A9D75AD6A62981 /* GutterController.swift in Sources */,
