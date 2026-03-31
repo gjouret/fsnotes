@@ -19,6 +19,10 @@ public class Note: NSObject  {
     var type: NoteType = .Markdown
     var url: URL
 
+    /// Injected storage reference — defaults to singleton during migration.
+    /// Eventually all callers pass this explicitly at construction.
+    lazy var sharedStorage: Storage = sharedStorage
+
     var content: NSMutableAttributedString = NSMutableAttributedString()
     var creationDate: Date? = Date()
 
@@ -182,7 +186,7 @@ public class Note: NSObject  {
     }
     
     public func loadProject() {
-        let sharedStorage = Storage.shared()
+        let sharedStorage = sharedStorage
         
         if let project = sharedStorage.getProjectByNote(url: url) {
             self.project = project
@@ -436,7 +440,7 @@ public class Note: NSObject  {
     }
     
     func move(to: URL, project: Project? = nil, forceRewrite: Bool = false) -> Bool {
-        let sharedStorage = Storage.shared()
+        let sharedStorage = sharedStorage
 
         do {
             var destination = to
@@ -534,7 +538,7 @@ public class Note: NSObject  {
 
                 var resultingItemUrl: NSURL?
                 if #available(iOS 11.0, *) {
-                    if let trash = Storage.shared().getDefaultTrash() {
+                    if let trash = sharedStorage.getDefaultTrash() {
                         moveImages(to: trash)
                     }
 
@@ -557,7 +561,7 @@ public class Note: NSObject  {
 
             print("Note moved in custom Trash folder")
 
-            if let trash = Storage.shared().getDefaultTrash() {
+            if let trash = sharedStorage.getDefaultTrash() {
                 moveImages(to: trash)
             }
             
@@ -593,7 +597,7 @@ public class Note: NSObject  {
         }
 
         do {
-            guard let dst = Storage.shared().trashItem(url: url) else {
+            guard let dst = sharedStorage.trashItem(url: url) else {
                 var resultingItemUrl: NSURL?
                 try FileManager.default.trashItem(at: url, resultingItemURL: &resultingItemUrl)
 
@@ -606,7 +610,7 @@ public class Note: NSObject  {
                 return [self.url, originalURL]
             }
 
-            if let trash = Storage.shared().getDefaultTrash() {
+            if let trash = sharedStorage.getDefaultTrash() {
                 moveImages(to: trash)
             }
 
@@ -692,14 +696,14 @@ public class Note: NSObject  {
 
             if imagesMeta.count > 0 {
                 if save() {
-                    Storage.shared().add(self)
+                    sharedStorage.add(self)
                 }
             }
         }
     }
     
     private func getDefaultTrashURL() -> URL? {
-        if let url = Storage.shared().getDefaultTrash()?.url {
+        if let url = sharedStorage.getDefaultTrash()?.url {
             return url
         }
 
@@ -799,7 +803,7 @@ public class Note: NSObject  {
         isPinned = true
         
         if cloudSave {
-            Storage.shared().saveCloudPins()
+            sharedStorage.saveCloudPins()
         }
     }
 
@@ -808,7 +812,7 @@ public class Note: NSObject  {
             isPinned = false
             
             if cloudSave {
-                Storage.shared().saveCloudPins()
+                sharedStorage.saveCloudPins()
             }
         }
     }
@@ -1034,7 +1038,7 @@ public class Note: NSObject  {
         }
 
         pendingWriteOperation = operation
-        Storage.shared().plainWriter.addOperation(operation)
+        sharedStorage.plainWriter.addOperation(operation)
     }
 
     public func save(content: NSMutableAttributedString) {
@@ -1046,7 +1050,7 @@ public class Note: NSObject  {
         modifiedLocalAt = Date()
 
         if write(attributedString: copy) {
-            Storage.shared().add(self)
+            sharedStorage.add(self)
         }
     }
 
@@ -1105,9 +1109,9 @@ public class Note: NSObject  {
             try FileManager.default.setAttributes(attributes, ofItemAtPath: dst.path)
 
             if decryptedTemporarySrc != nil {
-                Storage.shared().ciphertextWriter.cancelAllOperations()
-                Storage.shared().ciphertextWriter.addOperation {
-                    guard Storage.shared().ciphertextWriter.operationCount == 1 else { return }
+                sharedStorage.ciphertextWriter.cancelAllOperations()
+                sharedStorage.ciphertextWriter.addOperation { [self] in
+                    guard self.sharedStorage.ciphertextWriter.operationCount == 1 else { return }
                     self.writeEncrypted()
                 }
             }
@@ -1851,7 +1855,7 @@ public class Note: NSObject  {
 
         content.append(NSAttributedString(string: prefix + "#" + name))
         if save() {
-            Storage.shared().add(self)
+            sharedStorage.add(self)
         }
     }
 

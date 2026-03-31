@@ -17,7 +17,7 @@ import UIKit
 
 extension Note {
     public func unLock(password: String) -> Bool {
-        let sharedStorage = Storage.shared()
+        let sharedStorage = sharedStorage
 
         do {
             let name = url.deletingPathExtension().lastPathComponent
@@ -232,7 +232,7 @@ extension Note {
         guard let temporaryURL = self.decryptedTemporarySrc else { return false }
 
         // Wait for pending cipher operations to complete (max 5 seconds, non-blocking check)
-        let writer = Storage.shared().ciphertextWriter
+        let writer = sharedStorage.ciphertextWriter
         let timeout = Date().addingTimeInterval(5)
         writer.waitUntilAllOperationsAreFinished()
 
