@@ -295,7 +295,15 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             // Phase 5: Block-aware paragraph styles (replaces addTabStops)
             // Must run after block model is populated (updateBlockModel runs at end of process body)
             if !blocks.isEmpty {
-                let paragraphRange = (textStorage.string as NSString).paragraphRange(for: editedRange)
+                // Expand to include the paragraph AFTER the edit — when inserting a newline,
+                // the new empty line is in the next paragraph and needs its own paragraph style.
+                let nsString = textStorage.string as NSString
+                var paragraphRange = nsString.paragraphRange(for: editedRange)
+                let afterEdit = NSMaxRange(paragraphRange)
+                if afterEdit < nsString.length {
+                    let nextParaRange = nsString.paragraphRange(for: NSRange(location: afterEdit, length: 0))
+                    paragraphRange = NSUnionRange(paragraphRange, nextParaRange)
+                }
                 phase5_paragraphStyles(textStorage: textStorage, range: paragraphRange)
             } else {
                 // Fallback to old addTabStops if block model not yet populated
@@ -437,18 +445,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 //   p { margin-bottom: 16px }  hr { margin: 16px 0 }
                 switch block.type {
                 case .heading(let level), .headingSetext(let level):
-                    // MPreview CSS: h1-h6 { margin-top: 1em; margin-bottom: 16px }
-                    //   h1 { margin: .67em 0 }; h1,h2 { padding-bottom: .3em; border-bottom }
-                    // NOTE: .3em padding is handled visually by drawHeaderBottomBorders —
-                    // do NOT include it in paragraphSpacing (that would double-count).
-                    // Progressive spacing: larger headers get more bottom margin.
                     switch level {
                     case 1:
                         if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.67 }
-                        paragraph.paragraphSpacing = baseSize * 0.67  // .67em margin-bottom
+                        paragraph.paragraphSpacing = baseSize * 0.67
                     case 2:
                         if !isFirst { paragraph.paragraphSpacingBefore = baseSize }
-                        paragraph.paragraphSpacing = 16  // margin-bottom: 16px
+                        paragraph.paragraphSpacing = 16
                     case 3:
                         if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.8 }
                         paragraph.paragraphSpacing = 12
@@ -458,7 +461,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     case 5:
                         if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.5 }
                         paragraph.paragraphSpacing = 8
-                    default: // h6
+                    default:
                         if !isFirst { paragraph.paragraphSpacingBefore = baseSize * 0.4 }
                         paragraph.paragraphSpacing = 6
                     }
@@ -536,7 +539,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     // CSS collapses margins, NSTextView adds them. Use half to compensate.
                     paragraph.paragraphSpacing = 12
 
-                case .empty, .table, .yamlFrontmatter:
+                case .empty:
+                    // Explicitly set body paragraph style — otherwise empty lines
+                    // inherit heading/list paragraph style from the previous character,
+                    // causing wrong line height and cursor size.
+                    paragraph.paragraphSpacing = 0
+                    paragraph.paragraphSpacingBefore = 0
+
+                case .table, .yamlFrontmatter:
                     break
                 }
 
@@ -775,11 +785,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     self.isRendering = true
                     textStorage.beginEditing()
                     textStorage.replaceCharacters(in: codeRange, with: attachmentString)
-                    // Clear background on the replaced range
                     let replacedRange = NSRange(location: codeRange.location, length: attachmentString.length)
-                    if replacedRange.location + replacedRange.length <= textStorage.length {
-                        textStorage.removeAttribute(.backgroundColor, range: replacedRange)
-                    }
                     // Set flag false BEFORE endEditing so the delegate callback sees it correctly
                     self.isRendering = false
                     textStorage.endEditing()

@@ -78,194 +78,13 @@ public class TextFormatter {
         return attributedString
     }
     
-    func bold() {
-        guard note.isMarkdown() else { return }
+    func bold() { toggleMarkers(open: prefs.boldMarker, close: prefs.boldMarker) }
+    func italic() { toggleMarkers(open: prefs.italicMarker, close: prefs.italicMarker) }
+    public func underline() { toggleMarkers(open: "<u>", close: "</u>") }
+    public func strike() { toggleMarkers(open: "~~", close: "~~") }
+    public func highlight() { toggleMarkers(open: "<mark>", close: "</mark>") }
 
-        let marker = prefs.boldMarker  // "**" or "__"
-        let markerLen = marker.count
-        let fullString = getAttributedString().string
-        let nsStr = fullString as NSString
-
-        // Check if cursor/selection is inside existing bold markers
-        // by looking for markers immediately before and after the range
-        let expandedStart = max(0, range.location - markerLen)
-        let expandedEnd = min(nsStr.length, NSMaxRange(range) + markerLen)
-
-        if expandedStart + markerLen <= range.location && expandedEnd >= NSMaxRange(range) + markerLen {
-            let before = nsStr.substring(with: NSRange(location: expandedStart, length: markerLen))
-            let after = nsStr.substring(with: NSRange(location: NSMaxRange(range), length: markerLen))
-            if (before == "**" && after == "**") || (before == "__" && after == "__") {
-                // Remove the markers around the selection
-                let fullBoldRange = NSRange(location: expandedStart, length: expandedEnd - expandedStart)
-                let content = nsStr.substring(with: range)
-                insertText(content, replacementRange: fullBoldRange, selectRange: NSRange(location: expandedStart, length: content.count))
-                return
-            }
-        }
-
-        // Also try regex match for cursor-inside-bold (no selection)
-        if range.length == 0 {
-            var resultFound = false
-            NotesTextProcessor.boldRegex.matches(fullString, range: NSRange(0..<nsStr.length)) { (result) -> Void in
-                guard let matchRange = result?.range else { return }
-                if matchRange.intersection(self.range) != nil {
-                    let boldAttributed = self.getAttributedString().attributedSubstring(from: matchRange)
-                    self.unBold(attributedString: boldAttributed, range: matchRange)
-                    resultFound = true
-                }
-            }
-            if resultFound { return }
-        }
-
-        // Apply bold markers
-        var selectRange = NSMakeRange(range.location + markerLen, 0)
-        let string = attributedString.string
-        let length = string.count
-        if length != 0 {
-            selectRange = NSMakeRange(range.location, length + markerLen * 2)
-        }
-        insertText(marker + string + marker, selectRange: selectRange)
-    }
-    
-    func italic() {
-        guard note.isMarkdown() else { return }
-
-        let marker = prefs.italicMarker  // "*" or "_"
-        let markerLen = marker.count
-        let fullString = getAttributedString().string
-        let nsStr = fullString as NSString
-
-        // Check if selection is inside existing italic markers
-        let expandedStart = max(0, range.location - markerLen)
-        let expandedEnd = min(nsStr.length, NSMaxRange(range) + markerLen)
-
-        if expandedStart + markerLen <= range.location && expandedEnd >= NSMaxRange(range) + markerLen {
-            let before = nsStr.substring(with: NSRange(location: expandedStart, length: markerLen))
-            let after = nsStr.substring(with: NSRange(location: NSMaxRange(range), length: markerLen))
-            if before == marker && after == marker {
-                let fullItalicRange = NSRange(location: expandedStart, length: expandedEnd - expandedStart)
-                let content = nsStr.substring(with: range)
-                insertText(content, replacementRange: fullItalicRange, selectRange: NSRange(location: expandedStart, length: content.count))
-                return
-            }
-        }
-
-        // Cursor inside italic (no selection)
-        if range.length == 0 {
-            var resultFound = false
-            NotesTextProcessor.italicRegex.matches(fullString, range: NSRange(0..<nsStr.length)) { (result) -> Void in
-                guard let matchRange = result?.range else { return }
-                if matchRange.intersection(self.range) != nil {
-                    let italicAttributed = self.getAttributedString().attributedSubstring(from: matchRange)
-                    self.unItalic(attributedString: italicAttributed, range: matchRange)
-                    resultFound = true
-                }
-            }
-            if resultFound { return }
-        }
-
-        // Apply italic markers
-        var selectRange = NSMakeRange(range.location + markerLen, 0)
-        let string = attributedString.string
-        let length = string.count
-        if length != 0 {
-            selectRange = NSMakeRange(range.location, length + markerLen * 2)
-        }
-        insertText(marker + string + marker, selectRange: selectRange)
-    }
-
-    private func unBold(attributedString: NSAttributedString, range: NSRange) {
-        let unBold = attributedString
-            .string
-            .replacingOccurrences(of: "**", with: "")
-            .replacingOccurrences(of: "__", with: "")
-
-        let selectRange = NSRange(location: range.location, length: unBold.count)
-        insertText(unBold, replacementRange: range, selectRange: selectRange)
-    }
-
-    private func unItalic(attributedString: NSAttributedString, range: NSRange) {
-        let unItalic = attributedString
-            .string
-            .replacingOccurrences(of: "*", with: "")
-            .replacingOccurrences(of: "_", with: "")
-
-        let selectRange = NSRange(location: range.location, length: unItalic.count)
-        insertText(unItalic, replacementRange: range, selectRange: selectRange)
-    }
-
-    private func unStrike(attributedString: NSAttributedString, range: NSRange) {
-        let unStrike = attributedString
-            .string
-            .replacingOccurrences(of: "~~", with: "")
-
-        let selectRange = NSRange(location: range.location, length: unStrike.count)
-        insertText(unStrike, replacementRange: range, selectRange: selectRange)
-    }
-    
-    public func underline() {
-        // Markdown doesn't have native underline — use HTML <u> tags
-        let str = attributedString.string
-        // Only strip if the selection is exactly <u>...</u> with a single pair
-        if str.hasPrefix("<u>") && str.hasSuffix("</u>") && str.count > 7 {
-            // Remove only the outer <u>...</u> wrapper
-            let start = str.index(str.startIndex, offsetBy: 3)
-            let end = str.index(str.endIndex, offsetBy: -4)
-            let inner = String(str[start..<end])
-            replaceWith(string: inner, range: range)
-            setSelectedRange(NSRange(location: range.location, length: inner.count))
-        } else {
-            // Add underline
-            let text = "<u>" + str + "</u>"
-            replaceWith(string: text, range: range)
-            if attributedString.length == 0 {
-                setSelectedRange(NSRange(location: range.location + 3, length: 0))
-            } else {
-                setSelectedRange(NSRange(location: range.location, length: text.count))
-            }
-        }
-    }
-    
-    public func strike() {
-        // UnStrike if not selected
-        if range.length == 0 {
-            var resultFound = false
-            let string = getAttributedString().string
-
-            NotesTextProcessor.strikeRegex.matches(string, range: NSRange(0..<string.count)) { (result) -> Void in
-                guard let range = result?.range else { return }
-
-                if range.intersection(self.range) != nil {
-                    let italicAttributed = self.getAttributedString().attributedSubstring(from: range)
-
-                    self.unStrike(attributedString: italicAttributed, range: range)
-                    resultFound = true
-                }
-            }
-
-            if resultFound {
-                return
-            }
-        }
-
-        // UnStrike
-        if attributedString.string.contains("~~") {
-            unStrike(attributedString: attributedString, range: range)
-            return
-        }
-
-        var selectRange = NSMakeRange(range.location + 2, 0)
-        let string = attributedString.string
-        let length = string.count
-
-        if length != 0 {
-            selectRange = NSMakeRange(range.location, length + 4)
-        }
-
-        insertText("~~" + string + "~~", selectRange: selectRange)
-    }
-    
-    /// Wrap the current selection with open/close markers. Generic for any tag.
+    /// Wrap the current selection with open/close markers (apply only, no toggle).
     public func wrapSelection(with open: String, close: String) {
         let string = attributedString.string
         let length = string.count
@@ -276,6 +95,103 @@ public class TextFormatter {
         }
 
         insertText(open + string + close, selectRange: selectRange)
+    }
+
+    // MARK: - Unified Format Toggle
+
+    /// Toggle markers around the cursor/selection. Handles ALL marker-based formatting:
+    /// bold (**), italic (*), strikethrough (~~), underline (<u></u>), highlight (<mark></mark>).
+    ///
+    /// - If cursor/selection is inside existing markers → remove them, cursor at end of content
+    /// - If not → wrap selection with markers
+    public func toggleMarkers(open: String, close: String) {
+        guard note.isMarkdown() else { return }
+
+        let fullString = getAttributedString().string
+        let nsStr = fullString as NSString
+        let openLen = open.count
+        let closeLen = close.count
+
+        // --- Detection: is cursor/selection inside existing markers? ---
+
+        // Strategy 1: Check characters immediately before/after the selection
+        let expandedStart = max(0, range.location - openLen)
+        let expandedEnd = min(nsStr.length, NSMaxRange(range) + closeLen)
+
+        if expandedStart + openLen <= range.location && expandedEnd >= NSMaxRange(range) + closeLen {
+            let before = nsStr.substring(with: NSRange(location: expandedStart, length: openLen))
+            let after = nsStr.substring(with: NSRange(location: NSMaxRange(range), length: closeLen))
+
+            // For bold, accept both ** and __ as markers
+            let matchesBefore: Bool
+            let matchesAfter: Bool
+            if open == "**" {
+                matchesBefore = (before == "**" || before == "__")
+                matchesAfter = (after == "**" || after == "__")
+            } else if open == "*" {
+                matchesBefore = (before == "*" || before == "_")
+                matchesAfter = (after == "*" || after == "_")
+            } else {
+                matchesBefore = (before == open)
+                matchesAfter = (after == close)
+            }
+
+            if matchesBefore && matchesAfter {
+                let fullRange = NSRange(location: expandedStart, length: expandedEnd - expandedStart)
+                let content = nsStr.substring(with: range)
+                insertText(content, replacementRange: fullRange,
+                           selectRange: NSRange(location: expandedStart + content.count, length: 0))
+                return
+            }
+        }
+
+        // Strategy 2: No selection — search backward/forward from cursor for markers
+        if range.length == 0 {
+            let searchStart = max(0, range.location - 500)
+            let searchEnd = min(nsStr.length, range.location + 500)
+
+            let backRange = NSRange(location: searchStart,
+                                    length: min(range.location - searchStart + openLen, nsStr.length - searchStart))
+            let openMatch = nsStr.range(of: open, options: .backwards, range: backRange)
+
+            if openMatch.location != NSNotFound {
+                let fwdStart = range.location
+                let fwdRange = NSRange(location: fwdStart,
+                                       length: min(500, nsStr.length - fwdStart))
+                let closeMatch = nsStr.range(of: close, range: fwdRange)
+
+                if closeMatch.location != NSNotFound {
+                    // Verify no intervening close marker between open and cursor
+                    let betweenRange = NSRange(location: NSMaxRange(openMatch),
+                                               length: range.location - NSMaxRange(openMatch))
+                    let intervening = nsStr.range(of: close, range: betweenRange)
+
+                    if intervening.location == NSNotFound {
+                        let contentStart = NSMaxRange(openMatch)
+                        let contentLen = closeMatch.location - contentStart
+                        let content = nsStr.substring(with: NSRange(location: contentStart, length: contentLen))
+                        let fullRange = NSRange(location: openMatch.location,
+                                                length: NSMaxRange(closeMatch) - openMatch.location)
+                        insertText(content, replacementRange: fullRange,
+                                   selectRange: NSRange(location: openMatch.location + content.count, length: 0))
+                        return
+                    }
+                }
+            }
+        }
+
+        // --- Not inside markers: wrap selection ---
+        let string = attributedString.string
+        let length = string.count
+
+        if length == 0 {
+            // No selection — place cursor between markers
+            insertText(open + close, selectRange: NSMakeRange(range.location + openLen, 0))
+        } else {
+            // Place cursor at end of wrapped text
+            insertText(open + string + close,
+                       selectRange: NSMakeRange(range.location + openLen + length + closeLen, 0))
+        }
     }
 
     public func tab() {
@@ -627,126 +543,201 @@ public class TextFormatter {
         #endif
     }
 
-    public func newLine() {
-        guard let currentParagraphRange = self.getParagraphRange() else { return }
+    // MARK: - Return Key State Machine
 
-        let currentParagraph = storage.attributedSubstring(from: currentParagraphRange)
-        let selectedRange = self.textView.selectedRange
+    /// What should happen when Return is pressed on the current line.
+    public enum NewLineTransition: Equatable {
+        /// Plain newline, reset typing attributes to body font
+        case bodyText
+        /// Continue checkbox list: \n + indent + unchecked checkbox
+        case continueCheckbox(prefix: String, todoLocation: Int)
+        /// Continue unordered list: \n + matched prefix (e.g. "  - ")
+        case continueUnorderedList(prefix: String)
+        /// Continue numbered list: \n + incremented prefix (e.g. "2. ")
+        case continueNumberedList(next: String)
+        /// Continue indentation: \n + tabs/spaces
+        case continueIndent(prefix: String)
+        /// Exit list: delete empty bullet line, insert plain newline
+        case exitList(paragraphRange: NSRange)
+        /// Exit todo: special handling for empty checkbox near cursor
+        case exitTodo(paragraphRange: NSRange)
+    }
 
-        // Autocomplete todo lists
+    /// Pure function: determine what transition to apply when Return is pressed.
+    /// Reads the paragraph content and cursor position, returns the transition.
+    public static func newLineTransition(
+        paragraph: NSAttributedString,
+        paragraphRange: NSRange,
+        cursorLocation: Int,
+        storageLength: Int
+    ) -> NewLineTransition {
+        let selectedRange = NSRange(location: cursorLocation, length: 0)
+        let paragraphString = paragraph.string
+        let cursorNearEnd = cursorLocation != paragraphRange.location
+            && paragraphRange.upperBound - 2 < cursorLocation
 
-        if selectedRange.location != currentParagraphRange.location && currentParagraphRange.upperBound - 2 < selectedRange.location, currentParagraph.length >= 2 {
-
-            if textView.selectedRange.upperBound > 2 {
-                let char = storage.attributedSubstring(from: NSRange(location: textView.selectedRange.upperBound - 2, length: 1))
-
-                if let _ = char.attribute(.todo, at: 0, effectiveRange: nil) {
-                    let selectRange = NSRange(location: currentParagraphRange.location, length: 0)
-
-                    insertText("", replacementRange: currentParagraphRange, selectRange: selectRange)
-
-                    #if os(OSX)
-                        textView.insertNewline(nil)
-                        textView.setSelectedRange(selectRange)
-                    #else
-                        textView.insertText("\n")
-                        textView.selectedRange = selectRange
-                    #endif
-
-                    return
+        // --- 1. Checkbox (todo) ---
+        if cursorNearEnd && paragraph.length >= 2 {
+            // Check if character before cursor has .todo attribute (empty checkbox case)
+            if cursorLocation > 1 && cursorLocation - 2 < paragraph.length {
+                let localIdx = cursorLocation - paragraphRange.location - 2
+                if localIdx >= 0 && localIdx < paragraph.length {
+                    if paragraph.attribute(.todo, at: localIdx, effectiveRange: nil) != nil {
+                        return .exitTodo(paragraphRange: paragraphRange)
+                    }
                 }
             }
 
+            // Check if paragraph has a todo attribute anywhere
             var todoLocation = -1
-            currentParagraph.enumerateAttribute(.todo, in: NSRange(0..<currentParagraph.length), options: []) { (value, range, stop) -> Void in
+            paragraph.enumerateAttribute(.todo, in: NSRange(0..<paragraph.length), options: []) { value, range, stop in
                 guard value != nil else { return }
-
                 todoLocation = range.location
                 stop.pointee = true
             }
 
             if todoLocation > -1 {
-                let unchecked = AttributedBox.getUnChecked()?.attributedSubstring(from: NSRange(0..<2))
-                var prefix = String()
+                let prefix = todoLocation > 0
+                    ? paragraph.attributedSubstring(from: NSRange(0..<todoLocation)).string
+                    : ""
+                return .continueCheckbox(prefix: prefix, todoLocation: todoLocation)
+            }
+        }
 
-                if todoLocation > 0 {
-                    prefix = currentParagraph.attributedSubstring(from: NSRange(0..<todoLocation)).string
+        // --- 2. Unordered list ---
+        if cursorNearEnd {
+            if let charsMatch = getAutocompleteCharsMatch(string: paragraphString) {
+                let found = (paragraphString as NSString).substring(with: charsMatch.range)
+                let content = paragraphString
+                    .replacingOccurrences(of: found, with: "", options: [], range: paragraphString.startIndex..<paragraphString.endIndex)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if content.isEmpty {
+                    return .exitList(paragraphRange: paragraphRange)
+                } else {
+                    return .continueUnorderedList(prefix: found)
                 }
+            }
 
-            #if os(OSX)
-                let string = NSMutableAttributedString(string: "\n" + prefix)
-                string.append(unchecked!)
-                self.insertText(string)
-            #else
-                let selectedRange = textView.selectedRange
-                let selectedTextRange = textView.selectedTextRange!
-                let checkbox = NSMutableAttributedString(string: "\n" + prefix)
-                checkbox.append(unchecked!)
+            // --- 3. Numbered list ---
+            if let digitsMatch = getAutocompleteDigitsMatch(string: paragraphString) {
+                let found = (paragraphString as NSString).substring(with: digitsMatch.range)
+                var newLine = 1
+                if cursorLocation == storageLength { newLine = 0 }
 
-                textView.undoManager?.beginUndoGrouping()
-                textView.replace(selectedTextRange, withText: checkbox.string)
-                textView.textStorage.replaceCharacters(in: NSRange(location: selectedRange.location, length: checkbox.length), with: checkbox)
-                textView.undoManager?.endUndoGrouping()
-            #endif
-                return
+                if found.count + newLine == paragraph.length {
+                    return .exitList(paragraphRange: paragraphRange)
+                } else if let position = Int(found.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)) {
+                    let next = found.replacingOccurrences(of: String(position), with: String(position + 1))
+                    return .continueNumberedList(next: next)
+                }
             }
         }
 
-        // Autocomplete ordered and unordered lists
-
-        if selectedRange.location != currentParagraphRange.location && currentParagraphRange.upperBound - 2 < selectedRange.location {
-            if let charsMatch = TextFormatter.getAutocompleteCharsMatch(string: currentParagraph.string) {
-                self.matchChars(string: currentParagraph, match: charsMatch)
-                return
-            }
-
-            if let digitsMatch = TextFormatter.getAutocompleteDigitsMatch(string: currentParagraph.string) {
-                self.matchDigits(string: currentParagraph, match: digitsMatch)
-                return
-            }
-        }
-
-        // Headers: Return key exits header mode (no prefix continuation)
-        let paragraphString = currentParagraph.string
+        // --- 4. Heading ---
         if paragraphString.starts(with: "#") {
+            return .bodyText
+        }
+
+        // --- 5. Indentation ---
+        if paragraphString.starts(with: "\t"),
+           let prefix = paragraphString.getPrefixMatchSequentially(char: "\t"),
+           cursorLocation != paragraphRange.location {
+            return .continueIndent(prefix: prefix)
+        }
+        if paragraphString.starts(with: "  "),
+           let prefix = paragraphString.getPrefixMatchSequentially(char: " "),
+           cursorLocation != paragraphRange.location {
+            return .continueIndent(prefix: prefix)
+        }
+
+        // --- 6. Default ---
+        return .bodyText
+    }
+
+    /// Execute the transition: insert text, set typing attributes, position cursor.
+    private func applyTransition(_ transition: NewLineTransition) {
+        switch transition {
+
+        case .bodyText:
             #if os(OSX)
             (textView as? EditTextView)?.suppressCompletion = true
-            // Reset typing attributes to body font so the new line doesn't
-            // inherit header styling
+            // Set typing attributes to body font/style BEFORE inserting newline.
+            // Phase5 and the highlighter handle all paragraph and font styling —
+            // we just need to ensure the new line starts with body attributes.
+            let bodyParagraph = NSMutableParagraphStyle()
+            bodyParagraph.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+            bodyParagraph.paragraphSpacing = 0
+            bodyParagraph.paragraphSpacingBefore = 0
+
             textView.typingAttributes = [
                 .font: prefs.noteFont,
-                .foregroundColor: NotesTextProcessor.fontColor
+                .foregroundColor: NotesTextProcessor.fontColor,
+                .paragraphStyle: bodyParagraph
             ]
-            #endif
             textView.insertNewline(nil)
-            return
-        }
-        // New Line insertion
+            #else
+            textView.insertText("\n")
+            #endif
 
-        var newLine = "\n"
-        var prefix: String?
-
-        if paragraphString.starts(with: "\t") {
-            prefix = paragraphString.getPrefixMatchSequentially(char: "\t")
-        } else if paragraphString.starts(with: "  ") {
-            prefix = paragraphString.getPrefixMatchSequentially(char: " ")
-        }
-
-        if let x = prefix {
-            if selectedRange.location != currentParagraphRange.location {
-                newLine += x
-            }
-
-            let string = TextFormatter.getAttributedCode(string: newLine)
+        case .continueCheckbox(let prefix, _):
+            let unchecked = AttributedBox.getUnChecked()?.attributedSubstring(from: NSRange(0..<2))
+            #if os(OSX)
+            let string = NSMutableAttributedString(string: "\n" + prefix)
+            string.append(unchecked!)
             self.insertText(string)
-            return
-        }
+            #else
+            let selectedRange = textView.selectedRange
+            let selectedTextRange = textView.selectedTextRange!
+            let checkbox = NSMutableAttributedString(string: "\n" + prefix)
+            checkbox.append(unchecked!)
+            textView.undoManager?.beginUndoGrouping()
+            textView.replace(selectedTextRange, withText: checkbox.string)
+            textView.textStorage.replaceCharacters(in: NSRange(location: selectedRange.location, length: checkbox.length), with: checkbox)
+            textView.undoManager?.endUndoGrouping()
+            #endif
 
-        #if os(iOS)
-            self.textView.insertText("\n")
-        #else
-            self.textView.insertNewline(nil)
-        #endif
+        case .continueUnorderedList(let prefix):
+            insertText("\n" + prefix)
+            updateCurrentParagraph()
+
+        case .continueNumberedList(let next):
+            insertText("\n" + next)
+            updateCurrentParagraph()
+
+        case .continueIndent(let prefix):
+            let string = TextFormatter.getAttributedCode(string: "\n" + prefix)
+            self.insertText(string)
+
+        case .exitList(let paragraphRange):
+            let range = storage.mutableString.paragraphRange(for: textView.selectedRange)
+            let selectRange = NSRange(location: range.location, length: 0)
+            insertText("\n", replacementRange: range, selectRange: selectRange)
+            updateCurrentParagraph()
+
+        case .exitTodo(let paragraphRange):
+            let selectRange = NSRange(location: paragraphRange.location, length: 0)
+            insertText("", replacementRange: paragraphRange, selectRange: selectRange)
+            #if os(OSX)
+            textView.insertNewline(nil)
+            textView.setSelectedRange(selectRange)
+            #else
+            textView.insertText("\n")
+            textView.selectedRange = selectRange
+            #endif
+        }
+    }
+
+    public func newLine() {
+        guard let paragraphRange = getParagraphRange() else { return }
+        let paragraph = storage.attributedSubstring(from: paragraphRange)
+        let transition = Self.newLineTransition(
+            paragraph: paragraph,
+            paragraphRange: paragraphRange,
+            cursorLocation: textView.selectedRange.location,
+            storageLength: storage.length
+        )
+        applyTransition(transition)
     }
 
     public func todo() {

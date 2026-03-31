@@ -471,6 +471,17 @@ CA
                                                 <action selector="strikeMenu:" target="Ady-hI-5gd" id="ez5-KB-i65"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Underline" image="underline" catalog="system" keyEquivalent="u" id="UND-kN-kK4">
+                                            <connections>
+                                                <action selector="underlineMenu:" target="Ady-hI-5gd" id="und-KB-i66"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Highlight" image="highlighter" catalog="system" keyEquivalent="M" id="HLT-kN-kK5">
+                                            <modifierMask key="keyEquivalentModifierMask" shift="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="highlightMenu:" target="Ady-hI-5gd" id="hlt-KB-i67"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem isSeparatorItem="YES" id="pUR-Y1-6Rc"/>
                                         <menuItem title="Headers" image="textformat.size.smaller" catalog="system" id="Pzb-TG-43d">
                                             <modifierMask key="keyEquivalentModifierMask"/>

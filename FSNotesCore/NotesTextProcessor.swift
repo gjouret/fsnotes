@@ -498,8 +498,17 @@ public class NotesTextProcessor {
         // We detect and process underlined headers
         NotesTextProcessor.headersSetextRegex.matches(string, range: paragraphRange) { (result) -> Void in
             guard let range = result?.range else { return }
-            
-            attributedString.enumerateAttribute(.font, in: range) { value, subrange, _ in
+
+            // Exclude trailing \n from font application (same as ATX headers above)
+            let fontRange: NSRange
+            if range.length > 0 && NSMaxRange(range) <= string.count
+                && (string as NSString).substring(with: NSRange(location: NSMaxRange(range) - 1, length: 1)) == "\n" {
+                fontRange = NSRange(location: range.location, length: range.length - 1)
+            } else {
+                fontRange = range
+            }
+
+            attributedString.enumerateAttribute(.font, in: fontRange) { value, subrange, _ in
                 guard let font = value as? PlatformFont else { return }
                 let headerFont = NotesTextProcessor.getHeaderFont(level: 1, baseFont: font, baseFontSize: pointSize)
                 attributedString.addAttribute(.font, value: headerFont, range: subrange)
@@ -516,13 +525,23 @@ public class NotesTextProcessor {
         NotesTextProcessor.headersAtxRegex.matches(string, range: paragraphRange) { (result) -> Void in
             guard let range = result?.range,
                   let headerMarksRange = result?.range(at: 1) else { return }
-                
+
+            // Exclude trailing \n from font application — the newline's font
+            // determines cursor height on the next line, which must be body size.
+            let fontRange: NSRange
+            if range.length > 0 && NSMaxRange(range) <= string.count
+                && (string as NSString).substring(with: NSRange(location: NSMaxRange(range) - 1, length: 1)) == "\n" {
+                fontRange = NSRange(location: range.location, length: range.length - 1)
+            } else {
+                fontRange = range
+            }
+
             let headerLevel = headerMarksRange.length
-            attributedString.enumerateAttribute(.font, in: range) { value, subrange, _ in
+            attributedString.enumerateAttribute(.font, in: fontRange) { value, subrange, _ in
                 guard let font = value as? PlatformFont else { return }
 
                 let headerFont = NotesTextProcessor.getHeaderFont(level: headerLevel, baseFont: font, baseFontSize: pointSize)
-                
+
                 attributedString.addAttribute(.font, value: headerFont, range: subrange)
             }
 

@@ -560,18 +560,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             markdown += "\n"
         }
 
+        // Set clean typing attributes BEFORE insertion so the restored markdown
+        // doesn't inherit rendered-block attributes from the attachment.
+        typingAttributes = [
+            .font: UserDefaultsManagement.noteFont,
+            .foregroundColor: NotesTextProcessor.fontColor
+        ]
+
         breakUndoCoalescing()
         insertText(markdown, replacementRange: attachmentRange)
         breakUndoCoalescing()
 
-        // Strip leaked rendered-block attributes from the restored text
-        // (insertText inherits typing attributes from the attachment, which had these)
         let restoredRange = NSRange(location: index, length: min(markdown.count, storage.length - index))
-        if restoredRange.length > 0 {
-            storage.removeAttribute(.renderedBlockSource, range: restoredRange)
-            storage.removeAttribute(.renderedBlockType, range: restoredRange)
-            storage.removeAttribute(.renderedBlockOriginalMarkdown, range: restoredRange)
-        }
 
         // Place cursor inside the code block for editing
         let cursorPos = min(index + markdown.count - 5, storage.length) // before closing ```\n
@@ -1333,7 +1333,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         guard let note = self.note, isEditable, note.isMarkdown() else { return }
 
         let formatter = TextFormatter(textView: self, note: note)
-        formatter.wrapSelection(with: "<mark>", close: "</mark>")
+        formatter.highlight()
         deselectAfterFormatting()
         updateToolbarAfterFormatting()
     }
@@ -1517,6 +1517,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             let formatter = TextFormatter(textView: self, note: note)
             formatter.newLine()
             breakUndoCoalescing()
+
             return
         }
 

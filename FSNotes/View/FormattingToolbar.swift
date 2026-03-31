@@ -171,11 +171,14 @@ class FormattingToolbar: NSView {
         }
 
         let range = editor.selectedRange()
-        let location = min(range.location, storage.length - 1)
-        guard location >= 0 else {
+        // Cursor at end of text — no character to check, reset all buttons.
+        // Using storage.length - 1 would clamp back onto the previous line's newline,
+        // falsely detecting heading/bold/etc. from the line above.
+        guard range.location < storage.length else {
             resetAllButtons()
             return
         }
+        let location = range.location
 
         // Determine heading level from block model (reliable) instead of font size (fragile).
         // Use paragraph range intersection — the cursor at end-of-line is past block.range
@@ -198,9 +201,32 @@ class FormattingToolbar: NSView {
         setButtonState("h2", active: headingLevel == 2)
         setButtonState("h3", active: headingLevel >= 3)
 
+        // Read formatting attributes. When cursor is a point (no selection), use
+        // typingAttributes — these reflect the ACTUAL formatting for the next character,
+        // not the storage attributes which may be stale from the previous line (e.g.,
+        // heading font on a newline character after pressing Return).
+        let attrs: [NSAttributedString.Key: Any]
+        if range.length == 0 {
+            attrs = editor.typingAttributes
+        } else {
+            var effectiveAttrs: [NSAttributedString.Key: Any] = [:]
+            if let font = storage.attribute(.font, at: location, effectiveRange: nil) {
+                effectiveAttrs[.font] = font
+            }
+            if let strike = storage.attribute(.strikethroughStyle, at: location, effectiveRange: nil) {
+                effectiveAttrs[.strikethroughStyle] = strike
+            }
+            if let underline = storage.attribute(.underlineStyle, at: location, effectiveRange: nil) {
+                effectiveAttrs[.underlineStyle] = underline
+            }
+            if let bg = storage.attribute(.backgroundColor, at: location, effectiveRange: nil) {
+                effectiveAttrs[.backgroundColor] = bg
+            }
+            attrs = effectiveAttrs
+        }
+
         // Inline formatting — suppress bold/italic when inside a heading
-        // (headings are rendered bold by definition, not because user toggled bold)
-        if let font = storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont {
+        if let font = attrs[.font] as? NSFont {
             let traits = font.fontDescriptor.symbolicTraits
             setButtonState("bold", active: headingLevel == 0 && traits.contains(.bold))
             setButtonState("italic", active: headingLevel == 0 && traits.contains(.italic))
@@ -209,15 +235,17 @@ class FormattingToolbar: NSView {
             setButtonState("italic", active: false)
         }
 
-        let hasStrike = storage.attribute(.strikethroughStyle, at: location, effectiveRange: nil) != nil
+        let hasStrike = attrs[.strikethroughStyle] != nil
         setButtonState("strikethrough", active: hasStrike)
 
-        let hasUnderline = storage.attribute(.underlineStyle, at: location, effectiveRange: nil) != nil
+        let hasUnderline = attrs[.underlineStyle] != nil
         setButtonState("underline", active: hasUnderline)
 
-        // Check for highlight (<mark> tag — sets backgroundColor with yellow)
-        if let bg = storage.attribute(.backgroundColor, at: location, effectiveRange: nil) as? NSColor {
-            setButtonState("highlight", active: bg.yellowComponent > 0.5)
+        // Check for highlight (<mark> tag — sets backgroundColor with yellow-ish RGB)
+        if let bg = attrs[.backgroundColor] as? NSColor,
+           let rgb = bg.usingColorSpace(.deviceRGB) {
+            let isHighlight = rgb.redComponent > 0.8 && rgb.greenComponent > 0.8 && rgb.blueComponent < 0.3
+            setButtonState("highlight", active: isHighlight)
         } else {
             setButtonState("highlight", active: false)
         }
