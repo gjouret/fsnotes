@@ -130,7 +130,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 guard let evc = NSApplication.shared.keyWindow?.contentViewController as? EditorViewController,
                       evc.vcEditor?.note != nil else { return false }
                         
-                if evc.vcEditor?.markdownView == nil {
+                if true /* markdownView removed */ {
                     if ["findMenu.find",
                         "findMenu.findAndReplace",
                         "findMenu.next",
@@ -320,11 +320,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
               evc.vcEditor?.note != nil
         else { return }
         
-        if let mView = evc.vcEditor?.markdownView {
-            mView.performTextFinderAction(sender)
-            return
-        }
-        
+        // markdownView removed — WYSIWYG only
         if let editView = evc.vcEditor {
             editView.performFindPanelAction(sender)
         }
@@ -1134,25 +1130,8 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
 
         textView.disablePreviewEditorAndNote()
 
-        // Save web scroll position before removing the webview,
-        // then clean up and refill — all inside the async callback
-        // to avoid the race condition of removing the webview before
-        // the JavaScript completes
-        if let mdView = textView.markdownView {
-            mdView.getScrollPosition { [weak self] point in
-                guard let self = self else { return }
-                self.vcEditor?.note?.contentOffsetWeb = point
-
-                mdView.removeFromSuperview()
-                textView.markdownView = nil
-                textView.subviews.removeAll(where: { $0.isKind(of: MPreviewView.self) })
-
-                self.restoreAfterPreviewDisable(textView: textView, savedRange: savedRange)
-            }
-        } else {
-            textView.subviews.removeAll(where: { $0.isKind(of: MPreviewView.self) })
-            restoreAfterPreviewDisable(textView: textView, savedRange: savedRange)
-        }
+        // markdownView removed — WYSIWYG only. Just restore directly.
+        restoreAfterPreviewDisable(textView: textView, savedRange: savedRange)
     }
 
     /// Shared restore logic after preview is disabled: refill editor, restore cursor, apply focus.
@@ -1173,7 +1152,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
     private func applyEditModeFocus() {
         if let vc = ViewController.shared() {
             vc.previewHasFocus = false
-            vcEditor?.markdownView?.hideFocusBorder()
+            // markdownView removed
             vc.editAreaScroll.showFocusBorder()
             vc.focusEditArea()
         }

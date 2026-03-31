@@ -161,11 +161,8 @@ class SearchTextField: NSSearchField, NSSearchFieldDelegate {
         case "insertTab:":
             markCompleteonAsSuccess()
 
-            if vcDelegate.vcEditor?.isPreviewEnabled() == true {
-                NSApp.mainWindow?.makeFirstResponder(vcDelegate.editor.markdownView)
-            } else {
-                vcDelegate.focusEditArea()
-            }
+            // Preview mode removed — always focus edit area
+            vcDelegate.focusEditArea()
 
             vcDelegate.editor.scrollToCursor()
             return true

@@ -781,21 +781,15 @@ class ViewController: EditorViewController,
             // Shift+Tab from preview: go back to notes list
             if event.modifierFlags.contains(.shift) && previewHasFocus {
                 previewHasFocus = false
-                editor.markdownView?.hideFocusBorder()
+                // markdownView removed
                 NSApp.mainWindow?.makeFirstResponder(notesTableView)
                 return false
             }
 
             if let fr = NSApp.mainWindow?.firstResponder, fr.isKind(of: NotesTableView.self) {
-                if vcEditor?.isPreviewEnabled() == true, let mView = editor.markdownView {
-                    previewHasFocus = true
-                    mView.showFocusBorder()
-                    NSApp.mainWindow?.makeFirstResponder(mView)
-                    return false
-                } else {
-                    editAreaScroll.showFocusBorder()
-                    focusEditArea()
-                }
+                // Preview removed — always focus edit area
+                editAreaScroll.showFocusBorder()
+                focusEditArea()
                 return false
             }
         }
@@ -834,11 +828,7 @@ class ViewController: EditorViewController,
                 return false
             }
 
-            if let mView = self.editor.markdownView, mView.isFindPanelVisible {
-                mView.hideFindPanel()
-                NSApp.mainWindow?.makeFirstResponder(mView.webView)
-                return false
-            }
+            // markdownView find panel removed — WYSIWYG only
             
             if self.editAreaScroll.isFindBarVisible {
                 cancelTextSearch()
@@ -932,46 +922,7 @@ class ViewController: EditorViewController,
             return false
         }
 
-        // Preview focus: handle scrolling and navigation
-        if previewHasFocus {
-            if let webView = editor.markdownView?.webView {
-                switch Int(event.keyCode) {
-                case kVK_UpArrow:
-                    scrollPreview(webView, by: -40)
-                    return false
-                case kVK_DownArrow:
-                    scrollPreview(webView, by: 40)
-                    return false
-                case kVK_LeftArrow:
-                    previewHasFocus = false
-                    editor.markdownView?.hideFocusBorder()
-                    NSApp.mainWindow?.makeFirstResponder(notesTableView)
-                    return false
-                case kVK_PageUp:
-                    scrollPreview(webView, by: "window.innerHeight", negate: true)
-                    return false
-                case kVK_PageDown:
-                    scrollPreview(webView, by: "window.innerHeight", negate: false)
-                    return false
-                case kVK_Home:
-                    webView.evaluateJavaScript("window.scrollTo(0, 0)", completionHandler: nil)
-                    return false
-                case kVK_End:
-                    webView.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)", completionHandler: nil)
-                    return false
-                case kVK_Space:
-                    scrollPreview(webView, by: "window.innerHeight", negate: event.modifierFlags.contains(.shift))
-                    return false
-                case kVK_Escape:
-                    previewHasFocus = false
-                    editor.markdownView?.hideFocusBorder()
-                    NSApp.mainWindow?.makeFirstResponder(notesTableView)
-                    return false
-                default:
-                    break
-                }
-            }
-        }
+        // Preview focus block removed — WYSIWYG only
 
         if event.keyCode == kVK_RightArrow {
             if let fr = mw.firstResponder, fr.isKind(of: NotesTableView.self) {
@@ -980,15 +931,9 @@ class ViewController: EditorViewController,
                     return true
                 }
 
-                if vcEditor?.isPreviewEnabled() == true, let mView = editor.markdownView {
-                    previewHasFocus = true
-                    mView.showFocusBorder()
-                    NSApp.mainWindow?.makeFirstResponder(mView)
-                    return false
-                } else {
-                    editAreaScroll.showFocusBorder()
-                    focusEditArea()
-                }
+                // Preview removed — always focus edit area
+                editAreaScroll.showFocusBorder()
+                focusEditArea()
 
                 return false
             }
@@ -998,7 +943,7 @@ class ViewController: EditorViewController,
             if let fr = mw.firstResponder {
                 if fr.isKind(of: MPreviewView.self) || fr.isKind(of: MPreviewContainerView.self) {
                     previewHasFocus = false
-                    editor.markdownView?.hideFocusBorder()
+                    // markdownView removed
                     sidebarOutlineView.window?.makeFirstResponder(notesTableView)
                     return false
                 }

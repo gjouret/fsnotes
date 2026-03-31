@@ -106,7 +106,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     
     public var timer: Timer?
     public var tagsTimer: Timer?
-    public var markdownView: MPreviewContainerView?
+    // markdownView removed — WYSIWYG is the only rendering mode
     public var isLastEdited: Bool = false
     
     @IBOutlet weak var previewMathJax: NSMenuItem!
@@ -115,7 +115,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var attributesCachingQueue = OperationQueue.init()
     public lazy var gutterController = GutterController(textView: self)
 
-    private var preview = false
+    // preview flag removed — WYSIWYG is the only rendering mode
     
     public var isScrollPositionSaverLocked = false
     public var skipLoadSelectedRange = false
@@ -1158,13 +1158,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         typingAttributes.removeAll()
         typingAttributes[.font] = UserDefaultsManagement.noteFont
 
-        if isPreviewEnabled() {
-            loadMarkdownWebView(note: note, force: force)
-            return
-        }
-
-        markdownView?.removeFromSuperview()
-        markdownView = nil
+        // Preview mode removed — WYSIWYG is the only rendering path
 
         guard let storage = textStorage else { return }
 
@@ -1238,48 +1232,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         needsDisplay = true
     }
 
-    private func loadMarkdownWebView(note: Note, force: Bool) {
-        self.note = nil
-        textStorage?.setAttributedString(NSAttributedString())
-        self.note = note
-
-        guard let scrollView = editorViewController?.vcEditorScrollView else { return }
-        
-        if markdownView == nil {
-            let frame = scrollView.bounds
-            
-            let containerView = MPreviewContainerView(frame: frame, note: note, closure: { [weak self] in
-                guard let self = self, let note = self.note else { return }
-
-                // If we have a saved web scroll position, use it;
-                // otherwise use the cursor's scroll fraction to approximate
-                if note.contentOffsetWeb != .zero {
-                    self.markdownView?.restoreScrollPosition(note.contentOffsetWeb)
-                    note.contentOffsetWeb = .zero
-                } else if note.cursorScrollFraction > 0 {
-                    self.markdownView?.scrollToFraction(note.cursorScrollFraction)
-                }
-            })
-            markdownView = containerView
-            
-            containerView.webView.setEditorVC(evc: editorViewController)
-            if self.note == note {
-                scrollView.addSubview(containerView)
-            }
-        } else {
-            /// Resize markdownView
-            let frame = scrollView.bounds
-            markdownView?.frame = frame
-
-            /// Load note if needed
-            markdownView?.webView.load(note: note, force: force)
-        }
-    }
+    // loadMarkdownWebView removed — WYSIWYG is the only rendering mode
 
     public func lockEncryptedView() {
         textStorage?.setAttributedString(NSAttributedString())
-        markdownView?.removeFromSuperview()
-        markdownView = nil
+        // markdownView removed — WYSIWYG only
 
         isEditable = false
         
@@ -1291,8 +1248,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     
     public func clear() {
         textStorage?.setAttributedString(NSAttributedString())
-        markdownView?.removeFromSuperview()
-        markdownView = nil
+        // markdownView removed — WYSIWYG only
 
         isEditable = false
         
@@ -2724,7 +2680,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         let position =
             window?.firstResponder == self ? selectedRange().location : -1
-        let state = editorViewController?.vcEditor?.preview == true ? "preview" : "editor"
+        let state = "editor"  // WYSIWYG only, no preview mode
         let data =
             [
                 "note-file-name": note.name,
@@ -2760,28 +2716,20 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     }
     
     public func changePreviewState(_ state: Bool) {
-        preview = state
+        // No-op: WYSIWYG is the only mode
     }
-    
+
     public func togglePreviewState() {
-        self.preview = !self.preview
-        
-        note?.previewState = self.preview
+        // No-op: WYSIWYG is the only mode
     }
     
     public func isPreviewEnabled() -> Bool {
-        // In WYSIWYG mode, MPreview is never used for production rendering.
-        // The NSTextView WYSIWYG renderer handles all display, so preview (MPreview)
-        // must always be disabled when hideSyntax is active.
-        if NotesTextProcessor.hideSyntax {
-            return false
-        }
-        return preview
+        // WYSIWYG is the only rendering mode. MPreview removed.
+        return false
     }
     
     public func disablePreviewEditorAndNote() {
-        preview = false
-        
+        // No-op: WYSIWYG is the only mode
         note?.previewState = false
     }
     
