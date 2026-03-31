@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AE6D47605A4C62BABAE54290 /* Note+FileOps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 881DE5440F7EE1A7780FC10E /* Note+FileOps.swift */; };
 		F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 992A7F1EEF372989B048ABA4 /* FacadeTests.swift */; };
 		2B39BCAF9051872BCE028441 /* SyncPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */; };
 		613B083A6587CA8FA9EF6729 /* UIPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */; };
@@ -953,6 +954,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		881DE5440F7EE1A7780FC10E /* Note+FileOps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Note+FileOps.swift"; sourceTree = "<group>"; };
 		992A7F1EEF372989B048ABA4 /* FacadeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FacadeTests.swift; sourceTree = "<group>"; };
 		AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPreferences.swift; sourceTree = "<group>"; };
 		ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIPreferences.swift; sourceTree = "<group>"; };
@@ -1641,6 +1643,7 @@
 				11F2D4F32F1042F4002E4E47 /* Project+Date.swift */,
 				D79FE8A01F77D04A00113CFD /* Note.swift */,
 				1E542E1FA50A721D79E9B2B9 /* Note+Crypto.swift */,
+				881DE5440F7EE1A7780FC10E /* Note+FileOps.swift */,
 				DA1A7AD903241437AC031214 /* ProjectStore.swift */,
 				AB14DB1EEBC0E2F177E624CC /* NoteStore.swift */,
 				113A319F2EEE2D3A009B50B0 /* Note+Preview.swift */,
@@ -3014,6 +3017,7 @@
 				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
 				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
 				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
+				AE6D47605A4C62BABAE54290 /* Note+FileOps.swift in Sources */,
 				2B39BCAF9051872BCE028441 /* SyncPreferences.swift in Sources */,
 				613B083A6587CA8FA9EF6729 /* UIPreferences.swift in Sources */,
 				463B24C6CE8C9184874D1625 /* GitPreferences.swift in Sources */,
