@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 992A7F1EEF372989B048ABA4 /* FacadeTests.swift */; };
 		2B39BCAF9051872BCE028441 /* SyncPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */; };
 		613B083A6587CA8FA9EF6729 /* UIPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */; };
 		463B24C6CE8C9184874D1625 /* GitPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15E434ACD015C1730A4F944D /* GitPreferences.swift */; };
@@ -960,6 +961,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		992A7F1EEF372989B048ABA4 /* FacadeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FacadeTests.swift; sourceTree = "<group>"; };
 		AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncPreferences.swift; sourceTree = "<group>"; };
 		ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIPreferences.swift; sourceTree = "<group>"; };
 		15E434ACD015C1730A4F944D /* GitPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPreferences.swift; sourceTree = "<group>"; };
@@ -2174,6 +2176,7 @@
 			children = (
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
 				TEST00000000000000000002 /* RendererComparisonTests.swift */,
+				992A7F1EEF372989B048ABA4 /* FacadeTests.swift */,
 				0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */,
 				BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */,
 				62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */,
@@ -3521,6 +3524,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */,
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
 				40111EF2FC1CA108D2E96E72 /* FoldVisibilityTests.swift in Sources */,
 				C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */,
