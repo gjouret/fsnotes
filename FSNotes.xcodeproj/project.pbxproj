@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C40864C972A9D75AD6A62981 /* GutterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8E9E90A4CAF395C4789D551 /* GutterController.swift */; };
 		B61B5F8CEAD35C13E9E11654 /* Note+Crypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E542E1FA50A721D79E9B2B9 /* Note+Crypto.swift */; };
 		B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */; };
 		40111EF2FC1CA108D2E96E72 /* FoldVisibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */; };
@@ -952,6 +953,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E8E9E90A4CAF395C4789D551 /* GutterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GutterController.swift; sourceTree = "<group>"; };
 		1E542E1FA50A721D79E9B2B9 /* Note+Crypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Note+Crypto.swift"; sourceTree = "<group>"; };
 		0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldSnapshotTests.swift; sourceTree = "<group>"; };
 		BED549A3E8D7FDEA4337E3FA /* FoldVisibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldVisibilityTests.swift; sourceTree = "<group>"; };
@@ -1895,6 +1897,7 @@
 			children = (
 				6BA7249E78448E4743FAB3AB /* Rendering */,
 				D7EDEDFA219203C9000B8C1A /* NoteCellView+.swift */,
+				E8E9E90A4CAF395C4789D551 /* GutterController.swift */,
 				D7CC44C02A1E5E4F00743857 /* ViewController+WebApi.swift */,
 				D75C903C223EF727002A9CAD /* Preferences */,
 				D7CD5F6A1F51184A006AA35D /* Extensions */,
@@ -3005,6 +3008,7 @@
 				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
 				3D9665948213423E6B49584B /* BulletProcessor.swift in Sources */,
 				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
+				C40864C972A9D75AD6A62981 /* GutterController.swift in Sources */,
 				B61B5F8CEAD35C13E9E11654 /* Note+Crypto.swift in Sources */,
 				1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */,
 				4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */,

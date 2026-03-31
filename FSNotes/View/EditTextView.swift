@@ -113,7 +113,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     public var imagesLoaderQueue = OperationQueue.init()
     public var attributesCachingQueue = OperationQueue.init()
-    
+    public lazy var gutterController = GutterController(textView: self)
+
     private var preview = false
     
     public var isScrollPositionSaverLocked = false
@@ -151,7 +152,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         // Must be here (not in LayoutManager.drawBackground) because the gutter is OUTSIDE
         // the text container bounds and would be clipped by the layout manager.
         if NotesTextProcessor.hideSyntax {
-            drawGutterIcons(in: dirtyRect)
+            gutterController.drawIcons(in: dirtyRect)
         }
 
         guard UserDefaultsManagement.inlineTags else { return }
@@ -411,7 +412,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
 
         // Check for click in the gutter (fold/unfold toggle)
-        if NotesTextProcessor.hideSyntax, handleGutterClick(event) {
+        if NotesTextProcessor.hideSyntax, gutterController.handleClick(event) {
             return
         }
 
@@ -516,61 +517,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         #endif
     }
     
-    // MARK: - Gutter Click (Fold/Unfold)
-
-    private func handleGutterClick(_ event: NSEvent) -> Bool {
-        let point = convert(event.locationInWindow, from: nil)
-        let gutterWidth = EditTextView.gutterWidth
-
-        // Gutter occupies the space from (insetWidth - gutterWidth) to insetWidth,
-        // which is the reserved area left of the text container origin
-        let gutterRight = textContainerInset.width
-        let gutterLeft = gutterRight - gutterWidth
-        guard point.x >= gutterLeft, point.x < gutterRight else { return false }
-
-        guard let manager = self.layoutManager,
-              let container = self.textContainer,
-              let storage = self.textStorage,
-              let processor = self.textStorageProcessor else { return false }
-
-        // Map click Y to a character index
-        let textPoint = NSPoint(x: textContainerInset.width + 1, y: point.y)
-        let charIndex = manager.characterIndex(for: textPoint, in: container,
-                                                fractionOfDistanceBetweenInsertionPoints: nil)
-        guard charIndex < storage.length else { return false }
-
-        // Find the header block at this position
-        if let blockIdx = processor.headerBlockIndex(at: charIndex) {
-            processor.toggleFold(headerBlockIndex: blockIdx, textStorage: storage)
-            needsDisplay = true
-            return true
-        }
-        return false
-    }
+    // Gutter click handling moved to GutterController
 
     @objc public func toggleFoldAtCursor() {
-        guard let storage = textStorage,
-              let processor = textStorageProcessor else { return }
-        let cursorPos = selectedRange().location
-        // Find the header at cursor, or the nearest header above cursor
-        if let idx = processor.headerBlockIndex(at: cursorPos) {
-            processor.toggleFold(headerBlockIndex: idx, textStorage: storage)
-            needsDisplay = true
-        }
+        gutterController.toggleFoldAtCursor()
     }
 
     @objc public func foldAllHeaders() {
-        guard let storage = textStorage,
-              let processor = textStorageProcessor else { return }
-        processor.foldAll(textStorage: storage)
-        needsDisplay = true
+        gutterController.foldAllHeaders()
     }
 
     @objc public func unfoldAllHeaders() {
-        guard let storage = textStorage,
-              let processor = textStorageProcessor else { return }
-        processor.unfoldAll(textStorage: storage)
-        needsDisplay = true
+        gutterController.unfoldAllHeaders()
     }
 
     private func handleRenderedBlockClick(_ event: NSEvent) -> Bool {
@@ -790,11 +748,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         // Track gutter hover — fold carets only show when mouse is in the pipe area
         if NotesTextProcessor.hideSyntax {
-            let inGutter = point.x < textContainerInset.width && point.x >= textContainerInset.width - EditTextView.gutterWidth
-            if inGutter != isMouseInGutter {
-                isMouseInGutter = inGutter
-                needsDisplay = true  // Redraw to show/hide fold carets
-            }
+            gutterController.updateMouseTracking(at: point)
         }
         let properPoint = NSPoint(
             x: point.x - textContainerInset.width,
@@ -1916,100 +1870,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         return NSPoint(x: origin.x, y: origin.y - 7)
     }
 
-    private func drawGutterIcons(in dirtyRect: NSRect) {
-        guard let storage = textStorage,
-              let lm = layoutManager as? LayoutManager,
-              let container = textContainer,
-              let processor = textStorageProcessor else { return }
-        guard !processor.blocks.isEmpty else { return }
-
-        let origin = textContainerOrigin
-        let gutterWidth = EditTextView.gutterWidth
-        let gutterLeft = origin.x - gutterWidth
-        let gutterRight = origin.x
-
-        // Reset clip rect to the full view bounds so gutter area isn't clipped
-        NSGraphicsContext.current?.saveGraphicsState()
-        NSBezierPath(rect: bounds).setClip()
-
-        // Visible glyph range
-        let visibleRect = enclosingScrollView?.contentView.bounds ?? bounds
-        let visibleGlyphRange = lm.glyphRange(forBoundingRect: visibleRect, in: container)
-        let visibleCharRange = lm.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
-
-        let cursorParagraphRange: NSRange? = {
-            let idx = lm.cursorCharIndex
-            guard idx >= 0, idx < storage.length else { return nil }
-            return (storage.string as NSString).paragraphRange(for: NSRange(location: idx, length: 0))
-        }()
-
-        for block in processor.blocks {
-            let level: Int
-            switch block.type {
-            case .heading(let l): level = l
-            case .headingSetext(let l): level = l
-            default: continue
-            }
-
-            guard NSIntersectionRange(block.range, visibleCharRange).length > 0 else { continue }
-            guard block.range.location < storage.length,
-                  NSMaxRange(block.range) <= storage.length else { continue }
-            // Skip blocks inside a folded region
-            if storage.attribute(.foldedContent, at: block.range.location, effectiveRange: nil) != nil { continue }
-
-            let glyphRange = lm.glyphRange(forCharacterRange: block.range, actualCharacterRange: nil)
-            if glyphRange.length == 0 { continue }
-            let lineFragRect = lm.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-            if lineFragRect.isEmpty { continue }
-
-            let midY = lineFragRect.midY + origin.y
-
-            let isCollapsed = block.collapsed
-
-            // Fold carets only visible when mouse hovers in the gutter, or when collapsed
-            if isMouseInGutter || isCollapsed {
-                let caretStr = isCollapsed ? "▶" : "▼"
-                let caretFont = NSFont.systemFont(ofSize: 16, weight: .regular)
-                let caretAttrs: [NSAttributedString.Key: Any] = [
-                    .font: caretFont,
-                    .foregroundColor: NSColor(calibratedWhite: 0.55, alpha: 1.0)
-                ]
-                let caretSize = (caretStr as NSString).size(withAttributes: caretAttrs)
-                let caretX = gutterRight - caretSize.width - 4
-                let caretY = midY - caretSize.height / 2
-                (caretStr as NSString).draw(at: NSPoint(x: caretX, y: caretY), withAttributes: caretAttrs)
-            }
-
-            // H-level badge: show when mouse hovers in gutter (for all headers),
-            // or when cursor is actively editing this specific header line
-            let cursorOnThisLine = cursorParagraphRange.map { NSIntersectionRange($0, block.range).length > 0 } ?? false
-            let isEditing = window?.firstResponder === self
-            if isMouseInGutter || (cursorOnThisLine && isEditing) {
-                let badge = "H\(level)"
-                let badgeAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 9, weight: .bold),
-                    .foregroundColor: NSColor.gray
-                ]
-                let badgeSize = (badge as NSString).size(withAttributes: badgeAttrs)
-                (badge as NSString).draw(at: NSPoint(x: gutterLeft + 2, y: midY - badgeSize.height / 2), withAttributes: badgeAttrs)
-            }
-
-            // "⋯" after collapsed header
-            if isCollapsed {
-                let ellipsis = " ⋯ "
-                let ellipsisAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 20, weight: .medium),
-                    .foregroundColor: NSColor(calibratedWhite: 0.5, alpha: 1.0),
-                    .backgroundColor: NSColor(calibratedWhite: 0.92, alpha: 1.0)
-                ]
-                let usedRect = lm.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-                let ellipsisSize = (ellipsis as NSString).size(withAttributes: ellipsisAttrs)
-                (ellipsis as NSString).draw(at: NSPoint(x: usedRect.maxX + origin.x + 4, y: midY - ellipsisSize.height / 2), withAttributes: ellipsisAttrs)
-            }
-        }
-
-        NSGraphicsContext.current?.restoreGraphicsState()
-    }
+    // drawGutterIcons moved to GutterController
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let note = self.note, let storage = textStorage else { return false }
@@ -2684,7 +2545,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     /// Whether the mouse is currently hovering over the gutter (pipe) area.
     /// Fold carets only appear on hover, matching Bear/Apple Notes behavior.
-    private var isMouseInGutter = false
 
     public func getInsetWidth() -> CGFloat {
         let lineWidth = UserDefaultsManagement.lineWidth
