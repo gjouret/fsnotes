@@ -264,11 +264,20 @@ class NewLineTransitionTests: XCTestCase {
         let linesA = measureLineFragments(editorA)
         saveSnapshot(editorA, to: "\(outputDir)/h2_loaded.png")
 
-        // --- B: Same content but loaded with the RESULT of pressing Return ---
-        // This is what the markdown looks like after: heading, then Return, then typed text
+        // --- B: LIVE RETURN — load same content, then press Return after heading ---
         let editorB = makeFullPipelineEditor()
-        editorB.textStorage?.setAttributedString(NSMutableAttributedString(string: "## Bullets\nI press return\nNow is the time"))
+        editorB.textStorage?.setAttributedString(NSMutableAttributedString(string: "## Bullets\nNow is the time"))
         runFullPipeline(editorB)
+        // Place cursor at end of "## Bullets" (before \n), press Return
+        // This is position 10 ("## Bullets" = 10 chars)
+        editorB.setSelectedRange(NSRange(location: 10, length: 0))
+        let noteB = editorB.note!
+        let formatter = TextFormatter(textView: editorB, note: noteB)
+        formatter.newLine()
+        // Type body text on the new line (simulates what user does after Return)
+        editorB.insertText("I press return", replacementRange: editorB.selectedRange())
+        editorB.layoutSubtreeIfNeeded()
+        editorB.display()
         let linesB = measureLineFragments(editorB)
         saveSnapshot(editorB, to: "\(outputDir)/h2_return.png")
 

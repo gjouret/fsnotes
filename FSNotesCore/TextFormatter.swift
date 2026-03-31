@@ -84,7 +84,9 @@ public class TextFormatter {
     public func strike() { toggleMarkers(open: "~~", close: "~~") }
     public func highlight() { toggleMarkers(open: "<mark>", close: "</mark>") }
 
-    /// Wrap the current selection with open/close markers (apply only, no toggle).
+    /// Wrap the current selection with open/close markers. Apply-only — does NOT detect
+    /// existing markers or toggle them off. Use toggleMarkers() for toggle behavior.
+    /// Used by callers that always want to add markers (e.g., inserting a new link/image).
     public func wrapSelection(with open: String, close: String) {
         let string = attributedString.string
         let length = string.count
