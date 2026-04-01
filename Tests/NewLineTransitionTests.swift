@@ -395,6 +395,64 @@ class NewLineTransitionTests: XCTestCase {
         }
     }
 
+    /// Verify bullet glyph (•) is actually rendered in the snapshot.
+    /// The - marker is hidden by syntax hiding; BulletDrawer must draw • in its place.
+    func test_bullet_glyph_rendered_in_snapshot() {
+        let outputDir = NSHomeDirectory() + "/unit-tests"
+        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+
+        let savedHideSyntax = NotesTextProcessor.hideSyntax
+        NotesTextProcessor.hideSyntax = true
+        defer { NotesTextProcessor.hideSyntax = savedHideSyntax }
+
+        let editor = makeFullPipelineEditor()
+        editor.textStorage?.setAttributedString(NSMutableAttributedString(string: "- First item\n- Second item"))
+        runFullPipeline(editor)
+
+        // Verify storage still has - (not •)
+        let storageStr = editor.textStorage!.string
+        XCTAssertTrue(storageStr.contains("- First"), "Storage should contain original '- ' markdown, got: \(storageStr.prefix(20))")
+        XCTAssertFalse(storageStr.contains("\u{2022}"), "Storage should NOT contain • (BulletProcessor removed)")
+
+        // Verify .bulletMarker attribute is set on the - characters
+        var bulletMarkerCount = 0
+        editor.textStorage!.enumerateAttribute(.bulletMarker, in: NSRange(location: 0, length: editor.textStorage!.length)) { value, _, _ in
+            if value != nil { bulletMarkerCount += 1 }
+        }
+        XCTAssertGreaterThan(bulletMarkerCount, 0, "Phase4 should set .bulletMarker attribute on hidden - characters")
+
+        // Render snapshot and check for dark pixels in the bullet area
+        guard let bitmapRep = editor.bitmapImageRepForCachingDisplay(in: editor.bounds) else {
+            XCTFail("Could not create bitmap")
+            return
+        }
+        editor.cacheDisplay(in: editor.bounds, to: bitmapRep)
+        saveSnapshot(editor, to: "\(outputDir)/bullet_glyph.png")
+
+        // Check for dark pixels in the left margin area (where bullets should draw)
+        // The indent area is 0..firstLineHeadIndent (~19pt). Bullets draw at ~firstLineHeadIndent.
+        let width = bitmapRep.pixelsWide
+        let height = bitmapRep.pixelsHigh
+        var darkPixelsInBulletArea = 0
+        let bulletAreaMaxX = 25  // Check leftmost 25 pixels for bullet glyphs
+
+        for y in 0..<height {
+            for x in 0..<bulletAreaMaxX {
+                if let color = bitmapRep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+                    let brightness = (color.redComponent + color.greenComponent + color.blueComponent) / 3
+                    // Dark pixels (text/glyphs) on light background, or light pixels on dark background
+                    if color.alphaComponent > 0.5 && (brightness < 0.3 || brightness > 0.7) {
+                        darkPixelsInBulletArea += 1
+                    }
+                }
+            }
+        }
+
+        print("Bullet glyph test: \(bulletMarkerCount) markers, \(darkPixelsInBulletArea) pixels in bullet area (\(width)x\(height))")
+        XCTAssertGreaterThan(darkPixelsInBulletArea, 10,
+                             "Bullet area should have visible pixels (• glyph). Found \(darkPixelsInBulletArea) — BulletDrawer may not be rendering.")
+    }
+
     /// All list types (bullet, numbered, todo) should have consistent indentation.
     /// Parameterized: checks headIndent > 0 and firstLineHeadIndent < headIndent for each.
     func test_all_list_types_indent_consistently() {
