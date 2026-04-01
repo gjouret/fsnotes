@@ -480,7 +480,7 @@ public class TextFormatter {
 
     public static func getAutocompleteCharsMatch(string: String) -> NSTextCheckingResult? {
         guard let regex = try? NSRegularExpression(pattern:
-            "^(( |\t)*\\- \\[[x| ]*\\] )|^(( |\t)*[-|–|—|*|•|>|\\+]{1} )"), let result = regex.firstMatch(in: string, range: NSRange(0..<string.count)) else { return nil }
+            "^(( |\t)*\\- \\[[x| ]*\\] )|^(( |\t)*[-|–|—|*|>|\\+]{1} )"), let result = regex.firstMatch(in: string, range: NSRange(0..<string.count)) else { return nil }
 
         return result
     }

@@ -364,9 +364,9 @@ public class MarkdownBlockParser {
     private func isUnorderedListItem(_ line: String) -> Bool {
         let stripped = line.trimmingCharacters(in: .whitespaces)
         // Check for marker + space (has content) OR bare marker (empty bullet, e.g. after Return).
-        // Also match • (U+2022) — Phase 4 substitutes - with • for WYSIWYG display.
-        let hasMarkerWithContent = stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") || stripped.hasPrefix("\u{2022} ")
-        let isBareMarker = stripped == "-" || stripped == "*" || stripped == "+" || stripped == "\u{2022}"
+        // Storage always contains original markdown markers (no • substitution).
+        let hasMarkerWithContent = stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ")
+        let isBareMarker = stripped == "-" || stripped == "*" || stripped == "+"
         return (hasMarkerWithContent || isBareMarker) &&
                !stripped.hasPrefix("- [ ") && !stripped.hasPrefix("- [x") && !stripped.hasPrefix("- [X")
     }
@@ -624,8 +624,8 @@ public class MarkdownBlockParser {
             let leadingSpaces = line.prefix(while: { $0 == " " || $0 == "\t" }).count
 
             if case .unorderedList = type {
-                // Find the marker (-, *, +, or • from Phase 4 substitution) and space
-                if stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") || stripped.hasPrefix("\u{2022} ") {
+                // Find the marker (-, *, +) and space
+                if stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") {
                     syntaxRanges.append(NSRange(location: lineRange.location + leadingSpaces, length: 2))
                 }
             } else if case .orderedList = type {

@@ -29,7 +29,8 @@ public enum NoteSerializer {
     /// Full pipeline: prepare an attributed string for saving to disk as markdown.
     /// This is the ONLY place that chains the serialization steps.
     public static func prepareForSave(_ content: NSMutableAttributedString) -> NSMutableAttributedString {
-        restoreBulletMarkers(in: content)
+        // Bullets no longer need restoration — storage always contains original markdown.
+        // restoreBulletMarkers() removed: BulletProcessor no longer mutates storage.
         _ = content.restoreRenderedBlocks()
         _ = content.unloadTasks()
         _ = content.unloadImagesAndFiles()

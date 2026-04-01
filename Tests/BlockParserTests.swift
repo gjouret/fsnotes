@@ -166,9 +166,11 @@ class BlockParserTests: XCTestCase {
     }
 
     func test_bulletCharRecognized() {
-        // After Phase 4 substitution, • should still be recognized
-        let blocks = parse("\u{2022} Item 1\n\u{2022} Item 2")
-        XCTAssertEqual(types(blocks), ["ul"])
+        // Storage always contains original markdown markers (no • substitution).
+        // All three marker types should be recognized.
+        XCTAssertEqual(types(parse("- Item 1\n- Item 2")), ["ul"])
+        XCTAssertEqual(types(parse("* Item 1\n* Item 2")), ["ul"])
+        XCTAssertEqual(types(parse("+ Item 1\n+ Item 2")), ["ul"])
     }
 
     func test_orderedList() {

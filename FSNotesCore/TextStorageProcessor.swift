@@ -79,7 +79,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     /// Registered block processors. Adding a new block visual = one new BlockProcessor file + one entry here.
     static let blockProcessors: [BlockProcessor] = [
-        BulletProcessor(),
         BlockquoteProcessor(),
         HorizontalRuleProcessor(),
     ]
@@ -490,7 +489,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 case .unorderedList, .orderedList:
                     // MPreview CSS: ul,ol { padding-left: 2em; margin-top: 0; margin-bottom: 16px }
                     //               li { line-height: 28px }
-                    let markers = ["\u{2022} ", "- ", "* ", "+ "]
+                    // Storage always contains original markdown markers (no • substitution)
+                    let markers = ["- ", "* ", "+ "]
                     let prefix = value.getSpacePrefix()
                     var matchedPrefix: String?
 
@@ -511,16 +511,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     // padding-left: 2em
                     let listIndent = baseSize * 2
                     if let mp = matchedPrefix {
-                        // Use the bullet font (0.8x) for • markers — BulletProcessor
-                        // renders them at this size. Using body font here would miscalculate
-                        // the indent, causing the bullet text to be misaligned.
-                        let markerFont: PlatformFont
-                        if mp.hasPrefix("\u{2022}") || mp.contains("\u{2022}") {
-                            markerFont = PlatformFont.systemFont(ofSize: baseSize * 0.8)
-                        } else {
-                            markerFont = font
-                        }
-                        let markerWidth = mp.widthOfString(usingFont: markerFont, tabs: tabs)
+                        // Storage always contains original markdown (-, *, +, 1.)
+                        // The marker is hidden by phase4 and drawn by BulletDrawer.
+                        let markerWidth = mp.widthOfString(usingFont: font, tabs: tabs)
                         paragraph.headIndent = max(markerWidth, listIndent)
                         paragraph.firstLineHeadIndent = paragraph.headIndent - markerWidth
                     } else {
@@ -653,6 +646,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     guard syntaxRange.location < textStorage.length,
                           NSMaxRange(syntaxRange) <= textStorage.length else { continue }
                     hideSyntaxRange(syntaxRange, in: textStorage)
+
+                    // For unordered lists, set .bulletMarker on the hidden marker character
+                    // so BulletDrawer can draw • at the correct position.
+                    if case .unorderedList = block.type {
+                        let markerRange = NSRange(location: syntaxRange.location, length: 1)
+                        textStorage.addAttribute(.bulletMarker, value: true, range: markerRange)
+                    }
                 }
             }
         }

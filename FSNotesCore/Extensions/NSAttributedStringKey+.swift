@@ -28,6 +28,7 @@ public extension NSAttributedString.Key {
     static let renderedBlockRange = NSAttributedString.Key(rawValue: "es.fsnot.rendered.range")
     static let renderedBlockOriginalMarkdown = NSAttributedString.Key(rawValue: "es.fsnot.rendered.original")
     static let listBullet = NSAttributedString.Key(rawValue: "es.fsnot.list.bullet")
+    static let bulletMarker = NSAttributedString.Key(rawValue: "es.fsnot.bullet.marker")
     static let codeFence = NSAttributedString.Key(rawValue: "es.fsnot.code.fence")
     static let kbdTag = NSAttributedString.Key(rawValue: "es.fsnot.kbd")
     static let foldedContent = NSAttributedString.Key(rawValue: "es.fsnot.folded.content")

@@ -31,6 +31,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         HorizontalRuleDrawer(),
         BlockquoteBorderDrawer(),
         KbdBoxDrawer(),
+        BulletDrawer(),
     ]
     
     override init() {
