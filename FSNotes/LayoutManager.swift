@@ -31,7 +31,9 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         HorizontalRuleDrawer(),
         BlockquoteBorderDrawer(),
         KbdBoxDrawer(),
-        BulletDrawer(),
+        // BulletDrawer is NOT registered here — it uses lineFragmentRect
+        // (boundingRect is empty for kern-collapsed characters).
+        // Bullets are drawn in drawBulletMarkers() called from drawBackground().
     ]
     
     override init() {
@@ -191,6 +193,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                     drawAttributeRanges(drawer: drawer, forGlyphRange: range, at: origin,
                                         layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
                 }
+                drawBulletMarkers(forGlyphRange: range, at: origin, textStorage: ts, context: ctx)
             }
 
             super.drawBackground(forGlyphRange: range, at: origin)
@@ -208,6 +211,48 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
     }
     
+    /// Draw bullet markers (•) at positions where `-` is hidden by syntax hiding.
+    /// Can't use the standard AttributeDrawer path because boundingRect returns empty
+    /// for kern-collapsed characters. Uses lineFragmentRect for positioning instead.
+    private func drawBulletMarkers(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint,
+                                    textStorage: NSTextStorage, context: CGContext) {
+        let visibleCharRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        let safeRange = NSIntersectionRange(visibleCharRange, NSRange(location: 0, length: textStorage.length))
+        guard safeRange.length > 0 else { return }
+
+        let fontSize = CGFloat(UserDefaultsManagement.fontSize)
+        let bulletFont = NSFont.systemFont(ofSize: fontSize * 0.8)
+        let bullet = "\u{2022}"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: bulletFont,
+            .foregroundColor: NSColor.textColor
+        ]
+        let bulletSize = (bullet as NSString).size(withAttributes: attrs)
+
+        textStorage.enumerateAttribute(.bulletMarker, in: safeRange) { value, range, _ in
+            guard value != nil else { return }
+            let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            if glyphRange.length == 0 { return }
+
+            // Use lineFragmentRect — boundingRect is empty for kern-collapsed glyphs
+            let lineRect = self.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            let lineUsedRect = self.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+
+            // Position bullet at the start of the line (where the hidden - was)
+            // The paragraph's firstLineHeadIndent positions the line content;
+            // the bullet draws at the indent offset.
+            let paraStyle = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+            let firstLineIndent = paraStyle?.firstLineHeadIndent ?? 0
+
+            let x = origin.x + firstLineIndent + lineRect.minX
+            let y = lineRect.midY + origin.y - bulletSize.height / 2
+
+            context.saveGState()
+            (bullet as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+            context.restoreGState()
+        }
+    }
+
     private func drawCodeBlockBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         guard let textStorage = self.textStorage,
               let context = NSGraphicsContext.current?.cgContext else {
