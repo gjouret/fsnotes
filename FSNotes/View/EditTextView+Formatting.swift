@@ -188,17 +188,11 @@ extension EditTextView {
     }
 
     @IBAction func pressBold(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.bold()
+        boldMenu(sender)
     }
 
     @IBAction func pressItalic(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.italic()
+        italicMenu(sender)
     }
 
     @IBAction func quoteMenu(_ sender: Any) {
@@ -278,22 +272,6 @@ extension EditTextView {
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.header(level)
-
-        let baseFontSize = CGFloat(UserDefaultsManagement.fontSize)
-        let headerLevel = level.filter({ $0 == "#" }).count
-        let headerSize: CGFloat
-        switch headerLevel {
-        case 1: headerSize = baseFontSize * 2.0
-        case 2: headerSize = baseFontSize * 1.7
-        case 3: headerSize = baseFontSize * 1.4
-        default: headerSize = baseFontSize
-        }
-        let headerFont = NSFont.boldSystemFont(ofSize: headerSize)
-        typingAttributes = [
-            .font: headerFont,
-            .foregroundColor: NotesTextProcessor.fontColor
-        ]
-        updateInsertionPointStateAndRestartTimer(true)
     }
 
     @IBAction func insertCodeBlock(_ sender: NSButton) {
@@ -343,31 +321,19 @@ extension EditTextView {
     }
 
     @IBAction func insertList(_ sender: NSMenuItem) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.list()
+        bulletListMenu(sender)
     }
 
     @IBAction func insertOrderedList(_ sender: NSMenuItem) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.orderedList()
+        numberedListMenu(sender)
     }
 
     @IBAction func insertQuote(_ sender: NSMenuItem) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.quote()
+        quoteMenu(sender)
     }
 
     @IBAction func insertLink(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.link()
+        linkMenu(sender)
     }
 
     func getTextFormatter() -> TextFormatter? {

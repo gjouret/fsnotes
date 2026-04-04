@@ -13,6 +13,11 @@
 #endif
 
 enum SidebarSystemBuilder {
+    /// Build system sidebar items and assign virtual projects on storage.
+    /// NOTE: This method intentionally mutates `storage.allNotesProject`,
+    /// `.todoProject`, `.untaggedProject` as a side effect — these virtual
+    /// projects are created here and must be registered on storage for
+    /// filtering to work. Callers should be aware of this mutation.
     static func makeSystemItems(storage: Storage) -> [SidebarItem] {
         guard let defaultProject = storage.getDefault(),
               let defaultURL = defaultProject.url as URL? else { return [] }

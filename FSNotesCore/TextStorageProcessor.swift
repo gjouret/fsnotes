@@ -862,13 +862,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     self.isRendering = false
                     textStorage.endEditing()
 
+                    // Re-find the block by ID after endEditing, because endEditing
+                    // triggers process() which may rebuild self.blocks, invalidating blockIdx.
+                    guard let updatedIdx = self.blocks.firstIndex(where: { $0.id == blockID }) else { return }
+
                     // Mark the block as rendered (not removed). The block stays in the
                     // model with updated range. codeBlockRanges filters it out so
                     // LayoutManager won't draw a gray background behind the image.
-                    self.blocks[blockIdx].renderMode = .rendered
-                    self.blocks[blockIdx].range = replacedRange
-                    self.blocks[blockIdx].contentRange = replacedRange
-                    self.blocks[blockIdx].syntaxRanges = []
+                    self.blocks[updatedIdx].renderMode = .rendered
+                    self.blocks[updatedIdx].range = replacedRange
+                    self.blocks[updatedIdx].contentRange = replacedRange
+                    self.blocks[updatedIdx].syntaxRanges = []
                 }
             }
         }

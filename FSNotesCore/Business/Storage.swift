@@ -28,20 +28,21 @@ class Storage {
 
     public var shouldMovePrompt = false
 
+    // NOTE: These properties are `internal` (not `private`) only because Storage
+    // extensions live in separate files. External callers should use accessor methods
+    // (getDefaultTrash, getSortBy, buildSortBy, overrideSortBy) instead of direct access.
     var trashURL = URL(string: String())
+    var relativeInlineImagePaths = [String]()
+    var sortByState: SortBy = .modificationDate
+    var sortDirectionState: SortDirection = .asc
 
     let lastNewsDate = "2026-01-10"
     public var isCrashedLastTime = false
-
-    var relativeInlineImagePaths = [String]()
 
     public var plainWriter = OperationQueue.init()
     public var ciphertextWriter = OperationQueue.init()
 
     public var searchQuery: SearchQuery = SearchQuery()
-
-    var sortByState: SortBy = .modificationDate
-    var sortDirectionState: SortDirection = .asc
 
     // Virtual projects
     public var allNotesProject: Project?

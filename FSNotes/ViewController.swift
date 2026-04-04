@@ -24,10 +24,71 @@ class ViewController: EditorViewController,
     public var projectSettingsViewController: ProjectSettingsViewController?
 
     private var isPreLoaded = false
-    // Note navigation history (browser-style back/forward)
+    // MARK: - Note Navigation History (browser-style back/forward)
     public var noteHistory: [Note] = []
     public var noteHistoryIndex: Int = -1
     var isNavigatingHistory = false
+
+    public func pushNoteHistory(_ note: Note) {
+        guard !isNavigatingHistory else { return }
+
+        if noteHistoryIndex < noteHistory.count - 1 {
+            noteHistory = Array(noteHistory[0...noteHistoryIndex])
+        }
+
+        if noteHistory.last === note { return }
+
+        noteHistory.append(note)
+        noteHistoryIndex = noteHistory.count - 1
+
+        if noteHistory.count > 50 {
+            noteHistory.removeFirst()
+            noteHistoryIndex -= 1
+        }
+
+        formattingToolbar?.updateNavigationButtons(canGoBack: canGoBack(), canGoForward: canGoForward())
+    }
+
+    public func canGoBack() -> Bool {
+        return noteHistoryIndex > 0
+    }
+
+    public func canGoForward() -> Bool {
+        return noteHistoryIndex < noteHistory.count - 1
+    }
+
+    @objc public func navigateBack(_ sender: Any) {
+        guard canGoBack() else { return }
+        noteHistoryIndex -= 1
+        navigateToHistoryNote()
+    }
+
+    @objc public func navigateForward(_ sender: Any) {
+        guard canGoForward() else { return }
+        noteHistoryIndex += 1
+        navigateToHistoryNote()
+    }
+
+    private func navigateToHistoryNote() {
+        let note = noteHistory[noteHistoryIndex]
+        isNavigatingHistory = true
+
+        if search.stringValue.count > 0 {
+            search.stringValue = ""
+            search.lastSearchQuery = ""
+            buildSearchQuery()
+            updateTable {
+                self.notesTableView.select(note: note)
+            }
+        } else {
+            notesTableView.select(note: note)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.isNavigatingHistory = false
+        }
+        formattingToolbar?.updateNavigationButtons(canGoBack: canGoBack(), canGoForward: canGoForward())
+    }
 
     let storage = Storage.shared()
     lazy var sidebarDisplayController = SidebarDisplayController(viewController: self)

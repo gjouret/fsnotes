@@ -599,7 +599,7 @@ public class TextFormatter {
             && paragraphRange.upperBound - 2 < cursorLocation
 
         // --- 1. Checkbox (todo) ---
-        if paragraph.length >= 2, let todo = todoMatch(in: paragraphString), cursorNearEnd {
+        if paragraph.length >= 2, let todo = todoMatch(in: paragraphString) {
             let content = (paragraphString as NSString)
                 .replacingCharacters(in: todo.markerRange, with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -877,6 +877,14 @@ public class TextFormatter {
         let cursorLocation = location ?? textView.selectedRange.location
         guard let paragraphRange = getParagraphRange(for: cursorLocation) else { return }
 
+        #if os(OSX)
+        if textView.window?.firstResponder != textView {
+            textView.window?.makeFirstResponder(textView)
+        }
+        // Save scroll position to prevent jump on paragraph replacement
+        let savedVisibleRect = textView.enclosingScrollView?.contentView.bounds
+        #endif
+
         let paragraphString = storage.attributedSubstring(from: paragraphRange).string
         guard let todo = Self.todoMatch(in: paragraphString) else { return }
 
@@ -885,7 +893,29 @@ public class TextFormatter {
             length: todo.markerRange.length
         )
         let currentMarker = (paragraphString as NSString).substring(with: todo.markerRange)
+        let wasChecked = todo.checked
+
         insertText(Self.toggledTodoMarker(currentMarker), replacementRange: markerRange)
+
+        // Apply or remove strikethrough for the entire paragraph
+        if let updatedParaRange = getParagraphRange(for: cursorLocation) {
+            if !wasChecked {
+                // Checking: add strikethrough
+                storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: updatedParaRange)
+            } else {
+                // Unchecking: remove strikethrough
+                storage.removeAttribute(.strikethroughStyle, range: updatedParaRange)
+            }
+        }
+
+        #if os(OSX)
+        // Restore scroll position after paragraph replacement
+        if let rect = savedVisibleRect {
+            textView.enclosingScrollView?.contentView.scroll(to: rect.origin)
+            textView.enclosingScrollView?.reflectScrolledClipView(textView.enclosingScrollView!.contentView)
+        }
+        #endif
+
         updateCurrentParagraph()
     }
 
