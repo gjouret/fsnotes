@@ -9,7 +9,7 @@ import AppKit
 
 /// Generates a PDF from an EditTextView's current attributed content using
 /// NSView.dataWithPDF(inside:). This is the production PDF path used for
-/// both export and sharing. It does NOT use WKWebView/MPreview.
+/// both export and sharing.
 class PDFExporter: NSObject {
 
     /// Export the contents of `textView` to `outputURL` as a PDF.

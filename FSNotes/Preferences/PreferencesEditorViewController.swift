@@ -102,7 +102,6 @@ class PreferencesEditorViewController: NSViewController {
             if let evc = editor.editorViewController {
                 editor.textStorage?.updateParagraphStyle()
 
-                // MPreview template cache removed
                 NotesTextProcessor.resetCaches()
 
                 evc.refillEditArea(force: true)
@@ -125,7 +124,6 @@ class PreferencesEditorViewController: NSViewController {
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
             if let evc = editor.editorViewController {
-                // MPreview template cache removed
                 NotesTextProcessor.resetCaches()
 
                 if let lm = evc.vcEditor?.layoutManager as? LayoutManager {
@@ -161,7 +159,6 @@ class PreferencesEditorViewController: NSViewController {
             if let evc = editor.editorViewController {
                 editor.updateTextContainerInset()
 
-                // MPreview template cache removed
                 NotesTextProcessor.resetCaches()
 
                 evc.refillEditArea(force: true)
@@ -195,7 +192,6 @@ class PreferencesEditorViewController: NSViewController {
             if let evc = editor.editorViewController {
                 editor.updateTextContainerInset()
     
-                // MPreview template cache removed
                 NotesTextProcessor.resetCaches()
     
                 evc.refillEditArea(force: true)

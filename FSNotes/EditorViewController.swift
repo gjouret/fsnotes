@@ -9,7 +9,6 @@
 import Foundation
 import AppKit
 import LocalAuthentication
-import WebKit
 import UserNotifications
 
 class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
@@ -22,14 +21,10 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
     public var vcTitleLabel: TitleTextField?
     public var vcNonSelectedLabel: NSTextField?
     
-    public var vcPreviewButton: NSButton?
-    public var vcShareButton: NSButton?
-    public var vcLockUnlockButton: NSButton?
     public var vcEditorScrollView: EditorScrollView?
     public var vcTitleBarView: TitleBarView?
     public var formattingToolbar: FormattingToolbar?
     
-    public var previewResizeTimer = Timer()
     public var rowUpdaterTimer = Timer()
     public var editorUndoManager = UndoManager()
     
@@ -130,23 +125,13 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 guard let evc = NSApplication.shared.keyWindow?.contentViewController as? EditorViewController,
                       evc.vcEditor?.note != nil else { return false }
                         
-                if true /* markdownView removed */ {
-                    if ["findMenu.find",
-                        "findMenu.findAndReplace",
-                        "findMenu.next",
-                        "findMenu.prev",
-                        "findMenu.selectionToFind"
-                    ].contains(menuItem.identifier?.rawValue) {
-                        return true
-                    }
-                } else {
-                    if ["findMenu.find",
-                        "findMenu.next",
-                        "findMenu.prev",
-                        "findMenu.selectionToFind"
-                    ].contains(menuItem.identifier?.rawValue) {
-                        return true
-                    }
+                if ["findMenu.find",
+                    "findMenu.findAndReplace",
+                    "findMenu.next",
+                    "findMenu.prev",
+                    "findMenu.selectionToFind"
+                ].contains(menuItem.identifier?.rawValue) {
+                    return true
                 }
 
                 return false
@@ -320,7 +305,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
               evc.vcEditor?.note != nil
         else { return }
         
-        // markdownView removed — WYSIWYG only
         if let editView = evc.vcEditor {
             editView.performFindPanelAction(sender)
         }
@@ -605,13 +589,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
 
         // Show/hide formatting toolbar
         formattingToolbar?.isHidden = !NotesTextProcessor.hideSyntax
-
-        // Update preview button icon
-        if #available(macOS 11.0, *) {
-            vcPreviewButton?.image = NSImage(systemSymbolName:
-                NotesTextProcessor.hideSyntax ? "doc.richtext" : "doc.plaintext",
-                accessibilityDescription: NotesTextProcessor.hideSyntax ? "WYSIWYG Mode" : "Source Mode")
-        }
 
         // Restore cursor
         if savedRange.upperBound <= storage.length {
@@ -1084,7 +1061,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
 
     // MARK: Dep methods
     
-    public func openInNewWindow(note: Note, frame: NSRect? = nil, preview: Bool = false) {
+    public func openInNewWindow(note: Note, frame: NSRect? = nil) {
         guard let windowController = NSStoryboard(name: "Main", bundle: nil)
             .instantiateController(withIdentifier: "noteWindowController") as? NSWindowController else { return }
         
@@ -1094,7 +1071,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         let viewController = windowController.contentViewController as! NoteViewController
         viewController.initWindow()
                 
-        viewController.editor.changePreviewState(preview)
         viewController.editor.fill(note: note)
         
         if note.isEncryptedAndLocked() {
@@ -1128,9 +1104,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         // note.selectedRange gets overwritten to (0,0) by textViewDidChangeSelection
         let savedRange = savedCursorRange
 
-        textView.disablePreviewEditorAndNote()
-
-        // markdownView removed — WYSIWYG only. Just restore directly.
         restoreAfterPreviewDisable(textView: textView, savedRange: savedRange)
     }
 
@@ -1151,29 +1124,11 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
     /// Called from disablePreview()'s async callback to ensure content is loaded first.
     private func applyEditModeFocus() {
         if let vc = ViewController.shared() {
-            vc.previewHasFocus = false
-            // markdownView removed
             vc.editAreaScroll.showFocusBorder()
             vc.focusEditArea()
         }
     }
 
-    public func viewDidResize() {
-        guard vcEditor?.isPreviewEnabled() == true else { return }
-
-        if noteLoading != .incomplete {
-            previewResizeTimer.invalidate()
-            previewResizeTimer = Timer.scheduledTimer(timeInterval: 0.1, target: self, selector: #selector(reloadPreview), userInfo: nil, repeats: false)
-        }
-    }
-    
-    @objc private func reloadPreview() {
-        DispatchQueue.main.async {
-            // MPreview template cache removed
-            self.refillEditArea(force: true)
-        }
-    }
-    
     public func updateTitle(note: Note) {
         guard let vcTitleLabel = vcTitleLabel else { return }
         
@@ -1196,7 +1151,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
     
     func refillEditArea(force: Bool = false) {
         noteLoading = .incomplete
-        vcPreviewButton?.state = vcEditor?.isPreviewEnabled() == true ? .on : .off
 
         if let note = vcEditor?.note {
             vcEditor?.fill(note: note, force: force)
@@ -1511,7 +1465,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
     func focusEditArea() {
         guard let editor = vcEditor,
               let note = editor.note,
-              !editor.isPreviewEnabled(),
               note.container != .encryptedTextPack else { return }
 
         editor.window?.makeFirstResponder(editor)
@@ -1536,9 +1489,8 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         if editor.isEditable {
             note.isBlocked = true
 
-            editor.syncAllTableData()
             editor.textStorage?.removeHighlight()
-            note.save(attributed: editor.attributedString())
+            note.save(attributed: editor.attributedStringForSaving())
 
             updateLastEditedStatus()
             vc.reSort(note: note)
@@ -1560,11 +1512,8 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             
     @objc func breakUndo() {
         guard let editor = vcEditor else { return }
-        
-        if (
-            editor.isPreviewEnabled() == false
-           && editor.isEditable
-        ) {
+
+        if editor.isEditable {
             editor.breakUndoCoalescing()
         }
     }

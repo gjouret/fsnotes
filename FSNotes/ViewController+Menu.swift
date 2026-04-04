@@ -9,6 +9,179 @@
 import AppKit
 
 extension ViewController {
+    @IBAction func noteUp(_ sender: NSMenuItem) {
+        NSApp.mainWindow?.makeFirstResponder(notesTableView)
+
+        if titleLabel.isEditable {
+            titleLabel.editModeOff()
+            titleLabel.window?.makeFirstResponder(nil)
+        }
+
+        notesTableView.selectPrev()
+    }
+
+    @IBAction func noteDown(_ sender: NSMenuItem) {
+        NSApp.mainWindow?.makeFirstResponder(notesTableView)
+
+        if titleLabel.isEditable {
+            titleLabel.editModeOff()
+            titleLabel.window?.makeFirstResponder(nil)
+        }
+
+        notesTableView.selectNext()
+    }
+
+    @IBAction func sidebarUp(_ sender: NSMenuItem) {
+        if titleLabel.isEditable {
+            titleLabel.editModeOff()
+            titleLabel.window?.makeFirstResponder(nil)
+        }
+
+        NSApp.mainWindow?.makeFirstResponder(sidebarOutlineView)
+
+        guard let cgEvent = CGEvent(keyboardEventSource: .none, virtualKey: 126, keyDown: true) else { return }
+        cgEvent.flags.remove(.maskShift)
+        guard let nsEvent = NSEvent(cgEvent: cgEvent) else { return }
+        sidebarOutlineView.keyDown(with: nsEvent)
+    }
+
+    @IBAction func sidebarDown(_ sender: NSMenuItem) {
+        if titleLabel.isEditable {
+            titleLabel.editModeOff()
+            titleLabel.window?.makeFirstResponder(nil)
+        }
+
+        NSApp.mainWindow?.makeFirstResponder(sidebarOutlineView)
+
+        guard let cgEvent = CGEvent(keyboardEventSource: .none, virtualKey: 125, keyDown: true) else { return }
+        cgEvent.flags.remove(.maskShift)
+        guard let nsEvent = NSEvent(cgEvent: cgEvent) else { return }
+        sidebarOutlineView.keyDown(with: nsEvent)
+    }
+
+    @IBAction func toggleSidebar(_ sender: Any) {
+        sidebarDisplayController.toggleVisibility()
+    }
+
+    @IBAction func toggleNoteList(_ sender: Any) {
+        guard let vc = ViewController.shared() else { return }
+
+        let size = UserDefaultsManagement.horizontalOrientation
+            ? vc.splitView.subviews[0].frame.height
+            : vc.splitView.subviews[0].frame.width
+
+        if size == 0 {
+            var size = UserDefaultsManagement.notesTableWidth
+            if UserDefaultsManagement.notesTableWidth == 0 {
+                size = 300
+            }
+
+            vc.splitView.shouldHideDivider = false
+            vc.splitView.setPosition(size, ofDividerAt: 0)
+        } else if vc.splitView.shouldHideDivider {
+            vc.splitView.shouldHideDivider = false
+            vc.splitView.setPosition(UserDefaultsManagement.notesTableWidth, ofDividerAt: 0)
+        } else {
+            UserDefaultsManagement.notesTableWidth = size
+
+            vc.splitView.shouldHideDivider = true
+            vc.splitView.setPosition(0, ofDividerAt: 0)
+
+            DispatchQueue.main.async {
+                vc.splitView.setPosition(0, ofDividerAt: 0)
+            }
+        }
+
+        vc.editor.updateTextContainerInset()
+    }
+
+    @IBAction func prevHistory(_ sender: NSMenuItem) {
+        navigateBack(sender)
+    }
+
+    @IBAction func nextHistory(_ sender: NSMenuItem) {
+        navigateForward(sender)
+    }
+
+    @IBAction func toggleFold(_ sender: Any) {
+        editor.toggleFoldAtCursor()
+    }
+
+    @IBAction func foldAllHeaders(_ sender: Any) {
+        editor.foldAllHeaders()
+    }
+
+    @IBAction func unfoldAllHeaders(_ sender: Any) {
+        editor.unfoldAllHeaders()
+    }
+
+    public func pushNoteHistory(_ note: Note) {
+        guard !isNavigatingHistory else { return }
+
+        if noteHistoryIndex < noteHistory.count - 1 {
+            noteHistory = Array(noteHistory[0...noteHistoryIndex])
+        }
+
+        if noteHistory.last === note { return }
+
+        noteHistory.append(note)
+        noteHistoryIndex = noteHistory.count - 1
+
+        if noteHistory.count > 50 {
+            noteHistory.removeFirst()
+            noteHistoryIndex -= 1
+        }
+
+        formattingToolbar?.updateNavigationButtons(canGoBack: canGoBack(), canGoForward: canGoForward())
+    }
+
+    public func canGoBack() -> Bool {
+        return noteHistoryIndex > 0
+    }
+
+    public func canGoForward() -> Bool {
+        return noteHistoryIndex < noteHistory.count - 1
+    }
+
+    @objc public func navigateBack(_ sender: Any) {
+        guard canGoBack() else { return }
+        noteHistoryIndex -= 1
+        navigateToHistoryNote()
+    }
+
+    @objc public func navigateForward(_ sender: Any) {
+        guard canGoForward() else { return }
+        noteHistoryIndex += 1
+        navigateToHistoryNote()
+    }
+
+    @objc func doubleClickOnNotesTable() {
+        let selected = notesTableView.clickedRow
+        guard selected >= 0, let note = notesTableView.getNote(at: selected) else { return }
+        openInNewWindow(note: note)
+    }
+
+    private func navigateToHistoryNote() {
+        let note = noteHistory[noteHistoryIndex]
+        isNavigatingHistory = true
+
+        if search.stringValue.count > 0 {
+            search.stringValue = ""
+            search.lastSearchQuery = ""
+            buildSearchQuery()
+            updateTable {
+                self.notesTableView.select(note: note)
+            }
+        } else {
+            notesTableView.select(note: note)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.isNavigatingHistory = false
+        }
+        formattingToolbar?.updateNavigationButtons(canGoBack: canGoBack(), canGoForward: canGoForward())
+    }
+
     
     func processFileMenuItems(_ menuItem: NSMenuItem, menuId: String) -> Bool {
         

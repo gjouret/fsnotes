@@ -138,18 +138,8 @@ class SearchTextField: NSSearchField, NSSearchFieldDelegate {
 
                 markCompleteonAsSuccess()
 
-                if vcDelegate.vcEditor?.isPreviewEnabled() == true
-                    && vcDelegate.editor.note?.container != .encryptedTextPack {
-                    vcDelegate.vcEditor?.disablePreviewEditorAndNote()
-                    
-                    DispatchQueue.main.async {
-                        self.vcDelegate.refillEditArea()
-                        NSApp.mainWindow?.makeFirstResponder(self.vcDelegate.editor)
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.vcDelegate.focusEditArea()
-                    }
+                DispatchQueue.main.async {
+                    self.vcDelegate.focusEditArea()
                 }
             } else {
                 vcDelegate.makeNote(self)
@@ -160,8 +150,6 @@ class SearchTextField: NSSearchField, NSSearchFieldDelegate {
             return true
         case "insertTab:":
             markCompleteonAsSuccess()
-
-            // Preview mode removed — always focus edit area
             vcDelegate.focusEditArea()
 
             vcDelegate.editor.scrollToCursor()

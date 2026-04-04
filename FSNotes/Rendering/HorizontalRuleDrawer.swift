@@ -20,7 +20,7 @@ struct HorizontalRuleDrawer: AttributeDrawer {
         let padding = textContainer.lineFragmentPadding
         let lineY = rect.midY + origin.y
 
-        // MPreview CSS: background #e7e7e7, height 4px
+        // Horizontal rule fill and thickness used by the editor renderer.
         context.setFillColor(NSColor(red: 0.906, green: 0.906, blue: 0.906, alpha: 1.0).cgColor)
         context.fill(CGRect(x: origin.x + padding, y: lineY - 2, width: containerWidth - padding * 2, height: 4))
     }

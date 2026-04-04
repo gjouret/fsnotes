@@ -10,6 +10,15 @@ import Foundation
 import AppKit
 
 extension EditTextView {
+    override func clicked(onLink link: Any, at charIndex: Int) {
+        if handleEmailLink(link) { return }
+        if handleAnchorLink(link) { return }
+
+        if !isAttachmentAtPosition(charIndex) {
+            if handleRegularLink(link, at: charIndex) { return }
+        }
+    }
+
     public func handleEmailLink(_ link: Any) -> Bool {
         guard let emailString = link as? String,
               emailString.isValidEmail(),

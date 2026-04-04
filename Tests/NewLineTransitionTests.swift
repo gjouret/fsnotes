@@ -270,7 +270,7 @@ class NewLineTransitionTests: XCTestCase {
         formatter.newLine()
         // Type body text on the new line (simulates what user does after Return)
         editorB.insertText("I press return", replacementRange: editorB.selectedRange())
-        // Pump run loop for async operations (BulletProcessor)
+        // Pump run loop for async renderer work
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
         editorB.layoutSubtreeIfNeeded()
         editorB.display()
@@ -347,14 +347,11 @@ class NewLineTransitionTests: XCTestCase {
         return editor
     }
 
-    /// Simulate fill(): load tasks (checkbox attachments), set note.content,
-    /// trigger didProcessEditing pipeline, pump run loop for async BulletProcessor.
+    /// Simulate fill(): set note.content, trigger didProcessEditing pipeline,
+    /// then pump the run loop for async renderer work.
     /// Caller must set NotesTextProcessor.hideSyntax before calling.
     private func runFullPipeline(_ editor: EditTextView) {
         guard let storage = editor.textStorage, let note = editor.note else { return }
-
-        // Load checkbox attachments (converts "- [ ] " → checkbox NSTextAttachment)
-        storage.loadTasks()
 
         // Set note.content to match storage (prevents hash-based early return in process())
         let content = NSMutableAttributedString(attributedString: storage)
@@ -364,7 +361,7 @@ class NewLineTransitionTests: XCTestCase {
         // Re-set to trigger didProcessEditing → process() → highlight + phase4 + phase5
         storage.setAttributedString(content)
 
-        // Pump the main run loop so BulletProcessor's DispatchQueue.main.async completes
+        // Pump the main run loop so async renderer work completes
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
         editor.layoutSubtreeIfNeeded()
@@ -581,14 +578,14 @@ class NewLineTransitionTests: XCTestCase {
             }
         }
 
-        // Check attributes on the checkbox AND first few text characters
-        let todoStart = (editor.textStorage!.string as NSString).range(of: "\u{FFFC}").location
+        // Check attributes on the raw markdown checkbox and first few text characters
+        let todoStart = (editor.textStorage!.string as NSString).range(of: "- [ ] Hello").location
         if todoStart != NSNotFound {
-            for offset in 0..<min(7, editor.textStorage!.length - todoStart) {
+            for offset in 0..<min(10, editor.textStorage!.length - todoStart) {
                 let idx = todoStart + offset
                 let attrs = editor.textStorage!.attributes(at: idx, effectiveRange: nil)
                 let ch = (editor.textStorage!.string as NSString).substring(with: NSRange(location: idx, length: 1))
-                let escaped = ch == "\u{FFFC}" ? "□" : (ch == " " ? "SPC" : ch)
+                let escaped = ch == " " ? "SPC" : ch
                 var summary = ""
                 for (key, val) in attrs {
                     if key == .foregroundColor || key == .kern || key == .font || key == .paragraphStyle {
@@ -633,7 +630,7 @@ class NewLineTransitionTests: XCTestCase {
         let noteB = editorB.note!
         let formatter = TextFormatter(textView: editorB, note: noteB)
         formatter.newLine()
-        // Pump run loop so BulletProcessor async completes
+        // Pump run loop so async renderer work completes
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
         // Do NOT type anything — measure the empty bullet line right after Return
         // This is what the user sees before typing their first character

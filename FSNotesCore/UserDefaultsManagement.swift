@@ -1255,7 +1255,7 @@ public class UserDefaultsManagement {
             } else {
                 try? item.savePassword(newValue)
             }
-            // Remove any legacy UserDefaults entry
+            // Remove any older UserDefaults copy after saving to Keychain.
             shared?.removeObject(forKey: Constants.AIAPIKey)
         }
     }

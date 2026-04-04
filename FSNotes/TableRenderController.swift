@@ -18,9 +18,11 @@ class TableRenderController {
 
     // MARK: - Table Data Sync
 
-    /// Sync all InlineTableView cell data back to text storage attributes for save.
-    func syncAllTableData() {
+    /// Materialize live InlineTableView cell data back into attachment attributes.
+    /// If there are no live inline table views, saving should remain a pure read.
+    func prepareRenderedTablesForSave() {
         guard let textView = textView, let storage = textView.textStorage else { return }
+        guard textView.subviews.contains(where: { $0 is InlineTableView }) else { return }
 
         // Clean up "spread" rendered-block attributes from non-attachment chars.
         let fullRange = NSRange(location: 0, length: storage.length)

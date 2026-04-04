@@ -1,10 +1,7 @@
 //
 //  ProjectStore.swift
 //  FSNotesCore
-//
-//  Focused façade for project/folder operations.
-//  Delegates to Storage.shared() during migration.
-//
+//  Focused facade for project and folder operations.
 
 import Foundation
 

@@ -1,11 +1,7 @@
 //
 //  NoteStore.swift
 //  FSNotesCore
-//
-//  Focused façade for note collection operations.
-//  Delegates to Storage.shared() during migration; will eventually
-//  replace the singleton as the injected note store.
-//
+//  Focused facade for note collection operations.
 
 import Foundation
 

@@ -1483,7 +1483,7 @@ class SidebarOutlineView: NSOutlineView,
         vc.loadMoveMenu()
 
         let selected = vc.sidebarOutlineView.selectedRow
-        vc.sidebarOutlineView.sidebarItems = Sidebar().getList()
+        vc.sidebarOutlineView.sidebarItems = vc.sidebarDisplayController.makeSidebarItems()
         vc.sidebarOutlineView.reloadData()
         vc.sidebarOutlineView.selectRowIndexes([selected], byExtendingSelection: false)
 

@@ -151,20 +151,6 @@ class PreferencesWebViewController: NSViewController, NSTextFieldDelegate {
             return
         }
         
-        let path = Bundle.main.path(forResource: "MPreview", ofType: ".bundle")
-        let url = NSURL.fileURL(withPath: path!)
-        let bundle = Bundle(url: url)
-
-        guard let bundleResourceURL = bundle?.resourceURL
-            else {
-            uploadError(text: "Test bundle can not found")
-            return
-        }
-        
-        let localJsDir = bundleResourceURL.appendingPathComponent("js", isDirectory: true)
-        let localFontsDir = bundleResourceURL.appendingPathComponent("fonts", isDirectory: true)
-        let localCssFile = bundleResourceURL.appendingPathComponent("main.css")
-        
         let alert = NSAlert()
 
         do {
@@ -172,37 +158,12 @@ class PreferencesWebViewController: NSViewController, NSTextFieldDelegate {
             
             guard let remoteDir = UserDefaultsManagement.sftpPath else { throw "Please enter remote path" }
             
-            let remoteJsDir = "\(remoteDir)js/"
-            let remoteFontsDir = "\(remoteDir)fonts/"
-            
-            guard let files = try? FileManager.default.contentsOfDirectory(atPath: localJsDir.path) else { return }
-            guard let fontFiles = try? FileManager.default.contentsOfDirectory(atPath: localFontsDir.path) else { return }
-            
             if password.count > 0 {
                 try ssh.authenticate(username: username, password: password)
             } else if let publicKeyURL = publicKeyURL, let privateKeyURL = privateKeyURL {
                 try ssh.authenticate(username: username, privateKey: privateKeyURL.path, publicKey: publicKeyURL.path, passphrase: passphrase)
             }
-            
-            _ = try ssh.execute("mkdir -p \(remoteJsDir)")
-            _ = try ssh.execute("mkdir -p \(remoteFontsDir)")
-            
-            let permissions = Permissions(arrayLiteral: .write, .read, .execute)
-            let filePerm = FilePermissions(owner: permissions, group: permissions, others: permissions)
-            
-            let sftp = try ssh.openSftp()
-            
-            for file in files {
-                let localURL = localJsDir.appendingPathComponent(file)
-                try? sftp.upload(localURL: localURL, remotePath: remoteJsDir + file, permissions: filePerm)
-            }
-            
-            for file in fontFiles {
-                let localURL = localFontsDir.appendingPathComponent(file)
-                try? sftp.upload(localURL: localURL, remotePath: remoteFontsDir + file, permissions: filePerm)
-            }
-            
-            try sftp.upload(localURL: localCssFile, remotePath: remoteDir + "main.css", permissions: filePerm)
+            try WebNotePublisher.verifyRemoteWriteAccess(ssh: ssh, remoteRoot: remoteDir)
             
             alert.alertStyle = .informational
             alert.messageText = NSLocalizedString("Connection established successfully 🤟", comment: "")

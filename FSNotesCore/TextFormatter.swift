@@ -22,6 +22,11 @@ import Foundation
 #endif
 
 public class TextFormatter {
+    private static let todoPrefixRegex = try! NSRegularExpression(
+        pattern: #"^([ \t]*)([-*+]) \[([ xX])\] "#,
+        options: []
+    )
+
     private var attributedString: NSMutableAttributedString
     private var attributedSelected: NSAttributedString
     private var type: NoteType
@@ -209,7 +214,7 @@ public class TextFormatter {
             padding = "    "
         }
         
-        let mutable = NSMutableAttributedString(attributedString: getAttributedString().attributedSubstring(from: pRange)).unloadTasks()
+        let mutable = NSMutableAttributedString(attributedString: getAttributedString().attributedSubstring(from: pRange))
 
         let string = mutable.string
         var result = String()
@@ -232,13 +237,8 @@ public class TextFormatter {
         let selectRange = NSRange(location: location + padding.count, length: length + addsChars)
         
         let mutableResult = NSMutableAttributedString(string: result)
-        mutableResult.loadTasks()
 
-        #if os(OSX)
-            textView.textStorage?.removeAttribute(.todo, range: pRange)
-        #else
-            textView.textStorage.removeAttribute(.todo, range: pRange)
-
+        #if !os(OSX)
             // Fixes font size issue #1271
             let parFont = NotesTextProcessor.font
             let parRange = NSRange(location: 0, length:   mutableResult.length)
@@ -252,7 +252,7 @@ public class TextFormatter {
     public func unTab() {
         guard let pRange = getParagraphRange() else { return }
 
-        let mutable = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: pRange)).unloadTasks()
+        let mutable = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: pRange))
         let string = mutable.string
 
         var result = String()
@@ -324,13 +324,8 @@ public class TextFormatter {
 
         let selectRange = NSRange(location: selectLocation, length: selectLength)
         let mutableResult = NSMutableAttributedString(string: result)
-        mutableResult.loadTasks()
 
-        #if os(OSX)
-            textView.textStorage?.removeAttribute(.todo, range: pRange)
-        #else
-            textView.textStorage.removeAttribute(.todo, range: pRange)
-
+        #if !os(OSX)
             // Fixes font size issue #1271
             let parFont = NotesTextProcessor.font
             let parRange = NSRange(location: 0, length:   mutableResult.length)
@@ -454,6 +449,29 @@ public class TextFormatter {
         return false
     }
 
+    private static func todoMatch(in line: String) -> (prefix: String, markerRange: NSRange, checked: Bool)? {
+        let nsLine = line as NSString
+        let range = NSRange(location: 0, length: nsLine.length)
+
+        guard let match = todoPrefixRegex.firstMatch(in: line, options: [], range: range) else {
+            return nil
+        }
+
+        let prefix = nsLine.substring(with: match.range(at: 1))
+        let marker = nsLine.substring(with: match.range(at: 0))
+        return (prefix: prefix, markerRange: match.range(at: 0), checked: marker.lowercased().contains("[x]"))
+    }
+
+    private static func toggledTodoMarker(_ marker: String) -> String {
+        if marker.lowercased().contains("[x]") {
+            return marker
+                .replacingOccurrences(of: "[x]", with: "[ ]")
+                .replacingOccurrences(of: "[X]", with: "[ ]")
+        }
+
+        return marker.replacingOccurrences(of: "[ ]", with: "[x]")
+    }
+
     public func tabKey() {
         guard let currentPR = getParagraphRange() else { return }
         let paragraph = storage.attributedSubstring(from: currentPR).string
@@ -536,12 +554,15 @@ public class TextFormatter {
     }
 
     private func updateCurrentParagraph() {
-        let parRange = getParagraphRange(for: textView.selectedRange.location)
-
+        guard let parRange = getParagraphRange(for: textView.selectedRange.location) else { return }
         #if os(iOS)
             textView.textStorage.updateParagraphStyle(range: parRange)
         #else
-            textView.textStorage?.updateParagraphStyle(range: parRange)
+            if let editor = textView as? EditTextView {
+                editor.refreshParagraphRendering(range: parRange)
+            } else {
+                textView.textStorage?.updateParagraphStyle(range: parRange)
+            }
         #endif
     }
 
@@ -573,46 +594,21 @@ public class TextFormatter {
         cursorLocation: Int,
         storageLength: Int
     ) -> NewLineTransition {
-        let selectedRange = NSRange(location: cursorLocation, length: 0)
         let paragraphString = paragraph.string
         let cursorNearEnd = cursorLocation != paragraphRange.location
             && paragraphRange.upperBound - 2 < cursorLocation
 
         // --- 1. Checkbox (todo) ---
-        if paragraph.length >= 2 {
-            // Check if paragraph has a todo attribute (checkbox)
-            var hasTodo = false
-            paragraph.enumerateAttribute(.todo, in: NSRange(0..<paragraph.length), options: []) { value, _, stop in
-                if value != nil { hasTodo = true; stop.pointee = true }
+        if paragraph.length >= 2, let todo = todoMatch(in: paragraphString), cursorNearEnd {
+            let content = (paragraphString as NSString)
+                .replacingCharacters(in: todo.markerRange, with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if content.isEmpty {
+                return .exitTodo(paragraphRange: paragraphRange)
             }
 
-            if hasTodo {
-                // Check if the line is empty (only checkbox + space, no text content).
-                // Same pattern as bullet/numbered lists: empty marker → exit list.
-                let content = paragraphString
-                    .replacingOccurrences(of: "\u{FFFC}", with: "")  // Remove attachment char
-                    .replacingOccurrences(of: "- [ ] ", with: "")     // Remove raw markdown
-                    .replacingOccurrences(of: "- [x] ", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if content.isEmpty {
-                    return .exitTodo(paragraphRange: paragraphRange)
-                }
-            }
-
-            // Check if paragraph has a todo attribute anywhere
-            var todoLocation = -1
-            paragraph.enumerateAttribute(.todo, in: NSRange(0..<paragraph.length), options: []) { value, range, stop in
-                guard value != nil else { return }
-                todoLocation = range.location
-                stop.pointee = true
-            }
-
-            if todoLocation > -1 {
-                let prefix = todoLocation > 0
-                    ? paragraph.attributedSubstring(from: NSRange(0..<todoLocation)).string
-                    : ""
-                return .continueCheckbox(prefix: prefix, todoLocation: todoLocation)
-            }
+            return .continueCheckbox(prefix: todo.prefix, todoLocation: todo.markerRange.location)
         }
 
         // --- 2. Unordered list ---
@@ -679,21 +675,7 @@ public class TextFormatter {
             #endif
 
         case .continueCheckbox(let prefix, _):
-            let unchecked = AttributedBox.getUnChecked()?.attributedSubstring(from: NSRange(0..<2))
-            #if os(OSX)
-            let string = NSMutableAttributedString(string: "\n" + prefix)
-            string.append(unchecked!)
-            self.insertText(string)
-            #else
-            let selectedRange = textView.selectedRange
-            let selectedTextRange = textView.selectedTextRange!
-            let checkbox = NSMutableAttributedString(string: "\n" + prefix)
-            checkbox.append(unchecked!)
-            textView.undoManager?.beginUndoGrouping()
-            textView.replace(selectedTextRange, withText: checkbox.string)
-            textView.textStorage.replaceCharacters(in: NSRange(location: selectedRange.location, length: checkbox.length), with: checkbox)
-            textView.undoManager?.endUndoGrouping()
-            #endif
+            insertText("\n" + prefix + "- [ ] ")
 
         case .continueUnorderedList(let prefix):
             insertText("\n" + prefix)
@@ -775,7 +757,7 @@ public class TextFormatter {
         guard let pRange = getParagraphRange() else { return }
 
         let attributedString = getAttributedString().attributedSubstring(from: pRange)
-        let mutable = NSMutableAttributedString(attributedString: attributedString).unloadTasks()
+        let mutable = NSMutableAttributedString(attributedString: attributedString)
 
         if !attributedString.hasTodoAttribute() && selectedRange.length == 0 {
             var offset = 0
@@ -789,8 +771,9 @@ public class TextFormatter {
             }
 
             let insertRange = NSRange(location: pRange.location + offset, length: 0)
-            let selectRange = NSRange(location: range.location + 2, length: range.length)
-            insertText(AttributedBox.getUnChecked()!, replacementRange: insertRange, selectRange: selectRange)
+            let marker = "- [ ] "
+            let selectRange = NSRange(location: insertRange.location + marker.count, length: 0)
+            insertText(marker, replacementRange: insertRange, selectRange: selectRange)
             #if os(OSX)
             // Set clean typing attributes so text typed after the checkbox
             // doesn't inherit stale attributes (negative kern, wrong color).
@@ -881,95 +864,29 @@ public class TextFormatter {
         mutableResult.addAttribute(.foregroundColor, value: textColor, range: NSRange(location: 0, length: mutableResult.length))
         mutableResult.addAttribute(.font, value: NotesTextProcessor.font, range: NSRange(location: 0, length: mutableResult.length))
         mutableResult.fixAttributes(in: NSRange(location: 0, length: mutableResult.length))
-        mutableResult.loadTasks()
 
         let diff = mutableResult.length - attributedString.length
         let selectRange = selectedRange.length == 0 || lines.count == 1
             ? NSRange(location: pRange.location + pRange.length + diff - 1, length: 0)
             : NSRange(location: pRange.location, length: mutableResult.length)
-        
-        // Fixes clicked area
-        storage.removeAttribute(.todo, range: pRange)
 
         insertText(mutableResult, replacementRange: pRange, selectRange: selectRange)
     }
 
     public func toggleTodo(_ location: Int? = nil) {
-        if let location = location, let todoAttr = storage.attribute(.todo, at: location, effectiveRange: nil) as? Int {
-            #if os(OSX)
-                if textView.window?.firstResponder != textView {
-                    textView.window?.makeFirstResponder(textView)
-                }
-                // Save scroll position to prevent jump on paragraph replacement
-                let savedVisibleRect = textView.enclosingScrollView?.contentView.bounds
-            #endif
+        let cursorLocation = location ?? textView.selectedRange.location
+        guard let paragraphRange = getParagraphRange(for: cursorLocation) else { return }
 
-            guard let paragraph = getParagraphRange(for: location) else { return }
-            let paragraphTextNonMutable = storage.attributedSubstring(from: paragraph)
-            let paragraphText = NSMutableAttributedString(attributedString: paragraphTextNonMutable)
-            
-            let attributedText = (todoAttr == 0) ?
-                AttributedBox.getChecked(clean: true) :
-                AttributedBox.getUnChecked(clean: true)
-            
-            let checkboxLocation = location - paragraph.location
-            paragraphText.replaceCharacters(in: NSRange(location: checkboxLocation, length: 1), with: attributedText!)
-            
-            if todoAttr == 0 {
-                paragraphText.addAttribute(.strikethroughStyle, value: 1, range: NSRange(location: 0, length: paragraphText.length))
-                textView.typingAttributes[.strikethroughStyle] = 1
-            } else {
-                paragraphText.removeAttribute(.strikethroughStyle, range: NSRange(location: 0, length: paragraphText.length))
-                textView.typingAttributes.removeValue(forKey: .strikethroughStyle)
-            }
+        let paragraphString = storage.attributedSubstring(from: paragraphRange).string
+        guard let todo = Self.todoMatch(in: paragraphString) else { return }
 
-            // Preserve headIndent for proper text wrapping + consistent line height
-            let parStyle = NSMutableParagraphStyle()
-            parStyle.lineSpacing = CGFloat(Float(prefs.editorLineSpacing))
-            let markerWidth = ("- [ ] " as NSString).size(withAttributes: [.font: NotesTextProcessor.font]).width
-            parStyle.headIndent = markerWidth
-            paragraphText.addAttribute(.paragraphStyle, value: parStyle, range: NSRange(location: 0, length: paragraphText.length))
-
-            insertText(paragraphText, replacementRange: paragraph)
-
-            if todoAttr == 1 {
-                storage.removeAttribute(.strikethroughStyle, range: paragraph)
-            }
-
-            #if os(OSX)
-                // Restore scroll position after paragraph replacement
-                if let rect = savedVisibleRect {
-                    textView.enclosingScrollView?.contentView.scroll(to: rect.origin)
-                    textView.enclosingScrollView?.reflectScrolledClipView(textView.enclosingScrollView!.contentView)
-                }
-            #endif
-
-            updateCurrentParagraph()
-            
-            return
-        }
-
-        guard let paragraphRange = getParagraphRange() else { return }
-        let paragraph = self.storage.attributedSubstring(from: paragraphRange)
-        
-        if let index = paragraph.string.range(of: "- [ ] ") {
-            let local = paragraph.string.nsRange(from: index).location
-            let range = NSMakeRange(paragraphRange.location + local, 6)
-            if let attributedText = AttributedBox.getChecked() {
-                self.insertText(attributedText, replacementRange: range)
-            }
-            
-            return
-
-        } else if let index = paragraph.string.range(of: "- [x] ") {
-            let local = paragraph.string.nsRange(from: index).location
-            let range = NSMakeRange(paragraphRange.location + local, 6)
-            if let attributedText = AttributedBox.getUnChecked() {
-                self.insertText(attributedText, replacementRange: range)
-            }
-            
-            return
-        }
+        let markerRange = NSRange(
+            location: paragraphRange.location + todo.markerRange.location,
+            length: todo.markerRange.length
+        )
+        let currentMarker = (paragraphString as NSString).substring(with: todo.markerRange)
+        insertText(Self.toggledTodoMarker(currentMarker), replacementRange: markerRange)
+        updateCurrentParagraph()
     }
 
     public func backTick() {
@@ -1388,7 +1305,6 @@ public class TextFormatter {
     
     private func reset(pRange: NSRange) {
         storage.removeAttribute(.strikethroughStyle, range: pRange)
-        storage.removeAttribute(.todo, range: pRange)
     }
 
     private func cleanListItem(line: String) -> String {

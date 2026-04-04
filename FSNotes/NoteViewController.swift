@@ -12,7 +12,6 @@ import AppKit
 class NoteViewController: EditorViewController, NSWindowDelegate {
 
     @IBOutlet weak var shareButton: NSButton!
-    @IBOutlet weak var previewButton: NSButton!
     @IBOutlet weak var lockUnlockButton: NSButton!
     
     @IBOutlet weak var titleLabel: TitleTextField!
@@ -47,8 +46,6 @@ class NoteViewController: EditorViewController, NSWindowDelegate {
     
     func windowDidResize(_ notification: Notification) {
         editor.updateTextContainerInset()
-        
-        super.viewDidResize()
     }
     
     func windowWillClose(_ notification: Notification) {

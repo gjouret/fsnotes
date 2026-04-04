@@ -55,22 +55,6 @@ extension NSTextStorage {
 
         let parRange = mutableString.paragraphRange(for: scanRange)
 
-        enumerateAttribute(.attachment, in: parRange, options: .init()) { value, range, _ in
-            guard attribute(.todo, at: range.location, effectiveRange: nil) != nil else { return }
-
-            let currentParRange = mutableString.paragraphRange(for: range)
-
-            var attachmentWidth: CGFloat = 0
-            if let attachment = value as? NSTextAttachment {
-                let attachmentBounds = attachment.bounds
-                attachmentWidth = attachmentBounds.width
-            }
-
-            let parStyle = NSMutableParagraphStyle()
-            parStyle.headIndent = spaceWidth + attachmentWidth
-            parStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
-            addAttribute(.paragraphStyle, value: parStyle, range: currentParRange)
-        }   
         endEditing()
     }
 
@@ -131,22 +115,20 @@ extension NSTextStorage {
                 }
             }
 
-            // In WYSIWYG mode, add spacing to match MPreview CSS
+            // In WYSIWYG mode, add block spacing used by the editor renderer.
             if NotesTextProcessor.hideSyntax {
                 let isH1 = value.hasPrefix("# ") || value.hasPrefix("#\n")
                 let isH2 = value.hasPrefix("## ") && !value.hasPrefix("### ")
                 let isH3 = value.hasPrefix("### ") && !value.hasPrefix("#### ")
 
-                // MPreview CSS: h1/h2 have padding-bottom: .3em, border-bottom, margin-bottom: 16px
-                // The border is drawn by LayoutManager at maxY, so paragraphSpacing
-                // must provide: .3em (text→border) + 16px (border→next paragraph)
+                // Heading borders are drawn by LayoutManager at maxY, so paragraphSpacing
+                // must provide both text-to-border padding and border-to-next-paragraph spacing.
                 if isH1 || isH2 {
                     paragraph.paragraphSpacing = 20  // ~.3em + 16px
                 } else if isH3 {
                     paragraph.paragraphSpacing = 12
                 }
 
-                // MPreview CSS: ul/ol have margin-bottom: 16px, li+li have margin-top: 0.25em
                 // Detect list items (bullets, numbered, todos) but NOT blockquotes
                 let isListItem = matchedPrefix != nil && matchedPrefix != "> "
                     && !(matchedPrefix?.hasPrefix("> ") ?? false)
@@ -215,23 +197,7 @@ extension NSTextStorage {
     }
 
     public func updateCheckboxList() {
-        let fullRange = NSRange(location: 0, length: self.length)
-
-        enumerateAttribute(.todo, in: fullRange, options: []) { value, range, _ in
-            if let value = value as? Int {
-                let attribute = self.attribute(.attachment, at: range.location, longestEffectiveRange: nil, in: fullRange)
-
-                if let attachment = attribute as? NSTextAttachment {
-                    let checkboxName = value == 0 ? "checkbox_empty" : "checkbox"
-
-                    attachment.image = AttributedBox.getImage(name: checkboxName)
-
-                    for layoutManager in layoutManagers {
-                        layoutManager.invalidateDisplay(forCharacterRange: range)
-                    }
-                }
-            }
-        }
+        // No-op: checkbox rendering is derived from raw markdown, not attachments.
     }
 
     public func highlightKeyword(search: String) {

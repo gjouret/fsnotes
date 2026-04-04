@@ -3,8 +3,6 @@
 //  FSNotes
 //
 //  Table data structures and markdown parsing/generation utilities.
-//  The old modal dialog UI has been removed — table editing is now
-//  handled inline by InlineTableView.
 //
 
 import Cocoa

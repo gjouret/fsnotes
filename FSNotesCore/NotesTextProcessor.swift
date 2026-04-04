@@ -19,7 +19,7 @@ public class NotesTextProcessor {
     typealias Image = NSImage
     typealias Font = NSFont
 
-    /// MPreview CSS link color: #4078c0
+    /// Link color used by the editor renderer.
     private static let wysiwygLinkColor = NSColor(red: 0.251, green: 0.471, blue: 0.753, alpha: 1.0)
 
     public static var fontColor: NSColor {
@@ -428,7 +428,6 @@ public class NotesTextProcessor {
                 attributedString.addAttribute(.link, value: substring, range: range)
             }
 
-            // MPreview CSS: link color #4078c0
             if NotesTextProcessor.hideSyntax {
                 attributedString.addAttribute(.foregroundColor, value: wysiwygLinkColor, range: range)
             }
@@ -603,8 +602,7 @@ public class NotesTextProcessor {
                 destinationLink = substring
                 attributedString.addAttribute(.link, value: substring, range: linkRange)
 
-                // In WYSIWYG mode, also apply .link to the display text (group 2)
-                // so it's clickable, and set link color to match MPreview CSS (#4078c0)
+                // In WYSIWYG mode, also apply .link to the display text so it remains clickable.
                 if NotesTextProcessor.hideSyntax, let displayRange = result?.range(at: 2), displayRange.length > 0 {
                     attributedString.addAttribute(.link, value: substring, range: displayRange)
                     attributedString.addAttribute(.foregroundColor, value: wysiwygLinkColor, range: displayRange) // #4078c0
@@ -961,14 +959,6 @@ public class NotesTextProcessor {
 
                 attributedString.addAttribute(.link, value: "fsnotes://open/?tag=\(tag)", range: range)
                 attributedString.addAttribute(.tag, value: "\(tag)", range: range)
-            }
-        }
-
-        attributedString.enumerateAttribute(.attachment, in: paragraphRange,  options: []) { (value, range, stop) -> Void in
-            if value != nil, let todo = attributedString.attribute(.todo, at: range.location, effectiveRange: nil) {
-
-                let strikeRange = attributedString.mutableString.paragraphRange(for: range)
-                attributedString.addAttribute(.strikethroughStyle, value: todo, range: strikeRange)
             }
         }
 
@@ -1340,8 +1330,7 @@ public class NotesTextProcessor {
     
     public static let blockQuoteRegex = MarklightRegex(pattern: blockQuotePattern, options: [.allowCommentsAndWhitespace, .anchorsMatchLines])
 
-    // Inline tag regexes now live in InlineTagRegistry.swift (buildInlineTagDefinitions).
-    // underlineRegex, kbdRegex, markRegex removed — single source of truth.
+    // Inline tag regexes live in InlineTagRegistry.swift via buildInlineTagDefinitions().
 
     // Static compiled regexes for horizontal rules and blockquotes — avoids recompiling on every highlight call
     public static let hrRegex: NSRegularExpression? = try? NSRegularExpression(pattern: "^[ ]{0,3}([-*_])[ ]{0,2}(\\1[ ]{0,2}){2,}[ \\t]*$", options: .anchorsMatchLines)

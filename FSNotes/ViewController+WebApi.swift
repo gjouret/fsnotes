@@ -74,13 +74,9 @@ extension ViewController {
         let web = UserDefaultsManagement.webPath
         let api = UserDefaultsManagement.apiPath
 
-        let dst = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Upload")
-        try? FileManager.default.removeItem(at: dst)
+        let content = exportAttributedContent(for: note)
+        guard let package = try? WebNotePublisher.makeSite(note: note, content: content) else { return }
 
-        // TODO: Replace MPreviewView.buildPage with WYSIWYG HTML export
-        guard let localURL = URL(string: "about:blank") else { return }  // Placeholder
-
-        let zipUrl = localURL.deletingLastPathComponent().appendingPathComponent(note.getLatinName()).appendingPathExtension("zip")
         let privateKey = UserDefaultsManagement.uploadKey
 
         var parameters = ["key": privateKey]
@@ -99,14 +95,9 @@ extension ViewController {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var urls = [URL]()
-        let items = note.content.getImagesAndFiles()
-
-        for item in items {
-            urls.append(item.url)
-        }
-
-        urls.append(localURL)
-        urls.append(zipUrl)
+        urls.append(contentsOf: package.assetURLs)
+        urls.append(package.indexURL)
+        urls.append(package.zipURL)
 
         guard let body = try? createBody(with: parameters, filePathKey: "file", urls: urls, boundary: boundary) else { return }
         request.httpBody = body

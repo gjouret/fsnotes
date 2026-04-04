@@ -8,7 +8,6 @@
 
 import UIKit
 import LocalAuthentication
-import WebKit
 import AudioToolbox
 import CoreSpotlight
 
@@ -26,7 +25,7 @@ class ViewController: UIViewController, UISearchBarDelegate, UIGestureRecognizer
 
     @IBOutlet weak var lockedProject: UIImageView!
 
-    private var newsPopup: MPreviewView?
+    private var newsPopup: UIView?
     private var newsOverlay: UIView?
 
     public var indicator: UIActivityIndicatorView?
@@ -605,13 +604,24 @@ class ViewController: UIViewController, UISearchBarDelegate, UIGestureRecognizer
             height: height
         )
 
-        let news = MPreviewView(frame: frame, note: note, closure: {})
+        let news = UIView(frame: frame)
         news.layer.zPosition = 105
         news.backgroundColor = UIColor.white
         news.layer.cornerRadius = 5
         news.layer.masksToBounds = true
         news.layer.borderWidth = 1
         news.layer.borderColor = UIColor.gray.cgColor
+
+        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        textView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        textView.backgroundColor = .clear
+        textView.textContainerInset = UIEdgeInsets(top: 56, left: 16, bottom: 16, right: 16)
+        textView.isEditable = false
+        textView.alwaysBounceVertical = true
+        textView.text = note.content.string
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.textColor = .label
+        news.addSubview(textView)
 
         if #available(iOS 15.0, *) {
             var config = UIButton.Configuration.plain()

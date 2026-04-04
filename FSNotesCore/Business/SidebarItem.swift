@@ -12,6 +12,100 @@
     import UIKit
 #endif
 
+enum SidebarSystemBuilder {
+    static func makeSystemItems(storage: Storage) -> [SidebarItem] {
+        guard let defaultProject = storage.getDefault(),
+              let defaultURL = defaultProject.url as URL? else { return [] }
+
+        var system = [SidebarItem]()
+
+        if UserDefaultsManagement.sidebarVisibilityNotes {
+            let notesLabel = NSLocalizedString("Notes", comment: "Sidebar label")
+            let notesProject = makeVirtualProject(
+                storage: storage,
+                url: defaultURL.appendingPathComponent("Fake Virtual Notes Dir"),
+                label: notesLabel
+            )
+            storage.allNotesProject = notesProject
+            system.append(SidebarItem(name: notesLabel, project: notesProject, type: .All))
+        }
+
+        if UserDefaultsManagement.sidebarVisibilityInbox {
+            system.append(SidebarItem(name: NSLocalizedString("Inbox", comment: "Sidebar label"), project: defaultProject, type: .Inbox))
+        }
+
+        if UserDefaultsManagement.sidebarVisibilityTodo {
+            let todoLabel = NSLocalizedString("Todo", comment: "Sidebar label")
+            let todoProject = makeVirtualProject(
+                storage: storage,
+                url: defaultURL.appendingPathComponent("Fake Virtual Todo Dir"),
+                label: todoLabel
+            )
+            storage.todoProject = todoProject
+            system.append(SidebarItem(name: todoLabel, project: todoProject, type: .Todo))
+        }
+
+        if UserDefaultsManagement.sidebarVisibilityUntagged {
+            let untaggedLabel = NSLocalizedString("Untagged", comment: "Sidebar label")
+            let untaggedProject = makeVirtualProject(
+                storage: storage,
+                url: defaultURL.appendingPathComponent("Fake Virtual Utagged Dir"),
+                label: untaggedLabel
+            )
+            storage.untaggedProject = untaggedProject
+            system.append(SidebarItem(name: untaggedLabel, project: untaggedProject, type: .Untagged))
+        }
+
+        if UserDefaultsManagement.sidebarVisibilityTrash {
+            system.append(
+                SidebarItem(
+                    name: NSLocalizedString("Trash", comment: "Sidebar label"),
+                    project: storage.getDefaultTrash(),
+                    type: .Trash
+                )
+            )
+        }
+
+        return system
+    }
+
+    static func makeProjectItems(storage: Storage) -> [SidebarItem] {
+        return storage
+            .getAvailableProjects()
+            .sorted(by: { $0.label < $1.label })
+            .map { SidebarItem(name: $0.label, project: $0, type: .Project) }
+    }
+
+    private static func makeVirtualProject(storage: Storage, url: URL, label: String) -> Project {
+        return Project(storage: storage, url: url, label: label, isVirtual: true)
+    }
+}
+
+enum SidebarListBuilder {
+    static func makeMacSidebarItems(storage: Storage) -> [Any] {
+        var items = [Any]()
+        let systemItems = SidebarSystemBuilder.makeSystemItems(storage: storage)
+
+        if !systemItems.isEmpty {
+            items.append(contentsOf: systemItems)
+        }
+
+        items.append(SidebarItem(name: "projects", type: .Separator))
+        items.append(contentsOf: storage.getSidebarProjects())
+        items.append(SidebarItem(name: "tags", type: .Separator))
+
+        return items
+    }
+
+    static func makeIOSidebarSections(storage: Storage) -> [[SidebarItem]] {
+        return [
+            SidebarSystemBuilder.makeSystemItems(storage: storage),
+            SidebarSystemBuilder.makeProjectItems(storage: storage),
+            []
+        ]
+    }
+}
+
 class SidebarItem {
     var name: String
     var project: Project?

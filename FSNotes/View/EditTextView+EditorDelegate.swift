@@ -8,7 +8,7 @@
 
 import AppKit
 
-extension EditTextView: EditorDelegate {
+extension EditTextView {
     public var currentNote: Note? {
         return self.note
     }

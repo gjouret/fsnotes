@@ -2137,7 +2137,6 @@ CA
                         <outlet property="notesScrollView" destination="Kzf-Jh-YEb" id="u8R-Hy-KjV"/>
                         <outlet property="notesTableView" destination="8X8-yh-5EA" id="pGL-Nn-LM0"/>
                         <outlet property="outlineHeader" destination="vp7-cq-QSI" id="iK6-z5-GgC"/>
-                        <outlet property="previewButton" destination="Bn7-FD-jzc" id="RxQ-Au-NBr"/>
                         <outlet property="search" destination="bd7-O3-GQF" id="HjC-CH-gRR"/>
                         <outlet property="searchTopConstraint" destination="nXO-Fh-8nv" id="p8r-Pf-fo8"/>
                         <outlet property="shareButton" destination="oDB-Y6-20P" id="8bV-gW-UaW"/>
@@ -4133,7 +4132,6 @@ Olena Hlushcneko</string>
                         <outlet property="editorScrollView" destination="7WR-qL-UhC" id="ivQ-Kf-OO8"/>
                         <outlet property="lockUnlockButton" destination="PiC-RU-ugX" id="TkZ-BU-gAW"/>
                         <outlet property="nonSelectedLabel" destination="JuI-am-1kF" id="q3Q-0a-BiE"/>
-                        <outlet property="previewButton" destination="grq-z8-mu5" id="vGw-jF-1Df"/>
                         <outlet property="shareButton" destination="jV1-b8-PLn" id="WkC-CN-mgS"/>
                         <outlet property="titleBarView" destination="Iip-lX-188" id="dHI-nm-3ue"/>
                         <outlet property="titleLabel" destination="rYa-4l-z3U" id="E6B-Mr-QuY"/>

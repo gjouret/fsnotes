@@ -38,6 +38,7 @@ public enum BlockRenderMode {
 // MARK: - Block Model
 
 public struct MarkdownBlock {
+    public let id: UUID
     public let type: MarkdownBlockType
     public var range: NSRange               // Full range in textStorage (includes syntax)
     public var contentRange: NSRange        // Range of visible content (excludes syntax delimiters)
@@ -45,7 +46,14 @@ public struct MarkdownBlock {
     public var collapsed: Bool = false      // For future expand/collapse feature
     public var renderMode: BlockRenderMode = .source  // Current display mode
 
-    public init(type: MarkdownBlockType, range: NSRange, contentRange: NSRange, syntaxRanges: [NSRange] = []) {
+    public init(
+        id: UUID = UUID(),
+        type: MarkdownBlockType,
+        range: NSRange,
+        contentRange: NSRange,
+        syntaxRanges: [NSRange] = []
+    ) {
+        self.id = id
         self.type = type
         self.range = range
         self.contentRange = contentRange
@@ -353,10 +361,6 @@ public class MarkdownBlockParser {
         if stripped.hasPrefix("- [x] ") || stripped.hasPrefix("* [x] ") || stripped.hasPrefix("+ [x] ") ||
            stripped.hasPrefix("- [X] ") || stripped.hasPrefix("* [X] ") || stripped.hasPrefix("+ [X] ") {
             return true
-        }
-        // Rendered checkbox: attachment character (U+FFFC) replaces "- [ ] " after loadTasks()
-        if stripped.hasPrefix("\u{FFFC}") {
-            return false  // treat as unchecked by default; actual state is in the attachment
         }
         return nil
     }

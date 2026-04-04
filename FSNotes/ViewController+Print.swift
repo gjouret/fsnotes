@@ -6,12 +6,11 @@
 //  Copyright © 2019 Oleksandr Glushchenko. All rights reserved.
 //
 
-import WebKit
+import AppKit
 
 extension EditorViewController {
 
     public func printMarkdownPreview() {
-        // Print directly from the WYSIWYG NSTextView — no MPreview HTML needed
         guard let editor = vcEditor else { return }
 
         let printInfo = NSPrintInfo.shared

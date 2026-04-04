@@ -12,26 +12,41 @@ import PDFKit
 import QuickLookThumbnailing
 
 class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelegate, EditorDelegate {
-
-    // MARK: - EditorDelegate conformance
     public var currentNote: Note? { return self.note }
     public func setNeedsDisplay() { self.needsDisplay = true }
     public var editorLayoutManager: NSLayoutManager? { return self.layoutManager }
     public var editorTextContainer: NSTextContainer? { return self.textContainer }
     public var editorContentWidth: CGFloat { return enclosingScrollView?.contentView.bounds.width ?? 400 }
-    // imagesLoaderQueue already declared as public property
 
     public var editorViewController: EditorViewController?
     public var textStorageProcessor: TextStorageProcessor?
-    // retainedTableEditorVC removed — table editing is now inline via InlineTableView
 
-    /// Collect cell data from all live InlineTableViews and update their
-    /// .renderedBlockOriginalMarkdown attributes on the attachment.
-    /// Called from save() and EditorViewController.saveContent() BEFORE reading
-    /// the text storage for saving. NOT called from attributedString() to avoid
-    /// re-entrancy (attributedString() should be a pure read).
-    func syncAllTableData() {
-        tableController.syncAllTableData()
+    /// Materialize live table widget state back into the attachment attributes
+    /// before a save reads the editor storage.
+    func prepareRenderedTablesForSave() {
+        tableController.prepareRenderedTablesForSave()
+    }
+
+    /// Explicit save boundary for the editor. Reading the storage remains pure;
+    /// only this method is allowed to prepare live rendered widgets first.
+    func attributedStringForSaving() -> NSAttributedString {
+        prepareRenderedTablesForSave()
+        return attributedString()
+    }
+
+    func refreshParagraphRendering(range: NSRange) {
+        guard let storage = textStorage else { return }
+
+        if NotesTextProcessor.hideSyntax,
+           let processor = textStorageProcessor,
+           !processor.blocks.isEmpty {
+            processor.phase5_paragraphStyles(textStorage: storage, range: range)
+            processor.phase4_hideSyntax(textStorage: storage, range: range)
+        } else {
+            storage.updateParagraphStyle(range: range)
+        }
+
+        layoutManager?.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
     }
 
     public var note: Note?
@@ -46,11 +61,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     
     let storage = Storage.shared()
     let caretWidth: CGFloat = 2
-    // downView (MPreviewView) removed — WYSIWYG only
     
     public var timer: Timer?
     public var tagsTimer: Timer?
-    // markdownView removed — WYSIWYG is the only rendering mode
     public var isLastEdited: Bool = false
     
     @IBOutlet weak var previewMathJax: NSMenuItem!
@@ -59,8 +72,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var attributesCachingQueue = OperationQueue.init()
     public lazy var gutterController = GutterController(textView: self)
     public lazy var tableController = TableRenderController(textView: self)
-
-    // preview flag removed — WYSIWYG is the only rendering mode
     
     public var isScrollPositionSaverLocked = false
     public var skipLoadSelectedRange = false
@@ -352,9 +363,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             return
         }
 
-        if editorViewController?.vcEditor?.isPreviewEnabled() == false {
-            self.isEditable = true
-        }
+        self.isEditable = true
 
         // Check for click in the gutter (fold/unfold toggle)
         if NotesTextProcessor.hideSyntax, gutterController.handleClick(event) {
@@ -743,10 +752,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             }
         }
 
-        if editorViewController?.vcEditor?.isPreviewEnabled() == true {
-            return
-        }
-
         super.mouseMoved(with: event)
     }
 
@@ -776,10 +781,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         
         let range = (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: 0))
         let string = storage.attributedSubstring(from: range).string as NSString
-
-        if storage.attribute(.todo, at: location, effectiveRange: nil) != nil {
-            return true
-        }
 
         var length = string.range(of: "- [ ] ").length
         if length == 0 {
@@ -826,7 +827,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
 
         if type == NSPasteboard.attributed {
-            let attributedString = attributedString.unloadTasks()
             attributedString.saveData()
 
             if let data = try? NSKeyedArchiver.archivedData(
@@ -902,11 +902,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         if let rtfdData = NSPasteboard.general.data(forType: NSPasteboard.attributed),
            let attributed = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(rtfdData) as? NSAttributedString {
 
-            let mutable = NSMutableAttributedString(attributedString: attributed)
-            mutable.loadTasks()
-
             breakUndoCoalescing()
-            insertText(mutable, replacementRange: selectedRange())
+            insertText(attributed, replacementRange: selectedRange())
             breakUndoCoalescing()
 
             return
@@ -951,7 +948,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             NSPasteboard.general.string(forType: NSPasteboard.PasteboardType.fileURL) == nil {
 
             let attributed = NSMutableAttributedString(string: clipboard.trim())
-            attributed.loadTasks()
 
             breakUndoCoalescing()
             insertText(attributed, replacementRange: selectedRange())
@@ -1007,378 +1003,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         super.cut(sender)
     }
 
-    func getSelectedNote() -> Note? {
-        return ViewController.shared()?.notesTableView?.getSelectedNote()
-    }
-    
-    public func isEditable(note: Note) -> Bool {
-        if note.container == .encryptedTextPack { return false }
-
-        guard let editor = editorViewController?.vcEditor else { return false }
-
-        if editor.isPreviewEnabled() {
-            return false
-        }
-        
-        return true
-    }
-
-    public func getVC() -> EditorViewController {
-        return self.window?.contentViewController as! EditorViewController
-    }
-    
-    public func getEVC() -> EditorViewController? {
-        return self.window?.contentViewController as? EditorViewController
-    }
-
-    public func save() {
-        guard let note = self.note else { return }
-
-        syncAllTableData()
-        note.save(attributed: self.attributedString())
-    }
-
-    func fill(note: Note, highlight: Bool = false, force: Bool = false) {
-        isScrollPositionSaverLocked = true
-
-        // Clear block model before loading new note — rendered blocks from the
-        // previous note have stale ranges that can crash the LayoutManager.
-        textStorageProcessor?.blocks = []
-
-        if !note.isLoaded {
-            note.load()
-        }
-
-        viewDelegate?.updateCounters(note: note)
-
-        textStorage?.setAttributedString(NSAttributedString(string: ""))
-        
-        // Hack for invalidate prev layout data (order is important, only before fill)
-        if let length = textStorage?.length {
-            textStorage?.layoutManagers.first?.invalidateDisplay(forGlyphRange: NSRange(location: 0, length: length))
-
-            invalidateLayout()
-        }
-
-        undoManager?.removeAllActions(withTarget: self)
-        registerHandoff(note: note)
-
-        // resets timer if editor refilled 
-        viewDelegate?.breakUndoTimer.invalidate()
-
-        unregisterDraggedTypes()
-        registerForDraggedTypes([
-            NSPasteboard.note,
-            NSPasteboard.PasteboardType.fileURL,
-            NSPasteboard.PasteboardType.URL,
-            NSPasteboard.PasteboardType.string
-        ])
-
-        if let label = editorViewController?.vcNonSelectedLabel {
-            label.isHidden = true
-
-            if note.container == .encryptedTextPack {
-                label.stringValue = NSLocalizedString("Locked", comment: "")
-                label.isHidden = false
-            } else {
-                label.stringValue = NSLocalizedString("None Selected", comment: "")
-                label.isHidden = true
-            }
-        }
-    
-        self.note = note
-        // Clear cache hash so process() repopulates the block model.
-        // fill() clears blocks to [], but the cacheHash guard in process()
-        // skips updateBlockModel if the content hasn't changed — leaving
-        // blocks empty and mermaid/table rendering unable to find them.
-        note.cacheHash = nil
-        UserDefaultsManagement.lastSelectedURL = note.url
-
-        editorViewController?.updateTitle(note: note)
-
-        isEditable = isEditable(note: note)
-        
-        editorViewController?.editorUndoManager = note.undoManager
-
-        typingAttributes.removeAll()
-        typingAttributes[.font] = UserDefaultsManagement.noteFont
-
-        // Preview mode removed — WYSIWYG is the only rendering path
-
-        guard let storage = textStorage else { return }
-
-        if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {
-            textStorageProcessor?.detector = CodeBlockDetector()
-
-            // Clear stale state BEFORE replacing storage content
-            pendingRenderBlockRange = nil
-            removeAllInlineTableViews()
-
-            storage.setAttributedString(content)
-        } else {
-            storage.setAttributedString(note.content)
-        }
-        
-        if highlight {
-            textStorage?.highlightKeyword(search: getSearchText())
-        }
-
-        // In WYSIWYG mode, ensure code fences are hidden after fill
-        // (process() may not always run the fence-hiding path on setAttributedString)
-        if NotesTextProcessor.hideSyntax, let storage = textStorage, let processor = textStorageProcessor {
-            let codeBlockRanges = processor.codeBlockRanges
-            let string = storage.string as NSString
-            // Half-height paragraph style for hidden fence lines
-            let fenceParaStyle = NSMutableParagraphStyle()
-            fenceParaStyle.maximumLineHeight = CGFloat(UserDefaultsManagement.fontSize) * 0.5
-            fenceParaStyle.lineSpacing = 0
-            let fenceFont = NSFont.systemFont(ofSize: CGFloat(UserDefaultsManagement.fontSize) * 0.5)
-
-            for codeRange in codeBlockRanges {
-                guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }
-                let openingLineRange = string.lineRange(for: NSRange(location: codeRange.location, length: 0))
-                if openingLineRange.length > 0 {
-                    // Set font BEFORE hiding — kern calculation uses the current font
-                    storage.addAttribute(.font, value: fenceFont, range: openingLineRange)
-                    storage.addAttribute(.paragraphStyle, value: fenceParaStyle, range: openingLineRange)
-                    processor.hideSyntaxRange(openingLineRange, in: storage)
-                }
-                let endLoc = NSMaxRange(codeRange)
-                if endLoc > 0 {
-                    let closingLineRange = string.lineRange(for: NSRange(location: endLoc - 1, length: 0))
-                    if closingLineRange.length > 0, closingLineRange.location != openingLineRange.location {
-                        storage.addAttribute(.font, value: fenceFont, range: closingLineRange)
-                        storage.addAttribute(.paragraphStyle, value: fenceParaStyle, range: closingLineRange)
-                        processor.hideSyntaxRange(closingLineRange, in: storage)
-                    }
-                }
-            }
-        }
-
-        // In WYSIWYG mode, render mermaid/math blocks and table markdown.
-        // Defer to next run loop iteration so layout manager has computed glyph positions.
-        if NotesTextProcessor.hideSyntax {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self,
-                      let storage = self.textStorage,
-                      let processor = self.textStorageProcessor else { return }
-                let codeRanges = processor.codeBlockRanges
-                if !codeRanges.isEmpty {
-                    processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
-                }
-                self.renderTables()
-            }
-        }
-
-        viewDelegate?.restoreScrollPosition()
-
-        // Force full redraw so gutter icons (drawn outside text container bounds)
-        // render after block model is populated by process()
-        needsDisplay = true
-    }
-
-    // loadMarkdownWebView removed — WYSIWYG is the only rendering mode
-
-    public func lockEncryptedView() {
-        textStorage?.setAttributedString(NSAttributedString())
-        // markdownView removed — WYSIWYG only
-
-        isEditable = false
-        
-        if let label = editorViewController?.vcNonSelectedLabel {
-            label.stringValue = NSLocalizedString("Locked", comment: "")
-            label.isHidden = false
-        }
-    }
-    
-    public func clear() {
-        textStorage?.setAttributedString(NSAttributedString())
-        // markdownView removed — WYSIWYG only
-
-        isEditable = false
-        
-        window?.title = AppDelegate.appTitle
-        
-        if let label = editorViewController?.vcNonSelectedLabel {
-            label.stringValue = NSLocalizedString("None Selected", comment: "")
-            label.isHidden = false
-            editorViewController?.dropTitle()
-        }
-        
-        self.note = nil
-        
-        if let vc = viewDelegate {
-            vc.updateCounters()
-        }
-    }
-
-    @IBAction func boldMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        if applyInlineTableCellFormatting("**") { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.bold()
-        deselectAfterFormatting()
-        updateToolbarAfterFormatting()
-    }
-
-    @IBAction func italicMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        if applyInlineTableCellFormatting("*") { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.italic()
-        deselectAfterFormatting()
-        updateToolbarAfterFormatting()
-    }
-
-    /// If an InlineTableView cell is being edited, wrap the selection (or insert markers at cursor).
-    /// Returns true if formatting was applied to a cell, false if the caller should fall through.
-    private func applyInlineTableCellFormatting(_ marker: String) -> Bool {
-        return tableController.applyInlineTableCellFormatting(marker)
-    }
-
-    @IBAction func linkMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        // Check clipboard for a URL
-        if let clipboardString = NSPasteboard.general.string(forType: .string) {
-            let normalized = clipboardString.normalizedAsURL()
-            if let url = URL(string: normalized),
-               let scheme = url.scheme, ["http", "https", "ftp", "ftps", "mailto"].contains(scheme.lowercased()) {
-                // Clipboard has a URL — insert link directly
-                let selectedText = attributedSubstring(forProposedRange: selectedRange(), actualRange: nil)?.string ?? ""
-                let displayText = selectedText.isEmpty ? normalized : selectedText
-                let markdown = "[\(displayText)](\(normalized))"
-                let range = selectedRange()
-                insertText(markdown, replacementRange: range)
-                return
-            }
-        }
-        // No URL in clipboard — show dialog
-        showLinkDialog()
-    }
-
-    private func showLinkDialog() {
-        guard let window = self.window else { return }
-
-        let alert = NSAlert()
-        alert.messageText = "Enter the Internet address (URL) for this link."
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Remove Link")
-
-        let urlField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        urlField.placeholderString = "https://example.com"
-        alert.accessoryView = urlField
-        alert.window.initialFirstResponder = urlField
-
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self = self else { return }
-            if response == .alertFirstButtonReturn {
-                let rawInput = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !rawInput.isEmpty else { return }
-                let urlString = rawInput.normalizedAsURL()
-
-                let selectedText = self.attributedSubstring(forProposedRange: self.selectedRange(), actualRange: nil)?.string ?? ""
-                let displayText = selectedText.isEmpty ? urlString : selectedText
-                let markdown = "[\(displayText)](\(urlString))"
-                let range = self.selectedRange()
-                self.insertText(markdown, replacementRange: range)
-            } else if response == .alertThirdButtonReturn {
-                // Remove link: if cursor is inside a markdown link, strip the syntax
-                let range = self.selectedRange()
-                guard let storage = self.textStorage else { return }
-                let nsString = storage.string as NSString
-                let paraRange = nsString.paragraphRange(for: range)
-                let paraString = nsString.substring(with: paraRange)
-
-                // Match [text](url) pattern around cursor
-                let linkPattern = "\\[([^\\]]*?)\\]\\(([^)]*?)\\)"
-                if let regex = try? NSRegularExpression(pattern: linkPattern),
-                   let match = regex.firstMatch(in: paraString, range: NSRange(location: 0, length: paraString.count)) {
-                    let cursorInPara = range.location - paraRange.location
-                    if NSLocationInRange(cursorInPara, match.range) {
-                        let textRange = match.range(at: 1)
-                        let displayText = (paraString as NSString).substring(with: textRange)
-                        let fullRange = NSRange(location: paraRange.location + match.range.location, length: match.range.length)
-                        self.insertText(displayText, replacementRange: fullRange)
-                    }
-                }
-            }
-        }
-    }
-
-    @IBAction func underlineMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.underline()
-        deselectAfterFormatting()
-        updateToolbarAfterFormatting()
-    }
-
-    @IBAction func strikeMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.strike()
-        deselectAfterFormatting()
-        updateToolbarAfterFormatting()
-    }
-
-    @IBAction func highlightMenu(_ sender: Any) {
-        guard let note = self.note, isEditable, note.isMarkdown() else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.highlight()
-        deselectAfterFormatting()
-        updateToolbarAfterFormatting()
-    }
-
-    /// Collapse selection to cursor inside the formatted text so the toolbar
-    /// reflects the applied formatting (bold/italic/etc. button shows active).
-    private func deselectAfterFormatting() {
-        let sel = selectedRange()
-        if sel.length > 0 {
-            let mid = sel.location + sel.length / 2
-            setSelectedRange(NSRange(location: mid, length: 0))
-        }
-    }
-
-    /// Force toolbar button state update after formatting change.
-    /// Deferred slightly so the text storage has time to re-highlight.
-    private func updateToolbarAfterFormatting() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            if let vc = ViewController.shared() {
-                vc.formattingToolbar?.updateButtonStates(for: self)
-            }
-        }
-    }
-
-    @IBAction func headerMenu(_ sender: NSMenuItem) {
-        guard let note = self.note, isEditable else { return }
-
-        guard let id = sender.identifier?.rawValue else { return }
-
-        let code =
-            Int(id.replacingOccurrences(of: "format.h", with: ""))
-
-        var string = String()
-        for index in [1, 2, 3, 4, 5, 6] {
-            string = string + "#"
-            if code == index {
-                break
-            }
-        }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.header(string)
-    }
-    
     @IBAction func moveSelectedLinesDown(_ sender: NSMenuItem) {
         self.moveSelectedLinesDown()
     }
@@ -1391,13 +1015,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         self.clearCompletedTodos()
     }
 
-    func getParagraphRange() -> NSRange? {
-        guard let storage = textStorage else { return nil }
-        
-        let range = selectedRange()
-        return storage.mutableString.paragraphRange(for: range)
-    }
-    
     // Clickable links flag changed with cmd / shift
     override func flagsChanged(with event: NSEvent) {
         super.flagsChanged(with: event)
@@ -1705,32 +1322,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
     }
 
-    func saveSelectedRange() {
-        // Defer to the next run loop iteration to avoid Swift exclusivity violations.
-        // When deleting table attachments, keyDown triggers text storage mutations
-        // that re-enter self.note access. By deferring, the access happens after
-        // keyDown's call stack has unwound completely.
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, let note = self.note else { return }
-            note.setSelectedRange(range: self.selectedRange)
-        }
-    }
-
-    /// Returns the cursor's vertical position as a fraction (0.0 to 1.0) of the document
-    func getCursorScrollFraction() -> CGFloat {
-        guard let storage = textStorage, storage.length > 0 else { return 0 }
-        return CGFloat(selectedRange().location) / CGFloat(storage.length)
-    }
-    
-    func loadSelectedRange() {
-        guard let storage = textStorage else { return }
-
-        if let range = self.note?.getSelectedRange(), range.upperBound <= storage.length {
-            setSelectedRange(range)
-            scrollToCursor()
-        }
-    }
-
     func setEditorTextColor(_ color: NSColor) {
         if let note = self.note, !note.isMarkdown() {
             textColor = color
@@ -1751,129 +1342,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     // drawGutterIcons moved to GutterController
 
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let note = self.note, let storage = textStorage else { return false }
-
-        let pasteboard = sender.draggingPasteboard
-        let dropPoint = convert(sender.draggingLocation, from: nil)
-        let caretLocation = characterIndexForInsertion(at: dropPoint)
-        let replacementRange = NSRange(location: caretLocation, length: 0)
-
-        // Handle local file drops first — route through saveFile which handles
-        // PDFs (thumbnail), images (attachment), and other files (markdown link).
-        // This must come before handleAttributedText, which would insert non-image
-        // files (DOCX, PPTX, etc.) as NSTextAttachments with image syntax.
-        if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
-            .urlReadingFileURLsOnly: true
-        ]) as? [URL], !fileURLs.isEmpty {
-            var handled = false
-            setSelectedRange(replacementRange)
-            for url in fileURLs where url.isFileURL {
-                if saveFile(url: url, in: note) {
-                    handled = true
-                }
-            }
-            if handled { return true }
-        }
-
-        if handleAttributedText(pasteboard, note: note, storage: storage, replacementRange: replacementRange) { return true }
-        if handleNoteReference(pasteboard, note: note, replacementRange: replacementRange) { return true }
-        if handleURLs(pasteboard, note: note, replacementRange: replacementRange) { return true }
-
-        return super.performDragOperation(sender)
-    }
-
-    func fetchDataFromURL(url: URL, completion: @escaping (Data?, Error?) -> Void) {
-        let session = URLSession.shared
-
-        let task = session.dataTask(with: url) { (data, response, error) in
-            if let error = error {
-                completion(nil, error)
-                return
-            }
-
-            completion(data, nil)
-        }
-
-        task.resume()
-    }
-
-    
-    func getHTMLTitle(from data: Data) -> String? {
-        guard let htmlString = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        
-        return extractTitle(from: htmlString)
-    }
-
-    func getSearchText() -> String {
-        guard let search = ViewController.shared()?.search else { return String() }
-
-        if let editor = search.currentEditor(), editor.selectedRange.length > 0 {
-            return (search.stringValue as NSString).substring(with: NSRange(0..<editor.selectedRange.location))
-        }
-        
-        return search.stringValue
-    }
-
-    public func scrollToCursor() {
-        let cursorRange = NSMakeRange(self.selectedRange().location, 0)
-
-        // DispatchQueue fixes rare bug when textStorage invalidation not working (blank page instead text)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.scrollRangeToVisible(cursorRange)
-        }
-    }
-    
-    public func hasFocus() -> Bool {
-        if let fr = self.window?.firstResponder, fr.isKind(of: EditTextView.self) {
-            return true
-        }
-        
-        return false
-    }
-
-    @IBAction func shiftLeft(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-        let f = TextFormatter(textView: self, note: note)
-        f.unTab()
-    }
-    
-    @IBAction func shiftRight(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-        let f = TextFormatter(textView: self, note: note)
-        f.tab()
-    }
-
-    @IBAction func todo(_ sender: Any) {
-        guard let f = self.getTextFormatter(), isEditable else { return }
-        
-        f.todo()
-    }
-
-    @IBAction func wikiLinks(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.wikiLink()
-    }
-
-    @IBAction func pressBold(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.bold()
-    }
-
-    @IBAction func pressItalic(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.italic()
-    }
-    
     @IBAction func insertFileOrImage(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
@@ -1901,273 +1369,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
     }
 
-    // MARK: - WYSIWYG Toolbar Actions
-
-    @IBAction func quoteMenu(_ sender: Any) {
-        guard let note = self.note, isEditable, let storage = textStorage else { return }
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.quote()
-
-        // Force re-highlight to apply blockquote indent immediately
-        if NotesTextProcessor.hideSyntax {
-            let cursorLoc = min(selectedRange().location, storage.length - 1)
-            if cursorLoc >= 0 {
-                let paraRange = (storage.string as NSString).paragraphRange(
-                    for: NSRange(location: cursorLoc, length: 0))
-                storage.updateParagraphStyle(range: paraRange)
-                layoutManager?.invalidateLayout(forCharacterRange: paraRange, actualCharacterRange: nil)
-            }
-        }
-    }
-
-    @IBAction func bulletListMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.list()
-    }
-
-    @IBAction func numberedListMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.orderedList()
-    }
-
-    @IBAction func imageMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.image()
-    }
-
-    @IBAction func insertTableMenu(_ sender: Any) {
-        guard let storage = textStorage, isEditable else { return }
-
-        // Insert a 2x2 empty markdown table at cursor
-        let tableMarkdown = "|  |  |\n|--|--|\n|  |  |"
-        let insertRange = selectedRange()
-        let prefix = insertRange.location > 0 ? "\n" : ""
-        insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
-
-        // In WYSIWYG mode, immediately render as InlineTableView
-        if NotesTextProcessor.hideSyntax {
-            renderTables()
-            // Focus the first cell after a brief delay so the table is fully laid out
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                self?.focusFirstInlineTableCell()
-            }
-        }
-    }
-
-    /// Focus the first editable cell in the most recently added InlineTableView
-    private func focusFirstInlineTableCell() {
-        tableController.focusFirstInlineTableCell()
-    }
-
-    /// Unfocus all inline table views (hide their controls)
-    func unfocusAllInlineTableViews() {
-        tableController.unfocusAllInlineTableViews()
-    }
-
-    /// Remove all inline table view subviews (called on source mode toggle or note switch).
-    /// First collects any pending cell edits and restores table attachments to markdown
-    /// so the note content reflects the latest edits.
-    func removeAllInlineTableViews() {
-        // Collect pending cell values into the data model (does NOT fire callbacks).
-        // Do NOT call notifyChanged() here — it fires onMarkdownChanged which can
-        // trigger saves. During fill(), self.note already points to the NEW note
-        // and the text storage is EMPTY, so a save would write 0 bytes.
-        for subview in subviews {
-            if let tableView = subview as? InlineTableView {
-                tableView.collectCellData()
-            }
-        }
-
-        // Do NOT call storage.restoreRenderedBlocks() here!
-        // Modifying the text storage during note switching triggers auto-save
-        // which writes empty/corrupt content to the PREVIOUS note's file.
-        // Rendered blocks are restored in the save path (Note.save(content:)
-        // calls unloadAttachments() which calls restoreRenderedBlocks()).
-
-        // Remove the table subviews only
-        for subview in subviews {
-            if subview is InlineTableView {
-                subview.removeFromSuperview()
-            }
-        }
-    }
-
-    // MARK: - Inline Table Rendering
-
-    /// Render markdown tables as inline InlineTableView widgets in WYSIWYG mode
-    func renderTables() {
-        tableController.renderTables()
-    }
-
-
-    private func getTableMaxWidth() -> CGFloat {
-        return tableController.getTableMaxWidth()
-    }
-
-    @IBAction func horizontalRuleMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.horizontalRule()
-    }
-
-    @IBAction func headerMenu1(_ sender: Any) {
-        applyHeader(level: "#")
-    }
-
-    @IBAction func headerMenu2(_ sender: Any) {
-        applyHeader(level: "##")
-    }
-
-    @IBAction func headerMenu3(_ sender: Any) {
-        applyHeader(level: "###")
-    }
-
-    private func applyHeader(level: String) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.header(level)
-
-        // After header() inserts "# " (which gets hidden at 0.1pt font),
-        // the cursor sits after hidden characters. NSTextView draws the cursor
-        // using the font at the insertion point, which is the 0.1pt hidden font.
-        //
-        // Fix: set typing attributes to header font AND force cursor redraw.
-        let baseFontSize = CGFloat(UserDefaultsManagement.fontSize)
-        let headerLevel = level.filter({ $0 == "#" }).count
-        let headerSize: CGFloat
-        switch headerLevel {
-        case 1: headerSize = baseFontSize * 2.0
-        case 2: headerSize = baseFontSize * 1.7
-        case 3: headerSize = baseFontSize * 1.4
-        default: headerSize = baseFontSize
-        }
-        let headerFont = NSFont.boldSystemFont(ofSize: headerSize)
-        typingAttributes = [
-            .font: headerFont,
-            .foregroundColor: NotesTextProcessor.fontColor
-        ]
-        // Force cursor to redraw with the new typing attributes
-        updateInsertionPointStateAndRestartTimer(true)
-    }
-
-    @IBAction func insertCodeBlock(_ sender: NSButton) {
-        guard isEditable else { return }
-
-        let currentRange = selectedRange()
-
-        if currentRange.length > 0 {
-            let mutable = NSMutableAttributedString(string: "```\n")
-            if let substring = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
-                mutable.append(substring)
-
-                if substring.string.last != "\n" {
-                    mutable.append(NSAttributedString(string: "\n"))
-                }
-            }
-
-            mutable.append(NSAttributedString(string: "```\n"))
-
-            insertText(mutable, replacementRange: currentRange)
-            setSelectedRange(NSRange(location: currentRange.location + 4, length: 0))
-
-            return
-        }
-
-        insertText("```\n\n```\n", replacementRange: currentRange)
-        // Place cursor at end of opening ``` so user can type language name
-        setSelectedRange(NSRange(location: currentRange.location + 3, length: 0))
-    }
-
-    @IBAction func insertCodeSpan(_ sender: NSMenuItem) {
-        guard isEditable else { return }
-
-        let currentRange = selectedRange()
-
-        if currentRange.length > 0 {
-            let mutable = NSMutableAttributedString(string: "`")
-            if let substring = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
-                mutable.append(substring)
-            }
-
-            mutable.append(NSAttributedString(string: "`"))
-
-            insertText(mutable, replacementRange: currentRange)
-            return
-        }
-
-        insertText("``", replacementRange: currentRange)
-        setSelectedRange(NSRange(location: currentRange.location + 1, length: 0))
-    }
-
-    @IBAction func insertList(_ sender: NSMenuItem) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.list()
-    }
-
-    @IBAction func insertOrderedList(_ sender: NSMenuItem) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.orderedList()
-    }
-
-    @IBAction func insertQuote(_ sender: NSMenuItem) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.quote()
-    }
-
-    @IBAction func insertLink(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
-
-        let formatter = TextFormatter(textView: self, note: note)
-        formatter.link()
-    }
-    
-    private func getTextFormatter() -> TextFormatter? {
-        guard let note = self.note, isEditable else { return nil }
-        
-        return TextFormatter(textView: self, note: note)
-    }
-    
-    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        return true
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if sender.draggingPasteboard.data(forType: NSPasteboard.note) != nil {
-            let dropPoint = convert(sender.draggingLocation, from: nil)
-            let caretLocation = characterIndexForInsertion(at: dropPoint)
-            setSelectedRange(NSRange(location: caretLocation, length: 0))
-            return .copy
-        }
-
-        return super.draggingUpdated(sender)
-    }
-    
-    override func clicked(onLink link: Any, at charIndex: Int) {
-        if handleEmailLink(link) { return }
-        
-        if handleAnchorLink(link) { return }
-
-        if !isAttachmentAtPosition(charIndex) {
-            if handleRegularLink(link, at: charIndex) { return }
-        }
-    }
-
     override func viewDidChangeEffectiveAppearance() {
         UserDataService.instance.isDark = effectiveAppearance.isDark
         storage.resetCacheAttributes()
 
-        // clear preview cache
-        // MPreview template cache removed
         let webkitPreview = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("wkPreview")
         try? FileManager.default.removeItem(at: webkitPreview)
 
@@ -2176,136 +1381,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         guard let note = self.note else { return }
         NotesTextProcessor.highlight(attributedString: note.content)
 
-        let funcName = effectiveAppearance.isDark ? "switchToDarkMode" : "switchToLightMode"
-        let switchScript = "if (typeof(\(funcName)) == 'function') { \(funcName)(); }"
-
-        // downView (MPreviewView) removed — WYSIWYG only
-
-        viewDelegate?.refillEditArea(force: true)
-    }
-
-    /// Image file extensions that should be pasted directly inline
-    private static let imageExtensions: Set<String> = [
-        "png", "jpg", "jpeg", "gif", "tiff", "tif", "webp", "heic", "heif", "svg", "bmp", "ico"
-    ]
-
-    private func saveFile(url: URL, in note: Note) -> Bool {
-        guard let data = try? Data(contentsOf: url) else { return false }
-        let preferredName = url.lastPathComponent
-        let ext = url.pathExtension.lowercased()
-
-        // Images: paste directly inline as attachment
-        if EditTextView.imageExtensions.contains(ext) || data.getFileType() != .unknown {
-            guard let attributed = NSMutableAttributedString.build(data: data, preferredName: preferredName) else { return false }
-            breakUndoCoalescing()
-            insertText(attributed, replacementRange: selectedRange())
-            breakUndoCoalescing()
-            return true
-        }
-
-        // Other files: save file, generate QuickLook thumbnail, insert table card.
-        // For files QL can't render, uses a generic file icon.
-        return saveFileWithThumbnail(data: data, preferredName: preferredName, in: note)
-    }
-
-    /// Save a non-image file to the note's assets, generate a QuickLook thumbnail,
-    /// and insert a markdown table with the thumbnail image + clickable link.
-    /// Uses QLThumbnailGenerator for consistent thumbnail rendering across all
-    /// document types (PDF, SVG, Office, iWork, etc.).
-    private func saveFileWithThumbnail(data: Data, preferredName: String, in note: Note) -> Bool {
-        // 1. Save file to assets/
-        guard let (fileRelPath, fileURL) = note.save(data: data, preferredName: preferredName) else { return false }
-
-        // 2. Generate QuickLook thumbnail asynchronously
-        let request = QLThumbnailGenerator.Request(
-            fileAt: fileURL,
-            size: CGSize(width: 480, height: 480),
-            scale: NSScreen.main?.backingScaleFactor ?? 2.0,
-            representationTypes: .all
-        )
-
-        let insertionRange = selectedRange()
-        let capturedNote = note
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, error in
-            DispatchQueue.main.async {
-                // Verify the note hasn't changed since the async request was made
-                guard let self = self, self.note === capturedNote else { return }
-                self.insertThumbnailCard(
-                    thumbnail: thumbnail,
-                    fileRelPath: fileRelPath,
-                    preferredName: preferredName,
-                    note: capturedNote,
-                    insertionRange: insertionRange
-                )
-            }
-        }
-
-        return true
-    }
-
-    /// Insert the markdown table card with thumbnail + link after QuickLook generates the thumbnail.
-    private func insertThumbnailCard(thumbnail: QLThumbnailRepresentation?, fileRelPath: String, preferredName: String, note: Note, insertionRange: NSRange) {
-        let encodedFilePath = fileRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileRelPath
-        let displayName = preferredName
-
-        var markdown: String
-
-        if let cgImage = thumbnail?.cgImage {
-            // Convert thumbnail to PNG and save
-            let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-            if let pngData = nsImage.PNGRepresentation {
-
-                let thumbName = (preferredName as NSString).deletingPathExtension + "_thumb.png"
-                if let (thumbRelPath, thumbURL) = note.save(data: pngData, preferredName: thumbName) {
-                    let encodedThumbPath = thumbRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? thumbRelPath
-                    let thumbDisplayName = (preferredName as NSString).deletingPathExtension + "_thumb.png"
-
-                    // Update note.imageUrl so loadImages() finds the thumbnail in preview mode
-                    if note.imageUrl != nil {
-                        note.imageUrl!.append(thumbURL)
-                    } else {
-                        note.imageUrl = [thumbURL]
-                    }
-
-                    markdown = "\n| Thumbnail |\n|:---:|\n| ![\(thumbDisplayName)](\(encodedThumbPath)) |\n| [\(displayName)](\(encodedFilePath)) |\n"
-                } else {
-                    markdown = "\n[\(displayName)](\(encodedFilePath))\n"
-                }
-            } else {
-                markdown = "\n[\(displayName)](\(encodedFilePath))\n"
-            }
-        } else {
-            // No QL thumbnail available — use the system file icon as thumbnail
-            let ext = (preferredName as NSString).pathExtension
-            let fileIcon = NSWorkspace.shared.icon(forFileType: ext)
-            fileIcon.size = NSSize(width: 128, height: 128)
-            if let pngData = fileIcon.PNGRepresentation {
-                let iconName = (preferredName as NSString).deletingPathExtension + "_icon.png"
-                if let (iconRelPath, iconURL) = note.save(data: pngData, preferredName: iconName) {
-                    let encodedIconPath = iconRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? iconRelPath
-                    if note.imageUrl != nil {
-                        note.imageUrl!.append(iconURL)
-                    } else {
-                        note.imageUrl = [iconURL]
-                    }
-                    markdown = "\n| Attachment |\n|:---:|\n| ![\(iconName)](\(encodedIconPath)) |\n| [\(displayName)](\(encodedFilePath)) |\n"
-                } else {
-                    markdown = "\n[\(displayName)](\(encodedFilePath))\n"
-                }
-            } else {
-                markdown = "\n[\(displayName)](\(encodedFilePath))\n"
-            }
-        }
-
-        breakUndoCoalescing()
-        insertText(NSMutableAttributedString(string: markdown), replacementRange: selectedRange())
-        breakUndoCoalescing()
-
-        // Save to disk synchronously, then reload so loadImagesAndFiles()
-        // converts ![](path) to NSTextAttachment for immediate inline rendering
-        note.content = NSMutableAttributedString(attributedString: attributedString())
-        _ = note.save()
-        note.load()
         viewDelegate?.refillEditArea(force: true)
     }
 
@@ -2497,12 +1572,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         let position =
             window?.firstResponder == self ? selectedRange().location : -1
-        let state = "editor"  // WYSIWYG only, no preview mode
         let data =
             [
                 "note-file-name": note.name,
-                "position": String(position),
-                "state": state
+                "position": String(position)
             ]
 
         userActivity.addUserInfoEntries(from: data)
@@ -2532,24 +1605,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
     }
     
-    public func changePreviewState(_ state: Bool) {
-        // No-op: WYSIWYG is the only mode
-    }
-
-    public func togglePreviewState() {
-        // No-op: WYSIWYG is the only mode
-    }
-    
-    public func isPreviewEnabled() -> Bool {
-        // WYSIWYG is the only rendering mode. MPreview removed.
-        return false
-    }
-    
-    public func disablePreviewEditorAndNote() {
-        // No-op: WYSIWYG is the only mode
-        note?.previewState = false
-    }
-    
     public func scheduleTagScan(for note: Note) {
         if let vc = ViewController.shared(),
            !vc.tagsScannerQueue.contains(note) {
@@ -2571,7 +1626,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         typingAttributes.removeValue(forKey: .attachmentTitle)
         typingAttributes.removeValue(forKey: .attachmentPath)
         typingAttributes.removeValue(forKey: .attachmentSave)
-        typingAttributes.removeValue(forKey: .todo)
         typingAttributes.removeValue(forKey: .tag)
 
         if let style = typingAttributes[.paragraphStyle] as? NSMutableParagraphStyle {

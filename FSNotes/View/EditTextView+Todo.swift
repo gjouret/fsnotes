@@ -18,12 +18,12 @@ extension EditTextView {
         undoManager?.beginUndoGrouping()
         
         var linesToRemove: [NSRange] = []
-        textStorage.enumerateAttribute(.todo, in: fullRange, options: []) { value, range, stop in
-            if let value = value as? Int, value == 1 {
-                let lineRange = text.lineRange(for: range)
-                
-                if !linesToRemove.contains(where: { $0.intersection(lineRange) != nil }) {
-                    linesToRemove.append(lineRange)
+        text.enumerateSubstrings(in: fullRange, options: .byParagraphs) { value, _, enclosingRange, _ in
+            guard let value = value else { return }
+            let trimmed = value.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("- [x] ") || trimmed.hasPrefix("* [x] ") || trimmed.hasPrefix("+ [x] ") {
+                if !linesToRemove.contains(where: { $0.intersection(enclosingRange) != nil }) {
+                    linesToRemove.append(enclosingRange)
                 }
             }
         }

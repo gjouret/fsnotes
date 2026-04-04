@@ -74,7 +74,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         set { editorDelegate = newValue }
     }
 
-    public var detector = CodeBlockDetector()
     public var isRendering = false
 
     /// Registered block processors. Adding a new block visual = one new BlockProcessor file + one entry here.
@@ -88,6 +87,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// The block model — single source of truth for all WYSIWYG rendering.
     /// Populated by MarkdownBlockParser during process().
     public var blocks: [MarkdownBlock] = []
+    private var pendingRenderedBlockIDs = Set<UUID>()
 
     /// Code block ranges in source mode (excludes rendered mermaid/math images).
     /// Used by LayoutManager for gray background and by triggerCodeBlockRenderingIfNeeded.
@@ -294,23 +294,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             // Phase 5: Block-aware paragraph styles (replaces addTabStops)
             // Must run after block model is populated (updateBlockModel runs at end of process body)
             if !blocks.isEmpty {
-                // Expand to include neighboring paragraphs — edits at block boundaries
-                // (e.g., Return after heading, exit list) need adjacent paragraphs restyled.
                 let nsString = textStorage.string as NSString
-                var paragraphRange = nsString.paragraphRange(for: editedRange)
-
-                // Include previous paragraph (list exit needs last bullet restyled)
-                if paragraphRange.location > 0 {
-                    let prevParaRange = nsString.paragraphRange(for: NSRange(location: paragraphRange.location - 1, length: 0))
-                    paragraphRange = NSUnionRange(paragraphRange, prevParaRange)
-                }
-
-                // Include next paragraph (newline insertion needs new line styled)
-                let afterEdit = NSMaxRange(paragraphRange)
-                if afterEdit < nsString.length {
-                    let nextParaRange = nsString.paragraphRange(for: NSRange(location: afterEdit, length: 0))
-                    paragraphRange = NSUnionRange(paragraphRange, nextParaRange)
-                }
+                let paragraphRange = expandedParagraphRange(for: editedRange, in: nsString)
                 phase5_paragraphStyles(textStorage: textStorage, range: paragraphRange)
             } else {
                 // Fallback to old addTabStops if block model not yet populated
@@ -327,67 +312,32 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         if note.content.length == textStorage.length && (
             note.content.string.fnv1a == note.cacheHash
         ) { return }
-        
-        // Full load
-        if editedRange.length == textStorage.length {
-            NotesTextProcessor.highlight(attributedString: textStorage)
 
-            // Populate block model on full load — Phase 4 (syntax hiding) and
-            // Phase 5 (paragraph styles) run from the defer block using this model
-            updateBlockModel(textStorage: textStorage, editedRange: editedRange, delta: delta)
+        let previousBlocks = blocks
+        updateBlockModel(textStorage: textStorage, editedRange: editedRange, delta: delta)
 
-            return
+        let renderRanges = processingRanges(
+            textStorage: textStorage,
+            editedRange: editedRange,
+            previousBlocks: previousBlocks
+        )
+        let currentCodeRanges = codeBlockRanges
+
+        for range in renderRanges.markdownRanges {
+            let safe = safeRange(range, in: textStorage)
+            NotesTextProcessor.resetFont(attributedString: textStorage, paragraphRange: safe)
+            NotesTextProcessor.highlightMarkdown(
+                attributedString: textStorage,
+                paragraphRange: safe,
+                codeBlockRanges: currentCodeRanges
+            )
         }
 
-        let codeBlockRanges = detector.findCodeBlocks(in: textStorage)
-        let paragraphRange = (textStorage.string as NSString).paragraphRange(for: editedRange)
-
-        NotesTextProcessor.highlightMarkdown(attributedString: textStorage, paragraphRange: paragraphRange, codeBlockRanges: codeBlockRanges)
-
-        // Code block founds
-        var result = detector.codeBlocks(textStorage: textStorage, editedRange: editedRange, delta: delta, newRanges: codeBlockRanges)
-
-        // In WYSIWYG mode, code blocks show all content as-is (no syntax hiding).
-        // Fences (```), language names, and code are all visible.
-        // Mermaid/math rendering is triggered ONLY when the cursor leaves the code
-        // block (in textViewDidChangeSelection), NOT on every keystroke here.
-
-        // Highlight code block end (```), that wiped previously in highlightMarkdown
-        for range in codeBlockRanges {
-            if NSIntersectionRange(range, paragraphRange).length > 0 {
-                if result.edited == nil {
-                    result.code?.append(range)
-                }
-            }
-        }
-
-        if let ranges = result.code {
-            for range in ranges {
-                NotesTextProcessor
-                    .getHighlighter()
-                    .highlight(in: textStorage, fullRange: range)
-            }
-        }
-
-        if let editedBlock = result.edited, let editedParagraph = result.editedParagraph {
+        for range in renderRanges.codeRanges {
             NotesTextProcessor
                 .getHighlighter()
-                .highlight(in: textStorage, fullRange: editedBlock, editedRange: editedParagraph)
+                .highlight(in: textStorage, fullRange: range)
         }
-
-        if let ranges = result.md {
-            for range in ranges {
-                let safeRange = safeRange(range, in: textStorage)
-                NotesTextProcessor.resetFont(attributedString: textStorage, paragraphRange: safeRange)
-                NotesTextProcessor.highlightMarkdown(attributedString: textStorage, paragraphRange: safeRange)
-            }
-        }
-
-        // Phase 4 (syntax hiding) runs from defer block after block model is populated.
-        // No more scattered fence hiding here — it's unified in phase4_hideSyntax().
-
-        // Populate block model after all highlighting is complete.
-        updateBlockModel(textStorage: textStorage, editedRange: editedRange, delta: delta)
     }
 
     /// Populate the block model from the current text storage.
@@ -415,6 +365,86 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 MarkdownBlockParser.reparseBlocks(&blocks, dirtyIndices: dirtyIndices, string: string)
             }
         }
+    }
+
+    private func processingRanges(
+        textStorage: NSTextStorage,
+        editedRange: NSRange,
+        previousBlocks: [MarkdownBlock]
+    ) -> (markdownRanges: [NSRange], codeRanges: [NSRange]) {
+        if editedRange.length == textStorage.length {
+            return (
+                markdownRanges: [NSRange(location: 0, length: textStorage.length)],
+                codeRanges: codeBlockRanges
+            )
+        }
+
+        let string = textStorage.string as NSString
+        let paragraphRange = expandedParagraphRange(for: editedRange, in: string)
+        let previousCodeRanges = codeRanges(in: previousBlocks)
+        let currentCodeRanges = codeBlockRanges
+
+        var markdownRanges = [paragraphRange]
+        let contextualCodeRanges = (previousCodeRanges + currentCodeRanges).filter { codeRange in
+            NSIntersectionRange(codeRange, paragraphRange).length > 0 ||
+            NSLocationInRange(editedRange.location, codeRange) ||
+            (editedRange.location > 0 && NSLocationInRange(editedRange.location - 1, codeRange))
+        }
+        markdownRanges.append(contentsOf: contextualCodeRanges)
+
+        let mergedMarkdownRanges = mergeRanges(markdownRanges)
+        let codeToHighlight = currentCodeRanges.filter { codeRange in
+            mergedMarkdownRanges.contains { NSIntersectionRange($0, codeRange).length > 0 }
+        }
+
+        return (markdownRanges: mergedMarkdownRanges, codeRanges: codeToHighlight)
+    }
+
+    private func expandedParagraphRange(for editedRange: NSRange, in string: NSString) -> NSRange {
+        var paragraphRange = string.paragraphRange(for: editedRange)
+
+        if paragraphRange.location > 0 {
+            let prevParaRange = string.paragraphRange(for: NSRange(location: paragraphRange.location - 1, length: 0))
+            paragraphRange = NSUnionRange(paragraphRange, prevParaRange)
+        }
+
+        let afterEdit = NSMaxRange(paragraphRange)
+        if afterEdit < string.length {
+            let nextParaRange = string.paragraphRange(for: NSRange(location: afterEdit, length: 0))
+            paragraphRange = NSUnionRange(paragraphRange, nextParaRange)
+        }
+
+        return paragraphRange
+    }
+
+    private func codeRanges(in blocks: [MarkdownBlock]) -> [NSRange] {
+        return blocks.compactMap { block in
+            if case .codeBlock = block.type, block.renderMode == .source {
+                return block.range
+            }
+            return nil
+        }
+    }
+
+    private func mergeRanges(_ ranges: [NSRange]) -> [NSRange] {
+        let sorted = ranges
+            .filter { $0.length > 0 }
+            .sorted { lhs, rhs in lhs.location < rhs.location }
+
+        guard var current = sorted.first else { return [] }
+        var merged: [NSRange] = []
+
+        for range in sorted.dropFirst() {
+            if range.location <= NSMaxRange(current) {
+                current = NSUnionRange(current, range)
+            } else {
+                merged.append(current)
+                current = range
+            }
+        }
+
+        merged.append(current)
+        return merged
     }
 
     // MARK: - Phase 5: Block-Aware Paragraph Styles
@@ -453,16 +483,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 paragraph.tabStops = tabs
                 paragraph.alignment = .left
 
-                // Block-type-specific styles — values from MPreview main.css:
-                //   body { font-size: 14px; line-height: 1.2 }
-                //   h1,h2,h3,h4,h5,h6 { margin-top: 1em; margin-bottom: 16px; line-height: 1.4 }
-                //   h1 { font-size: 1.8em; margin: .67em 0 }
-                //   h1:not(.no-border), h2 { padding-bottom: .3em; border-bottom: 1px solid #eee }
-                //   h2 { font-size: 1.6em }  h3 { font-size: 1.4em }
-                //   h4 { font-size: 1.2em }  h5,h6 { font-size: 1em }
-                //   ul,ol { padding-left: 2em; margin-bottom: 16px; margin-top: 0 }
-                //   li { line-height: 28px }
-                //   p { margin-bottom: 16px }  hr { margin: 16px 0 }
+                // Block-type-specific spacing values for the editor renderer.
                 switch block.type {
                 case .heading(let level), .headingSetext(let level):
                     switch level {
@@ -487,8 +508,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     }
 
                 case .unorderedList, .orderedList:
-                    // MPreview CSS: ul,ol { padding-left: 2em; margin-top: 0; margin-bottom: 16px }
-                    //               li { line-height: 28px }
                     // Storage always contains original markdown markers (no • substitution)
                     let markers = ["- ", "* ", "+ "]
                     let prefix = value.getSpacePrefix()
@@ -531,31 +550,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     paragraph.paragraphSpacing = isLastLine ? 16 : 0
 
                 case .todoItem:
-                    // Same indent pattern as bullet/numbered lists.
-                    // Detect the marker: either raw "- [ ] " or attachment char (U+FFFC) + space.
+                    // Same indent pattern as bullet/numbered lists using raw markdown storage.
                     let listIndent = baseSize * 2
-                    var markerWidth: CGFloat = 0
-
-                    // Check if the line starts with attachment character (rendered checkbox)
                     let lineStr = (textStorage.string as NSString).substring(with: parRange)
-                    if lineStr.hasPrefix("\u{FFFC}") {
-                        // Attachment: measure the attachment cell's width
-                        if parRange.location < textStorage.length,
-                           let attachment = textStorage.attribute(.attachment, at: parRange.location, effectiveRange: nil) as? NSTextAttachment,
-                           let cell = attachment.attachmentCell as? NSCell {
-                            markerWidth = cell.cellSize.width + 4  // + padding
-                        } else {
-                            markerWidth = 22  // fallback
-                        }
-                    } else {
-                        // Raw markdown "- [ ] " — measure text width
-                        let rawMarker = "- [ ] "
-                        markerWidth = rawMarker.widthOfString(usingFont: font, tabs: tabs)
-                    }
+                    let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
+                    let marker = trimmed.lowercased().hasPrefix("- [x] ")
+                        || trimmed.lowercased().hasPrefix("* [x] ")
+                        || trimmed.lowercased().hasPrefix("+ [x] ")
+                        ? "- [x] "
+                        : "- [ ] "
+                    let markerWidth = marker.widthOfString(usingFont: font, tabs: tabs)
 
-                    // Checkbox at left margin, wrapped text indents to after checkbox.
-                    // Unlike bullet text (where firstLineHeadIndent offsets the marker),
-                    // the checkbox is an attachment that renders inline — text flows after it.
                     paragraph.firstLineHeadIndent = 0
                     paragraph.headIndent = markerWidth
                     paragraph.lineSpacing = 7
@@ -642,16 +647,30 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
             // Default: hide syntax for blocks with no registered processor
             if !handled {
-                for syntaxRange in block.syntaxRanges {
-                    guard syntaxRange.location < textStorage.length,
-                          NSMaxRange(syntaxRange) <= textStorage.length else { continue }
-                    hideSyntaxRange(syntaxRange, in: textStorage)
+                if case .unorderedList = block.type {
+                    // Bullet markers: hide the "-" visually (clear color) but preserve
+                    // its width (NO negative kern). BulletDrawer draws • in the space
+                    // the "-" occupies. The space after "-" IS hidden normally.
+                    for syntaxRange in block.syntaxRanges {
+                        guard syntaxRange.location < textStorage.length,
+                              NSMaxRange(syntaxRange) <= textStorage.length else { continue }
 
-                    // For unordered lists, set .bulletMarker on the hidden marker character
-                    // so BulletDrawer can draw • at the correct position.
-                    if case .unorderedList = block.type {
                         let markerRange = NSRange(location: syntaxRange.location, length: 1)
+                        // Hide marker character visually but keep its width
+                        textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: markerRange)
                         textStorage.addAttribute(.bulletMarker, value: true, range: markerRange)
+
+                        // Hide the space after the marker normally (collapse to zero width)
+                        if syntaxRange.length > 1 {
+                            let spaceRange = NSRange(location: syntaxRange.location + 1, length: syntaxRange.length - 1)
+                            hideSyntaxRange(spaceRange, in: textStorage)
+                        }
+                    }
+                } else {
+                    for syntaxRange in block.syntaxRanges {
+                        guard syntaxRange.location < textStorage.length,
+                              NSMaxRange(syntaxRange) <= textStorage.length else { continue }
+                        hideSyntaxRange(syntaxRange, in: textStorage)
                     }
                 }
             }
@@ -781,23 +800,19 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
             guard !source.isEmpty else { continue }
 
-            // Check if already rendered or rendering — use block model as source of truth,
-            // not text attributes (which persist across save/reload and cause false dedup)
-            if let blockIdx = blocks.firstIndex(where: {
+            guard let blockIdx = blocks.firstIndex(where: {
                 if case .codeBlock = $0.type { return $0.range == codeRange }
                 return false
-            }), blocks[blockIdx].renderMode == .rendered {
+            }) else {
                 continue
             }
+            let blockID = blocks[blockIdx].id
 
-            // Mark as rendering immediately in the block model to prevent duplicate
-            // async renders (triggerCodeBlockRenderingIfNeeded can fire from multiple sources)
-            if let blockIdx = blocks.firstIndex(where: {
-                if case .codeBlock = $0.type { return $0.range == codeRange }
-                return false
-            }) {
-                blocks[blockIdx].renderMode = .rendered
+            // Skip blocks that are already rendered or already scheduled.
+            if blocks[blockIdx].renderMode == .rendered || pendingRenderedBlockIDs.contains(blockID) {
+                continue
             }
+            pendingRenderedBlockIDs.insert(blockID)
 
             let maxWidth = getImageMaxWidth()
 
@@ -805,16 +820,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             let originalMarkdown = string.substring(with: codeRange)
 
             BlockRenderer.render(source: source, type: type, maxWidth: maxWidth) { [weak self] image in
-                guard let image = image, let self = self else { return }
+                guard let self = self else { return }
 
                 DispatchQueue.main.async {
-                    // Re-find the code block by searching for the original markdown.
-                    // The captured codeRange may be stale if other blocks were rendered first.
-                    let currentString = textStorage.string as NSString
-                    let searchRange = NSRange(location: 0, length: currentString.length)
-                    let foundRange = currentString.range(of: originalMarkdown, range: searchRange)
-                    guard foundRange.location != NSNotFound else { return }
-                    let codeRange = foundRange
+                    defer { self.pendingRenderedBlockIDs.remove(blockID) }
+                    guard let image = image else { return }
+                    guard let blockIdx = self.blocks.firstIndex(where: { $0.id == blockID }) else { return }
+                    guard case .codeBlock = self.blocks[blockIdx].type else { return }
+
+                    let codeRange = self.blocks[blockIdx].range
+                    guard codeRange.location < textStorage.length,
+                          NSMaxRange(codeRange) <= textStorage.length else { return }
 
                     // Replace the entire code block with a centered rendered image
                     let scale = min(maxWidth / image.size.width, 1.0)
@@ -849,15 +865,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     // Mark the block as rendered (not removed). The block stays in the
                     // model with updated range. codeBlockRanges filters it out so
                     // LayoutManager won't draw a gray background behind the image.
-                    if let idx = self.blocks.firstIndex(where: { block in
-                        if case .codeBlock = block.type { return block.range == codeRange }
-                        return false
-                    }) {
-                        self.blocks[idx].renderMode = .rendered
-                        self.blocks[idx].range = replacedRange
-                        self.blocks[idx].contentRange = replacedRange
-                        self.blocks[idx].syntaxRanges = []
-                    }
+                    self.blocks[blockIdx].renderMode = .rendered
+                    self.blocks[blockIdx].range = replacedRange
+                    self.blocks[blockIdx].contentRange = replacedRange
+                    self.blocks[blockIdx].syntaxRanges = []
                 }
             }
         }

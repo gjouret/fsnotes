@@ -94,53 +94,10 @@ extension NSMutableAttributedString {
     }
 
     public func unloadTasks() -> NSMutableAttributedString {
-        let result = NSMutableAttributedString(attributedString: self)
-        var offset = 0
-        let fullRange = NSRange(location: 0, length: length)
-
-        enumerateAttribute(.attachment, in: fullRange) { value, range, _ in
-            guard
-                value != nil,
-                range.length == 1,
-                let todoValue = self.attribute(.todo, at: range.location, effectiveRange: nil) as? Int
-            else {
-                return
-            }
-
-            let gfm = todoValue == 1 ? "- [x]" : "- [ ]"
-            let adjustedRange = NSRange(location: range.location + offset, length: range.length)
-
-            result.replaceCharacters(in: adjustedRange, with: gfm)
-            offset += gfm.count - range.length
-        }
-
-        return result
+        return self
     }
 
     public func loadTasks() {
-        while mutableString.contains("- [ ] ") {
-            let range = mutableString.range(of: "- [ ] ")
-            if length >= range.upperBound, let unChecked = AttributedBox.getUnChecked() {
-                replaceCharacters(in: range, with: unChecked)
-            }
-        }
-
-        while mutableString.contains("- [x] ") {
-            let range = mutableString.range(of: "- [x] ")
-            let parRange = mutableString.paragraphRange(for: range)
-
-            if length >= range.upperBound, let checked = AttributedBox.getChecked() {
-                #if os(macOS)
-                let color = UserDataService.instance.isDark ? NSColor.white : NSColor.black
-                addAttribute(.strikethroughColor, value: color, range: parRange)
-                addAttribute(.strikethroughStyle, value: 1, range: parRange)
-                #else
-                addAttribute(.strikethroughColor, value: UIColor.blackWhite, range: parRange)
-                #endif
-
-                replaceCharacters(in: range, with: checked)
-            }
-        }
     }
     
     public func loadFont() {
@@ -148,10 +105,7 @@ extension NSMutableAttributedString {
     }
 
     public func unloadAttachments() -> NSMutableAttributedString {
-        return
-            restoreRenderedBlocks()
-            .unloadTasks()
-            .unloadImagesAndFiles()
+        return NoteSerializer.prepareForSave(self)
     }
 
     /// Restore rendered block attachments (mermaid/math) back to their original markdown source
@@ -193,7 +147,6 @@ extension NSMutableAttributedString {
 
     public func loadAttachments(_ note: Note) -> NSMutableAttributedString {
         loadImagesAndFiles(note: note)
-        loadTasks()
         return self
     }
 

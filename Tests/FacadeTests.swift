@@ -89,7 +89,7 @@ class FacadeTests: XCTestCase {
 
     func test_noteSerializer_prepareForSave_plainText() {
         let attrStr = NSMutableAttributedString(string: "# Hello\n\nPlain text")
-        _ = NoteSerializer.prepareForSave(attrStr)
-        XCTAssertEqual(attrStr.string, "# Hello\n\nPlain text")
+        let prepared = NoteSerializer.prepareForSave(attrStr)
+        XCTAssertEqual(prepared.string, "# Hello\n\nPlain text")
     }
 }

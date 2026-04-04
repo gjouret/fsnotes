@@ -8,6 +8,192 @@
 
 import Cocoa
 import Shout
+import SSZipArchive
+
+struct PublishedNoteSite {
+    let workingDirectory: URL
+    let indexURL: URL
+    let zipURL: URL
+    let assetURLs: [URL]
+}
+
+enum WebNotePublisher {
+    static func renderHTML(title: String, content: NSAttributedString) -> String? {
+        let mutable = NSMutableAttributedString(attributedString: content)
+        let attachments = mutable.getImagesAndFiles()
+        let markdown = rewrittenMarkdown(from: mutable, attachments: attachments)
+
+        guard let body = renderMarkdownHTML(markdown: markdown) else {
+            return nil
+        }
+
+        return wrapHTML(title: title, body: body)
+    }
+
+    static func makeSite(note: Note, content: NSAttributedString) throws -> PublishedNoteSite {
+        let workingDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("Upload")
+            .appendingPathComponent(note.getLatinName(), isDirectory: true)
+
+        try? FileManager.default.removeItem(at: workingDirectory)
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true, attributes: nil)
+
+        let mutable = NSMutableAttributedString(attributedString: content)
+        let attachments = mutable.getImagesAndFiles().filter {
+            !$0.path.startsWith(string: "http://") && !$0.path.startsWith(string: "https://")
+        }
+        let markdown = rewrittenMarkdown(from: mutable, attachments: attachments)
+
+        guard let body = renderMarkdownHTML(markdown: markdown) else {
+            throw "Unable to render markdown as HTML"
+        }
+
+        let indexURL = workingDirectory.appendingPathComponent("index.html")
+        try wrapHTML(title: note.title, body: body).write(to: indexURL, atomically: true, encoding: .utf8)
+
+        let assetURLs = try copyAttachments(attachments, into: workingDirectory)
+        let zipURL = workingDirectory.deletingLastPathComponent().appendingPathComponent(note.getLatinName()).appendingPathExtension("zip")
+        try? FileManager.default.removeItem(at: zipURL)
+        SSZipArchive.createZipFile(atPath: zipURL.path, withContentsOfDirectory: workingDirectory.path)
+
+        return PublishedNoteSite(
+            workingDirectory: workingDirectory,
+            indexURL: indexURL,
+            zipURL: zipURL,
+            assetURLs: assetURLs
+        )
+    }
+
+    static func verifyRemoteWriteAccess(ssh: SSH, remoteRoot: String) throws {
+        let remoteDir = normalizedRemoteDirectory(remoteRoot)
+        let testDir = remoteDir + "__fsnotes_test__/"
+        let testFileName = "index.html"
+        let localURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(testFileName)
+
+        defer {
+            try? FileManager.default.removeItem(at: localURL)
+            try? ssh.execute("rm -rf \(testDir)")
+        }
+
+        try "<html><body>FSNotes publish test</body></html>".write(to: localURL, atomically: true, encoding: .utf8)
+
+        try ssh.execute("mkdir -p \(testDir)")
+        let sftp = try ssh.openSftp()
+        try sftp.upload(localURL: localURL, remotePath: testDir + testFileName)
+    }
+
+    private static func rewrittenMarkdown(
+        from content: NSMutableAttributedString,
+        attachments: [(url: URL, title: String, path: String)]
+    ) -> String {
+        var markdown = NoteSerializer.prepareForSave(content).string
+        for attachment in attachments {
+            let encodedPath = attachment.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? attachment.path
+            markdown = markdown.replacingOccurrences(of: encodedPath, with: "i/\(attachment.url.lastPathComponent)")
+        }
+        return markdown
+    }
+
+    private static func copyAttachments(
+        _ attachments: [(url: URL, title: String, path: String)],
+        into workingDirectory: URL
+    ) throws -> [URL] {
+        guard !attachments.isEmpty else { return [] }
+
+        let assetDirectory = workingDirectory.appendingPathComponent("i", isDirectory: true)
+        try FileManager.default.createDirectory(at: assetDirectory, withIntermediateDirectories: true, attributes: nil)
+
+        var copied = [URL]()
+        for attachment in attachments {
+            let destination = assetDirectory.appendingPathComponent(attachment.url.lastPathComponent)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                copied.append(destination)
+                continue
+            }
+
+            try FileManager.default.copyItem(at: attachment.url, to: destination)
+            copied.append(destination)
+        }
+
+        return copied
+    }
+
+    private static func wrapHTML(title: String, body: String) -> String {
+        """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>\(title)</title>
+            <style>
+                :root { color-scheme: light dark; }
+                body {
+                    margin: 0;
+                    font: 16px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+                    background: #f6f5f2;
+                    color: #1d1d1f;
+                }
+                main {
+                    max-width: 840px;
+                    margin: 0 auto;
+                    padding: 48px 24px 72px;
+                }
+                img { max-width: 100%; height: auto; }
+                pre, code {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    background: rgba(0, 0, 0, 0.05);
+                    border-radius: 6px;
+                }
+                pre { padding: 14px 16px; overflow-x: auto; }
+                code { padding: 0.1em 0.3em; }
+                blockquote {
+                    margin: 0;
+                    padding-left: 16px;
+                    border-left: 4px solid #d0d0d0;
+                    color: #555;
+                }
+                table {
+                    border-collapse: collapse;
+                    width: 100%;
+                    margin: 1.5rem 0;
+                }
+                th, td {
+                    border: 1px solid #d7d7d7;
+                    padding: 8px 10px;
+                    text-align: left;
+                }
+                hr {
+                    border: 0;
+                    border-top: 4px solid #e7e7e7;
+                    margin: 2rem 0;
+                }
+                @media (prefers-color-scheme: dark) {
+                    body { background: #121314; color: #ececec; }
+                    pre, code { background: rgba(255, 255, 255, 0.08); }
+                    blockquote { border-left-color: #4d4d4d; color: #c0c0c0; }
+                    th, td { border-color: #414141; }
+                    hr { border-top-color: #343434; }
+                }
+            </style>
+        </head>
+        <body>
+            <main>
+                \(body)
+            </main>
+        </body>
+        </html>
+        """
+    }
+
+    private static func normalizedRemoteDirectory(_ remoteRoot: String) -> String {
+        if remoteRoot.hasSuffix("/") {
+            return remoteRoot
+        }
+
+        return remoteRoot + "/"
+    }
+}
 
 extension EditorViewController {
     
@@ -64,15 +250,13 @@ extension EditorViewController {
         }
         
         guard let note = getCurrentNote() else { return }
-        
-        let dst = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Upload")
-        try? FileManager.default.removeItem(at: dst)
-        
-        // TODO: Replace MPreviewView.buildPage with WYSIWYG HTML export
-        guard let localURL = URL(string: "about:blank"),  // Placeholder — web publish needs reimplementation
-              let sftpPath = UserDefaultsManagement.sftpPath,
+
+        guard let sftpPath = UserDefaultsManagement.sftpPath,
               let web = UserDefaultsManagement.sftpWeb else { return }
-        
+
+        let content = exportAttributedContent(for: note)
+        guard let package = try? WebNotePublisher.makeSite(note: note, content: content) else { return }
+
         let latinName  = note.getLatinName()
         let remoteDir = "\(sftpPath)\(latinName)/"
         let resultUrl = web + latinName + "/"
@@ -80,43 +264,26 @@ extension EditorViewController {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(web + latinName + "/", forType: .string)
         
-        let images = note.content.getImagesAndFiles()
-
         DispatchQueue.global().async {
             do {
                 guard let ssh = self.getSSHResource() else { return }
                 
                 try ssh.execute("mkdir -p \(remoteDir)")
-                
-                let zipURL = localURL
-                    .deletingLastPathComponent()
-                    .appendingPathComponent(note.getLatinName())
-                    .appendingPathExtension("zip")
 
                 let sftp = try ssh.openSftp()
                 
-                // Upload index.html
                 let remoteIndex = remoteDir + "index.html"
                 
                 _ = try ssh.execute("rm -r \(remoteIndex)")
-                try sftp.upload(localURL: localURL, remotePath: remoteIndex)
+                try sftp.upload(localURL: package.indexURL, remotePath: remoteIndex)
                 
-                // Upload archive
-                try? sftp.upload(localURL: zipURL, remotePath: remoteDir + note.getLatinName() + ".zip")
+                try? sftp.upload(localURL: package.zipURL, remotePath: remoteDir + note.getLatinName() + ".zip")
                 
-                // Upload images
-                var imageDirCreationDone = false
-                for image in images {
-                    if image.path.startsWith(string: "http://") || image.path.startsWith(string: "https://") {
-                        continue
+                if !package.assetURLs.isEmpty {
+                    try ssh.execute("mkdir -p \(remoteDir)/i")
+                    for assetURL in package.assetURLs {
+                        try? sftp.upload(localURL: assetURL, remotePath: remoteDir + "i/" + assetURL.lastPathComponent)
                     }
-                    
-                    if !imageDirCreationDone {
-                        try ssh.execute("mkdir -p \(remoteDir)/i")
-                        imageDirCreationDone = true
-                    }
-                    
-                    try? sftp.upload(localURL: image.url, remotePath: remoteDir + "i/" + image.url.lastPathComponent)
                 }
 
                 if #available(macOS 10.14, *) {
@@ -127,7 +294,6 @@ extension EditorViewController {
                         NSWorkspace.shared.open(URL(string: resultUrl)!)
                     }
                 }
-                
                 print("Upload was successfull for note: \(note.title)")
                 
                 note.uploadPath = remoteDir

@@ -35,7 +35,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
     }
 
-    // Legacy compatibility
     var isFocused: Bool {
         get { focusState == .editing }
         set { focusState = newValue ? .editing : .unfocused }
@@ -53,7 +52,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     private var columnHandles: [GlassHandleView] = []
     private var rowHandles: [GlassHandleView] = []
-    // Edge buttons removed — add row/column via context menus on handles
     private var trackingArea: NSTrackingArea?
 
     // MARK: - Drag State
@@ -76,7 +74,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private var resizeStartX: CGFloat = 0
     private var columnWidthRatios: [CGFloat] = []
 
-    // MARK: - Layout Constants (single source of truth for all geometry)
+    // MARK: - Layout Constants
 
     private let minCellHeight: CGFloat = 32
     private let lineHeight: CGFloat = 17
@@ -551,8 +549,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             rowHandles.append(handle)
         }
     }
-
-    // MARK: - Edge Buttons (removed — add via context menus on handles)
 
     // MARK: - Context Menus
 

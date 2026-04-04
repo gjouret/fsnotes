@@ -221,7 +221,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         guard safeRange.length > 0 else { return }
 
         let fontSize = CGFloat(UserDefaultsManagement.fontSize)
-        let bulletFont = NSFont.systemFont(ofSize: fontSize * 0.8)
+        let bulletFont = NSFont.systemFont(ofSize: fontSize)
         let bullet = "\u{2022}"
         let attrs: [NSAttributedString.Key: Any] = [
             .font: bulletFont,
@@ -234,21 +234,18 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             if glyphRange.length == 0 { return }
 
-            // Use lineFragmentRect — boundingRect is empty for kern-collapsed glyphs
-            let lineRect = self.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-            let lineUsedRect = self.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            // The "-" character now has its original width (not kern-collapsed).
+            // boundingRect gives us the exact position where "-" renders.
+            guard let tc = self.textContainers.first else { return }
+            let rect = self.boundingRect(forGlyphRange: glyphRange, in: tc)
+            if rect.isEmpty { return }
 
-            // Position bullet at the start of the line (where the hidden - was)
-            // The paragraph's firstLineHeadIndent positions the line content;
-            // the bullet draws at the indent offset.
-            let paraStyle = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
-            let firstLineIndent = paraStyle?.firstLineHeadIndent ?? 0
-
-            let x = origin.x + firstLineIndent + lineRect.minX
-            let y = lineRect.midY + origin.y - bulletSize.height / 2
+            // Draw • centered on the "-" character's bounding rect
+            let bulletX = origin.x + rect.midX - bulletSize.width / 2
+            let bulletY = origin.y + rect.midY - bulletSize.height / 2
 
             context.saveGState()
-            (bullet as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+            (bullet as NSString).draw(at: NSPoint(x: bulletX, y: bulletY), withAttributes: attrs)
             context.restoreGState()
         }
     }
@@ -310,9 +307,6 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         context.restoreGState()
     }
 
-    // drawHorizontalRules, drawBlockquoteBorders, drawKbdTags removed —
-    // replaced by AttributeDrawer registry (HorizontalRuleDrawer, BlockquoteBorderDrawer, KbdBoxDrawer).
-
     private func drawHeaderBottomBorders(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         guard NotesTextProcessor.hideSyntax else { return }
         guard let textStorage = self.textStorage,
@@ -361,7 +355,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             context.saveGState()
             // #eeeeee = rgb(238,238,238) = 0.933
             context.setStrokeColor(NSColor(red: 0.933, green: 0.933, blue: 0.933, alpha: 1.0).cgColor)
-            // CSS "1px" = 0.5pt on Retina displays (thin hairline matching MPreview)
+            // CSS "1px" = 0.5pt on Retina displays for a thin hairline.
             context.setLineWidth(0.5)
             // Full content width, edge to edge (no lineFragmentPadding inset)
             context.move(to: CGPoint(x: origin.x, y: lineY))

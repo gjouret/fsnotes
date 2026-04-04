@@ -19,8 +19,7 @@ public class Note: NSObject  {
     var type: NoteType = .Markdown
     var url: URL
 
-    /// Injected storage reference — defaults to singleton during migration.
-    /// Eventually all callers pass this explicitly at construction.
+    /// Storage reference used for note-level persistence operations.
     lazy var sharedStorage: Storage = Storage.shared()
 
     var content: NSMutableAttributedString = NSMutableAttributedString()
@@ -65,8 +64,6 @@ public class Note: NSObject  {
     public var uploadPath: String?
     public var apiId: String?
     
-    public var previewState: Bool = false
-
     private var selectedRange: NSRange?
     
     public var contentOffset = CGPoint()
@@ -626,7 +623,8 @@ public class Note: NSObject  {
     
     func getPrettifiedContent() -> String {
         #if IOS_APP || os(OSX)
-            let mutable = NotesTextProcessor.convertAppTags(in: self.content.unloadAttachments(), codeBlockRanges: codeBlockRangesCache)
+            let prepared = NoteSerializer.prepareForSave(NSMutableAttributedString(attributedString: self.content))
+            let mutable = NotesTextProcessor.convertAppTags(in: prepared, codeBlockRanges: codeBlockRangesCache)
         let content = NotesTextProcessor.convertAppLinks(in: mutable, codeBlockRanges: codeBlockRangesCache)
             let cleaned = cleanMetaData(content: content.string)
             let result = Note.replaceHorizontalRulesOutsideCodeBlocks(cleaned)
@@ -776,8 +774,9 @@ public class Note: NSObject  {
         self.content = content
 
         // Full serialization pipeline: bullet restore + rendered block restore + attachment unload
-        let copy = NSMutableAttributedString(attributedString: content)
-        _ = NoteSerializer.prepareForSave(copy)
+        let copy = NoteSerializer.prepareForSave(
+            NSMutableAttributedString(attributedString: content)
+        )
 
         // SAFETY: If serialization produced empty content from non-empty input, abort.
         // This catches bugs in the serialization pipeline that would wipe the file.
@@ -793,12 +792,6 @@ public class Note: NSObject  {
         }
     }
 
-    /// Deprecated — use NoteSerializer.restoreBulletMarkers(in:) instead.
-    /// Kept for backward compatibility; delegates to the single source of truth.
-    public static func restoreBulletMarkers(in content: NSMutableAttributedString) {
-        NoteSerializer.restoreBulletMarkers(in: content)
-    }
-
     public func replace(tag: String, with string: String) {
         content.replaceTag(name: tag, with: string)
         _ = save()
@@ -810,9 +803,9 @@ public class Note: NSObject  {
     }
         
     public func save() -> Bool {
-        Self.restoreBulletMarkers(in: self.content)
-        let attributedString = self.content.unloadAttachments()
-
+        let attributedString = NoteSerializer.prepareForSave(
+            NSMutableAttributedString(attributedString: self.content)
+        )
         return write(attributedString: attributedString)
     }
 
@@ -1283,7 +1276,7 @@ public class Note: NSObject  {
         note.content = content
 
         let imagesMeta = content.getImagesAndFiles()
-        let mutableContent = content.unloadAttachments()
+        let mutableContent = NoteSerializer.prepareForSave(NSMutableAttributedString(attributedString: content))
 
         // write textbundle body
         guard note.write(attributedString: mutableContent) else { return note.url }
@@ -1357,8 +1350,7 @@ public class Note: NSObject  {
     }
 
     private func moveFilesAssetsToFlat(src: URL, project: Project) {
-        let mutableContent =
-            NSMutableAttributedString(attributedString: content).unloadAttachments()
+        let mutableContent = NoteSerializer.prepareForSave(NSMutableAttributedString(attributedString: content))
 
         let imagesMeta = content.getImagesAndFiles()
         for imageMeta in imagesMeta {
@@ -1645,10 +1637,6 @@ public class Note: NSObject  {
         return date < thirtySecondsAgo //Returns false if date is not older than 30 seconds
     }
     
-    public func loadPreviewState() {
-        previewState = project.settings.notesPreview.contains(name)
-    }
-
     public func cacheCodeBlocks() {
     #if !SHARE_EXT
         let ranges = CodeBlockDetector.shared.findCodeBlocks(in: content)

@@ -72,13 +72,7 @@ class NotesTableView: NSTableView,
         }
 
         if event.keyCode == kVK_Tab && !event.modifierFlags.contains(.control) {
-            if vc.editor?.isPreviewEnabled() == true {
-                // Focus is handled by ViewController.keyDown via previewHasFocus flag
-                return
-            } else {
-                vc.focusEditArea()
-            }
-
+            vc.focusEditArea()
             return
         }
         
@@ -264,15 +258,13 @@ class NotesTableView: NSTableView,
                 return
             }
             
-            // Save the current note's table data before switching
-            // (table cell edits don't modify the text storage, so textDidChange
-            // never fires — we must explicitly sync before switching notes)
+            // Persist the current editor snapshot before switching notes.
+            // This routes through the explicit save boundary that materializes
+            // any live rendered table widgets into attachment attributes first.
             if let oldNote = vc.editor.note, oldNote.isMarkdown() {
-                vc.editor.syncAllTableData()
-                oldNote.save(attributed: vc.editor.attributedString())
+                oldNote.save(attributed: vc.editor.attributedStringForSaving())
             }
 
-            vc.editor.changePreviewState(note.previewState)
             vc.editor.fill(note: note, highlight: true)
             vc.pushNoteHistory(note)
 

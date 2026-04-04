@@ -3,7 +3,6 @@
 //  FSNotes
 //
 //  Draws a rounded keyboard-key box with shadow for <kbd> tags.
-//  Matches MPreview CSS: #fcfcfc bg, #ccc border, #bbb bottom shadow, 3px radius.
 //
 
 import Cocoa

@@ -31,12 +31,6 @@ public protocol EditorDelegate: AnyObject {
     var imagesLoaderQueue: OperationQueue { get }
 }
 
-/// Decouples MPreviewView from the concrete ViewController type.
-public protocol PreviewDelegate: AnyObject {
-    var activeNote: Note? { get }
-    var editorInsetWidth: CGFloat { get }
-}
-
 /// Processes a block during Phase 4 (syntax hiding + attribute marking).
 public protocol BlockProcessor {
     /// Block types this processor handles.

@@ -20,7 +20,7 @@ struct BlockquoteBorderDrawer: AttributeDrawer {
         let baseX = origin.x + textContainer.lineFragmentPadding + 2
         let barSpacing: CGFloat = 10
 
-        // MPreview CSS: border-left 4px solid #ddd
+        // Blockquote border width and color used by the editor renderer.
         context.setFillColor(NSColor(red: 0.867, green: 0.867, blue: 0.867, alpha: 1.0).cgColor)
         for i in 0..<depth {
             context.fill(CGRect(x: baseX + CGFloat(i) * barSpacing,

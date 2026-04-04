@@ -47,7 +47,7 @@ extension EditorViewController {
     @objc func scrollViewDidScroll(_ notification: Notification) {
         guard notification.object as? NSClipView != nil else { return }
                 
-        if let textView = vcEditor, !textView.isPreviewEnabled(), !textView.isScrollPositionSaverLocked {
+        if let textView = vcEditor, !textView.isScrollPositionSaverLocked {
             guard
                 let layoutManager = textView.layoutManager,
                 let textContainer = textView.textContainer

@@ -10,6 +10,13 @@ import Cocoa
 import ObjectiveC
 
 extension EditorViewController: NSSharingServicePickerDelegate {
+    func exportAttributedContent(for note: Note) -> NSAttributedString {
+        if let editor = vcEditor, editor.note === note {
+            return editor.attributedStringForSaving()
+        }
+
+        return NSAttributedString(attributedString: note.content)
+    }
 
     func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, sharingServicesForItems items: [Any], proposedSharingServices proposedServices: [NSSharingService]) -> [NSSharingService] {
         var share = proposedServices
@@ -63,7 +70,9 @@ extension EditorViewController: NSSharingServicePickerDelegate {
 
     public func saveTextAtClipboard() {
         if let note = vcEditor?.note {
-            let unloadedText = note.content.unloadTasks()
+            let unloadedText = NoteSerializer.prepareForSave(
+                NSMutableAttributedString(attributedString: exportAttributedContent(for: note))
+            )
             let pasteboard = NSPasteboard.general
             pasteboard.declareTypes([NSPasteboard.PasteboardType.string], owner: nil)
             pasteboard.setString(unloadedText.string, forType: NSPasteboard.PasteboardType.string)
@@ -72,8 +81,10 @@ extension EditorViewController: NSSharingServicePickerDelegate {
 
     public func saveHtmlAtClipboard() {
         if let note = vcEditor?.note {
-            let unloadedText = note.content.unloadTasks()
-            if let render = renderMarkdownHTML(markdown: unloadedText.string) {
+            if let render = WebNotePublisher.renderHTML(
+                title: note.title,
+                content: exportAttributedContent(for: note)
+            ) {
                 let pasteboard = NSPasteboard.general
                 pasteboard.declareTypes([NSPasteboard.PasteboardType.string], owner: nil)
                 pasteboard.setString(render, forType: NSPasteboard.PasteboardType.string)

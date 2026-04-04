@@ -147,8 +147,6 @@ public class Project: NSObject {
     public func reloadSettings() {
         if let settings = getSettings() {
             self.settings = settings
-
-            loadNotesPreview()
         }
     }
 
@@ -316,7 +314,6 @@ public class Project: NSObject {
             storage.add(note)
         }
 
-        loadNotesPreview()
         _ = loadWebAPI()
 
         return notes
@@ -837,29 +834,16 @@ public class Project: NSObject {
     private func fetchAllDirectories() -> [URL]? {
         let maxDirs = UserDefaultsManagement.maxChildDirs
 
-        guard let fileEnumerator =
-            FileManager.default.enumerator(
-                at: url, includingPropertiesForKeys: nil,
-                options: FileManager.DirectoryEnumerationOptions()
-            )
-        else { return nil }
-
         let extensions = ["md", "markdown", "txt", "fountain", "textbundle", "etp", "jpg", "png", "gif", "jpeg", "json", "JPG", "PNG", ".icloud", ".cache", ".Trash", "i"]
 
-        let urls = fileEnumerator.allObjects.compactMap({ $0 as? URL })
-            .filter({
-                !extensions.contains($0.pathExtension)
-                && !extensions.contains($0.lastPathComponent)
-                && !$0.path.contains("/assets")
-                && !$0.path.contains("/.cache")
-                && !$0.path.contains("/files")
-                && !$0.path.contains("/.Trash")
-                && !$0.path.contains("/Trash")
-                && !$0.path.contains(".textbundle")
-                && !$0.path.contains(".revisions")
-                && !$0.path.contains("/.")
-                && $0 != UserDefaultsManagement.trashURL
-            })
+        guard let urls = DirectoryScanFilter.candidateDirectories(
+            in: url,
+            allowedExtensions: extensions,
+            excludedPaths: ["/assets", "/.cache", "/files", "/.Trash", "/Trash", ".textbundle", ".revisions", "/."],
+            excludedURLs: [UserDefaultsManagement.trashURL].compactMap { $0 }
+        ) else {
+            return nil
+        }
 
         var fin = [URL]()
         var i = 0
@@ -922,26 +906,6 @@ public class Project: NSObject {
         }
 
         return result
-    }
-
-    public func saveNotesPreview() {
-        let notes = getNotes()
-        var result = [String]()
-        for note in notes {
-            if note.previewState {
-                result.append(note.name)
-            }
-        }
-        settings.notesPreview = result
-        saveSettings()
-    }
-
-    public func loadNotesPreview() {
-        let names = settings.notesPreview
-        let notes = storage.getNotesBy(project: self)
-        for note in notes {
-            note.previewState = names.contains(note.name)
-        }
     }
 
     public func saveWebAPI() {

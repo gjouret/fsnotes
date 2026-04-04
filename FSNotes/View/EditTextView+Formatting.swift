@@ -1,0 +1,377 @@
+//
+//  EditTextView+Formatting.swift
+//  FSNotes
+//
+//  Created by Codex on 04.04.2026.
+//
+
+import Foundation
+import AppKit
+
+extension EditTextView {
+    @IBAction func boldMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        if applyInlineTableCellFormatting("**") { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.bold()
+        deselectAfterFormatting()
+        updateToolbarAfterFormatting()
+    }
+
+    @IBAction func italicMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        if applyInlineTableCellFormatting("*") { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.italic()
+        deselectAfterFormatting()
+        updateToolbarAfterFormatting()
+    }
+
+    func applyInlineTableCellFormatting(_ marker: String) -> Bool {
+        return tableController.applyInlineTableCellFormatting(marker)
+    }
+
+    @IBAction func linkMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        if let clipboardString = NSPasteboard.general.string(forType: .string) {
+            let normalized = clipboardString.normalizedAsURL()
+            if let url = URL(string: normalized),
+               let scheme = url.scheme, ["http", "https", "ftp", "ftps", "mailto"].contains(scheme.lowercased()) {
+                let selectedText = attributedSubstring(forProposedRange: selectedRange(), actualRange: nil)?.string ?? ""
+                let displayText = selectedText.isEmpty ? normalized : selectedText
+                let markdown = "[\(displayText)](\(normalized))"
+                let range = selectedRange()
+                insertText(markdown, replacementRange: range)
+                return
+            }
+        }
+
+        showLinkDialog()
+    }
+
+    private func showLinkDialog() {
+        guard let window = self.window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Enter the Internet address (URL) for this link."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Remove Link")
+
+        let urlField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        urlField.placeholderString = "https://example.com"
+        alert.accessoryView = urlField
+        alert.window.initialFirstResponder = urlField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self = self else { return }
+            if response == .alertFirstButtonReturn {
+                let rawInput = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !rawInput.isEmpty else { return }
+                let urlString = rawInput.normalizedAsURL()
+
+                let selectedText = self.attributedSubstring(forProposedRange: self.selectedRange(), actualRange: nil)?.string ?? ""
+                let displayText = selectedText.isEmpty ? urlString : selectedText
+                let markdown = "[\(displayText)](\(urlString))"
+                let range = self.selectedRange()
+                self.insertText(markdown, replacementRange: range)
+            } else if response == .alertThirdButtonReturn {
+                let range = self.selectedRange()
+                guard let storage = self.textStorage else { return }
+                let nsString = storage.string as NSString
+                let paraRange = nsString.paragraphRange(for: range)
+                let paraString = nsString.substring(with: paraRange)
+
+                let linkPattern = "\\[([^\\]]*?)\\]\\(([^)]*?)\\)"
+                if let regex = try? NSRegularExpression(pattern: linkPattern),
+                   let match = regex.firstMatch(in: paraString, range: NSRange(location: 0, length: paraString.count)) {
+                    let cursorInPara = range.location - paraRange.location
+                    if NSLocationInRange(cursorInPara, match.range) {
+                        let textRange = match.range(at: 1)
+                        let displayText = (paraString as NSString).substring(with: textRange)
+                        let fullRange = NSRange(location: paraRange.location + match.range.location, length: match.range.length)
+                        self.insertText(displayText, replacementRange: fullRange)
+                    }
+                }
+            }
+        }
+    }
+
+    @IBAction func underlineMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.underline()
+        deselectAfterFormatting()
+        updateToolbarAfterFormatting()
+    }
+
+    @IBAction func strikeMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.strike()
+        deselectAfterFormatting()
+        updateToolbarAfterFormatting()
+    }
+
+    @IBAction func highlightMenu(_ sender: Any) {
+        guard let note = self.note, isEditable, note.isMarkdown() else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.highlight()
+        deselectAfterFormatting()
+        updateToolbarAfterFormatting()
+    }
+
+    private func deselectAfterFormatting() {
+        let sel = selectedRange()
+        if sel.length > 0 {
+            let mid = sel.location + sel.length / 2
+            setSelectedRange(NSRange(location: mid, length: 0))
+        }
+    }
+
+    private func updateToolbarAfterFormatting() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let vc = ViewController.shared() {
+                vc.formattingToolbar?.updateButtonStates(for: self)
+            }
+        }
+    }
+
+    @IBAction func headerMenu(_ sender: NSMenuItem) {
+        guard let note = self.note, isEditable else { return }
+        guard let id = sender.identifier?.rawValue else { return }
+
+        let code = Int(id.replacingOccurrences(of: "format.h", with: ""))
+        var string = String()
+        for index in [1, 2, 3, 4, 5, 6] {
+            string += "#"
+            if code == index {
+                break
+            }
+        }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.header(string)
+    }
+
+    @IBAction func shiftLeft(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.unTab()
+    }
+
+    @IBAction func shiftRight(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.tab()
+    }
+
+    @IBAction func todo(_ sender: Any) {
+        guard let formatter = getTextFormatter(), isEditable else { return }
+        formatter.todo()
+    }
+
+    @IBAction func wikiLinks(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.wikiLink()
+    }
+
+    @IBAction func pressBold(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.bold()
+    }
+
+    @IBAction func pressItalic(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.italic()
+    }
+
+    @IBAction func quoteMenu(_ sender: Any) {
+        guard let note = self.note, isEditable, let storage = textStorage else { return }
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.quote()
+
+        if NotesTextProcessor.hideSyntax {
+            let cursorLoc = min(selectedRange().location, storage.length - 1)
+            if cursorLoc >= 0 {
+                let paraRange = (storage.string as NSString).paragraphRange(
+                    for: NSRange(location: cursorLoc, length: 0)
+                )
+                refreshParagraphRendering(range: paraRange)
+            }
+        }
+    }
+
+    @IBAction func bulletListMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.list()
+    }
+
+    @IBAction func numberedListMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.orderedList()
+    }
+
+    @IBAction func imageMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.image()
+    }
+
+    @IBAction func insertTableMenu(_ sender: Any) {
+        guard let _ = textStorage, isEditable else { return }
+
+        let tableMarkdown = "|  |  |\n|--|--|\n|  |  |"
+        let insertRange = selectedRange()
+        let prefix = insertRange.location > 0 ? "\n" : ""
+        insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
+
+        if NotesTextProcessor.hideSyntax {
+            renderTables()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.focusFirstInlineTableCell()
+            }
+        }
+    }
+
+    private func focusFirstInlineTableCell() {
+        tableController.focusFirstInlineTableCell()
+    }
+
+    @IBAction func horizontalRuleMenu(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.horizontalRule()
+    }
+
+    @IBAction func headerMenu1(_ sender: Any) {
+        applyHeader(level: "#")
+    }
+
+    @IBAction func headerMenu2(_ sender: Any) {
+        applyHeader(level: "##")
+    }
+
+    @IBAction func headerMenu3(_ sender: Any) {
+        applyHeader(level: "###")
+    }
+
+    private func applyHeader(level: String) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.header(level)
+
+        let baseFontSize = CGFloat(UserDefaultsManagement.fontSize)
+        let headerLevel = level.filter({ $0 == "#" }).count
+        let headerSize: CGFloat
+        switch headerLevel {
+        case 1: headerSize = baseFontSize * 2.0
+        case 2: headerSize = baseFontSize * 1.7
+        case 3: headerSize = baseFontSize * 1.4
+        default: headerSize = baseFontSize
+        }
+        let headerFont = NSFont.boldSystemFont(ofSize: headerSize)
+        typingAttributes = [
+            .font: headerFont,
+            .foregroundColor: NotesTextProcessor.fontColor
+        ]
+        updateInsertionPointStateAndRestartTimer(true)
+    }
+
+    @IBAction func insertCodeBlock(_ sender: NSButton) {
+        guard isEditable else { return }
+
+        let currentRange = selectedRange()
+
+        if currentRange.length > 0 {
+            let mutable = NSMutableAttributedString(string: "```\n")
+            if let substring = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
+                mutable.append(substring)
+
+                if substring.string.last != "\n" {
+                    mutable.append(NSAttributedString(string: "\n"))
+                }
+            }
+
+            mutable.append(NSAttributedString(string: "```\n"))
+
+            insertText(mutable, replacementRange: currentRange)
+            setSelectedRange(NSRange(location: currentRange.location + 4, length: 0))
+            return
+        }
+
+        insertText("```\n\n```\n", replacementRange: currentRange)
+        setSelectedRange(NSRange(location: currentRange.location + 3, length: 0))
+    }
+
+    @IBAction func insertCodeSpan(_ sender: NSMenuItem) {
+        guard isEditable else { return }
+
+        let currentRange = selectedRange()
+
+        if currentRange.length > 0 {
+            let mutable = NSMutableAttributedString(string: "`")
+            if let substring = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
+                mutable.append(substring)
+            }
+
+            mutable.append(NSAttributedString(string: "`"))
+            insertText(mutable, replacementRange: currentRange)
+            return
+        }
+
+        insertText("``", replacementRange: currentRange)
+        setSelectedRange(NSRange(location: currentRange.location + 1, length: 0))
+    }
+
+    @IBAction func insertList(_ sender: NSMenuItem) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.list()
+    }
+
+    @IBAction func insertOrderedList(_ sender: NSMenuItem) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.orderedList()
+    }
+
+    @IBAction func insertQuote(_ sender: NSMenuItem) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.quote()
+    }
+
+    @IBAction func insertLink(_ sender: Any) {
+        guard let note = self.note, isEditable else { return }
+
+        let formatter = TextFormatter(textView: self, note: note)
+        formatter.link()
+    }
+
+    func getTextFormatter() -> TextFormatter? {
+        guard let note = self.note, isEditable else { return nil }
+        return TextFormatter(textView: self, note: note)
+    }
+}
