@@ -52,43 +52,7 @@ class Storage {
     public var welcomeNote: Note?
 
     init() {
-
-#if CLOUD_RELATED_BLOCK
-        // Sync pins and related stuff
-        
-        NSUbiquitousKeyValueStore.default.synchronize()
-#endif
-
-        // Load root
-
-        print("A. Bookmarks loading is started")
-        let bookmarksManager = SandboxBookmark.sharedInstance()
-        bookmarksManager.load()
-
-        let storageType = UserDefaultsManagement.storageType
-        guard let url = getRoot() else { return }
-
-        removeCachesIfCrashed()
-
-#if os(OSX)
-        if storageType == .local && UserDefaultsManagement.storageType == .iCloudDrive {
-            shouldMovePrompt = true
-        }
-#endif
-
-        let name = getDefaultName(url: url)
-        let project =
-        Project(
-            storage: self,
-            url: url,
-            label: name,
-            isDefault: true
-        )
-
-        insertProject(project: project)
-
-        assignTrash(by: project.url)
-        assignBookmarks()
+        bootstrapStorageState()
     }
 
     public static func shared() -> Storage {

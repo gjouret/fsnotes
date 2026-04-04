@@ -15,6 +15,39 @@ import UIKit
 #endif
 
 extension Storage {
+    func bootstrapStorageState() {
+#if CLOUD_RELATED_BLOCK
+        NSUbiquitousKeyValueStore.default.synchronize()
+#endif
+
+        print("A. Bookmarks loading is started")
+        let bookmarksManager = SandboxBookmark.sharedInstance()
+        bookmarksManager.load()
+
+        let storageType = UserDefaultsManagement.storageType
+        guard let url = getRoot() else { return }
+
+        removeCachesIfCrashed()
+
+#if os(OSX)
+        if storageType == .local && UserDefaultsManagement.storageType == .iCloudDrive {
+            shouldMovePrompt = true
+        }
+#endif
+
+        let name = getDefaultName(url: url)
+        let project = Project(
+            storage: self,
+            url: url,
+            label: name,
+            isDefault: true
+        )
+
+        insertProject(project: project)
+        assignTrash(by: project.url)
+        assignBookmarks()
+    }
+
     public func loadInboxAndTrash() {
         _ = getDefault()?.loadNotes()
         _ = getDefaultTrash()?.loadNotes()

@@ -10,6 +10,79 @@ import MASShortcut
 import UserNotifications
 
 extension ViewController {
+    func performInitialViewLoad() {
+        if #available(macOS 12.0, *) {
+            let image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
+            var config = NSImage.SymbolConfiguration(textStyle: .body, scale: .large)
+            config = config.applying(.init(paletteColors: [.systemTeal, .systemGray]))
+            newNoteButton.image = image?.withSymbolConfiguration(config)
+        } else {
+            newNoteButton.image = NSImage(imageLiteralResourceName: "new_note_button").resize(to: CGSize(width: 20, height: 20))
+        }
+
+        configureShortcuts()
+        configureDelegates()
+        configureLayout()
+        configureEditor()
+
+        storage.checkWelcome()
+
+        fsManager = FileSystemEventManager(storage: storage, delegate: self)
+        fsManager?.start()
+
+        loadBookmarks(data: UserDefaultsManagement.sftpAccessData)
+        loadBookmarks(data: UserDefaultsManagement.gitPrivateKeyData)
+
+        loadMoveMenu()
+        loadSortBySetting()
+        checkSidebarConstraint()
+
+    #if CLOUD_RELATED_BLOCK
+        registerKeyValueObserver()
+    #endif
+
+        ViewController.gitQueue.maxConcurrentOperationCount = 1
+        notesTableView.doubleAction = #selector(self.doubleClickOnNotesTable)
+
+        DispatchQueue.global().async {
+            self.storage.loadInboxAndTrash()
+
+            DispatchQueue.main.async {
+                self.buildSearchQuery()
+                self.configureSidebar()
+                self.configureNoteList()
+            }
+        }
+    }
+
+    func restoreWindowStateAfterLaunch() {
+        if UserDefaultsManagement.isFirstLaunch {
+            if let window = self.view.window {
+                let newSize = NSSize(width: 1200, height: window.frame.height)
+                window.setContentSize(newSize)
+                window.center()
+            }
+
+            self.sidebarSplitView.setPosition(200, ofDividerAt: 0)
+            self.splitView.setPosition(300, ofDividerAt: 0)
+
+            UserDefaultsManagement.sidebarTableWidth = 200
+            UserDefaultsManagement.notesTableWidth = 300
+            UserDefaultsManagement.isFirstLaunch = false
+        }
+
+        if let x = UserDefaultsManagement.lastScreenX,
+           let y = UserDefaultsManagement.lastScreenY {
+            view.window?.setFrameOrigin(NSPoint(x: x, y: y))
+            UserDefaultsManagement.lastScreenX = nil
+            UserDefaultsManagement.lastScreenY = nil
+        }
+
+        if UserDefaultsManagement.fullScreen {
+            view.window?.toggleFullScreen(nil)
+        }
+    }
+
     public func preLoadProjectsData() {
         let projectsLoading = Date()
         let results = self.storage.getProjectDiffs()

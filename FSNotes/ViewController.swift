@@ -73,13 +73,7 @@ class ViewController: EditorViewController,
     @IBOutlet weak var newNoteButton: NSButton!
     @IBOutlet weak var titleLabel: TitleTextField! {
         didSet {
-            let clickGesture = NSClickGestureRecognizer()
-            clickGesture.target = self
-            clickGesture.numberOfClicksRequired = 2
-            clickGesture.buttonMask = 0x1
-            clickGesture.action = #selector(switchTitleToEditMode)
-            
-            titleLabel.addGestureRecognizer(clickGesture)
+            configureTitleLabel()
         }
     }
     @IBOutlet weak var shareButton: NSButton!
@@ -87,45 +81,12 @@ class ViewController: EditorViewController,
 
     @IBOutlet weak var titleBarAdditionalView: NSVisualEffectView! {
         didSet {
-            let layer = CALayer()
-            layer.frame = titleBarAdditionalView.bounds
-            layer.backgroundColor = .clear
-            titleBarAdditionalView.wantsLayer = true
-            titleBarAdditionalView.layer = layer
-            titleBarAdditionalView.alphaValue = 0
+            configureTitleBarAdditionalView()
         }
     }
     @IBOutlet weak var titleBarView: TitleBarView! {
         didSet {
-            titleBarView.onMouseExitedClosure = { [weak self] in
-                DispatchQueue.main.async {
-                    NSAnimationContext.runAnimationGroup({ context in
-                        context.duration = 0.35
-                        self?.titleBarAdditionalView.alphaValue = 0
-                        self?.titleLabel.backgroundColor = .clear
-                    }, completionHandler: nil)
-                }
-            }
-            titleBarView.onMouseEnteredClosure = { [weak self] in
-                DispatchQueue.main.async {
-                    guard self?.titleLabel.isEnabled == false || self?.titleLabel.isEditable == false else { return }
-                    
-                    if let note = self?.editor.note {
-                        if note.isEncryptedAndLocked() {
-                            self?.lockUnlock.image = NSImage(named: NSImage.lockLockedTemplateName)
-                        } else {
-                            self?.lockUnlock.image = NSImage(named: NSImage.lockUnlockedTemplateName)
-                        }
-                    }
-
-                    self?.lockUnlock.isHidden = (self?.editor.note == nil)
-
-                    NSAnimationContext.runAnimationGroup({ context in
-                        context.duration = 0.35
-                        self?.titleBarAdditionalView.alphaValue = 1
-                    }, completionHandler: nil)
-                }
-            }
+            configureTitleBarView()
         }
     }
 
@@ -148,85 +109,11 @@ class ViewController: EditorViewController,
         }
 
         isPreLoaded = true
-
-        if #available(macOS 12.0, *) {
-            let image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
-            var config = NSImage.SymbolConfiguration(textStyle: .body, scale: .large)
-            config = config.applying(.init(paletteColors: [.systemTeal, .systemGray]))
-
-            newNoteButton.image = image?.withSymbolConfiguration(config)
-        } else {
-            newNoteButton.image = NSImage(imageLiteralResourceName: "new_note_button").resize(to: CGSize(width: 20, height: 20))
-        }
-
-        configureShortcuts()
-        configureDelegates()
-        configureLayout()
-        configureEditor()
-
-        // Must before event manager starts
-        self.storage.checkWelcome()
-        
-        fsManager = FileSystemEventManager(storage: storage, delegate: self)
-        fsManager?.start()
-
-        loadBookmarks(data: UserDefaultsManagement.sftpAccessData)
-        loadBookmarks(data: UserDefaultsManagement.gitPrivateKeyData)
-
-        loadMoveMenu()
-        loadSortBySetting()
-        checkSidebarConstraint()
-
-    #if CLOUD_RELATED_BLOCK
-        registerKeyValueObserver()
-    #endif
-
-        ViewController.gitQueue.maxConcurrentOperationCount = 1
-
-        notesTableView.doubleAction = #selector(self.doubleClickOnNotesTable)
-
-        DispatchQueue.global().async {
-            self.storage.loadInboxAndTrash()
-
-            DispatchQueue.main.async {
-                self.buildSearchQuery()
-                self.configureSidebar()
-                self.configureNoteList()
-            }
-        }
+        performInitialViewLoad()
     }
     
     override func viewDidAppear() {
-
-        // Init window size
-        if UserDefaultsManagement.isFirstLaunch {
-            if let window = self.view.window {
-                let newSize = NSSize(width: 1200, height: window.frame.height)
-                window.setContentSize(newSize)
-                window.center()
-            }
-            
-            self.sidebarSplitView.setPosition(200, ofDividerAt: 0)
-            self.splitView.setPosition(300, ofDividerAt: 0)
-            
-            UserDefaultsManagement.sidebarTableWidth = 200
-            UserDefaultsManagement.notesTableWidth = 300
-            
-            UserDefaultsManagement.isFirstLaunch = false
-        }
-        
-        // Restore window position
-        if let x = UserDefaultsManagement.lastScreenX,
-            let y = UserDefaultsManagement.lastScreenY {
-            view.window?.setFrameOrigin(NSPoint(x: x, y: y))
-
-            UserDefaultsManagement.lastScreenX = nil
-            UserDefaultsManagement.lastScreenY = nil
-        }
-
-        if UserDefaultsManagement.fullScreen {
-            view.window?.toggleFullScreen(nil)
-        }
+        restoreWindowStateAfterLaunch()
     }
 
     // Ask project password before move to encrypted
