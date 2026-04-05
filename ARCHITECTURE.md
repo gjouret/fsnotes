@@ -148,6 +148,36 @@ Single generic method for all marker-based formatting:
 
 **Note**: Bullets no longer need restoration — storage always contains original `-` (BulletProcessor removed, replaced by BulletDrawer).
 
+## Gutter Icons
+
+**File**: `FSNotes/GutterController.swift`
+
+The 32pt-wide gutter on the left of the editor hosts: fold carets (▶/▼), H-level badges, code-block copy icons, and table copy icons. All icons render at 26pt, `calibratedWhite: 0.55` gray, same font family — only the glyph changes on state (⎘ → ✓ after copy, 1.5s feedback).
+
+**Code block copy**: Iterates `processor.blocks`, finds `.codeBlock` in source mode, draws ⎘ at the fence line. Click copies `contentRange` (between fences) as plain text.
+
+**Table copy**: Enumerates `.renderedBlockType == "table"` attributes in the visible range (tables are always single-char rendered attachments). Click parses `.renderedBlockOriginalMarkdown` via `TableUtility.parse()` and writes TSV + HTML + plain-string to the pasteboard. HTML output lets Excel/Numbers/Word/Google Docs receive a proper table.
+
+## Search ↔ Selection FSM
+
+**Files**: `FSNotes/ViewController.swift` (state fields), `FSNotes/View/SearchTextField.swift` (search trigger), `FSNotes/View/NotesTableView.swift` (selection change)
+
+State fields on ViewController:
+- `preSearchNote: Note?` — snapshot of active note when search begins
+- `searchWasActive: Bool` — tracks search field transitions
+- `isProgrammaticSearchSelection: Bool` — distinguishes FSM-driven selection from user clicks
+
+Transitions:
+1. **Search on** (empty → non-empty): snapshot `preSearchNote = editor.note`, auto-select top filtered result (flag as programmatic).
+2. **User clicks a different note during active search**: `tableViewSelectionDidChange` clears `preSearchNote` (deliberate choice takes priority).
+3. **Search off** (non-empty → empty): if `preSearchNote` is still set, restore it.
+
+## Pin Persistence
+
+**File**: `FSNotesCore/Extensions/Storage+Persistence.swift` → `CloudPinStore`
+
+Pins persist to `UserDefaults.standard` synchronously on every toggle (with `synchronize()`). Pre-fork code gated this behind `#if CLOUD_RELATED_BLOCK` making `save()` a no-op in non-cloud builds; pins only lived in the periodic project cache and were lost on crash. iCloud `NSUbiquitousKeyValueStore` is still used as an additional layer when the flag is active.
+
 ## Fold System
 
 **File**: `FSNotesCore/TextStorageProcessor.swift` → `toggleFold(headerBlockIndex:textStorage:)`
@@ -161,7 +191,11 @@ Single generic method for all marker-based formatting:
 
 **File**: `FSNotes/Helpers/InlineTableView.swift`
 
-Three focus states: `.unfocused`, `.hovered`, `.editing`. Rendered as NSTextAttachment inside the editor. `TableRenderController` manages creation from markdown table blocks. Grid drawn by `GridDocumentView`. Column/row handles are `GlassHandleView` (frosted glass effect with `⋮⋮` grip icons, cornerRadius=4).
+Three focus states: `.unfocused`, `.hovered`, `.editing`. Rendered as NSTextAttachment inside the editor. `TableRenderController` manages creation from markdown table blocks. Grid drawn by `GridDocumentView`. Column/row handles are `GlassHandleView` (frosted glass effect with `⋮⋮` grip icons, cornerRadius=8).
+
+**Grid drawing order** (in `drawGridLines`): header fill → alternating row fills → stroke. Backgrounds are painted first so grid lines stay full-strength (translucent fills on top dilute the stroke color). Boundary horizontal/vertical lines are inset by `gridLineWidth/2` so strokes aren't clipped by the parent bounds. Grid lines: solid `calibratedWhite: 0.4`. Header fill: solid `calibratedWhite: 0.85`. Alt-row fill (starting at row 0): solid `calibratedWhite: 0.95`. Top margin is always reserved to prevent layout jump on hover.
+
+**Copy button**: drawn in the gutter next to the table attachment (not on the table itself). See Gutter Icons below.
 
 ## Custom Attribute Keys
 
@@ -176,8 +210,30 @@ Three focus states: `.unfocused`, `.hovered`, `.editing`. Rendered as NSTextAtta
 | `.todo` | Int (0/1) | AttributedBox | Checkbox click handling |
 | `.listBullet` | String | (legacy) | (legacy) |
 | `.foldedContent` | Bool | toggleFold | LayoutManager gate |
-| `.renderedBlockOriginalMarkdown` | String | Mermaid/math renderer | Save pipeline |
+| `.renderedBlockOriginalMarkdown` | String | Mermaid/math/table renderer | Save pipeline, table copy |
+| `.renderedBlockType` | String | Mermaid/math/table renderer | Table click/copy routing |
 | `.codeFence` | Bool | Phase4 | Code block styling |
+
+## Paste Handling
+
+**File**: `FSNotes/View/EditTextView+Clipboard.swift` → `paste(_:)`
+
+Paste priority order (first match wins):
+1. RTFD attributed string
+2. File URL (save into note)
+3. **TSV** (`public.utf8-tab-separated-values-text`) → markdown table via `tsvToMarkdownTable()`, then `renderTables()`
+4. **HTML with `<table>`** → markdown table via `htmlTableToMarkdown()`, then `renderTables()`
+5. PDF (save with thumbnail attachment)
+6. PNG/TIFF (insert as image)
+7. Plain string
+
+TSV/HTML table checks run **before** PDF/image because Excel/Numbers/web pages put all types on the clipboard simultaneously. Preferring tabular data means table cells round-trip as markdown tables instead of PDF thumbnails.
+
+## Menu Action Routing
+
+Storyboard menu items point their action target at the `ViewController` customObject `L4m-js-agn`, which is a **placeholder instance** with only `showInSidebar` and `sortByOutlet` outlets connected. Actions that need outlets wired to the real main-window VC (e.g. `editor`) must route through `ViewController.shared()` (which returns `AppDelegate.mainWindowController?.window?.contentViewController as? ViewController`), otherwise force-unwrapping an IBOutlet on the placeholder crashes with `_assertionFailure`.
+
+Also avoid selector names that collide with AppKit (`fold:`, `unfold:` conflict with NSTextView). Renamed to `foldCurrentHeader:` / `unfoldCurrentHeader:` (⌥⌘← / ⌥⌘→).
 
 ## Test Infrastructure
 
