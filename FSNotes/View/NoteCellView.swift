@@ -381,5 +381,71 @@ class NoteCellView: NSTableCellView {
         }
 
         self.date.stringValue = note.getDateForLabel()
+
+        // Highlight search terms in title and preview
+        highlightSearchTerms()
+    }
+
+    private func highlightSearchTerms() {
+        guard let vc = ViewController.shared(),
+              !vc.search.stringValue.isEmpty else { return }
+
+        let searchText = vc.search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !searchText.isEmpty else { return }
+
+        // Split into terms (respecting quoted phrases)
+        let terms = Self.parseSearchTerms(searchText)
+        guard !terms.isEmpty else { return }
+
+        let highlightColor = NSColor.systemYellow.withAlphaComponent(0.4)
+
+        // Highlight title
+        let titleStr = name.stringValue
+        if !titleStr.isEmpty {
+            let titleAttr = NSMutableAttributedString(attributedString: name.attributedStringValue)
+            Self.applyHighlights(to: titleAttr, terms: terms, color: highlightColor)
+            name.attributedStringValue = titleAttr
+        }
+
+        // Highlight preview
+        let previewStr = preview.stringValue
+        if !previewStr.isEmpty {
+            let previewAttr = NSMutableAttributedString(attributedString: preview.attributedStringValue)
+            Self.applyHighlights(to: previewAttr, terms: terms, color: highlightColor)
+            preview.attributedStringValue = previewAttr
+        }
+    }
+
+    private static func parseSearchTerms(_ text: String) -> [String] {
+        var terms: [String] = []
+        let scanner = Scanner(string: text)
+        scanner.charactersToBeSkipped = nil
+
+        while !scanner.isAtEnd {
+            _ = scanner.scanCharacters(from: .whitespaces)
+            if scanner.scanString("\"") != nil {
+                if let quoted = scanner.scanUpToString("\"") {
+                    terms.append(quoted)
+                    _ = scanner.scanString("\"")
+                }
+            } else if let word = scanner.scanUpToCharacters(from: .whitespaces) {
+                terms.append(word)
+            }
+        }
+        return terms.filter { !$0.isEmpty }
+    }
+
+    private static func applyHighlights(to attrStr: NSMutableAttributedString, terms: [String], color: NSColor) {
+        let fullString = attrStr.string as NSString
+        for term in terms {
+            var searchRange = NSRange(location: 0, length: fullString.length)
+            while searchRange.location < fullString.length {
+                let foundRange = fullString.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
+                guard foundRange.location != NSNotFound else { break }
+                attrStr.addAttribute(.backgroundColor, value: color, range: foundRange)
+                searchRange.location = NSMaxRange(foundRange)
+                searchRange.length = fullString.length - searchRange.location
+            }
+        }
     }
 }

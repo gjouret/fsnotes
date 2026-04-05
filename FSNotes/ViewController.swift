@@ -29,6 +29,27 @@ class ViewController: EditorViewController,
     public var noteHistoryIndex: Int = -1
     var isNavigatingHistory = false
 
+    // MARK: - Search ↔ Note selection FSM
+    //
+    // Rules:
+    //   1. When search turns ON (query was empty, becomes non-empty):
+    //      snapshot the currently active note into preSearchNote, then
+    //      auto-select the top of the filtered list.
+    //   2. While search is ON, if the user EXPLICITLY clicks/arrow-keys to
+    //      a different note, that is a deliberate choice — preSearchNote is
+    //      cleared so it won't be restored.
+    //   3. When search turns OFF (query was non-empty, becomes empty):
+    //      if preSearchNote is still set (user never made an explicit choice
+    //      during search), restore it as the active note. Otherwise keep the
+    //      currently selected note.
+    //
+    // `isProgrammaticSearchSelection` is set true around selections that the
+    // search() flow makes itself (auto-select top, restore preSearchNote), so
+    // tableViewSelectionDidChange can distinguish those from user clicks.
+    public var preSearchNote: Note?
+    public var searchWasActive: Bool = false
+    public var isProgrammaticSearchSelection: Bool = false
+
     public func pushNoteHistory(_ note: Note) {
         guard !isNavigatingHistory else { return }
 

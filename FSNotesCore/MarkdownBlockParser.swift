@@ -449,8 +449,14 @@ public class MarkdownBlockParser {
                              contentRange: NSRange(location: contentStart, length: contentLen),
                              syntaxRanges: [])  // No syntax to hide
                 } else {
-                    // Raw markdown: "- [ ] " = 6 chars
-                    let markerLen = 6
+                    // Raw markdown: [leadingWhitespace] + "- [ ] " (6 chars)
+                    // Leading tabs/spaces MUST be part of the hidden syntax range,
+                    // otherwise indented todo items leak "]" past the hidden zone.
+                    var leadingWS = 0
+                    for ch in lineText {
+                        if ch == " " || ch == "\t" { leadingWS += 1 } else { break }
+                    }
+                    let markerLen = leadingWS + 6
                     let syntaxRange = NSRange(location: lineRange.location, length: min(markerLen, lineRange.length))
                     let contentStart = lineRange.location + min(markerLen, lineRange.length)
                     let contentLen = max(0, lineRange.length - markerLen)

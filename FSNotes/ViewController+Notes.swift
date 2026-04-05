@@ -230,6 +230,80 @@ extension ViewController {
         NSSound(named: "Pop")?.play()
     }
 
+    @IBAction func deleteOrphanedAttachments(_ sender: NSMenuItem) {
+        let fm = FileManager.default
+        var orphanedFiles: [(url: URL, noteTitle: String)] = []
+        var totalSize: UInt64 = 0
+
+        // Scan all notes with textbundle containers
+        for note in storage.noteList {
+            guard note.container == .textBundle || note.container == .textBundleV2 else { continue }
+            guard !note.isTrash() else { continue }
+
+            let assetsURL = note.url.appendingPathComponent("assets")
+            guard fm.fileExists(atPath: assetsURL.path) else { continue }
+
+            // Read the note's markdown content
+            guard let content = try? String(contentsOf: note.getURL(), encoding: .utf8) else { continue }
+
+            // List all files in assets/
+            guard let assetFiles = try? fm.contentsOfDirectory(at: assetsURL,
+                                                                includingPropertiesForKeys: [.fileSizeKey],
+                                                                options: .skipsHiddenFiles) else { continue }
+
+            for assetFile in assetFiles {
+                let filename = assetFile.lastPathComponent
+                // Check if the filename is referenced anywhere in the markdown
+                if !content.contains(filename) {
+                    orphanedFiles.append((url: assetFile, noteTitle: note.getTitle() ?? note.fileName))
+                    if let size = try? assetFile.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                        totalSize += UInt64(size)
+                    }
+                }
+            }
+        }
+
+        if orphanedFiles.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "No Orphaned Attachments"
+            alert.informativeText = "All attachments in your notes are referenced in their markdown content."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        let sizeMB = Double(totalSize) / 1_048_576.0
+        let alert = NSAlert()
+        alert.messageText = "Delete Orphaned Attachments?"
+        alert.informativeText = "Found \(orphanedFiles.count) orphaned attachment(s) totaling \(String(format: "%.1f", sizeMB)) MB across your notes. These files are not referenced in any note's markdown.\n\nThey will be moved to the Trash folder."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        // Move orphaned files to Trash
+        var deletedCount = 0
+        for orphan in orphanedFiles {
+            do {
+                try fm.trashItem(at: orphan.url, resultingItemURL: nil)
+                deletedCount += 1
+            } catch {
+                // Silently skip files that can't be trashed
+            }
+        }
+
+        NSSound(named: "Pop")?.play()
+
+        let doneAlert = NSAlert()
+        doneAlert.messageText = "Cleanup Complete"
+        doneAlert.informativeText = "Moved \(deletedCount) orphaned attachment(s) to Trash."
+        doneAlert.alertStyle = .informational
+        doneAlert.addButton(withTitle: "OK")
+        doneAlert.runModal()
+    }
+
     @IBAction func lockAll(_ sender: Any) {
         let projects = storage.getProjects().filter({ $0.isEncrypted && !$0.isLocked() })
         sidebarOutlineView.lock(projects: projects)

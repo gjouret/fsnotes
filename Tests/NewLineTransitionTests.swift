@@ -484,25 +484,125 @@ class NewLineTransitionTests: XCTestCase {
             let blocks = editor.textStorageProcessor?.blocks ?? []
             print("[\(name)] headIndent=\(para?.headIndent ?? -1) firstLine=\(para?.firstLineHeadIndent ?? -1) blocks=\(blocks.map { "\($0.type)" }) string=\"\(storage.string.prefix(20))\"")
 
-            // Assert: must be indented
+            // Assert: list paragraph style follows the tabs-as-metadata model.
+            //  - firstLineHeadIndent == slotWidth (constant for depth 0)
+            //  - headIndent == slotWidth + depth*listStep (so wrapped text aligns
+            //    beneath the first-line text at this depth)
+            //  - For the test inputs (depth=0, no leading tabs), first == head == slot.
             XCTAssertNotNil(para, "\(name): should have paragraph style")
             if let p = para {
-                XCTAssertGreaterThan(p.headIndent, 0,
-                                     "\(name): headIndent (\(p.headIndent)) must be > 0 (indented)")
-                XCTAssertLessThan(p.firstLineHeadIndent, p.headIndent,
-                                  "\(name): firstLineHeadIndent (\(p.firstLineHeadIndent)) must be < headIndent (\(p.headIndent))")
+                XCTAssertGreaterThan(p.firstLineHeadIndent, 0,
+                                     "\(name): firstLineHeadIndent must be > 0 (marker slot)")
+                XCTAssertGreaterThanOrEqual(p.headIndent, p.firstLineHeadIndent,
+                                            "\(name): headIndent (\(p.headIndent)) must be >= firstLineHeadIndent (\(p.firstLineHeadIndent))")
 
-                // Bullet and numbered lists should have the same headIndent.
-                // Todo items may differ (checkbox attachment has different width than • marker).
-                if name != "todo" {
-                    if referenceHeadIndent < 0 {
-                        referenceHeadIndent = p.headIndent
-                    } else {
-                        XCTAssertEqual(p.headIndent, referenceHeadIndent, accuracy: 2.0,
-                                       "\(name): headIndent (\(p.headIndent)) should match bullet (\(referenceHeadIndent))")
-                    }
+                // All list types at the same depth must have identical indents —
+                // the slot is now drawer-rendered and depth-independent of block type.
+                if referenceHeadIndent < 0 {
+                    referenceHeadIndent = p.headIndent
+                } else {
+                    XCTAssertEqual(p.headIndent, referenceHeadIndent, accuracy: 2.0,
+                                   "\(name): headIndent (\(p.headIndent)) should match bullet (\(referenceHeadIndent))")
                 }
             }
+        }
+    }
+
+    /// Regression test for "horizontal gap between glyph and text widens with
+    /// depth" (unchecked bug in FSNote++ Bugs & Enhancements).
+    ///
+    /// Invariants under the tabs-as-metadata model:
+    ///   - firstLineHeadIndent == slotWidth (constant for every depth)
+    ///   - headIndent == slotWidth + depth*listStep (depth-appropriate wrap)
+    ///   - paragraph.tabStops contains per-depth stops
+    ///   - The text-start position on the RENDERED line equals slotWidth +
+    ///     depth*listStep (i.e. identical gap between marker and text for all
+    ///     depths). We verify this by measuring location(forGlyphAt:) on the
+    ///     first non-whitespace glyph after the marker.
+    func test_list_indent_is_constant_gap_across_depths() {
+        let outputDir = NSHomeDirectory() + "/unit-tests"
+        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+
+        let savedHideSyntax = NotesTextProcessor.hideSyntax
+        NotesTextProcessor.hideSyntax = true
+        defer { NotesTextProcessor.hideSyntax = savedHideSyntax }
+
+        // Three items at depths 0, 1, 2 using leading tab characters.
+        let markdown = "- Level 1\n\t- Level 2\n\t\t- Level 3\n"
+        let editor = makeFullPipelineEditor()
+        editor.textStorage?.setAttributedString(NSMutableAttributedString(string: markdown))
+        runFullPipeline(editor)
+        saveSnapshot(editor, to: "\(outputDir)/depth_gap.png")
+
+        guard let storage = editor.textStorage, let lm = editor.layoutManager else {
+            XCTFail("missing storage/layoutManager"); return
+        }
+
+        let baseSize = UserDefaultsManagement.noteFont.pointSize
+        let listStep = baseSize * 4
+        let slotWidth = baseSize * 2
+        let lineFragmentPadding = editor.textContainer?.lineFragmentPadding ?? 0
+
+        // Locate the first character of each "Level N" text (the 'L').
+        let ns = storage.string as NSString
+        var depths: [(depth: Int, textLoc: Int)] = []
+        for depth in 0...2 {
+            let needle = "Level \(depth + 1)"
+            let r = ns.range(of: needle)
+            XCTAssertNotEqual(r.location, NSNotFound, "could not find '\(needle)'")
+            depths.append((depth, r.location))
+        }
+
+        for (depth, loc) in depths {
+            let para = storage.attribute(.paragraphStyle, at: loc, effectiveRange: nil) as? NSParagraphStyle
+            XCTAssertNotNil(para, "depth=\(depth): no paragraph style")
+            guard let p = para else { continue }
+
+            // Invariant 1: firstLineHeadIndent is the constant slot.
+            XCTAssertEqual(p.firstLineHeadIndent, slotWidth, accuracy: 0.5,
+                           "depth=\(depth): firstLineHeadIndent (\(p.firstLineHeadIndent)) should be slotWidth (\(slotWidth))")
+
+            // Invariant 2: headIndent == slotWidth + depth*listStep (wrap alignment).
+            let expectedHead = slotWidth + CGFloat(depth) * listStep
+            XCTAssertEqual(p.headIndent, expectedHead, accuracy: 0.5,
+                           "depth=\(depth): headIndent (\(p.headIndent)) should be \(expectedHead)")
+
+            // Invariant 3: depth-indexed NSTextTab stops exist.
+            XCTAssertFalse(p.tabStops.isEmpty, "depth=\(depth): no tabStops on paragraph")
+            if depth >= 1, p.tabStops.count >= depth {
+                let stop = p.tabStops[depth - 1]
+                let expected = slotWidth + CGFloat(depth) * listStep
+                XCTAssertEqual(stop.location, expected, accuracy: 0.5,
+                               "depth=\(depth): tab stop \(depth) at \(stop.location), expected \(expected)")
+            }
+
+            // Invariant 4 (rendered output): the glyph location of 'L' in
+            // "Level N" sits at lineFragmentPadding + slotWidth + depth*listStep.
+            // This is the critical visual check — tabs must advance the pen
+            // through tab stops to land the first text char at the depth position.
+            let glyphIdx = lm.glyphIndexForCharacter(at: loc)
+            let lineRect = lm.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
+            let glyphLoc = lm.location(forGlyphAt: glyphIdx)
+            let absX = lineRect.minX + glyphLoc.x
+            let expectedAbsX = lineFragmentPadding + expectedHead
+            XCTAssertEqual(absX, expectedAbsX, accuracy: 2.0,
+                           "depth=\(depth): text ('L') renders at x=\(absX), expected ~\(expectedAbsX) — gap from marker to text must be CONSTANT across depths")
+        }
+
+        // Cross-depth: the gap from line-origin to text-start is slotWidth for
+        // depth 0. For depth N it's slotWidth + N*listStep. The DIFFERENCE
+        // between consecutive depths must equal listStep exactly.
+        var prevX: CGFloat = -1
+        for (depth, loc) in depths {
+            let glyphIdx = lm.glyphIndexForCharacter(at: loc)
+            let lineRect = lm.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
+            let glyphLoc = lm.location(forGlyphAt: glyphIdx)
+            let absX = lineRect.minX + glyphLoc.x
+            if prevX >= 0 {
+                XCTAssertEqual(absX - prevX, listStep, accuracy: 2.0,
+                               "depth \(depth): step from previous depth must be listStep (\(listStep)), got \(absX - prevX)")
+            }
+            prevX = absX
         }
     }
 

@@ -109,6 +109,54 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         NotesTextProcessor.applySyntaxHiding(in: textStorage, range: range)
     }
 
+    /// Count leading tabs and 4-space groups as nesting levels.
+    public static func leadingListDepth(_ str: String) -> Int {
+        var depth = 0
+        var spaces = 0
+        for ch in str {
+            if ch == "\t" { depth += 1; spaces = 0 }
+            else if ch == " " { spaces += 1; if spaces == 4 { depth += 1; spaces = 0 } }
+            else { break }
+        }
+        return depth
+    }
+
+    /// Convert an integer to lowercase alpha (1=a, 2=b, 26=z, 27=aa).
+    public static func alphaMarker(_ n: Int) -> String {
+        var n = max(n, 1)
+        var result = ""
+        while n > 0 {
+            let r = (n - 1) % 26
+            result = String(UnicodeScalar(97 + r)!) + result
+            n = (n - 1) / 26
+        }
+        return result
+    }
+
+    /// Convert an integer to lowercase roman numeral.
+    public static func romanMarker(_ n: Int) -> String {
+        let values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+        let symbols = ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"]
+        var n = max(n, 1)
+        var result = ""
+        for i in 0..<values.count {
+            while n >= values[i] {
+                result += symbols[i]
+                n -= values[i]
+            }
+        }
+        return result
+    }
+
+    /// Marker text for an ordered list item at (depth, counter).
+    public static func orderedMarkerText(depth: Int, counter: Int) -> String {
+        switch depth {
+        case 0:  return "\(counter)."
+        case 1:  return "\(alphaMarker(counter))."
+        default: return "\(romanMarker(counter))."
+        }
+    }
+
     // MARK: - Header Fold/Unfold
 
     /// Toggle fold state for the header block at the given index in `blocks`.
@@ -201,6 +249,20 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         }
 
         return NSRange(location: foldStart, length: foldEnd - foldStart)
+    }
+
+    /// Fold the header block at `idx` if it is currently expanded. No-op if
+    /// already collapsed.
+    public func foldHeader(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
+        guard idx < blocks.count, !blocks[idx].collapsed else { return }
+        toggleFold(headerBlockIndex: idx, textStorage: textStorage)
+    }
+
+    /// Unfold the header block at `idx` if it is currently collapsed. No-op if
+    /// already expanded.
+    public func unfoldHeader(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
+        guard idx < blocks.count, blocks[idx].collapsed else { return }
+        toggleFold(headerBlockIndex: idx, textStorage: textStorage)
     }
 
     /// Fold all headers in the note.
@@ -507,73 +569,60 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                         paragraph.paragraphSpacing = 6
                     }
 
-                case .unorderedList, .orderedList:
-                    // Storage always contains original markdown markers (no • substitution)
-                    let markers = ["- ", "* ", "+ "]
-                    let prefix = value.getSpacePrefix()
-                    var matchedPrefix: String?
-
-                    if prefix.isEmpty {
-                        for marker in markers {
-                            if value.hasPrefix(marker) { matchedPrefix = marker; break }
-                        }
-                    } else {
-                        for marker in markers {
-                            let full = prefix + marker
-                            if value.hasPrefix(full) { matchedPrefix = full; break }
-                        }
+                case .unorderedList, .orderedList, .todoItem:
+                    // Tabs-as-metadata model:
+                    //  - firstLineHeadIndent = slotWidth (constant). The first
+                    //    line's leading TAB characters advance the pen through
+                    //    per-depth tab stops to reach slotWidth + depth*listStep.
+                    //  - headIndent = slotWidth + depth*listStep. Wrapped text on
+                    //    a list line has NO tabs, so headIndent must already be
+                    //    at the correct depth position for wrap alignment.
+                    //  - The marker syntax ("- ", "N. ", "[ ] ") is kern-collapsed
+                    //    in phase4; the drawer reads .listDepth to place the
+                    //    marker glyph into the slot before the text.
+                    let depth = Self.leadingListDepth(value)
+                    let listStep = baseSize * 4
+                    let slotWidth = baseSize * 2
+                    let depthIndent = slotWidth + CGFloat(depth) * listStep
+                    paragraph.firstLineHeadIndent = slotWidth
+                    paragraph.headIndent = depthIndent
+                    var listTabStops: [NSTextTab] = []
+                    for i in 1...12 {
+                        listTabStops.append(NSTextTab(textAlignment: .left,
+                                                      location: slotWidth + CGFloat(i) * listStep,
+                                                      options: [:]))
                     }
-                    if matchedPrefix == nil {
-                        matchedPrefix = textStorage.getNumberListPrefix(paragraph: value)
-                    }
-
-                    // padding-left: 2em
-                    let listIndent = baseSize * 2
-                    if let mp = matchedPrefix {
-                        // Storage always contains original markdown (-, *, +, 1.)
-                        // The marker is hidden by phase4 and drawn by BulletDrawer.
-                        let markerWidth = mp.widthOfString(usingFont: font, tabs: tabs)
-                        paragraph.headIndent = max(markerWidth, listIndent)
-                        paragraph.firstLineHeadIndent = paragraph.headIndent - markerWidth
-                    } else {
-                        paragraph.headIndent = listIndent
-                    }
-
-                    // li { line-height: 28px } → inter-item spacing comes from line height
-                    // 28px line-height at 14px font = 14px extra → ~7pt spacing per item
+                    paragraph.tabStops = listTabStops
                     paragraph.lineSpacing = 7
 
-                    // ul margin-top: 0, margin-bottom: 16px
                     let isFirstLine = (parRange.location == block.range.location)
                     let isLastLine = (NSMaxRange(parRange) >= NSMaxRange(block.range))
-                    paragraph.paragraphSpacingBefore = isFirstLine ? 0 : 2
-                    paragraph.paragraphSpacing = isLastLine ? 16 : 0
-
-                case .todoItem:
-                    // Same indent pattern as bullet/numbered lists using raw markdown storage.
-                    let listIndent = baseSize * 2
-                    let lineStr = (textStorage.string as NSString).substring(with: parRange)
-                    let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
-                    let marker = trimmed.lowercased().hasPrefix("- [x] ")
-                        || trimmed.lowercased().hasPrefix("* [x] ")
-                        || trimmed.lowercased().hasPrefix("+ [x] ")
-                        ? "- [x] "
-                        : "- [ ] "
-                    let markerWidth = marker.widthOfString(usingFont: font, tabs: tabs)
-
-                    paragraph.firstLineHeadIndent = 0
-                    paragraph.headIndent = markerWidth
-                    paragraph.lineSpacing = 7
-                    let prevIsTodo = prevBlock.map { self.isListBlock($0.type) } ?? false
-                    let nextIsTodo = nextBlock.map { self.isListBlock($0.type) } ?? false
-                    paragraph.paragraphSpacingBefore = prevIsTodo ? 2 : 0
-                    paragraph.paragraphSpacing = nextIsTodo ? 0 : 16
+                    if case .todoItem = block.type {
+                        let prevIsList = prevBlock.map { self.isListBlock($0.type) } ?? false
+                        let nextIsList = nextBlock.map { self.isListBlock($0.type) } ?? false
+                        paragraph.paragraphSpacingBefore = prevIsList ? 2 : 0
+                        paragraph.paragraphSpacing = nextIsList ? 0 : 16
+                    } else {
+                        paragraph.paragraphSpacingBefore = isFirstLine ? 0 : 2
+                        paragraph.paragraphSpacing = isLastLine ? 16 : 0
+                    }
 
                 case .blockquote:
-                    // blockquote: margin 0, padding 0 15px, border-left 4px #ddd
-                    paragraph.firstLineHeadIndent = 15
-                    paragraph.headIndent = 15
-                    paragraph.paragraphSpacing = 16
+                    // blockquote: vertical bars at depth-1 positions; text must
+                    // indent past the last bar per line. baseX=lineFragmentPadding+2,
+                    // each bar 4pt wide at 10pt spacing — so text must start past
+                    // 2 + depth*10 + 5pt gap + a bit of padding. Use depth*10 + 20.
+                    var depth = 0
+                    for ch in value { if ch == ">" { depth += 1 } else if ch == " " { continue } else { break } }
+                    // Bar extends to baseX + (depth-1)*10 + 4 from container leading edge.
+                    // Add ~6pt gap after the last bar for readability.
+                    let qIndent = CGFloat(max(depth, 1)) * 10 + 2
+                    paragraph.firstLineHeadIndent = qIndent
+                    paragraph.headIndent = qIndent
+                    paragraph.lineSpacing = 0
+                    let isLastLine = (NSMaxRange(parRange) >= NSMaxRange(block.range))
+                    paragraph.paragraphSpacing = isLastLine ? 16 : 0
+                    paragraph.paragraphSpacingBefore = 0
 
                 case .horizontalRule:
                     // hr: margin 16px 0, height 4px, background #e7e7e7
@@ -647,24 +696,118 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
             // Default: hide syntax for blocks with no registered processor
             if !handled {
+                // Helper: count depth from leading tabs/spaces on the line starting
+                // at `from`, returning (depth, position after whitespace). Tabs are
+                // depth METADATA — not rendered as characters. We do NOT kern-hide
+                // them; instead phase5 sets per-depth tab stops so the tab glyphs
+                // advance the pen to the correct indent position.
+                func hideLeadingWS(from lineStart: Int, upTo lineEnd: Int) -> (depth: Int, afterWS: Int) {
+                    let nsStr = textStorage.string as NSString
+                    var i = lineStart
+                    var depth = 0
+                    var spaces = 0
+                    while i < lineEnd {
+                        let ch = nsStr.character(at: i)
+                        if ch == 0x09 { depth += 1; spaces = 0; i += 1 }
+                        else if ch == 0x20 { spaces += 1; i += 1; if spaces == 4 { depth += 1; spaces = 0 } }
+                        else { break }
+                    }
+                    return (depth, i)
+                }
+
                 if case .unorderedList = block.type {
-                    // Bullet markers: hide the "-" visually (clear color) but preserve
-                    // its width (NO negative kern). BulletDrawer draws • in the space
-                    // the "-" occupies. The space after "-" IS hidden normally.
+                    // For each list item line: hide leading whitespace + "- " with
+                    // kern-collapse (zero width). Stamp .bulletMarker(depth) on the
+                    // marker's first char so the drawer can find the line.
+                    let nsStr = textStorage.string as NSString
+                    var lineStart = block.range.location
+                    let blockEnd = NSMaxRange(block.range)
+                    while lineStart < blockEnd {
+                        let lineRange = nsStr.paragraphRange(for: NSRange(location: lineStart, length: 0))
+                        let lineEnd = NSMaxRange(lineRange)
+                        let (depth, markerStart) = hideLeadingWS(from: lineRange.location, upTo: lineEnd)
+                        if markerStart + 1 < lineEnd {
+                            let ch = nsStr.character(at: markerStart)
+                            if ch == 0x2D || ch == 0x2A || ch == 0x2B { // - * +
+                                let markerRange = NSRange(location: markerStart, length: 2)
+                                hideSyntaxRange(markerRange, in: textStorage)
+                                textStorage.addAttribute(.bulletMarker, value: depth,
+                                                         range: NSRange(location: markerStart, length: 1))
+                                textStorage.addAttribute(.listDepth, value: depth,
+                                                         range: NSRange(location: markerStart, length: 1))
+                            }
+                        }
+                        lineStart = lineEnd
+                        if lineStart <= lineRange.location { break }
+                    }
+                } else if case .orderedList = block.type {
+                    // For each ordered list item: kern-collapse leading WS + "N." +
+                    // optional space. Substitute the marker (1./a./i.) by stamping
+                    // .orderedMarker(String) on the first digit.
+                    let nsStr = textStorage.string as NSString
+                    var lineStart = block.range.location
+                    let blockEnd = NSMaxRange(block.range)
+                    var counters: [Int: Int] = [:]
+                    while lineStart < blockEnd {
+                        let lineRange = nsStr.paragraphRange(for: NSRange(location: lineStart, length: 0))
+                        let lineEnd = NSMaxRange(lineRange)
+                        let (depth, markerStart) = hideLeadingWS(from: lineRange.location, upTo: lineEnd)
+
+                        // Reset deeper counters when depth decreases
+                        for d in counters.keys where d > depth { counters.removeValue(forKey: d) }
+                        counters[depth, default: 0] += 1
+                        let markerText = Self.orderedMarkerText(depth: depth, counter: counters[depth]!)
+
+                        // Scan digits + '.' + optional space
+                        var i = markerStart
+                        while i < lineEnd, nsStr.character(at: i) >= 0x30, nsStr.character(at: i) <= 0x39 {
+                            i += 1
+                        }
+                        if i < lineEnd, nsStr.character(at: i) == 0x2E { i += 1 } // '.'
+                        if i < lineEnd, nsStr.character(at: i) == 0x20 { i += 1 } // space
+                        if i > markerStart {
+                            let syntaxLen = i - markerStart
+                            let syntaxRange = NSRange(location: markerStart, length: syntaxLen)
+                            hideSyntaxRange(syntaxRange, in: textStorage)
+                            textStorage.addAttribute(.orderedMarker, value: markerText,
+                                                     range: NSRange(location: markerStart, length: 1))
+                            textStorage.addAttribute(.listDepth, value: depth,
+                                                     range: NSRange(location: markerStart, length: 1))
+                        }
+
+                        lineStart = lineEnd
+                        if lineStart <= lineRange.location { break }
+                    }
+                } else if case .todoItem(let checked) = block.type {
+                    // todoItem is a single-line block. Hide the entire syntax range
+                    // (already includes leading WS from MarkdownBlockParser fix) and
+                    // stamp .checkboxMarker(Bool) + .listDepth(Int) on first char.
+                    let nsStr = textStorage.string as NSString
                     for syntaxRange in block.syntaxRanges {
                         guard syntaxRange.location < textStorage.length,
                               NSMaxRange(syntaxRange) <= textStorage.length else { continue }
-
-                        let markerRange = NSRange(location: syntaxRange.location, length: 1)
-                        // Hide marker character visually but keep its width
-                        textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: markerRange)
-                        textStorage.addAttribute(.bulletMarker, value: true, range: markerRange)
-
-                        // Hide the space after the marker normally (collapse to zero width)
-                        if syntaxRange.length > 1 {
-                            let spaceRange = NSRange(location: syntaxRange.location + 1, length: syntaxRange.length - 1)
-                            hideSyntaxRange(spaceRange, in: textStorage)
+                        // Compute depth from leading WS within syntax range
+                        var depth = 0
+                        var spaces = 0
+                        var markerStart = syntaxRange.location
+                        var i = syntaxRange.location
+                        let maxI = NSMaxRange(syntaxRange)
+                        while i < maxI {
+                            let ch = nsStr.character(at: i)
+                            if ch == 0x09 { depth += 1; spaces = 0; i += 1; markerStart = i }
+                            else if ch == 0x20 { spaces += 1; i += 1; if spaces == 4 { depth += 1; spaces = 0 }; markerStart = i }
+                            else { break }
                         }
+                        // Only hide the "- [ ] " marker portion — leading WS is depth
+                        // metadata rendered via paragraph tab stops, not kerned away.
+                        if markerStart < maxI {
+                            let markerKernRange = NSRange(location: markerStart, length: maxI - markerStart)
+                            hideSyntaxRange(markerKernRange, in: textStorage)
+                        }
+                        let stampLoc = min(markerStart, max(syntaxRange.location, maxI - 1))
+                        let stampRange = NSRange(location: stampLoc, length: 1)
+                        textStorage.addAttribute(.checkboxMarker, value: checked, range: stampRange)
+                        textStorage.addAttribute(.listDepth, value: depth, range: stampRange)
                     }
                 } else {
                     for syntaxRange in block.syntaxRanges {

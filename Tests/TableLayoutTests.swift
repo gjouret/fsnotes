@@ -43,7 +43,7 @@ class TableLayoutTests: XCTestCase {
         }
     }
 
-    func test_wideTable_clampedToContainer() {
+    func test_wideTable_wrapsToFitContainer() {
         let table = makeTable(
             headers: ["Very long header text here", "Another long header"],
             rows: [["Some wide content that exceeds the container", "More wide content"]],
@@ -51,8 +51,11 @@ class TableLayoutTests: XCTestCase {
         )
         let layout = table.computeLayout()
 
+        // With auto-wrap, columns shrink to fit container — no horizontal scroll needed
         XCTAssertLessThanOrEqual(layout.scrollWidth, 200)
-        XCTAssertGreaterThan(layout.docWidth, layout.scrollWidth) // Document wider than visible
+        // Row heights should increase to accommodate wrapped text
+        XCTAssertGreaterThan(layout.rHeights[1], layout.rHeights[0],
+            "Data row with long text should be taller than header after wrapping")
     }
 
     func test_narrowTable_noScroll() {
@@ -114,17 +117,21 @@ class TableLayoutTests: XCTestCase {
         XCTAssertEqual(layout.gridWidth, sumOfWidths)
     }
 
-    func test_totalHeight_includesHandleMargin() {
+    func test_totalHeight_alwaysIncludesHandleMargin() {
         let table = makeTable(headers: ["A"], rows: [["1"]])
-        // Unfocused: no handle margin
+
+        // Margins are always reserved to prevent layout shift on hover
         table.focusState = .unfocused
         let unfocused = table.computeLayout()
-        XCTAssertEqual(unfocused.totalHeight, unfocused.gridHeight)
+        XCTAssertGreaterThan(unfocused.totalHeight, unfocused.gridHeight)
+        XCTAssertGreaterThan(unfocused.leftMargin, 0)
+        XCTAssertGreaterThan(unfocused.topMargin, 0)
 
-        // Hovered: includes handle margin
         table.focusState = .hovered
         let hovered = table.computeLayout()
-        XCTAssertGreaterThan(hovered.totalHeight, hovered.gridHeight)
+        XCTAssertEqual(hovered.totalHeight, unfocused.totalHeight, "Size must not change on hover")
+        XCTAssertEqual(hovered.leftMargin, unfocused.leftMargin)
+        XCTAssertEqual(hovered.topMargin, unfocused.topMargin)
     }
 
     // MARK: - Visual Snapshots
@@ -160,6 +167,30 @@ class TableLayoutTests: XCTestCase {
 
         table.removeFromSuperview()
     }
+
+    // MARK: - Copy Button
+
+    func test_copyButton_existsOnHover() {
+        let table = makeTable(headers: ["A", "B"], rows: [["1", "2"]])
+        table.focusState = .hovered
+        table.rebuild(skipCollect: true)
+
+        // Copy button should exist in hovered state
+        let copyBtn = table.subviews.compactMap { $0 as? GlassButton }.last
+        XCTAssertNotNil(copyBtn, "Copy button should be present when hovered")
+    }
+
+    func test_copyButton_absentWhenUnfocused() {
+        let table = makeTable(headers: ["A", "B"], rows: [["1", "2"]])
+        table.focusState = .unfocused
+        table.rebuild(skipCollect: true)
+
+        // Only the scrollView should be a subview, no GlassButtons
+        let buttons = table.subviews.compactMap { $0 as? GlassButton }
+        XCTAssertTrue(buttons.isEmpty, "No copy button when unfocused")
+    }
+
+    // MARK: - Visual Snapshots
 
     func test_tableWidget_unfocused() {
         let table = makeTable(

@@ -11,6 +11,10 @@ private enum CloudPinStore {
     static let key = "co.fluder.fsnotes.pins.shared"
 
     static func save(_ relatedPaths: [String]) {
+        // Persist to UserDefaults (synchronous, crash-safe) so pins survive app restarts.
+        UserDefaults.standard.set(relatedPaths, forKey: key)
+        UserDefaults.standard.synchronize()
+
         #if CLOUD_RELATED_BLOCK
         let keyStore = NSUbiquitousKeyValueStore.default
         keyStore.set(relatedPaths, forKey: key)
@@ -22,10 +26,12 @@ private enum CloudPinStore {
         #if CLOUD_RELATED_BLOCK
         let keyStore = NSUbiquitousKeyValueStore.default
         keyStore.synchronize()
-        return keyStore.array(forKey: key) as? [String]
-        #else
-        return nil
+        if let cloudPaths = keyStore.array(forKey: key) as? [String] {
+            return cloudPaths
+        }
         #endif
+
+        return UserDefaults.standard.array(forKey: key) as? [String]
     }
 }
 

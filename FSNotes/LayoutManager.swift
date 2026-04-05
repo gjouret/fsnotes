@@ -194,6 +194,8 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                                         layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
                 }
                 drawBulletMarkers(forGlyphRange: range, at: origin, textStorage: ts, context: ctx)
+                drawCheckboxMarkers(forGlyphRange: range, at: origin, textStorage: ts, context: ctx)
+                drawOrderedMarkers(forGlyphRange: range, at: origin, textStorage: ts, context: ctx)
             }
 
             super.drawBackground(forGlyphRange: range, at: origin)
@@ -211,41 +213,109 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
     }
     
-    /// Draw bullet markers (•) at positions where `-` is hidden by syntax hiding.
-    /// Can't use the standard AttributeDrawer path because boundingRect returns empty
-    /// for kern-collapsed characters. Uses lineFragmentRect for positioning instead.
-    private func drawBulletMarkers(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint,
-                                    textStorage: NSTextStorage, context: CGContext) {
+    /// Bullet glyph for a given nesting depth (0 = top level).
+    private static func bulletGlyph(for depth: Int) -> String {
+        switch depth {
+        case 0:  return "\u{2022}" // •
+        case 1:  return "\u{25E6}" // ◦
+        case 2:  return "\u{25AA}" // ▪
+        default: return "\u{25AB}" // ▫
+        }
+    }
+
+    /// Fixed gap between a list marker's right edge and the text start (constant across depths).
+    private var listMarkerGap: CGFloat { 6 }
+
+    /// Generic list-marker renderer. Tabs-as-metadata model: the marker X position
+    /// is computed from `.listDepth` using the SAME slotWidth + depth*listStep
+    /// geometry that phase5 encodes in its paragraph tab stops. This keeps the
+    /// drawer in sync with phase5 without reading firstLineHeadIndent (which is
+    /// now the constant depth-0 slot, not the per-line text indent).
+    private func drawListMarkers(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint,
+                                 textStorage: NSTextStorage,
+                                 attributeKey: NSAttributedString.Key,
+                                 render: (Any, NSRect, CGFloat, CGFloat) -> Void) {
         let visibleCharRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         let safeRange = NSIntersectionRange(visibleCharRange, NSRange(location: 0, length: textStorage.length))
         guard safeRange.length > 0 else { return }
 
-        let fontSize = CGFloat(UserDefaultsManagement.fontSize)
-        let bulletFont = NSFont.systemFont(ofSize: fontSize)
-        let bullet = "\u{2022}"
+        let baseSize = UserDefaultsManagement.noteFont.pointSize
+        let listStep = baseSize * 4     // must match phase5
+        let slotWidth = baseSize * 2    // must match phase5
+
+        textStorage.enumerateAttribute(attributeKey, in: safeRange) { value, range, _ in
+            guard let value = value else { return }
+            let glyphIdx = self.glyphIndexForCharacter(at: range.location)
+            guard glyphIdx < self.numberOfGlyphs else { return }
+            let lineRect = self.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
+            if lineRect.isEmpty { return }
+            let depth = (textStorage.attribute(.listDepth, at: range.location, effectiveRange: nil) as? Int) ?? 0
+            let textStartX = origin.x + lineRect.minX + slotWidth + CGFloat(depth) * listStep
+            let markerRightX = textStartX - self.listMarkerGap
+            // Use the TEXT BASELINE of the marker char, not the line's vertical
+            // center — marker glyph fonts can be 2x the text font and must sit on
+            // the same baseline as "Level 3a" to look visually aligned.
+            let glyphLoc = self.location(forGlyphAt: glyphIdx)
+            let baselineY = origin.y + lineRect.minY + glyphLoc.y
+            render(value, lineRect, markerRightX, baselineY)
+        }
+    }
+
+    /// Draw bullet markers at positions where `-` is hidden by syntax hiding.
+    private func drawBulletMarkers(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint,
+                                    textStorage: NSTextStorage, context: CGContext) {
+        let noteFont = UserDefaultsManagement.noteFont
+        let bulletFont = NSFont.systemFont(ofSize: noteFont.pointSize * 2)
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: bulletFont,
-            .foregroundColor: NSColor.textColor
+            .font: bulletFont, .foregroundColor: NSColor.textColor
         ]
-        let bulletSize = (bullet as NSString).size(withAttributes: attrs)
-
-        textStorage.enumerateAttribute(.bulletMarker, in: safeRange) { value, range, _ in
-            guard value != nil else { return }
-            let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            if glyphRange.length == 0 { return }
-
-            // The "-" character now has its original width (not kern-collapsed).
-            // boundingRect gives us the exact position where "-" renders.
-            guard let tc = self.textContainers.first else { return }
-            let rect = self.boundingRect(forGlyphRange: glyphRange, in: tc)
-            if rect.isEmpty { return }
-
-            // Draw • centered on the "-" character's bounding rect
-            let bulletX = origin.x + rect.midX - bulletSize.width / 2
-            let bulletY = origin.y + rect.midY - bulletSize.height / 2
-
+        drawListMarkers(forGlyphRange: glyphsToShow, at: origin, textStorage: textStorage,
+                        attributeKey: .bulletMarker) { value, _, rightX, baselineY in
+            let depth = (value as? Int) ?? 0
+            let glyph = Self.bulletGlyph(for: depth) as NSString
+            let size = glyph.size(withAttributes: attrs)
+            let topY = baselineY - bulletFont.ascender
             context.saveGState()
-            (bullet as NSString).draw(at: NSPoint(x: bulletX, y: bulletY), withAttributes: attrs)
+            glyph.draw(at: NSPoint(x: rightX - size.width, y: topY), withAttributes: attrs)
+            context.restoreGState()
+        }
+    }
+
+    /// Draw task-list checkboxes.
+    private func drawCheckboxMarkers(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint,
+                                     textStorage: NSTextStorage, context: CGContext) {
+        let noteFont = UserDefaultsManagement.noteFont
+        let cbFont = NSFont.systemFont(ofSize: noteFont.pointSize * 1.3)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: cbFont, .foregroundColor: NSColor.textColor
+        ]
+        drawListMarkers(forGlyphRange: glyphsToShow, at: origin, textStorage: textStorage,
+                        attributeKey: .checkboxMarker) { value, _, rightX, baselineY in
+            guard let checked = value as? Bool else { return }
+            let glyph = (checked ? "\u{2611}" : "\u{2610}") as NSString
+            let size = glyph.size(withAttributes: attrs)
+            let topY = baselineY - cbFont.ascender
+            context.saveGState()
+            glyph.draw(at: NSPoint(x: rightX - size.width, y: topY), withAttributes: attrs)
+            context.restoreGState()
+        }
+    }
+
+    /// Draw substituted ordered-list markers (1./a./i.).
+    private func drawOrderedMarkers(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint,
+                                    textStorage: NSTextStorage, context: CGContext) {
+        let noteFont = UserDefaultsManagement.noteFont
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: noteFont, .foregroundColor: NSColor.textColor
+        ]
+        drawListMarkers(forGlyphRange: glyphsToShow, at: origin, textStorage: textStorage,
+                        attributeKey: .orderedMarker) { value, _, rightX, baselineY in
+            guard let markerText = value as? String else { return }
+            let ns = markerText as NSString
+            let size = ns.size(withAttributes: attrs)
+            let topY = baselineY - noteFont.ascender
+            context.saveGState()
+            ns.draw(at: NSPoint(x: rightX - size.width, y: topY), withAttributes: attrs)
             context.restoreGState()
         }
     }
