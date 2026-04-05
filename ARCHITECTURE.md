@@ -2,7 +2,14 @@
 
 ## Overview
 
-FSNotes++ is a WYSIWYG markdown editor for macOS, forked from FSNotes. The app renders markdown in a single NSTextView — there is no separate HTML preview. The text storage always contains the original markdown; rendering is done via attributed string attributes, syntax hiding (clear color + negative kern), and custom drawing in the LayoutManager.
+FSNotes++ is a WYSIWYG markdown editor for macOS, forked from FSNotes. The app renders markdown in a single NSTextView — there is no separate HTML preview.
+
+The codebase currently contains **two rendering architectures running side-by-side**:
+
+1. **Legacy pipeline** (active in the app): text storage = original markdown; rendering via attributes + clear-color/negative-kern hiding + custom LayoutManager drawing. Described in "Rendering Pipeline" below.
+2. **Block-model pipeline** (tracer-bullet, not yet wired into the app): markdown is parsed once into a `Document`; the renderer consumes that tree and emits an NSAttributedString whose `.string` contains ONLY displayed characters. Source markers (`#`, `**`, `-`, `>`, fences, etc.) never reach the rendered output. Described in "Block-Model Rendering (Target Architecture)" below.
+
+The block model is the migration target. The legacy pipeline stays authoritative until every block type is ported and the rendering boundary is switched.
 
 **Bundle ID**: `co.fluder.FSNotes` (shared with original FSNotes for same notes folder)
 **Product Name**: `FSNotes++`
@@ -297,9 +304,140 @@ Use the `xcode-build-deploy` skill. Key steps:
 4. **One general solution**: When a pattern recurs (e.g., typing attributes after Return), solve it once for all cases, not per-case.
 5. **Verify with rendered output**: Unit tests must check actual rendered output (pixels, attribute values), not just data model state.
 
+## Block-Model Rendering (Target Architecture)
+
+**Location**: `FSNotesCore/Rendering/` (new files) + `Tests/*RoundTripTests.swift` + `Tests/ArchitectureEnforcementTests.swift`
+
+The block model eliminates WYSIWYG marker-hiding entirely. Instead of stuffing markers into storage and hiding them with clear color + negative kern, the parser consumes markers into a typed block tree, and the renderer emits a clean NSAttributedString.
+
+### The Pipeline
+
+```
+raw markdown ──► MarkdownParser.parse ──► Document (Block tree)
+                                              │
+                                              ▼
+                                    ┌──── Renderers ────┐
+                                    │  CodeBlockRenderer │
+                                    │  HeadingRenderer   │
+                                    │  ParagraphRenderer │
+                                    │  ListRenderer      │
+                                    │  BlockquoteRenderer│
+                                    │  HorizontalRuleRenderer
+                                    │  InlineRenderer    │
+                                    └────────┬──────────┘
+                                             ▼
+                                    NSAttributedString
+                                    (no source markers)
+
+raw markdown ◄── MarkdownSerializer.serialize ◄── Document
+```
+
+The `Document` is the single source of truth for rendering. Raw markdown exists only on disk and inside parse/serialize.
+
+### The Block Model
+
+**File**: `FSNotesCore/Rendering/Document.swift`
+
+```swift
+struct Document {
+    var blocks: [Block]
+    var trailingNewline: Bool       // preserved for byte-equal round-trip
+}
+
+enum Block {
+    case codeBlock(language: String?, content: String, fence: FenceStyle)
+    case heading(level: Int, suffix: String)
+    case paragraph(inline: [Inline])
+    case list(items: [ListItem])
+    case blockquote(lines: [BlockquoteLine])
+    case horizontalRule(character: Character, length: Int)
+    case blankLine
+}
+
+indirect enum Inline {
+    case text(String)
+    case bold([Inline])      // **…**
+    case italic([Inline])    // *…*
+    case code(String)        // `…`
+}
+```
+
+`ListItem` carries `indent` / `marker` / `afterMarker` / `inline` / `children` (recursive nesting). `BlockquoteLine` carries `prefix` verbatim (e.g. `"> "`, `">> "`, `"> > "`) + parsed inlines. `FenceStyle` records fence char/length/infoRaw. These "source fingerprints" are preserved for byte-equal round-trip; the renderers never read them.
+
+### The Four Architectural Invariants
+
+All renderers MUST uphold these. Violations fail the build via `ArchitectureEnforcementTests`.
+
+1. **No `.kern`-based width collapse** — rendered output MUST NOT contain any negative `.kern` attribute. If a character should not appear, do not put it in the rendered string.
+2. **No clear-color hiding** — rendered output MUST NOT contain any character with `.foregroundColor` alpha == 0.
+3. **No source markers in storage** — parser-consumed markers (fences, `#`, `-`/`*`/`+`/`N.`/`N)`, `**`/`*`, `` ` ``, `>`, HR runs) MUST NOT appear in the rendered string.
+4. **Pure idempotent rendering** — `render(x) == render(x)` byte-equal. Renderers are pure functions of their inputs.
+
+Plus the **round-trip invariant**: `serialize(parse(x)) == x`, byte-equal, for every valid markdown input.
+
+### Tracer-Bullet Status (169 tests, 0 failures)
+
+| Block type            | Round-trip tests | Architecture checks | Files |
+|-----------------------|------------------|---------------------|-------|
+| Code block (fenced)   | 22               | 5 + fence integration | `CodeBlockRenderer.swift` |
+| Heading (ATX 1-6)     | 22               | 4                   | `HeadingRenderer.swift` |
+| Paragraph + inlines   | 19               | 5 + font-trait checks | `ParagraphRenderer.swift`, `InlineRenderer.swift` |
+| Code spans            | 17               | (in paragraph)      | (in InlineRenderer) |
+| List (nested, mixed)  | 26               | 6                   | `ListRenderer.swift` |
+| Horizontal rule       | 15               | 4                   | `HorizontalRuleRenderer.swift` |
+| Blockquote (nested)   | 18               | 4                   | `BlockquoteRenderer.swift` |
+
+Not yet covered: links `[text](url)`, images `![alt](url)`, underscore emphasis (`_italic_`, `__bold__`), tables, task-list checkboxes, YAML frontmatter, mermaid/math, footnotes, reference-style links.
+
+### Renderer Contract
+
+Every renderer follows the same shape:
+
+```swift
+enum <Name>Renderer {
+    static func render(<typed inputs>, bodyFont: PlatformFont) -> NSAttributedString
+}
+```
+
+Inputs are strictly typed from the block model — never raw markdown. Output is an `NSAttributedString` whose `.string` is the DISPLAYED text only. No parsing or re-scanning happens in the renderer.
+
+Visual indent normalization: `ListRenderer` and `BlockquoteRenderer` emit 2 spaces per nesting depth REGARDLESS of source indent. The original indent is preserved in the block model for serialization, but the renderer normalizes for display consistency.
+
+### Architecture-Enforcement Tests (Tripwires)
+
+**File**: `Tests/ArchitectureEnforcementTests.swift`
+
+Every new renderer MUST append fixtures + checks here. The enforcement matrix runs on every PR:
+
+- `test_<block>Renderer_noNegativeKern` — invariant 1
+- `test_<block>Renderer_noClearForeground` — invariant 2
+- `test_<block>Renderer_containsNo<Source>Markers` — invariant 3
+- `test_<block>Renderer_isIdempotent` — invariant 4
+- Semantic checks: bold runs carry bold-trait font, code spans carry monospace-trait font, etc.
+
+These are permanent CI tripwires. Failing any of them is an architectural regression, not a cosmetic bug.
+
+### Migration Strategy
+
+Tracer-bullet philosophy: prove the architecture end-to-end on one block type, then expand. Each new block type is added in the same tight loop:
+
+1. Extend `Document.swift` with the new block case + any carrier struct (preserve source fingerprints for round-trip).
+2. Extend `MarkdownParser.swift` with a detector; consume the line(s) in the main parse loop.
+3. Extend `MarkdownSerializer.swift` with the matching serializer branch.
+4. Write a new `<Block>Renderer.swift` following the renderer contract.
+5. Write `<Block>RoundTripTests.swift` with flat/nested/edge fixtures and negative-case tests.
+6. Extend `ArchitectureEnforcementTests.swift` with fixtures and the four-invariant matrix.
+7. Add both new files to `FSNotes.xcodeproj/project.pbxproj` (PBXBuildFile, PBXFileReference, Rendering/Tests PBXGroup, Sources build phase).
+8. Run the tracer-bullet test suite — all tests MUST stay green.
+
+Switching the app to the block-model renderer is a **separate future phase** once all block types are covered.
+
 ## In-Progress Work
 
-### Bullet Rendering Refactor (Step 1 of 5)
+### Block-Model Tracer Bullet (current phase)
+7 of N block types covered (see table above). 169 round-trip + architecture-enforcement tests green. No integration with the live app yet — the block-model renderer runs only in tests.
+
+### Bullet Rendering Refactor (Step 1 of 5, legacy pipeline)
 Bullets now use non-destructive rendering: `-` stays in storage, hidden by clear color (width preserved), `•` drawn by BulletDrawer. BulletProcessor (destructive `-`→`•` replacement) removed. `restoreBulletMarkers()` removed from save pipeline.
 
 **Remaining steps**:
