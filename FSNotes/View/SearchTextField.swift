@@ -216,6 +216,18 @@ class SearchTextField: NSSearchField, NSSearchFieldDelegate {
     @objc private func search() {
         UserDataService.instance.searchTrigger = true
 
+        // FSM: detect search on/off transition and snapshot active note.
+        // See ViewController's preSearchNote rules.
+        let isActiveNow = stringValue.count > 0
+        let wasActive = vcDelegate.searchWasActive
+        if !wasActive && isActiveNow {
+            // Search just turned ON — snapshot whatever is currently in the
+            // editor pane so we can restore it when the user clears search.
+            vcDelegate.preSearchNote = vcDelegate.editor.note
+        }
+        vcDelegate.searchWasActive = isActiveNow
+        let searchJustTurnedOff = wasActive && !isActiveNow
+
         vcDelegate.buildSearchQuery()
 
         let searchText = self.stringValue
@@ -245,6 +257,24 @@ class SearchTextField: NSSearchField, NSSearchFieldDelegate {
         self.filterQueue.cancelAllOperations()
         self.filterQueue.addOperation {
             self.vcDelegate.updateTable() {
+                // FSM: if search just turned OFF and we still have a snapshot
+                // (user never explicitly changed selection during search),
+                // restore the pre-search note instead of auto-selecting row 0.
+                if searchJustTurnedOff, let restore = self.vcDelegate.preSearchNote {
+                    DispatchQueue.main.async {
+                        self.vcDelegate.isProgrammaticSearchSelection = true
+                        self.vcDelegate.notesTableView.setSelected(note: restore)
+                        self.vcDelegate.preSearchNote = nil
+                    }
+                    return
+                }
+                // Search turned off with no snapshot → clear snapshot slot and
+                // leave current selection alone.
+                if searchJustTurnedOff {
+                    self.vcDelegate.preSearchNote = nil
+                    return
+                }
+
                 if let note = self.vcDelegate.notesTableView.getNoteList().first {
                     DispatchQueue.main.async() {
                         if let searchQuery = self.getSearchTextExceptCompletion() {
@@ -256,12 +286,14 @@ class SearchTextField: NSSearchField, NSSearchFieldDelegate {
 
                             let search = searchQuery.lowercased()
                             if note.title.lowercased() == search || UserDefaultsManagement.textMatchAutoSelection {
+                                self.vcDelegate.isProgrammaticSearchSelection = true
                                 self.vcDelegate.notesTableView.setSelected(note: note)
                                 self.stringValue = searchQuery
                                 return
                             } else if !self.skipAutocomplete && (note.title.lowercased().starts(with: search)
                                 || note.fileName.lowercased().starts(with: search))
                             {
+                                self.vcDelegate.isProgrammaticSearchSelection = true
                                 self.vcDelegate.notesTableView.setSelected(note: note)
                                 self.suggestAutocomplete(note, filter: searchQuery)
                                 return

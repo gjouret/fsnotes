@@ -35,6 +35,12 @@
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="KF2-I2-ZON"/>
+                                        <menuItem title="Delete Orphaned Attachments..." identifier="fsnotes.deleteOrphanedAttachments" id="ORF-AN-DEL1">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="deleteOrphanedAttachments:" target="L4m-js-agn" id="ORF-AN-ACT1"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem image="trash" catalog="system" identifier="fsnotes.emptyBin" id="G9H-Lg-TXE">
                                             <string key="keyEquivalent" base64-UTF8="YES">
 CA
@@ -657,10 +663,16 @@ CA
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="iip-ri-cBa"/>
-                                        <menuItem title="Toggle Fold" keyEquivalent="'" id="fld-tg-001">
-                                            <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                                        <menuItem title="Fold" keyEquivalent="&#xF702;" id="fld-fd-001">
+                                            <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                             <connections>
-                                                <action selector="toggleFold:" target="L4m-js-agn" id="fld-tg-act"/>
+                                                <action selector="foldCurrentHeader:" target="L4m-js-agn" id="fld-fd-act"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Unfold" keyEquivalent="&#xF703;" id="fld-uf-001">
+                                            <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="unfoldCurrentHeader:" target="L4m-js-agn" id="fld-uf-act"/>
                                             </connections>
                                         </menuItem>
                                         <menuItem title="Fold All Headers" id="fld-al-001">

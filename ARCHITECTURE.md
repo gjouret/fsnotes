@@ -52,7 +52,7 @@ For unordered lists: hides `-` with clear color (NO negative kern — preserves 
 
 Sets block-type-specific paragraph styles:
 - **Headings**: Progressive spacing (H1: 0.67em, H2: 16px, etc.)
-- **Lists**: `headIndent` = 2em, `firstLineHeadIndent` = headIndent - markerWidth, `lineSpacing` = 7
+- **Lists (tabs-as-metadata model)**: `firstLineHeadIndent` = slotWidth (constant), `headIndent` = slotWidth + depth*listStep, per-depth `NSTextTab` stops at slotWidth + i*listStep. Leading tab chars advance the pen through the tab stops; wrapped lines align at `headIndent`. Marker glyph is drawn by LayoutManager into the slot to the left of the text, not rendered as text.
 - **Todo items**: Same indent pattern as lists, measures checkbox attachment width
 - **Empty blocks**: Explicit body paragraph style (prevents inheritance from headings/lists)
 - **Paragraphs**: `paragraphSpacing` = 12

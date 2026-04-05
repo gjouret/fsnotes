@@ -98,8 +98,12 @@ extension ViewController {
     @IBAction func prevHistory(_ sender: NSMenuItem) { navigateBack(sender) }
     @IBAction func nextHistory(_ sender: NSMenuItem) { navigateForward(sender) }
 
-    @IBAction func toggleFold(_ sender: Any) {
-        editor.toggleFoldAtCursor()
+    @IBAction func foldCurrentHeader(_ sender: Any) {
+        ViewController.shared()?.editor?.foldAtCursor()
+    }
+
+    @IBAction func unfoldCurrentHeader(_ sender: Any) {
+        ViewController.shared()?.editor?.unfoldAtCursor()
     }
 
     @IBAction func foldAllHeaders(_ sender: Any) {

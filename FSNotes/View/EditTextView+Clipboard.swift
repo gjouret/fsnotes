@@ -116,6 +116,31 @@ extension EditTextView {
             return
         }
 
+        // TSV (tab-separated) from Excel/Numbers → markdown table
+        // Must run BEFORE PDF/image checks: Excel/Numbers put PDF+PNG+TSV+HTML on the
+        // clipboard simultaneously. Prefer tabular data so pasted cells round-trip as tables.
+        let tsvType = NSPasteboard.PasteboardType(rawValue: "public.utf8-tab-separated-values-text")
+        if let tsvData = NSPasteboard.general.data(forType: tsvType),
+           let tsv = String(data: tsvData, encoding: .utf8),
+           let markdown = Self.tsvToMarkdownTable(tsv) {
+            breakUndoCoalescing()
+            insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
+            breakUndoCoalescing()
+            if NotesTextProcessor.hideSyntax { renderTables() }
+            return
+        }
+
+        // HTML with <table> → markdown table (also before PDF/image for same reason)
+        if let htmlData = NSPasteboard.general.data(forType: .html),
+           let html = String(data: htmlData, encoding: .utf8),
+           let markdown = Self.htmlTableToMarkdown(html) {
+            breakUndoCoalescing()
+            insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
+            breakUndoCoalescing()
+            if NotesTextProcessor.hideSyntax { renderTables() }
+            return
+        }
+
         if let pdfData = NSPasteboard.general.data(forType: .pdf)
             ?? NSPasteboard.general.data(forType: NSPasteboard.PasteboardType(rawValue: "com.adobe.pdf")),
            pdfData.isPDF {
@@ -221,6 +246,99 @@ extension EditTextView {
                 }
             }
         }
+    }
+
+    // MARK: - Table Paste Helpers
+
+    /// Convert tab-separated text to a markdown table.
+    static func tsvToMarkdownTable(_ tsv: String) -> String? {
+        let lines = tsv.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard lines.count >= 1 else { return nil }
+
+        let rows = lines.map { $0.components(separatedBy: "\t") }
+        let colCount = rows.map(\.count).max() ?? 0
+        guard colCount >= 1 else { return nil }
+
+        // Pad rows to uniform column count
+        let padded = rows.map { row -> [String] in
+            row + Array(repeating: "", count: max(0, colCount - row.count))
+        }
+
+        var result = ""
+        // Header row
+        result += "| " + padded[0].joined(separator: " | ") + " |\n"
+        // Separator
+        result += "| " + Array(repeating: "---", count: colCount).joined(separator: " | ") + " |\n"
+        // Data rows
+        for row in padded.dropFirst() {
+            result += "| " + row.joined(separator: " | ") + " |\n"
+        }
+        return result
+    }
+
+    /// Extract the first <table> from HTML and convert to markdown table.
+    static func htmlTableToMarkdown(_ html: String) -> String? {
+        guard let tableStart = html.range(of: "<table", options: .caseInsensitive),
+              let tableEnd = html.range(of: "</table>", options: .caseInsensitive, range: tableStart.lowerBound..<html.endIndex) else {
+            return nil
+        }
+
+        let tableHTML = String(html[tableStart.lowerBound..<tableEnd.upperBound])
+
+        // Extract rows
+        var rows: [[String]] = []
+        var searchRange = tableHTML.startIndex..<tableHTML.endIndex
+
+        while let trStart = tableHTML.range(of: "<tr", options: .caseInsensitive, range: searchRange),
+              let trEnd = tableHTML.range(of: "</tr>", options: .caseInsensitive, range: trStart.lowerBound..<tableHTML.endIndex) {
+            let rowHTML = String(tableHTML[trStart.lowerBound..<trEnd.upperBound])
+            let cells = Self.extractHTMLCells(from: rowHTML)
+            if !cells.isEmpty {
+                rows.append(cells)
+            }
+            searchRange = trEnd.upperBound..<tableHTML.endIndex
+        }
+
+        guard rows.count >= 1 else { return nil }
+        let colCount = rows.map(\.count).max() ?? 0
+        guard colCount >= 1 else { return nil }
+
+        let padded = rows.map { row -> [String] in
+            row + Array(repeating: "", count: max(0, colCount - row.count))
+        }
+
+        var result = ""
+        result += "| " + padded[0].joined(separator: " | ") + " |\n"
+        result += "| " + Array(repeating: "---", count: colCount).joined(separator: " | ") + " |\n"
+        for row in padded.dropFirst() {
+            result += "| " + row.joined(separator: " | ") + " |\n"
+        }
+        return result
+    }
+
+    /// Extract cell text from a <tr> element (handles both <th> and <td>).
+    private static func extractHTMLCells(from rowHTML: String) -> [String] {
+        var cells: [String] = []
+        let pattern = try! NSRegularExpression(pattern: "<t[hd][^>]*>(.*?)</t[hd]>", options: [.caseInsensitive, .dotMatchesLineSeparators])
+        let matches = pattern.matches(in: rowHTML, range: NSRange(rowHTML.startIndex..., in: rowHTML))
+        for match in matches {
+            if let range = Range(match.range(at: 1), in: rowHTML) {
+                let cellHTML = String(rowHTML[range])
+                // Strip remaining HTML tags and decode basic entities
+                let stripped = cellHTML
+                    .replacingOccurrences(of: "<br\\s*/?>", with: " ", options: .regularExpression)
+                    .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                    .replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&lt;", with: "<")
+                    .replacingOccurrences(of: "&gt;", with: ">")
+                    .replacingOccurrences(of: "&quot;", with: "\"")
+                    .replacingOccurrences(of: "&#39;", with: "'")
+                    .replacingOccurrences(of: "&nbsp;", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                cells.append(stripped)
+            }
+        }
+        return cells
     }
 
     func deleteUnusedImages(checkRange: NSRange) {

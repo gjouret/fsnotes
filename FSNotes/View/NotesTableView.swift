@@ -257,7 +257,17 @@ class NotesTableView: NSTableView,
                 vc.editor.clear()
                 return
             }
-            
+
+            // FSM: if the user explicitly changed selection while search is
+            // active (i.e. this change was NOT one of search()'s own
+            // programmatic setSelected calls), forget the pre-search note —
+            // the user made a deliberate choice.
+            let wasProgrammatic = vc.isProgrammaticSearchSelection
+            vc.isProgrammaticSearchSelection = false
+            if vc.searchWasActive && !wasProgrammatic {
+                vc.preSearchNote = nil
+            }
+
             // Persist the current editor snapshot before switching notes.
             // This routes through the explicit save boundary that materializes
             // any live rendered table widgets into attachment attributes first.

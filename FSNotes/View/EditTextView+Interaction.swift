@@ -115,6 +115,14 @@ extension EditTextView {
         gutterController.toggleFoldAtCursor()
     }
 
+    @objc public func foldAtCursor() {
+        gutterController.foldAtCursor()
+    }
+
+    @objc public func unfoldAtCursor() {
+        gutterController.unfoldAtCursor()
+    }
+
     @objc public func foldAllHeaders() {
         gutterController.foldAllHeaders()
     }

@@ -67,6 +67,9 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         case none, column, row
     }
 
+    private var copyButton: GlassButton?
+    private var copiedFeedbackTimer: Timer?
+
     // MARK: - Resize State
 
     private var isResizing = false
@@ -92,13 +95,9 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Computed Layout
 
-    /// Margins based on current focus state.
-    private var currentLeftMargin: CGFloat {
-        (focusState == .hovered || focusState == .editing) ? handleBarWidth : 0
-    }
-    private var currentTopMargin: CGFloat {
-        (focusState == .hovered || focusState == .editing) ? handleBarHeight : 0
-    }
+    /// Margins are always reserved so handles don't cause layout shift on hover.
+    private var currentLeftMargin: CGFloat { handleBarWidth }
+    private var currentTopMargin: CGFloat { handleBarHeight }
 
     /// Inset a column/row rect to produce the cell frame.
     func cellFrame(from rect: NSRect) -> NSRect {
@@ -111,7 +110,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     /// Compute all frame geometry from current data. Every layout path calls this.
     func computeLayout() -> TableLayout {
         let colWidths = contentBasedColumnWidths()
-        let rHeights = rowHeights()
+        let rHeights = rowHeights(colWidths: colWidths)
         let leftMargin = currentLeftMargin
         let topMargin = currentTopMargin
         let gridWidth = colWidths.reduce(0, +)
@@ -309,29 +308,56 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     /// Compute the height for each row based on multi-line content (<br> tags).
     /// Row 0 = header, rows 1..N = data rows.
-    func rowHeights() -> [CGFloat] {
+    func rowHeights(colWidths: [CGFloat]? = nil) -> [CGFloat] {
         let colCount = headers.count
         guard colCount > 0 else { return [] }
 
-        // Header row
+        let font = NSFont.systemFont(ofSize: 13)
+        let boldFont = NSFont.boldSystemFont(ofSize: 13)
+        let cellPad = cellPaddingH * 2
+
         var heights: [CGFloat] = []
-        var maxLines = 1
-        for h in headers {
-            let lines = h.components(separatedBy: "<br>").count
-            maxLines = max(maxLines, lines)
+
+        // Header row
+        var maxH: CGFloat = minCellHeight
+        for col in 0..<colCount {
+            let text = headers[col].replacingOccurrences(of: "<br>", with: "\n")
+            let cw = (colWidths != nil && col < colWidths!.count) ? colWidths![col] : nil
+            let h = wrappedTextHeight(text, font: boldFont, colWidth: cw, cellPad: cellPad)
+            maxH = max(maxH, h)
         }
-        heights.append(max(minCellHeight, CGFloat(maxLines) * lineHeight + 11))
+        heights.append(maxH)
 
         // Data rows
         for row in rows {
-            maxLines = 1
+            maxH = minCellHeight
             for col in 0..<min(colCount, row.count) {
-                let lines = row[col].components(separatedBy: "<br>").count
-                maxLines = max(maxLines, lines)
+                let text = row[col].replacingOccurrences(of: "<br>", with: "\n")
+                let cw = (colWidths != nil && col < colWidths!.count) ? colWidths![col] : nil
+                let h = wrappedTextHeight(text, font: font, colWidth: cw, cellPad: cellPad)
+                maxH = max(maxH, h)
             }
-            heights.append(max(minCellHeight, CGFloat(maxLines) * lineHeight + 11))
+            heights.append(maxH)
         }
         return heights
+    }
+
+    /// Calculate the height needed for text in a constrained column width.
+    private func wrappedTextHeight(_ text: String, font: NSFont, colWidth: CGFloat?, cellPad: CGFloat) -> CGFloat {
+        guard let colWidth = colWidth else {
+            // Fallback: count lines manually
+            let lineCount = max(1, text.components(separatedBy: "\n").count)
+            return max(minCellHeight, CGFloat(lineCount) * lineHeight + 11)
+        }
+
+        let availableWidth = max(1, colWidth - cellPad)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let boundingRect = (text as NSString).boundingRect(
+            with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attrs
+        )
+        return max(minCellHeight, ceil(boundingRect.height) + cellPaddingTop + cellPaddingBot + 5)
     }
 
     /// Total grid height from row heights.
@@ -360,6 +386,31 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 }
             }
         }
+
+        // Auto-wrap: if total width exceeds available space, shrink wide columns
+        let availableWidth = containerWidth - currentLeftMargin - focusRingPadding
+        let totalWidth = widths.reduce(0, +)
+        if totalWidth > availableWidth && availableWidth > 0 {
+            let fairShare = availableWidth / CGFloat(colCount)
+            // Identify which columns are "wide" (above fair share)
+            var fixedWidth: CGFloat = 0
+            var flexCount: CGFloat = 0
+            for w in widths {
+                if w <= fairShare {
+                    fixedWidth += w
+                } else {
+                    flexCount += 1
+                }
+            }
+            let flexBudget = max(minColumnWidth * flexCount, availableWidth - fixedWidth)
+            let perFlex = flexBudget / max(1, flexCount)
+            for i in 0..<colCount {
+                if widths[i] > fairShare {
+                    widths[i] = max(minColumnWidth, perFlex)
+                }
+            }
+        }
+
         return widths
     }
 
@@ -454,6 +505,10 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             buildRowHandles(rowCount: L.totalRows, leftMargin: L.leftMargin, gridHeight: L.gridHeight, topMargin: L.topMargin, rowHeights: L.rHeights)
         }
 
+        // Copy button moved to gutter — see GutterController.drawIcons().
+        copyButton?.removeFromSuperview()
+        copyButton = nil
+
         gridDocumentView.needsDisplay = true
         invalidateIntrinsicContentSize()
     }
@@ -503,6 +558,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         cell.tag = row * 1000 + col
         // Support multi-line cells (Return inserts newline, stored as <br> in markdown)
         cell.maximumNumberOfLines = 0
+        cell.lineBreakMode = .byWordWrapping
         cell.cell?.wraps = true
         cell.cell?.isScrollable = false
     }
@@ -1130,6 +1186,29 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
     }
 
+    // MARK: - Copy as TSV
+
+    private func copyTableAsTSV() {
+        collectCellData()
+        var lines: [String] = []
+        lines.append(headers.joined(separator: "\t"))
+        for row in rows {
+            lines.append(row.joined(separator: "\t"))
+        }
+        let tsv = lines.joined(separator: "\n")
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(tsv, forType: .string)
+        NSPasteboard.general.setString(tsv, forType: NSPasteboard.PasteboardType(rawValue: "public.utf8-tab-separated-values-text"))
+
+        // Show "Copied" feedback
+        copyButton?.setSymbol("\u{2713}") // ✓
+        copiedFeedbackTimer?.invalidate()
+        copiedFeedbackTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+            self?.copyButton?.setSymbol("\u{2398}") // ⎘
+        }
+    }
+
     // MARK: - Focus State Transition
 
     private func transitionFocusState(from: TableFocusState, to: TableFocusState) {
@@ -1137,15 +1216,13 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let wasShowingHandles = (from == .hovered || from == .editing)
 
         if showHandles != wasShowingHandles {
-            // Rebuild creates new handle views — set alpha AFTER rebuild
+            // Rebuild creates new handle views — set alpha AFTER rebuild.
+            // Margins are always reserved, so no invalidateAttachmentLayout() needed —
+            // the attachment size doesn't change on hover.
             rebuild()
             let targetAlpha: CGFloat = showHandles ? 1.0 : 0.0
             for h in columnHandles { h.alphaValue = targetAlpha; h.isHidden = !showHandles }
             for h in rowHandles { h.alphaValue = targetAlpha; h.isHidden = !showHandles }
-
-            // Notify NSTextView's layout manager that this attachment's size changed.
-            // Without this, NSTextView caches the old size and the "phantom row" persists.
-            invalidateAttachmentLayout()
         } else {
             // Just update cell editability
             let isEditing = (to == .editing)
@@ -1282,14 +1359,37 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private func drawGridLines(in context: CGContext) {
         let L = computeLayout()
 
-        context.setStrokeColor(NSColor.separatorColor.cgColor)
+        // Draw backgrounds FIRST so grid lines paint on top (otherwise the translucent
+        // header/row fills dilute the line color and the header lines look fainter).
+        let headerRect = NSRect(x: L.leftMargin, y: L.gridHeight - L.headerHeight, width: L.gridWidth, height: L.headerHeight)
+        NSColor(calibratedWhite: 0.85, alpha: 1.0).setFill()
+        NSBezierPath(rect: headerRect).fill()
+
+        var rowY = L.gridHeight - L.headerHeight
+        for row in 0..<L.rowCount {
+            let rowH = L.dataRowHeight(row)
+            rowY -= rowH
+            if row % 2 == 0 {
+                NSColor(calibratedWhite: 0.95, alpha: 1.0).setFill()
+                NSBezierPath(rect: NSRect(x: L.leftMargin, y: rowY, width: L.gridWidth, height: rowH)).fill()
+            }
+        }
+
+        context.setStrokeColor(NSColor(calibratedWhite: 0.4, alpha: 1.0).cgColor)
         context.setLineWidth(gridLineWidth)
+
+        // Strokes are centered on the path, so a line at y=0 or y=gridHeight has half its
+        // stroke outside the view bounds (clipped). Inset boundary lines by half line width.
+        let half = gridLineWidth / 2
 
         // Horizontal lines
         var lineY: CGFloat = 0
         for i in 0...L.totalRows {
-            context.move(to: CGPoint(x: L.leftMargin, y: lineY))
-            context.addLine(to: CGPoint(x: L.leftMargin + L.gridWidth, y: lineY))
+            var y = lineY
+            if i == 0 { y = half }
+            if i == L.totalRows { y = L.gridHeight - half }
+            context.move(to: CGPoint(x: L.leftMargin, y: y))
+            context.addLine(to: CGPoint(x: L.leftMargin + L.gridWidth, y: y))
             if i < L.rHeights.count {
                 lineY += L.rHeights[L.rHeights.count - 1 - i]
             }
@@ -1298,27 +1398,14 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         // Vertical lines
         var xOffset = L.leftMargin
         for i in 0...L.colCount {
-            context.move(to: CGPoint(x: xOffset, y: 0))
-            context.addLine(to: CGPoint(x: xOffset, y: L.gridHeight))
+            var x = xOffset
+            if i == 0 { x = L.leftMargin + half }
+            if i == L.colCount { x = L.leftMargin + L.gridWidth - half }
+            context.move(to: CGPoint(x: x, y: 0))
+            context.addLine(to: CGPoint(x: x, y: L.gridHeight))
             if i < L.colCount { xOffset += L.colWidths[i] }
         }
         context.strokePath()
-
-        // Header background
-        let headerRect = NSRect(x: L.leftMargin, y: L.gridHeight - L.headerHeight, width: L.gridWidth, height: L.headerHeight)
-        NSColor.controlBackgroundColor.withAlphaComponent(0.5).setFill()
-        NSBezierPath(rect: headerRect).fill()
-
-        // Alternating row backgrounds
-        var rowY = L.gridHeight - L.headerHeight
-        for row in 0..<L.rowCount {
-            let rowH = L.dataRowHeight(row)
-            rowY -= rowH
-            if row % 2 == 1 {
-                NSColor.controlBackgroundColor.withAlphaComponent(0.25).setFill()
-                NSBezierPath(rect: NSRect(x: L.leftMargin, y: rowY, width: L.gridWidth, height: rowH)).fill()
-            }
-        }
     }
 
     // MARK: - Intrinsic Size
@@ -1377,7 +1464,7 @@ class GlassHandleView: NSVisualEffectView {
         blendingMode = .withinWindow
         state = .active
         wantsLayer = true
-        layer?.cornerRadius = 4
+        layer?.cornerRadius = 8
         layer?.masksToBounds = true
         layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.15).cgColor
 
@@ -1465,6 +1552,10 @@ class GlassButton: NSVisualEffectView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func setSymbol(_ symbol: String) {
+        label.stringValue = symbol
     }
 
     override func mouseDown(with event: NSEvent) {
