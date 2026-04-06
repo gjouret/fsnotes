@@ -321,7 +321,7 @@ class AIChatPanelView: NSView {
         let fullRange = NSRange(location: 0, length: editor.textStorage?.length ?? 0)
         editor.insertText(textToInsert, replacementRange: fullRange)
 
-        _ = note.save(content: NSMutableAttributedString(attributedString: editor.attributedString()))
+        editor.save()
     }
 
     private func scrollToBottom() {

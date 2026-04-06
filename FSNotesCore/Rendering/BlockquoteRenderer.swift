@@ -11,10 +11,8 @@
 //    CONSUMED by the parser and NEVER reach the rendered output.
 //  - Zero `.kern`. Zero clear-color foreground. Idempotent.
 //
-//  Tracer-bullet rendering: emit TWO spaces of visual indent per
-//  `>` level. A future LayoutManager phase will draw a vertical
-//  quote bar in the gutter; for the architecture tracer, the
-//  invariant is "source `>` markers never appear in rendered output".
+//  Rendering: emits TWO spaces of visual indent per `>` level.
+//  Source `>` markers never appear in rendered output.
 //
 
 import Foundation

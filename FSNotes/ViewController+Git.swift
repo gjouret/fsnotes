@@ -101,7 +101,13 @@ extension EditorViewController {
         note.checkout(commit: commit)
 
         _ = note.reload()
-        NotesTextProcessor.highlight(attributedString: note.content)
+
+        // Block-model path: refillEditArea (inside reloadAllOpenedWindows)
+        // re-renders from the Document model. Legacy highlight is only
+        // needed when the editor is in source mode.
+        if vc.editor.documentProjection == nil {
+            NotesTextProcessor.highlight(attributedString: note.content)
+        }
 
         reloadAllOpenedWindows(note: note)
         

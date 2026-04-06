@@ -276,7 +276,7 @@ class ArchitectureEnforcementTests: XCTestCase {
     }
 
     func test_parseAndRender_headingsProduceStorageWithoutHashMarkers() {
-        // Full tracer-bullet flow: parse markdown with headings, render
+        // Full pipeline: parse markdown with headings, render
         // each heading block, verify NO `#` in the rendered output.
         let inputs = [
             "# Title\nbody\n",
@@ -455,8 +455,8 @@ class ArchitectureEnforcementTests: XCTestCase {
         ("flat_plus",          "+ x\n+ y\n",                        "• x\n• y"),
         ("ordered_dot",        "1. first\n2. second\n",             "1. first\n2. second"),
         ("ordered_paren",      "1) one\n2) two\n",                  "1) one\n2) two"),
-        ("nested_two_deep",    "- a\n  - b\n  - c\n- d\n",          "• a\n  • b\n  • c\n• d"),
-        ("nested_three_deep",  "- a\n  - b\n    - c\n- d\n",        "• a\n  • b\n    • c\n• d"),
+        ("nested_two_deep",    "- a\n  - b\n  - c\n- d\n",          "• a\n  ◦ b\n  ◦ c\n• d"),
+        ("nested_three_deep",  "- a\n  - b\n    - c\n- d\n",        "• a\n  ◦ b\n    ▪ c\n• d"),
         ("ordered_in_unord",   "- a\n  1. one\n  2. two\n",         "• a\n  1. one\n  2. two"),
         ("bold_in_item",       "- this is **bold** text\n",         "• this is bold text"),
         ("code_in_item",       "- call `foo()` here\n",             "• call foo() here"),
@@ -694,7 +694,7 @@ class ArchitectureEnforcementTests: XCTestCase {
     // MARK: - Integration: parse -> render produces clean storage
 
     func test_parseAndRender_producesStorageWithoutMarkdownMarkers() {
-        // Full tracer-bullet flow: parse markdown, render only the code-block
+        // Full pipeline: parse markdown, render only the code-block
         // payloads, verify NO fence characters in the rendered output.
         let inputs = [
             "```python\nprint(1)\n```\n",

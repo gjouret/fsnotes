@@ -8,8 +8,7 @@
 //
 //  The pipeline (WYSIWYG → markdown for disk):
 //    1. restoreRenderedBlocks — rendered block attachments → original markdown
-//    2. unloadTasks — checkbox serialization pass
-//    3. unloadImagesAndFiles — image/file attachments → ![](path)
+//    2. unloadImagesAndFiles — image/file attachments → ![](path)
 //
 //  Each step is idempotent and order-independent within the chain.
 //
@@ -30,7 +29,6 @@ public enum NoteSerializer {
     public static func prepareForSave(_ content: NSMutableAttributedString) -> NSMutableAttributedString {
         let prepared = NSMutableAttributedString(attributedString: content)
         _ = prepared.restoreRenderedBlocks()
-        _ = prepared.unloadTasks()
         return prepared.unloadImagesAndFiles()
     }
 }

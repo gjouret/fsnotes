@@ -502,89 +502,28 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         NotesTextProcessor.hideSyntax = !isWYSIWYG
         UserDefaultsManagement.wysiwygMode = NotesTextProcessor.hideSyntax
 
-        // When switching to source mode, restore all rendered block attachments
-        // (mermaid/math/tables) back to their original markdown source.
-        // Suppress process() during bulk restoration — the incremental updater
-        // can't handle multiple attachment→markdown replacements in sequence
-        // (each intermediate state has attachment chars that corrupt the parser).
-        // One clean full parse after all restorations is correct and efficient.
-        if !NotesTextProcessor.hideSyntax {
-            let processor = editor.textStorageProcessor
-            // Batch all replacements into one editing session so textDidChange
-            // fires once (not per-replacement), preventing intermediate saves.
-            processor?.isRendering = true
-            storage.beginEditing()
-            storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: NSRange(location: 0, length: storage.length), options: .reverse) { value, range, _ in
-                if let originalMarkdown = value as? String {
-                    let leftStyle = NSMutableParagraphStyle()
-                    leftStyle.alignment = .left
-                    let attrs: [NSAttributedString.Key: Any] = [
-                        .font: UserDefaultsManagement.noteFont,
-                        .paragraphStyle: leftStyle
-                    ]
-                    let restored = NSAttributedString(string: originalMarkdown, attributes: attrs)
-                    storage.replaceCharacters(in: range, with: restored)
-                }
-            }
-            storage.endEditing()
-            processor?.isRendering = false
-            // Single clean parse of the fully restored document
-            if var blocks = processor?.blocks {
-                MarkdownBlockParser.parsePreservingRendered(&blocks, string: storage.string as NSString)
-                processor?.blocks = blocks
-            }
-        }
+        // Save the current note before switching modes so no content is lost.
+        editor.save()
 
-        // Re-highlight the entire document with fresh code block ranges
-        let fullRange = NSRange(location: 0, length: storage.length)
-        if fullRange.length > 0 {
-            let codeBlockRanges = editor.textStorageProcessor?.codeBlockRanges
-            storage.beginEditing()
-            NotesTextProcessor.highlightMarkdown(
-                attributedString: storage,
-                paragraphRange: fullRange,
-                codeBlockRanges: codeBlockRanges
-            )
+        // Clear block-model state — fill() will re-activate it if switching
+        // to WYSIWYG mode, or leave it cleared for source mode.
+        editor.documentProjection = nil
+        editor.textStorageProcessor?.blockModelActive = false
 
-            // Also apply code block syntax coloring (highlightMarkdown doesn't do this —
-            // it's normally handled by TextStorageProcessor.process() via getHighlighter)
-            if let codeRanges = codeBlockRanges {
-                for range in codeRanges {
-                    NotesTextProcessor.getHighlighter().highlight(in: storage, fullRange: range)
-                }
-            }
-
-            storage.endEditing()
-
-            // CRITICAL: process() skips Phase 4/5 for attribute-only changes
-            // (guard editedMask != .editedAttributes). Since highlightMarkdown only
-            // changes attributes, we must explicitly run Phase 4 (syntax hiding)
-            // and Phase 5 (paragraph styles) here.
-            if let processor = editor.textStorageProcessor {
-                if !processor.blocks.isEmpty {
-                    processor.phase4_hideSyntax(textStorage: storage, range: fullRange)
-                    processor.phase5_paragraphStyles(textStorage: storage, range: fullRange)
-                } else {
-                    storage.updateParagraphStyle(range: fullRange)
-                }
-            } else {
-                storage.updateParagraphStyle(range: fullRange)
-            }
-        }
-
-        // When switching to WYSIWYG mode, render any mermaid/math blocks and tables
-        if NotesTextProcessor.hideSyntax,
-           let processor = editor.textStorageProcessor {
-            let codeRanges = processor.codeBlockRanges
-            if !codeRanges.isEmpty {
-                processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
-            }
-            editor.renderTables()
-        }
-
-        // When switching to source mode, remove inline table views
+        // When switching to source mode, remove inline table views.
         if !NotesTextProcessor.hideSyntax {
             editor.removeAllInlineTableViews()
+        }
+
+        // Re-fill the note from disk content. This is the single path for
+        // both directions:
+        //   → WYSIWYG: fill() calls fillViaBlockModel(), which parses
+        //     markdown → Document → rendered attributed string. No legacy
+        //     highlighting, phase4, or phase5 needed.
+        //   → Source: fill() sets textStorage to raw markdown content.
+        //     The legacy process() pipeline handles syntax coloring.
+        if let note = editor.note {
+            editor.fill(note: note)
         }
 
         // Show/hide formatting toolbar
@@ -842,6 +781,11 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 try? FileManager.default.copyItem(at: src, to: dst)
                 
                 continue
+            }
+
+            // Ensure note.content reflects unsaved block-model edits.
+            if let editor = vcEditor {
+                editor.save()
             }
 
             let name = dst.deletingPathExtension().lastPathComponent
@@ -1490,7 +1434,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             note.isBlocked = true
 
             editor.textStorage?.removeHighlight()
-            note.save(attributed: editor.attributedStringForSaving())
+            editor.save()
 
             updateLastEditedStatus()
             vc.reSort(note: note)

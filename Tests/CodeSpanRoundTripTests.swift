@@ -85,7 +85,7 @@ class CodeSpanRoundTripTests: XCTestCase {
     }
 
     func test_roundTrip_doubleBacktick_notCodeSpan() {
-        // Double-backtick spans are out of tracer-bullet scope — must
+        // Double-backtick spans are not yet supported — must
         // round-trip verbatim as literal backticks.
         assertRoundTrip("``code``\n")
     }

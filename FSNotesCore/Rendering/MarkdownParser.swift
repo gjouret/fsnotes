@@ -11,11 +11,9 @@
 //  - Round-trip: MarkdownSerializer.serialize(parse(x)) == x, byte-equal,
 //    for every valid markdown input.
 //
-//  TRACER-BULLET SCOPE: fenced code blocks, ATX headings, blank lines,
-//  and paragraphs with inline bold/italic emphasis (asterisk markers).
-//  Other constructs (lists, blockquotes, tables, links, images,
-//  inline code, underscore emphasis, etc.) are left as plain text
-//  inside paragraphs and will be added in later phases.
+//  Supported constructs: fenced code blocks, ATX headings, blank lines,
+//  paragraphs with inline bold/italic/code emphasis, lists (unordered +
+//  ordered with nesting), blockquotes, horizontal rules.
 //
 
 import Foundation
@@ -184,7 +182,7 @@ public enum MarkdownParser {
     /// Detect whether `line` opens a fenced code block. Returns the Fence
     /// descriptor if so, nil otherwise.
     ///
-    /// Tracer-bullet rule: a fence-open is a line that starts with >= 3
+    /// Rule: a fence-open is a line that starts with >= 3
     /// backticks or >= 3 tildes, optionally followed by an info string.
     /// Indented fences are NOT matched (we only handle unindented for now).
     private static func detectFenceOpen(_ line: String) -> Fence? {
@@ -256,7 +254,7 @@ public enum MarkdownParser {
 
     // MARK: - Inline tokenizer
 
-    /// Parse inline content from a paragraph's raw text. Tracer-bullet
+    /// Parse inline content from a paragraph's raw text. Standard
     /// scope: consumes `**…**` (bold) and `*…*` (italic) markers. All
     /// other characters (including `_`, `` ` ``, `[…](…)`) are treated
     /// as plain text and round-trip verbatim.
@@ -295,6 +293,14 @@ public enum MarkdownParser {
                 i = match.endIndex
                 continue
             }
+            // Try `~~…~~` (strikethrough) before bold — both use double
+            // markers but different characters.
+            if let match = tryMatchStrikethrough(chars, from: i) {
+                flushPlain()
+                result.append(.strikethrough(parseInlines(match.inner)))
+                i = match.endIndex
+                continue
+            }
             // Try `**…**` (bold) — double marker takes precedence over `*`.
             if let match = tryMatchEmphasis(chars, from: i, markerLength: 2) {
                 flushPlain()
@@ -316,7 +322,7 @@ public enum MarkdownParser {
         return result
     }
 
-    /// Try to match a code span starting at `start`. Tracer-bullet rule:
+    /// Try to match a code span starting at `start`. Rule:
     /// a single `` ` `` opens the span; the next single `` ` `` closes
     /// it; the inner content contains no backticks. Byte-equal round-trip
     /// is preserved by NOT stripping leading/trailing whitespace (unlike
@@ -329,7 +335,7 @@ public enum MarkdownParser {
         _ chars: [Character], from start: Int
     ) -> (inner: String, endIndex: Int)? {
         guard start < chars.count, chars[start] == "`" else { return nil }
-        // Reject multi-backtick runs (out of tracer-bullet scope).
+        // Reject multi-backtick runs (not yet supported).
         if start + 1 < chars.count, chars[start + 1] == "`" { return nil }
         // Scan for the next single backtick.
         var j = start + 1
@@ -415,13 +421,50 @@ public enum MarkdownParser {
         return nil
     }
 
+    /// Try to match a strikethrough span `~~…~~` starting at `start`.
+    private static func tryMatchStrikethrough(
+        _ chars: [Character], from start: Int
+    ) -> (inner: String, endIndex: Int)? {
+        // Need at least `~~X~~` = 5 characters.
+        guard start + 4 < chars.count,
+              chars[start] == "~", chars[start + 1] == "~" else { return nil }
+        // Reject triple-tilde (not strikethrough).
+        if start + 2 < chars.count, chars[start + 2] == "~" { return nil }
+        // Flanking: char after `~~` must not be whitespace.
+        let afterOpen = chars[start + 2]
+        if afterOpen == " " || afterOpen == "\t" || afterOpen == "\n" {
+            return nil
+        }
+        // Scan for closing `~~`.
+        var j = start + 2
+        while j + 1 < chars.count {
+            if chars[j] == "~" && chars[j + 1] == "~" {
+                // Not part of a longer tilde run.
+                if j + 2 < chars.count, chars[j + 2] == "~" {
+                    j += 1
+                    continue
+                }
+                // Char before close must not be whitespace.
+                let beforeClose = chars[j - 1]
+                if beforeClose == " " || beforeClose == "\t" || beforeClose == "\n" {
+                    j += 1
+                    continue
+                }
+                let inner = String(chars[(start + 2)..<j])
+                return (inner, j + 2)
+            }
+            j += 1
+        }
+        return nil
+    }
+
     // MARK: - Blockquote detection
 
     /// Detect whether `line` starts with a blockquote marker. The
     /// prefix is captured VERBATIM (needed for byte-equal round-trip)
     /// and the content is the remainder of the line.
     ///
-    /// Tracer-bullet rule: the prefix is a run of one or more `>`,
+    /// Rule: the prefix is a run of one or more `>`,
     /// each optionally followed by a single space or tab (to permit
     /// styles like "> ", ">> ", "> > ", ">"). Leading whitespace
     /// before the first `>` is NOT allowed.
@@ -451,7 +494,7 @@ public enum MarkdownParser {
     // MARK: - Horizontal rule detection
 
     /// Detect whether `line` is a thematic break (horizontal rule).
-    /// Tracer-bullet rule: the line consists of EXACTLY a run of
+    /// Rule: the line consists of EXACTLY a run of
     /// three-or-more identical `-`, `_`, or `*` characters, with no
     /// intervening whitespace and no other characters. Returns the
     /// character and count (needed for byte-equal round-trip), or
@@ -475,15 +518,16 @@ public enum MarkdownParser {
 
     /// A single line parsed as a list item: split into leading
     /// indentation, the marker itself, the whitespace after the
-    /// marker, and the line's content.
+    /// marker, an optional checkbox, and the line's content.
     struct ParsedListLine {
         let indent: String        // leading whitespace (spaces/tabs)
         let marker: String        // "-", "*", "+", or "<digits>.", "<digits>)"
-        let afterMarker: String   // whitespace between marker and content
-        let content: String       // remainder of the line after afterMarker
+        let afterMarker: String   // whitespace between marker and content/checkbox
+        let checkbox: Checkbox?   // "[ ]", "[x]", "[X]" for todo items
+        let content: String       // remainder of the line after checkbox/afterMarker
     }
 
-    /// Detect whether `line` is a list item. Tracer-bullet rules:
+    /// Detect whether `line` is a list item. Rules:
     /// - Leading indentation: any run of spaces/tabs (may be empty).
     /// - Marker: `-`, `*`, `+`, or one-or-more digits followed by `.`
     ///   or `)`.
@@ -537,10 +581,46 @@ public enum MarkdownParser {
         // ("-" alone) — not a list item.
         if i == afterStart { return nil }
         let afterMarker = String(chars[afterStart..<i])
-        let content = String(chars[i..<chars.count])
+
+        // Detect checkbox: "[ ] ", "[x] ", "[X] " at the start of
+        // content. Only for unordered markers ("-", "*", "+").
+        let remaining = chars[i..<chars.count]
+        let checkbox: Checkbox?
+        let contentStart: Int
+        if (marker == "-" || marker == "*" || marker == "+"),
+           remaining.count >= 4,
+           chars[i] == "[",
+           (chars[i+1] == " " || chars[i+1] == "x" || chars[i+1] == "X"),
+           chars[i+2] == "]" {
+            let cbText = String(chars[i..<(i+3)])  // "[ ]", "[x]", "[X]"
+            // Consume whitespace after checkbox.
+            var afterCB = i + 3
+            let afterCBStart = afterCB
+            while afterCB < chars.count, chars[afterCB] == " " || chars[afterCB] == "\t" {
+                afterCB += 1
+            }
+            // Require at least one space after the checkbox.
+            if afterCB > afterCBStart {
+                checkbox = Checkbox(text: cbText, afterText: String(chars[afterCBStart..<afterCB]))
+                contentStart = afterCB
+            } else if afterCB == chars.count {
+                // Checkbox at end of line with no content (empty todo).
+                checkbox = Checkbox(text: cbText, afterText: "")
+                contentStart = afterCB
+            } else {
+                checkbox = nil
+                contentStart = i
+            }
+        } else {
+            checkbox = nil
+            contentStart = i
+        }
+
+        let content = String(chars[contentStart..<chars.count])
         return ParsedListLine(
             indent: indent, marker: marker,
-            afterMarker: afterMarker, content: content
+            afterMarker: afterMarker, checkbox: checkbox,
+            content: content
         )
     }
 
@@ -586,6 +666,7 @@ public enum MarkdownParser {
                 indent: cur.indent,
                 marker: cur.marker,
                 afterMarker: cur.afterMarker,
+                checkbox: cur.checkbox,
                 inline: inline,
                 children: children
             ))

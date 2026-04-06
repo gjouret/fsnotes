@@ -7,8 +7,7 @@
 //  ARCHITECTURAL CONTRACT:
 //  - Input: Document (block model).
 //  - Output: raw markdown string suitable for writing to a .md file.
-//  - Round-trip: serialize(parse(x)) == x, byte-equal, for every valid
-//    markdown input that the tracer-bullet parser structurally recognizes.
+//  - Round-trip: serialize(parse(x)) == x, byte-equal.
 //
 
 import Foundation
@@ -16,7 +15,7 @@ import Foundation
 public enum MarkdownSerializer {
 
     /// Serialize a Document to markdown text. Round-trips with
-    /// MarkdownParser.parse for inputs in the tracer-bullet scope.
+    /// MarkdownParser.parse: serialize(parse(x)) == x.
     public static func serialize(_ document: Document) -> String {
         // Each block serializes to a string with NO trailing newline.
         // We join with "\n" to insert the separator between blocks.
@@ -69,8 +68,14 @@ public enum MarkdownSerializer {
     /// marker + afterMarker + inline content. Children are emitted
     /// on subsequent lines, joined by "\n".
     private static func serializeItem(_ item: ListItem) -> String {
+        let cbPart: String
+        if let cb = item.checkbox {
+            cbPart = cb.text + cb.afterText
+        } else {
+            cbPart = ""
+        }
         let firstLine = item.indent + item.marker + item.afterMarker
-            + serializeInlines(item.inline)
+            + cbPart + serializeInlines(item.inline)
         if item.children.isEmpty { return firstLine }
         let childLines = item.children.map { serializeItem($0) }
             .joined(separator: "\n")
@@ -90,6 +95,8 @@ public enum MarkdownSerializer {
                 out += "**" + serializeInlines(children) + "**"
             case .italic(let children):
                 out += "*" + serializeInlines(children) + "*"
+            case .strikethrough(let children):
+                out += "~~" + serializeInlines(children) + "~~"
             case .code(let s):
                 out += "`" + s + "`"
             }

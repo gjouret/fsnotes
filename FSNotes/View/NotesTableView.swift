@@ -269,11 +269,9 @@ class NotesTableView: NSTableView,
             }
 
             // Persist the current editor snapshot before switching notes.
-            // This routes through the explicit save boundary that materializes
-            // any live rendered table widgets into attachment attributes first.
-            if let oldNote = vc.editor.note, oldNote.isMarkdown() {
-                oldNote.save(attributed: vc.editor.attributedStringForSaving())
-            }
+            // Routes through editor.save() which handles both block-model
+            // (serialize Document) and legacy (attributedStringForSaving) paths.
+            vc.editor.save()
 
             vc.editor.fill(note: note, highlight: true)
             vc.pushNoteHistory(note)

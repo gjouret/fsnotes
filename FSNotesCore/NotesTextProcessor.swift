@@ -1364,7 +1364,14 @@ public class NotesTextProcessor {
                 ?? UserDefaultsManagement.noteFont
             let charStr = nsString.substring(with: NSRange(location: charIndex, length: 1))
             let charWidth = (charStr as NSString).size(withAttributes: [.font: charFont]).width
-            attributedString.addAttribute(.kern, value: -charWidth, range: NSRange(location: charIndex, length: 1))
+            let singleCharRange = NSRange(location: charIndex, length: 1)
+            // Lock font+kern together: kern is sized against `charFont`, so the font
+            // must stay `charFont` for the collapse to work. If another stage later
+            // changes the font, the kern becomes mismatched and the glyph re-appears
+            // (as observed for code-fence backticks: one char was getting a larger
+            // font set elsewhere, widening its advance past the -kern value).
+            attributedString.addAttribute(.font, value: charFont, range: singleCharRange)
+            attributedString.addAttribute(.kern, value: -charWidth, range: singleCharRange)
         }
     }
 

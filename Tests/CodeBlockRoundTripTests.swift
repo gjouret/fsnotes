@@ -2,7 +2,7 @@
 //  CodeBlockRoundTripTests.swift
 //  FSNotesTests
 //
-//  Round-trip tests for the tracer-bullet parser + serializer:
+//  Round-trip tests for the parser + serializer:
 //      serialize(parse(markdown)) == markdown  (byte-equal)
 //
 //  This is the single most important test for the architecture migration.

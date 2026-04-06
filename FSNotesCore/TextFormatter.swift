@@ -1059,16 +1059,20 @@ public class TextFormatter {
         #endif
 
         setTypingAttributes(font: prefs.noteFont)
-        var text: NSAttributedString?
 
-        #if os(OSX)
-            text = textView.attributedString()
-        #else
-            text = textView.attributedText
-        #endif
-
-        if let attributed = text {
-            note.save(attributed: attributed)
+        // Route through EditorDelegate.save() which handles both
+        // block-model (serialize Document) and legacy (attribute-strip)
+        // save paths. Falls back to direct note.save for non-editor views.
+        if let editor = textView as? EditorDelegate {
+            editor.save()
+        } else {
+            #if os(OSX)
+                note.save(attributed: textView.attributedString())
+            #else
+                if let text = textView.attributedText {
+                    note.save(attributed: text)
+                }
+            #endif
         }
 
         #if os(iOS)
@@ -1210,7 +1214,7 @@ public class TextFormatter {
 
         let attributedString = getAttributedString().attributedSubstring(from: pRange)
         let mutable = NSMutableAttributedString(attributedString: attributedString)
-        let string = mutable.unloadTasks().string
+        let string = mutable.string
 
         guard string.isContainsLetters else {
             insertText("- ")
@@ -1267,7 +1271,7 @@ public class TextFormatter {
 
         let attributedString = getAttributedString().attributedSubstring(from: pRange)
         let mutable = NSMutableAttributedString(attributedString: attributedString)
-        let string = mutable.unloadTasks().string
+        let string = mutable.string
 
         guard string.isContainsLetters else {
             insertText("1. ")

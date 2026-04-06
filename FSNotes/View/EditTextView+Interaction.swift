@@ -85,6 +85,10 @@ extension EditTextView {
 
     public func triggerCodeBlockRenderingIfNeeded() {
         #if os(OSX)
+        // Block-model pipeline handles its own rendering — skip legacy
+        // mermaid/math rendering when it's active.
+        if textStorageProcessor?.blockModelActive == true { return }
+
         guard NotesTextProcessor.hideSyntax,
               let processor = self.textStorageProcessor,
               let storage = self.textStorage else { return }
@@ -262,6 +266,24 @@ extension EditTextView {
     public func isTodo(_ location: Int) -> Bool {
         guard let storage = self.textStorage else { return false }
 
+        // Block-model path: check for checkbox glyphs (☐/☑).
+        if documentProjection != nil {
+            let range = (storage.string as NSString).paragraphRange(
+                for: NSRange(location: location, length: 0)
+            )
+            let string = storage.attributedSubstring(from: range).string
+            let trimmed = string.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("\u{2610}") || trimmed.hasPrefix("\u{2611}") {
+                // Check if the click is in the checkbox area (first few chars).
+                let prefixEnd = range.location + (string.count - trimmed.count) + 2
+                if location >= range.location && location <= prefixEnd {
+                    return true
+                }
+            }
+            return false
+        }
+
+        // Legacy path: check for raw markdown checkbox syntax.
         let range = (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: 0))
         let string = storage.attributedSubstring(from: range).string as NSString
 
@@ -368,6 +390,14 @@ extension EditTextView {
         guard glyphRect.contains(properPoint) else { return false }
 
         if isTodo(index) {
+            // Block-model path: toggle via EditingOps.
+            if documentProjection != nil {
+                _ = toggleTodoCheckboxViaBlockModel(at: index)
+                DispatchQueue.main.async { NSCursor.pointingHand.set() }
+                return true
+            }
+
+            // Legacy path.
             guard let formatter = self.getTextFormatter() else { return false }
             formatter.toggleTodo(index)
 
@@ -423,8 +453,7 @@ extension EditTextView {
                 if self.textStorage?.attribute(.attachment, at: at, effectiveRange: &range) as? NSTextAttachment != nil {
                     self.textStorage?.addAttribute(.attachmentTitle, value: attachment.title, range: range)
 
-                    let content = NSMutableAttributedString(attributedString: self.attributedString())
-                    _ = self.note?.save(content: content)
+                    self.save()
                 }
             }
             vc.alert = nil

@@ -15,7 +15,9 @@ extension EditTextView {
         }
 
         if let characters = event.characters, characters == "`" {
-            super.insertText("`", replacementRange: selectedRange())
+            // Route through insertText (not super) so that
+            // shouldChangeText → block model can intercept.
+            insertText("`", replacementRange: selectedRange())
             return
         }
 
@@ -36,6 +38,21 @@ extension EditTextView {
 
         if event.keyCode == kVK_Tab && !hasMarkedText() {
             breakUndoCoalescing()
+
+            // Block-model pipeline: route Tab/Shift-Tab through
+            // the list editing FSM when the cursor is in a list block.
+            if let projection = documentProjection {
+                let cursorPos = selectedRange().location
+                let state = ListEditingFSM.detectState(storageIndex: cursorPos, in: projection)
+                if case .listItem = state {
+                    let action: ListEditingFSM.Action = NSEvent.modifierFlags.contains(.shift) ? .shiftTab : .tab
+                    let transition = ListEditingFSM.transition(state: state, action: action)
+                    if handleListTransition(transition, at: cursorPos) {
+                        breakUndoCoalescing()
+                        return
+                    }
+                }
+            }
 
             let formatter = TextFormatter(textView: self, note: note)
             if formatter.isListParagraph() {
@@ -69,6 +86,20 @@ extension EditTextView {
 
         if event.keyCode == kVK_Return && !hasMarkedText() && isEditable {
             breakUndoCoalescing()
+
+            // Block-model pipeline: route Return through EditingOps
+            // which handles paragraph splits, list continuation, and
+            // empty-item exit via the FSM — all as Document operations.
+            if documentProjection != nil {
+                if handleEditViaBlockModel(
+                    in: selectedRange(),
+                    replacementString: "\n"
+                ) {
+                    breakUndoCoalescing()
+                    return
+                }
+            }
+
             let formatter = TextFormatter(textView: self, note: note)
             formatter.newLine()
             breakUndoCoalescing()
@@ -100,6 +131,13 @@ extension EditTextView {
     override func shouldChangeText(in range: NSRange, replacementString: String?) -> Bool {
         guard let note = self.note else {
             return super.shouldChangeText(in: range, replacementString: replacementString)
+        }
+
+        // Block-model pipeline: intercept the edit and apply it via
+        // EditingOps. Returns false to prevent NSTextView from doing
+        // its own mutation (we've already applied the splice).
+        if handleEditViaBlockModel(in: range, replacementString: replacementString) {
+            return false
         }
 
         note.resetAttributesCache()
@@ -148,8 +186,10 @@ extension EditTextView {
             let after = NSMakeRange(selectedRange().upperBound, 0)
             self.insertText(closingBracket, replacementRange: after)
         } else {
-            super.keyDown(with: event)
-            self.insertText(closingBracket, replacementRange: selectedRange())
+            // Insert both brackets via insertText (not super.keyDown)
+            // so that shouldChangeText → block model can intercept.
+            let pair = character + closingBracket
+            self.insertText(pair, replacementRange: selectedRange())
             self.moveBackward(self)
         }
 

@@ -121,31 +121,33 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             <body>
                 <pre class="mermaid">\(escapedSource)</pre>
                 <script>
-                    mermaid.initialize({ startOnLoad: false, theme: '\(mermaidTheme)', flowchart: { useMaxWidth: true, htmlLabels: true } });
+                    // htmlLabels:false → text renders as native SVG <text> (crisp at any
+                    // rasterization scale). htmlLabels:true wraps text in <foreignObject>
+                    // which WebKit rasterizes at a different scale than the parent SVG,
+                    // producing visibly fuzzy text in snapshots.
+                    mermaid.initialize({ startOnLoad: false, theme: '\(mermaidTheme)', flowchart: { useMaxWidth: true, htmlLabels: false } });
                     mermaid.run().then(function() {
                         setTimeout(function() {
-                            var svg = document.querySelector('.mermaid svg');
-                            if (svg) {
-                                // Use the SVG's intrinsic size from viewBox for tight bounds
-                                var vb = svg.viewBox.baseVal;
-                                if (vb && vb.width > 0) {
-                                    window.webkit.messageHandlers.renderComplete.postMessage({
-                                        width: Math.ceil(vb.width + 4),
-                                        height: Math.ceil(vb.height + 4)
-                                    });
-                                    return;
-                                }
-                            }
-                            // Fallback to bounding rect
-                            var el = svg || document.querySelector('.mermaid');
+                            // Use the CSS-rendered size so mermaid's useMaxWidth:true
+                            // fills the container. viewBox reports intrinsic content
+                            // size which is often narrower than the container.
+                            var el = document.querySelector('.mermaid svg') || document.querySelector('.mermaid');
                             var rect = el.getBoundingClientRect();
+                            // Add 2px stroke clearance on right/bottom: getBoundingClientRect
+                            // gives a tight geometric box, but stroked paths are centered on
+                            // their geometry so half the stroke width extends outside the box.
+                            // Without padding, the right-edge strokes get clipped.
                             window.webkit.messageHandlers.renderComplete.postMessage({
-                                width: Math.ceil(rect.width),
-                                height: Math.ceil(rect.height)
+                                width: Math.ceil(rect.right) + 2,
+                                height: Math.ceil(rect.bottom) + 2
                             });
                         }, 200);
                     }).catch(function(e) {
-                        window.webkit.messageHandlers.renderComplete.postMessage({ error: e.toString() });
+                        var errMsg = (e && e.message) ? e.message : (e && e.toString ? e.toString() : 'unknown');
+                        if (errMsg === '[object Object]') {
+                            try { errMsg = JSON.stringify(e); } catch(_) {}
+                        }
+                        window.webkit.messageHandlers.renderComplete.postMessage({ error: errMsg });
                     });
                 </script>
             </body>
@@ -222,6 +224,12 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             snapshotConfig.afterScreenUpdates = true
 
             webView.takeSnapshot(with: snapshotConfig) { [weak self] image, error in
+                if let image = image,
+                   let tiff = image.tiffRepresentation,
+                   let rep = NSBitmapImageRep(data: tiff),
+                   let png = rep.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: NSHomeDirectory() + "/dpi-snapshot.png"))
+                }
                 DispatchQueue.main.async {
                     self?.completion?(image)
                     self?.cleanup()

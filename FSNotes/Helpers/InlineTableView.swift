@@ -48,10 +48,14 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private(set) var headerCells: [NSTextField] = []
     private(set) var dataCells: [[NSTextField]] = []
 
-    // MARK: - Glass UI Handles
+    // MARK: - Glass UI Handles (Obsidian-style: single handle per axis)
 
-    private var columnHandles: [GlassHandleView] = []
-    private var rowHandles: [GlassHandleView] = []
+    private var activeColumnHandle: GlassHandleView?
+    private var activeRowHandle: GlassHandleView?
+    private var hoveredColumn: Int?      // Which column the mouse is over
+    private var hoveredRow: Int?         // Which row the mouse is over (0=header, 1+=data)
+    private var rowHighlightView: NSView?
+    private var columnHighlightView: NSView?
     private var trackingArea: NSTrackingArea?
 
     // MARK: - Drag State
@@ -79,19 +83,40 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Layout Constants
 
-    private let minCellHeight: CGFloat = 32
-    private let lineHeight: CGFloat = 17
+    /// Minimum cell height: font size + line spacing + vertical padding.
+    private var minCellHeight: CGFloat {
+        let fontSize = UserDefaultsManagement.noteFont.pointSize
+        let spacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+        return ceil(fontSize + spacing + cellPaddingTop + cellPaddingBot + fontSize * 0.4)
+    }
+    /// Line height derived from the note font + line spacing setting.
+    private var lineHeight: CGFloat {
+        let fontSize = UserDefaultsManagement.noteFont.pointSize
+        let spacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+        return ceil(fontSize + spacing)
+    }
     private let handleSize: CGFloat = 20
     private let edgeButtonSize: CGFloat = 16
     private let minColumnWidth: CGFloat = 80
     private let gridLineWidth: CGFloat = 0.5
-    private let handleBarHeight: CGFloat = 22
-    private let handleBarWidth: CGFloat = 22
-    private let cellPaddingH: CGFloat = 4    // Horizontal inset each side
-    private let cellPaddingTop: CGFloat = 3  // Top inset
-    private let cellPaddingBot: CGFloat = 3  // Bottom inset
+    private let handleBarHeight: CGFloat = 11
+    private let handleBarWidth: CGFloat = 11
+    /// Horizontal cell padding, derived from margin size setting.
+    private var cellPaddingH: CGFloat {
+        return max(3, ceil(CGFloat(UserDefaultsManagement.marginSize) * 0.2))
+    }
+    /// Vertical cell padding, derived from line spacing setting.
+    private var cellPaddingTop: CGFloat {
+        return max(2, ceil(CGFloat(UserDefaultsManagement.editorLineSpacing) * 0.75))
+    }
+    private var cellPaddingBot: CGFloat {
+        return max(2, ceil(CGFloat(UserDefaultsManagement.editorLineSpacing) * 0.75))
+    }
     private let focusRingPadding: CGFloat = 8
-    private let columnTextPadding: CGFloat = 20  // Extra width per column for text measurement
+    /// Extra width per column for text measurement, scales with margin.
+    private var columnTextPadding: CGFloat {
+        return max(16, ceil(CGFloat(UserDefaultsManagement.marginSize)))
+    }
 
     // MARK: - Computed Layout
 
@@ -143,7 +168,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         var headerHeight: CGFloat { rHeights.isEmpty ? 32 : rHeights[0] }
 
         func dataRowHeight(_ row: Int) -> CGFloat {
-            (row + 1) < rHeights.count ? rHeights[row + 1] : 32
+            if (row + 1) < rHeights.count { return rHeights[row + 1] }
+            // Fallback: font-relative minimum
+            let fontSize = UserDefaultsManagement.noteFont.pointSize
+            let spacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+            return ceil(fontSize + spacing + fontSize * 0.4 + 4)
         }
     }
 
@@ -193,26 +222,18 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     @objc private func scrollViewDidScroll(_ notification: Notification) {
         let scrollX = scrollView.contentView.bounds.origin.x
-        for handle in columnHandles {
-            // Each handle stores its original X in its tag-derived position;
-            // shift by negative scroll offset so handles track the grid content
-            handle.frame.origin.x = handle.layer?.value(forKey: "originalX") as? CGFloat ?? handle.frame.origin.x
-        }
-        // Reposition all column handles based on scroll offset
         updateColumnHandlePositions(scrollOffsetX: scrollX)
     }
 
     private func updateColumnHandlePositions(scrollOffsetX: CGFloat) {
-        let showHandles = (focusState == .hovered || focusState == .editing)
-        guard showHandles else { return }
-        let leftMargin: CGFloat = handleBarWidth
-        let columnWidths = contentBasedColumnWidths()
-        var xOffset = leftMargin
-        for (i, handle) in columnHandles.enumerated() {
-            if i < columnWidths.count {
-                handle.frame.origin.x = xOffset - scrollOffsetX
-                xOffset += columnWidths[i]
-            }
+        guard let col = hoveredColumn, let handle = activeColumnHandle, !handle.isHidden else { return }
+        let L = computeLayout()
+        var xOffset = L.leftMargin
+        for i in 0..<col { if i < L.colWidths.count { xOffset += L.colWidths[i] } }
+        handle.frame.origin.x = xOffset - scrollOffsetX
+        // Also update column highlight
+        if let highlight = columnHighlightView, !highlight.isHidden {
+            highlight.frame.origin.x = xOffset - scrollOffsetX
         }
     }
 
@@ -252,12 +273,224 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         if focusState == .unfocused {
             focusState = .hovered
         }
+        updateHoverPosition(with: event)
     }
 
     override func mouseExited(with event: NSEvent) {
         if focusState == .hovered {
             focusState = .unfocused
         }
+        clearHoverHandles()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateHoverPosition(with: event)
+    }
+
+    // MARK: - Per-Row/Column Hover Detection
+
+    /// Detect which row and column the mouse is over, and show handles accordingly.
+    private func updateHoverPosition(with event: NSEvent) {
+        guard focusState == .hovered || focusState == .editing else { return }
+        let loc = convert(event.locationInWindow, from: nil)
+        let L = computeLayout()
+
+        // Detect hovered column
+        var xOffset = L.leftMargin
+        var newCol: Int? = nil
+        let scrollOffset = scrollView.contentView.bounds.origin.x
+        for col in 0..<L.colCount {
+            let colX = xOffset - scrollOffset
+            if loc.x >= colX && loc.x < colX + L.colWidths[col] {
+                newCol = col
+                break
+            }
+            xOffset += L.colWidths[col]
+        }
+
+        // Detect hovered row (0=header, 1+=data)
+        var newRow: Int? = nil
+        // Grid occupies y=0 to y=gridHeight in the scrollView coordinate space
+        // But InlineTableView has topMargin above the grid
+        let gridLocalY = loc.y  // scrollView is at y=0
+        if gridLocalY >= 0 && gridLocalY <= L.gridHeight {
+            var rowY = L.gridHeight
+            for totalRow in 0..<L.totalRows {
+                let rowH = L.rHeights[totalRow]
+                if gridLocalY <= rowY && gridLocalY > rowY - rowH {
+                    newRow = totalRow
+                    break
+                }
+                rowY -= rowH
+            }
+        }
+
+        if newCol != hoveredColumn || newRow != hoveredRow {
+            hoveredColumn = newCol
+            hoveredRow = newRow
+            updateHoverHandles(layout: L)
+        }
+    }
+
+    /// Position the single column and row handles at the hovered position.
+    private func updateHoverHandles(layout L: TableLayout) {
+        let showHandles = (focusState == .hovered || focusState == .editing)
+        guard showHandles else {
+            clearHoverHandles()
+            return
+        }
+
+        let scrollOffset = scrollView.contentView.bounds.origin.x
+
+        // -- Column handle --
+        if let col = hoveredColumn {
+            var xOffset = L.leftMargin
+            for i in 0..<col { xOffset += L.colWidths[i] }
+            let handleFrame = NSRect(
+                x: xOffset - scrollOffset,
+                y: L.gridHeight,
+                width: L.colWidths[col],
+                height: handleBarHeight
+            )
+
+            if activeColumnHandle == nil {
+                let handle = GlassHandleView(frame: handleFrame, orientation: .horizontal, index: col)
+                handle.onRightClick = { [weak self] index in
+                    self?.showColumnContextMenu(column: index, at: handle.frame.origin)
+                }
+                handle.onDragStart = { [weak self] index in
+                    self?.startColumnDrag(column: index)
+                }
+                addSubview(handle)
+                activeColumnHandle = handle
+            } else {
+                activeColumnHandle?.frame = handleFrame
+                activeColumnHandle?.index = col
+                activeColumnHandle?.onRightClick = { [weak self] index in
+                    self?.showColumnContextMenu(column: index, at: NSPoint(x: handleFrame.origin.x, y: handleFrame.origin.y))
+                }
+                activeColumnHandle?.onDragStart = { [weak self] index in
+                    self?.startColumnDrag(column: index)
+                }
+            }
+            activeColumnHandle?.isHidden = false
+            activeColumnHandle?.alphaValue = 1.0
+
+            // Column highlight
+            updateColumnHighlight(col: col, layout: L, scrollOffset: scrollOffset)
+        } else {
+            activeColumnHandle?.isHidden = true
+            columnHighlightView?.isHidden = true
+        }
+
+        // -- Row handle --
+        if let row = hoveredRow {
+            var rowY = L.gridHeight
+            for i in 0..<row { rowY -= L.rHeights[i] }
+            let rowH = L.rHeights[row]
+            let handleFrame = NSRect(
+                x: 0,
+                y: rowY - rowH,
+                width: handleBarWidth,
+                height: rowH
+            )
+
+            if activeRowHandle == nil {
+                let handle = GlassHandleView(frame: handleFrame, orientation: .vertical, index: row)
+                handle.onRightClick = { [weak self] index in
+                    self?.showRowContextMenu(row: index, at: handle.frame.origin)
+                }
+                handle.onDragStart = { [weak self] index in
+                    self?.startRowDrag(row: index)
+                }
+                addSubview(handle)
+                activeRowHandle = handle
+            } else {
+                activeRowHandle?.frame = handleFrame
+                activeRowHandle?.index = row
+                activeRowHandle?.onRightClick = { [weak self] index in
+                    self?.showRowContextMenu(row: index, at: NSPoint(x: handleFrame.origin.x, y: handleFrame.origin.y))
+                }
+                activeRowHandle?.onDragStart = { [weak self] index in
+                    self?.startRowDrag(row: index)
+                }
+            }
+            activeRowHandle?.isHidden = false
+            activeRowHandle?.alphaValue = 1.0
+
+            // Row highlight
+            updateRowHighlight(row: row, layout: L)
+        } else {
+            activeRowHandle?.isHidden = true
+            rowHighlightView?.isHidden = true
+        }
+    }
+
+    /// Draw a subtle highlight on the hovered column.
+    private func updateColumnHighlight(col: Int, layout L: TableLayout, scrollOffset: CGFloat) {
+        var xOffset = L.leftMargin
+        for i in 0..<col { xOffset += L.colWidths[i] }
+
+        let highlightFrame = NSRect(
+            x: xOffset - scrollOffset,
+            y: 0,
+            width: L.colWidths[col],
+            height: L.gridHeight + handleBarHeight
+        )
+
+        if columnHighlightView == nil {
+            let v = NSView(frame: highlightFrame)
+            v.wantsLayer = true
+            v.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.06).cgColor
+            v.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            v.layer?.borderWidth = 1.0
+            addSubview(v, positioned: .below, relativeTo: activeColumnHandle)
+            columnHighlightView = v
+        } else {
+            columnHighlightView?.frame = highlightFrame
+            columnHighlightView?.isHidden = false
+        }
+    }
+
+    /// Draw a subtle highlight on the hovered row.
+    private func updateRowHighlight(row: Int, layout L: TableLayout) {
+        var rowY = L.gridHeight
+        for i in 0..<row { rowY -= L.rHeights[i] }
+        let rowH = L.rHeights[row]
+
+        let highlightFrame = NSRect(
+            x: 0,
+            y: rowY - rowH,
+            width: L.leftMargin + L.gridWidth,
+            height: rowH
+        )
+
+        if rowHighlightView == nil {
+            let v = NSView(frame: highlightFrame)
+            v.wantsLayer = true
+            v.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.06).cgColor
+            v.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            v.layer?.borderWidth = 1.0
+            addSubview(v, positioned: .below, relativeTo: activeRowHandle)
+            rowHighlightView = v
+        } else {
+            rowHighlightView?.frame = highlightFrame
+            rowHighlightView?.isHidden = false
+        }
+    }
+
+    /// Remove all hover handles and highlights.
+    private func clearHoverHandles() {
+        hoveredColumn = nil
+        hoveredRow = nil
+        activeColumnHandle?.removeFromSuperview()
+        activeColumnHandle = nil
+        activeRowHandle?.removeFromSuperview()
+        activeRowHandle = nil
+        columnHighlightView?.removeFromSuperview()
+        columnHighlightView = nil
+        rowHighlightView?.removeFromSuperview()
+        rowHighlightView = nil
     }
 
     // Override hitTest so clicks outside the cell grid pass through to EditTextView.
@@ -271,10 +504,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             }
         }
         // Check handle areas
-        for subview in subviews where subview is NSVisualEffectView {
-            if subview.frame.contains(localPoint) {
-                return super.hitTest(point)
-            }
+        if let h = activeColumnHandle, !h.isHidden, h.frame.contains(localPoint) {
+            return super.hitTest(point)
+        }
+        if let h = activeRowHandle, !h.isHidden, h.frame.contains(localPoint) {
+            return super.hitTest(point)
         }
         // Click is outside all cells/handles — let it pass through to text view
         return nil
@@ -312,8 +546,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let colCount = headers.count
         guard colCount > 0 else { return [] }
 
-        let font = NSFont.systemFont(ofSize: 13)
-        let boldFont = NSFont.boldSystemFont(ofSize: 13)
+        let font = UserDefaultsManagement.noteFont
+        let boldFont = NSFontManager.shared.convert(UserDefaultsManagement.noteFont, toHaveTrait: .boldFontMask)
         let cellPad = cellPaddingH * 2
 
         var heights: [CGFloat] = []
@@ -347,7 +581,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard let colWidth = colWidth else {
             // Fallback: count lines manually
             let lineCount = max(1, text.components(separatedBy: "\n").count)
-            return max(minCellHeight, CGFloat(lineCount) * lineHeight + 11)
+            return max(minCellHeight, CGFloat(lineCount) * lineHeight + cellPaddingTop + cellPaddingBot)
         }
 
         let availableWidth = max(1, colWidth - cellPad)
@@ -357,7 +591,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: attrs
         )
-        return max(minCellHeight, ceil(boundingRect.height) + cellPaddingTop + cellPaddingBot + 5)
+        return max(minCellHeight, ceil(boundingRect.height) + cellPaddingTop + cellPaddingBot + CGFloat(UserDefaultsManagement.editorLineSpacing))
     }
 
     /// Total grid height from row heights.
@@ -371,8 +605,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let colCount = headers.count
         guard colCount > 0 else { return [] }
 
-        let font = NSFont.systemFont(ofSize: 13)
-        let boldFont = NSFont.boldSystemFont(ofSize: 13)
+        let font = UserDefaultsManagement.noteFont
+        let boldFont = NSFontManager.shared.convert(UserDefaultsManagement.noteFont, toHaveTrait: .boldFontMask)
         let padding: CGFloat = columnTextPadding
 
         var widths = Array(repeating: minColumnWidth, count: colCount)
@@ -432,7 +666,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         if !skipCollect { collectCellData() }
 
         let L = computeLayout()
-        let showHandles = (focusState == .hovered || focusState == .editing)
 
         if columnWidthRatios.count != L.colCount {
             columnWidthRatios = Array(repeating: 1.0 / CGFloat(L.colCount), count: L.colCount)
@@ -441,11 +674,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         // Apply frames from single layout computation
         applyFrames(L)
 
-        // Remove old handles
-        columnHandles.forEach { $0.removeFromSuperview() }
-        rowHandles.forEach { $0.removeFromSuperview() }
-        columnHandles = []
-        rowHandles = []
+        // Clear hover handles — they'll be recreated on next mouseMoved
+        clearHoverHandles()
 
         // Build cells using pool
         let neededCells = L.totalRows * L.colCount
@@ -499,12 +729,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             allCells[i].nextKeyView = allCells[(i + 1) % allCells.count]
         }
 
-        // -- Glass UI Handles --
-        if showHandles {
-            buildColumnHandles(colCount: L.colCount, columnWidths: L.colWidths, leftMargin: L.leftMargin, gridHeight: L.gridHeight, topMargin: L.topMargin)
-            buildRowHandles(rowCount: L.totalRows, leftMargin: L.leftMargin, gridHeight: L.gridHeight, topMargin: L.topMargin, rowHeights: L.rHeights)
-        }
-
         // Copy button moved to gutter — see GutterController.drawIcons().
         copyButton?.removeFromSuperview()
         copyButton = nil
@@ -536,7 +760,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private func configureCell(_ cell: NSTextField, text: String, frame: NSRect, isHeader: Bool, isEditing: Bool, row: Int, col: Int) {
         cell.frame = cellFrame(from: frame)
 
-        let cellFont = isHeader ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13)
+        let cellFont = isHeader ? NSFontManager.shared.convert(UserDefaultsManagement.noteFont, toHaveTrait: .boldFontMask) : UserDefaultsManagement.noteFont
         let cellAlignment = col < alignments.count ? alignments[col] : NSTextAlignment.left
 
         // When not editing, render inline markdown (bold, italic, strikethrough).
@@ -563,48 +787,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         cell.cell?.isScrollable = false
     }
 
-    // MARK: - Glass Column Handles
-
-    private func buildColumnHandles(colCount: Int, columnWidths: [CGFloat], leftMargin: CGFloat, gridHeight: CGFloat, topMargin: CGFloat) {
-        // Column handles sit between the grid top and the frame top.
-        // Grid occupies y=0 to y=gridHeight. Handles go from y=gridHeight to y=gridHeight+handleBarHeight.
-        var xOffset = leftMargin
-        for col in 0..<colCount {
-            let handleFrame = NSRect(x: xOffset, y: gridHeight, width: columnWidths[col], height: handleBarHeight)
-            let handle = GlassHandleView(frame: handleFrame, orientation: .horizontal, index: col)
-            handle.onRightClick = { [weak self] index in
-                self?.showColumnContextMenu(column: index, at: handle.frame.origin)
-            }
-            handle.onDragStart = { [weak self] index in
-                self?.startColumnDrag(column: index)
-            }
-            addSubview(handle)
-            columnHandles.append(handle)
-            xOffset += columnWidths[col]
-        }
-    }
-
-    // MARK: - Glass Row Handles
-
-    private func buildRowHandles(rowCount: Int, leftMargin: CGFloat, gridHeight: CGFloat, topMargin: CGFloat, rowHeights rHeights: [CGFloat] = []) {
-        var yBottom = gridHeight
-        for row in 0..<rowCount {
-            let rowH = row < rHeights.count ? rHeights[row] : minCellHeight
-            yBottom -= rowH
-            // Skip header row (row 0) — it can't be reordered or deleted
-            if row == 0 { continue }
-            let handleFrame = NSRect(x: 0, y: yBottom, width: handleBarWidth, height: rowH)
-            let handle = GlassHandleView(frame: handleFrame, orientation: .vertical, index: row)
-            handle.onRightClick = { [weak self] index in
-                self?.showRowContextMenu(row: index, at: handle.frame.origin)
-            }
-            handle.onDragStart = { [weak self] index in
-                self?.startRowDrag(row: index)
-            }
-            addSubview(handle)
-            rowHandles.append(handle)
-        }
-    }
+    // Glass handle building is now done lazily via updateHoverHandles()
+    // — only the hovered row/column gets a handle.
 
     // MARK: - Context Menus
 
@@ -769,13 +953,15 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let colWidths = contentBasedColumnWidths()
         let rHeights = rowHeights()
         let gridHeight = gridHeightFromRows(rHeights)
-        let hasHandles = (focusState == .hovered || focusState == .editing)
-        let leftMargin: CGFloat = hasHandles ? handleBarWidth : 0
+        let leftMargin: CGFloat = handleBarWidth
 
         let gridWidth = colWidths.reduce(0, +) + leftMargin
 
         guard let window = self.window else { return }
         var targetIndex = column
+
+        // Change handle color to accent (toolbar "on" state)
+        activeColumnHandle?.setDragActive(true)
 
         // Create indicator and highlight in the grid document view (scrollable)
         let indicator = NSView()
@@ -841,9 +1027,20 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 let scrollOffset = scrollView.contentView.bounds.origin.x
                 let parentX = indX - scrollOffset - 1
                 indicator.frame = NSRect(x: parentX, y: 0, width: 2, height: gridHeight)
+
+                // Animate handle sliding along the top edge to follow the mouse
+                if let handle = activeColumnHandle {
+                    let clampedX = max(leftMargin - scrollOffset, min(loc.x - handle.frame.width / 2, leftMargin + gridWidth - scrollOffset - handle.frame.width))
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.08
+                        handle.animator().frame.origin.x = clampedX
+                    }
+                }
             }
         }
 
+        // Reset handle color
+        activeColumnHandle?.setDragActive(false)
         indicator.removeFromSuperview()
         sourceHighlight.removeFromSuperview()
 
@@ -856,29 +1053,27 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     }
 
     private func startRowDrag(row: Int) {
-        // Row handle indices: 0 = header (not draggable), 1+ = data rows
-        guard row >= 1 else { return }  // Can't drag header
-        let dataRow = row - 1  // Convert handle index to data row index
-
+        // Row handle indices: 0 = header, 1+ = data rows.
+        // Header row CAN be dragged — special handling below.
         collectCellData()
-        let dataRowCount = rows.count
-        guard dataRow >= 0, dataRow < dataRowCount else { return }
 
         let rHeights = rowHeights()
         let gridHeight = rHeights.reduce(0, +)
-        let hasHandles = (focusState == .hovered || focusState == .editing)
+        let leftMargin: CGFloat = handleBarWidth
+        let totalRowCount = rHeights.count  // header + data rows
 
+        guard row >= 0, row < totalRowCount else { return }
         guard let window = self.window else { return }
-        var targetDataRow = dataRow
-        var indicator: NSView? = nil
 
-        let ind = NSView()
-        ind.wantsLayer = true
-        ind.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        addSubview(ind)
-        indicator = ind
+        // Change handle color to accent (toolbar "on" state)
+        activeRowHandle?.setDragActive(true)
 
-        let leftMargin: CGFloat = hasHandles ? handleBarWidth : 0
+        var targetRow = row  // target in total-row space (0=header position)
+
+        let indicator = NSView()
+        indicator.wantsLayer = true
+        indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        addSubview(indicator)
 
         // Create source row highlight (blue border)
         let sourceHighlight = NSView()
@@ -886,13 +1081,9 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         sourceHighlight.layer?.borderColor = NSColor.controlAccentColor.cgColor
         sourceHighlight.layer?.borderWidth = 2
         sourceHighlight.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
-        // Row index in rHeights: 0=header, dataRow+1=our row
-        var srcY = gridHeight - rHeights[0]  // below header
-        for i in 0..<dataRow {
-            if (i + 1) < rHeights.count { srcY -= rHeights[i + 1] }
-        }
-        let srcRowH = (dataRow + 1) < rHeights.count ? rHeights[dataRow + 1] : minCellHeight
-        // Include the row handle on the left for visual symmetry
+        var srcY = gridHeight
+        for i in 0..<row { srcY -= rHeights[i] }
+        let srcRowH = rHeights[row]
         sourceHighlight.frame = NSRect(x: 0, y: srcY - srcRowH, width: bounds.width, height: srcRowH)
         addSubview(sourceHighlight)
 
@@ -904,40 +1095,70 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             if event.type == .leftMouseUp {
                 keepTracking = false
             } else {
-                // Find which data row gap the cursor is nearest
-                // rHeights[0] = header, rHeights[1] = data row 0, etc.
-                var y = gridHeight - rHeights[0]  // Start below header
+                // Find which row gap the cursor is nearest (in total-row space)
+                var y = gridHeight
                 var bestGap = 0
                 var bestDist: CGFloat = .greatestFiniteMagnitude
 
-                for i in 0...dataRowCount {
+                for i in 0...totalRowCount {
                     let dist = abs(loc.y - y)
                     if dist < bestDist {
                         bestDist = dist
                         bestGap = i
                     }
-                    if i < dataRowCount && (i + 1) < rHeights.count {
-                        y -= rHeights[i + 1]
+                    if i < totalRowCount {
+                        y -= rHeights[i]
                     }
                 }
-                targetDataRow = bestGap
+                targetRow = bestGap
 
-                // Position indicator below header + above the target gap
-                var indY = gridHeight - rHeights[0]
-                for i in 0..<targetDataRow {
-                    if (i + 1) < rHeights.count { indY -= rHeights[i + 1] }
+                // Position indicator at the target gap
+                var indY = gridHeight
+                for i in 0..<targetRow { indY -= rHeights[i] }
+                indicator.frame = NSRect(x: leftMargin, y: indY - 1, width: bounds.width - leftMargin, height: 2)
+
+                // Animate handle sliding along the left edge to follow the mouse
+                if let handle = activeRowHandle {
+                    let clampedY = max(0, min(loc.y - handle.frame.height / 2, gridHeight - handle.frame.height))
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.08
+                        handle.animator().frame.origin.y = clampedY
+                    }
                 }
-                indicator?.frame = NSRect(x: leftMargin, y: indY - 1, width: bounds.width - leftMargin, height: 2)
             }
         }
 
-        indicator?.removeFromSuperview()
+        // Reset handle color
+        activeRowHandle?.setDragActive(false)
+        indicator.removeFromSuperview()
         sourceHighlight.removeFromSuperview()
 
-        let dst = targetDataRow > dataRow ? targetDataRow - 1 : targetDataRow
-        if dst != dataRow {
-            moveRow(from: dataRow, to: dst)
+        let dst = targetRow > row ? targetRow - 1 : targetRow
+        if dst != row {
+            moveRowTotal(from: row, to: dst)
         }
+    }
+
+    /// Move a row in total-row space (0=header, 1+=data).
+    /// If the header (row 0) is moved down, the first data row becomes the new header.
+    private func moveRowTotal(from src: Int, to dst: Int) {
+        guard src != dst, src >= 0, dst >= 0 else { return }
+        let totalRows = 1 + rows.count  // header + data
+
+        guard src < totalRows, dst < totalRows else { return }
+
+        // Build a unified row array: [headers] + rows
+        var allRows: [[String]] = [headers] + rows
+
+        let moved = allRows.remove(at: src)
+        allRows.insert(moved, at: dst)
+
+        // Row 0 of allRows becomes the new header
+        headers = allRows[0]
+        rows = Array(allRows.dropFirst())
+
+        rebuild(skipCollect: true)
+        notifyChanged()
     }
 
     private func moveColumn(from src: Int, to dst: Int) {
@@ -1048,20 +1269,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             }
         }
 
-        // Column handles — above grid, in parent view coordinates (leftMargin offset)
-        x = L.leftMargin
-        for col in 0..<min(L.colCount, columnHandles.count) {
-            columnHandles[col].frame = NSRect(x: x, y: L.gridHeight, width: L.colWidths[col], height: handleBarHeight)
-            x += L.colWidths[col]
-        }
-
-        // Row handles — left of grid, skip header (row 0)
-        var handleY = L.gridHeight - L.headerHeight
-        for (idx, handle) in rowHandles.enumerated() {
-            let rowH = L.dataRowHeight(idx)
-            handleY -= rowH
-            handle.frame = NSRect(x: 0, y: handleY, width: handleBarWidth, height: rowH)
-        }
+        // Hover handles are positioned by updateHoverHandles(), not here.
     }
 
     // Handle Tab / Return for keyboard navigation
@@ -1216,13 +1424,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let wasShowingHandles = (from == .hovered || from == .editing)
 
         if showHandles != wasShowingHandles {
-            // Rebuild creates new handle views — set alpha AFTER rebuild.
-            // Margins are always reserved, so no invalidateAttachmentLayout() needed —
-            // the attachment size doesn't change on hover.
+            // Margins are always reserved, so no invalidateAttachmentLayout() needed.
             rebuild()
-            let targetAlpha: CGFloat = showHandles ? 1.0 : 0.0
-            for h in columnHandles { h.alphaValue = targetAlpha; h.isHidden = !showHandles }
-            for h in rowHandles { h.alphaValue = targetAlpha; h.isHidden = !showHandles }
+            if !showHandles {
+                clearHoverHandles()
+            }
         } else {
             // Just update cell editability
             let isEditing = (to == .editing)
@@ -1408,6 +1614,24 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         context.strokePath()
     }
 
+    // MARK: - Scroll Behavior
+
+    /// Vertical scrolling passes through to the parent text view (scrolls the note).
+    /// Horizontal scrolling is captured by the table's scroll view (for wide tables).
+    override func scrollWheel(with event: NSEvent) {
+        // If the scroll is primarily horizontal AND the table needs horizontal scrolling,
+        // let the table's scroll view handle it.
+        let isHorizontal = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+        let tableNeedsHScroll = gridDocumentView.frame.width > scrollView.frame.width
+
+        if isHorizontal && tableNeedsHScroll {
+            scrollView.scrollWheel(with: event)
+        } else {
+            // Forward vertical scrolls to parent (EditTextView's enclosing scroll view)
+            superview?.scrollWheel(with: event)
+        }
+    }
+
     // MARK: - Intrinsic Size
 
     override var intrinsicContentSize: NSSize {
@@ -1434,17 +1658,19 @@ private class GridDocumentView: NSView {
 // MARK: - Glass Handle View
 
 /// A frosted-glass handle bar for column/row drag and context menu.
+/// Obsidian-style: compact, shows only on the hovered row/column,
+/// uses a six-dot grip (⠿), changes color when dragging.
 class GlassHandleView: NSVisualEffectView {
 
     enum Orientation { case horizontal, vertical }
 
     let orientation: Orientation
-    let index: Int
+    var index: Int
 
     var onRightClick: ((Int) -> Void)?
     var onDragStart: ((Int) -> Void)?
 
-    private let gripLabel = NSTextField(labelWithString: "⋮⋮")
+    private let gripLabel = NSTextField(labelWithString: "")
 
     init(frame: NSRect, orientation: Orientation, index: Int) {
         self.orientation = orientation
@@ -1464,12 +1690,14 @@ class GlassHandleView: NSVisualEffectView {
         blendingMode = .withinWindow
         state = .active
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 4
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.15).cgColor
+        layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
 
-        gripLabel.font = NSFont.systemFont(ofSize: 9)
-        gripLabel.textColor = NSColor.secondaryLabelColor.withAlphaComponent(0.7)
+        // Six-dot grip glyph (⠿) — more visible than "⋮⋮"
+        gripLabel.stringValue = "⠿"
+        gripLabel.font = NSFont.systemFont(ofSize: max(8, UserDefaultsManagement.noteFont.pointSize * 0.75), weight: .bold)
+        gripLabel.textColor = NSColor.secondaryLabelColor
         gripLabel.alignment = .center
         gripLabel.sizeToFit()
         gripLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1481,17 +1709,29 @@ class GlassHandleView: NSVisualEffectView {
         ])
     }
 
+    /// Change appearance to indicate active drag state.
+    /// Uses the toolbar "on" button accent color.
+    func setDragActive(_ active: Bool) {
+        if active {
+            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+            gripLabel.textColor = NSColor.white
+        } else {
+            layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
+            gripLabel.textColor = NSColor.secondaryLabelColor
+        }
+    }
+
     override func mouseEntered(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1
-            gripLabel.animator().alphaValue = 1.0
+            self.animator().layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
         }
     }
 
     override func mouseExited(with event: NSEvent) {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1
-            gripLabel.animator().alphaValue = 0.7
+            self.animator().layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
         }
     }
 
@@ -1505,7 +1745,7 @@ class GlassHandleView: NSVisualEffectView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // Start drag after hold
+        // Start drag
         onDragStart?(index)
     }
 
@@ -1538,7 +1778,7 @@ class GlassButton: NSVisualEffectView {
         layer?.cornerRadius = frame.width / 2
 
         label.stringValue = symbol
-        label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        label.font = NSFont.systemFont(ofSize: max(10, UserDefaultsManagement.noteFont.pointSize * 0.9), weight: .medium)
         label.textColor = NSColor.secondaryLabelColor.withAlphaComponent(0.5)
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false

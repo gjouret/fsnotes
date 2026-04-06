@@ -23,6 +23,12 @@ public class Note: NSObject  {
     lazy var sharedStorage: Storage = Storage.shared()
 
     var content: NSMutableAttributedString = NSMutableAttributedString()
+
+    /// Cached parsed Document for the block-model pipeline. Invalidated
+    /// on any content mutation (save, load, reload). Lazily populated
+    /// by `fillViaBlockModel()` on first access after invalidation.
+    public var cachedDocument: Document?
+
     var creationDate: Date? = Date()
 
     let dateFormatter = DateFormatter()
@@ -305,6 +311,7 @@ public class Note: NSObject  {
 
         if let attributedString = getContent() {
             cacheHash = nil
+            cachedDocument = nil  // Invalidate — content loaded from disk
             content = attributedString.loadAttachments(self)
         }
 
@@ -320,10 +327,11 @@ public class Note: NSObject  {
 
     func reload() -> Bool {
         guard let modifiedAt = getFileModifiedDate() else { return false }
-                        
+
         if (modifiedAt != modifiedLocalAt) {
             if let attributedString = getContent() {
                 cacheHash = nil
+                cachedDocument = nil  // Invalidate — content reloaded
                 content = attributedString.loadAttachments(self)
                 cacheCodeBlocks()
             }
@@ -770,8 +778,32 @@ public class Note: NSObject  {
         sharedStorage.plainWriter.addOperation(operation)
     }
 
+    /// Save raw markdown directly to disk, bypassing NoteSerializer.
+    /// Used by the block-model pipeline which already produces clean
+    /// markdown via MarkdownSerializer — no attachment unloading or
+    /// rendered-block restoration needed.
+    public func save(markdown: String) {
+        // Update the in-memory content cache
+        self.content = NSMutableAttributedString(string: markdown)
+        self.cachedDocument = nil  // Invalidate — content changed
+
+        // SAFETY: reject empty content from non-empty input
+        if markdown.isEmpty {
+            NSLog("SAVE BLOCKED: empty markdown for: \(title)")
+            return
+        }
+
+        modifiedLocalAt = Date()
+
+        let attrStr = NSAttributedString(string: markdown)
+        if write(attributedString: attrStr) {
+            sharedStorage.add(self)
+        }
+    }
+
     public func save(content: NSMutableAttributedString) {
         self.content = content
+        self.cachedDocument = nil  // Invalidate — content changed
 
         // Full serialization pipeline: bullet restore + rendered block restore + attachment unload
         let copy = NoteSerializer.prepareForSave(

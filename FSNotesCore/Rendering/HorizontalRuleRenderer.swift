@@ -14,10 +14,8 @@
 //  - Zero `.kern`. Zero clear-color foreground.
 //  - Pure function: same input → byte-equal output.
 //
-//  Tracer-bullet rendering: emit a fixed-width run of "─" (box-drawing
-//  light horizontal, U+2500). The full-width visual rule is a future
-//  LayoutManager concern; for the architecture tracer, the invariant
-//  is "source markers never appear in rendered output".
+//  Rendering: emits a fixed-width run of "─" (box-drawing light
+//  horizontal, U+2500). Source markers never appear in rendered output.
 //
 
 import Foundation

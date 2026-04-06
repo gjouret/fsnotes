@@ -6,7 +6,7 @@
 //
 //      serialize(parse(markdown)) == markdown  (byte-equal)
 //
-//  Tracer-bullet scope: pure runs of 3+ identical `-`, `_`, or `*`.
+//  Pure runs of 3+ identical `-`, `_`, or `*`.
 //
 
 import XCTest
@@ -87,7 +87,7 @@ class HorizontalRuleRoundTripTests: XCTestCase {
     }
 
     func test_roundTrip_dashWithSpace_notHR() {
-        // Space between chars: strict tracer-bullet rejects.
+        // Space between chars: strict parser rejects.
         assertRoundTrip("- - -\n")
     }
 

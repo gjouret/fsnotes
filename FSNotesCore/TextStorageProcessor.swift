@@ -38,11 +38,36 @@ class CenteredImageCell: NSTextAttachmentCell {
         return NSSize(width: containerWidth, height: imageSize.height)
     }
 
+    /// Called by the layout manager with the CURRENT line fragment rect.
+    /// This lets us shrink the attachment dynamically when the editor is
+    /// resized narrower than the image's intrinsic width.
+    override func cellFrame(for textContainer: NSTextContainer, proposedLineFragment lineFrag: NSRect, glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
+        let available = lineFrag.width
+        guard imageSize.width > 0, available > 0 else {
+            return NSRect(x: 0, y: -2, width: containerWidth, height: imageSize.height)
+        }
+        // If image is wider than available line-fragment width, scale down proportionally.
+        if imageSize.width > available {
+            let scale = available / imageSize.width
+            return NSRect(x: 0, y: -2, width: available, height: imageSize.height * scale)
+        }
+        // Image fits; cell spans the available width so it can center horizontally.
+        return NSRect(x: 0, y: -2, width: available, height: imageSize.height)
+    }
+
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
         guard let image = self.image else { return }
-        let x = cellFrame.origin.x + (cellFrame.width - imageSize.width) / 2
+        // Scale the image to fit the current cellFrame, preserving aspect ratio.
+        // cellFrame.height is already the scaled height (from cellFrame(for:...)),
+        // so the image's drawn height should match cellFrame.height.
+        var drawSize = imageSize
+        if drawSize.width > cellFrame.width && drawSize.width > 0 {
+            let fitScale = cellFrame.width / drawSize.width
+            drawSize = NSSize(width: drawSize.width * fitScale, height: drawSize.height * fitScale)
+        }
+        let x = cellFrame.origin.x + (cellFrame.width - drawSize.width) / 2
         let drawRect = NSRect(origin: NSPoint(x: x, y: cellFrame.origin.y),
-                              size: imageSize)
+                              size: drawSize)
         image.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1.0,
                    respectFlipped: true, hints: nil)
     }
@@ -75,17 +100,16 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     }
 
     public var isRendering = false
+    /// When true, the block-model pipeline owns rendering. The old
+    /// process() pipeline must not run — it would apply syntax colors,
+    /// kern, and clear-foreground to storage that has no markdown markers.
+    public var blockModelActive = false
 
-    /// Registered block processors. Adding a new block visual = one new BlockProcessor file + one entry here.
-    static let blockProcessors: [BlockProcessor] = [
-        BlockquoteProcessor(),
-        HorizontalRuleProcessor(),
-    ]
+    // MARK: - Legacy Block Array
 
-    // MARK: - Block Model (Phase A: shadow mode — populated alongside existing code)
-
-    /// The block model — single source of truth for all WYSIWYG rendering.
-    /// Populated by MarkdownBlockParser during process().
+    /// Legacy block array used by fold/unfold and the legacy rendering
+    /// pipeline (source mode). When blockModelActive==true, populated
+    /// via syncBlocksFromProjection() instead of updateBlockModel().
     public var blocks: [MarkdownBlock] = []
     private var pendingRenderedBlockIDs = Set<UUID>()
 
@@ -104,11 +128,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return blocks[idx]
     }
 
-    /// Hide syntax characters by delegating to the shared static method.
-    func hideSyntaxRange(_ range: NSRange, in textStorage: NSTextStorage) {
-        NotesTextProcessor.applySyntaxHiding(in: textStorage, range: range)
-    }
-
     /// Count leading tabs and 4-space groups as nesting levels.
     public static func leadingListDepth(_ str: String) -> Int {
         var depth = 0
@@ -121,40 +140,75 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return depth
     }
 
-    /// Convert an integer to lowercase alpha (1=a, 2=b, 26=z, 27=aa).
-    public static func alphaMarker(_ n: Int) -> String {
-        var n = max(n, 1)
-        var result = ""
-        while n > 0 {
-            let r = (n - 1) % 26
-            result = String(UnicodeScalar(97 + r)!) + result
-            n = (n - 1) / 26
-        }
-        return result
-    }
+    // MARK: - Block Model Sync for Fold/Unfold
 
-    /// Convert an integer to lowercase roman numeral.
-    public static func romanMarker(_ n: Int) -> String {
-        let values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
-        let symbols = ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"]
-        var n = max(n, 1)
-        var result = ""
-        for i in 0..<values.count {
-            while n >= values[i] {
-                result += symbols[i]
-                n -= values[i]
+    /// Populate the legacy `blocks` array from a DocumentProjection so
+    /// that fold/unfold (which reads `blocks`) works when
+    /// `blockModelActive == true`.
+    ///
+    /// The block-model pipeline bypasses `process()` (which normally
+    /// populates `blocks`), so fold operations would silently no-op.
+    /// This method bridges the gap by creating MarkdownBlock entries
+    /// from the Document model's block types + the rendered blockSpans.
+    ///
+    /// IMPORTANT: preserves the `collapsed` flag from any existing blocks
+    /// that match by type + position, so fold state survives re-renders.
+    public func syncBlocksFromProjection(_ projection: DocumentProjection) {
+        let doc = projection.document
+        let spans = projection.blockSpans
+        guard doc.blocks.count == spans.count else {
+            blocks = []
+            return
+        }
+
+        // Snapshot previous collapsed states keyed by block index
+        let previousCollapsed = Dictionary(
+            uniqueKeysWithValues: blocks.enumerated()
+                .filter { $0.element.collapsed }
+                .map { ($0.offset, true) }
+        )
+
+        var newBlocks: [MarkdownBlock] = []
+        for (i, block) in doc.blocks.enumerated() {
+            let span = spans[i]
+            let blockType: MarkdownBlockType
+            switch block {
+            case .heading(let level, _):
+                blockType = .heading(level: level)
+            case .paragraph:
+                blockType = .paragraph
+            case .codeBlock(let lang, _, _):
+                blockType = .codeBlock(language: lang)
+            case .list(let items):
+                // Determine list type from first item
+                if items.first?.checkbox != nil {
+                    blockType = .todoItem(checked: items.first?.isChecked ?? false)
+                } else if let marker = items.first?.marker,
+                          marker == "-" || marker == "*" || marker == "+" {
+                    blockType = .unorderedList
+                } else {
+                    blockType = .orderedList
+                }
+            case .blockquote:
+                blockType = .blockquote
+            case .horizontalRule:
+                blockType = .horizontalRule
+            case .blankLine:
+                blockType = .empty
             }
-        }
-        return result
-    }
 
-    /// Marker text for an ordered list item at (depth, counter).
-    public static func orderedMarkerText(depth: Int, counter: Int) -> String {
-        switch depth {
-        case 0:  return "\(counter)."
-        case 1:  return "\(alphaMarker(counter))."
-        default: return "\(romanMarker(counter))."
+            var mb = MarkdownBlock(
+                type: blockType,
+                range: span,
+                contentRange: span
+            )
+            // Preserve collapsed state from previous blocks at the same index
+            if previousCollapsed[i] == true {
+                mb.collapsed = true
+            }
+            newBlocks.append(mb)
         }
+        blocks = newBlocks
     }
 
     // MARK: - Header Fold/Unfold
@@ -184,12 +238,36 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             blocks[idx].collapsed = false
             textStorage.endEditing()
             isRendering = false
-            // Re-highlight only the unfolded range to restore proper colors
-            let paragraphRange = (textStorage.string as NSString).paragraphRange(for: foldRange)
-            NotesTextProcessor.highlightMarkdown(
-                attributedString: textStorage,
-                paragraphRange: paragraphRange,
-                codeBlockRanges: codeBlockRanges)
+
+            if blockModelActive {
+                // Block-model path: the rendered text already has correct
+                // attributes from DocumentRenderer. We just need to restore
+                // them after removing the fold's clear-foreground override.
+                // Trigger a re-render of the affected range by re-splicing
+                // the projection's attributed string for the fold range.
+                if let editTextView = editor as? EditTextView,
+                   let projection = editTextView.documentProjection {
+                    let attrSource = projection.attributed
+                    let safeEnd = min(NSMaxRange(foldRange), attrSource.length)
+                    let safeStart = min(foldRange.location, safeEnd)
+                    let safeRange = NSRange(location: safeStart, length: safeEnd - safeStart)
+                    if safeRange.length > 0 {
+                        let originalAttrs = attrSource.attributedSubstring(from: safeRange)
+                        isRendering = true
+                        textStorage.beginEditing()
+                        textStorage.replaceCharacters(in: safeRange, with: originalAttrs)
+                        textStorage.endEditing()
+                        isRendering = false
+                    }
+                }
+            } else {
+                // Legacy path: re-highlight the unfolded range to restore colors
+                let paragraphRange = (textStorage.string as NSString).paragraphRange(for: foldRange)
+                NotesTextProcessor.highlightMarkdown(
+                    attributedString: textStorage,
+                    paragraphRange: paragraphRange,
+                    codeBlockRanges: codeBlockRanges)
+            }
             editor?.needsDisplay = true
         } else {
             blocks[idx].collapsed = true
@@ -346,28 +424,28 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     }
 #endif
 
+    /// Legacy rendering pipeline. Runs ONLY when blockModelActive==false
+    /// (source mode, non-markdown notes). When blockModelActive==true,
+    /// all rendering is handled by DocumentRenderer + EditingOps.
     private func process(textStorage: NSTextStorage, range editedRange: NSRange, changeInLength delta: Int) {
         guard let note = editor?.note, textStorage.length > 0 else { return }
         guard !isRendering else { return }
 
+        // Block-model pipeline owns rendering — bail out entirely.
+        if blockModelActive {
+            return
+        }
+
         defer {
             loadImages(textStorage: textStorage, checkRange: editedRange)
 
-            // Phase 5: Block-aware paragraph styles (replaces addTabStops)
-            // Must run after block model is populated (updateBlockModel runs at end of process body)
+            // Block-aware paragraph styles (spacing, indentation).
             if !blocks.isEmpty {
                 let nsString = textStorage.string as NSString
                 let paragraphRange = expandedParagraphRange(for: editedRange, in: nsString)
                 phase5_paragraphStyles(textStorage: textStorage, range: paragraphRange)
             } else {
-                // Fallback to old addTabStops if block model not yet populated
                 textStorage.updateParagraphStyle(range: editedRange)
-            }
-
-            // Phase 4: Unified syntax hiding (replaces scattered fence hiding)
-            if NotesTextProcessor.hideSyntax && !blocks.isEmpty {
-                let paragraphRange = (textStorage.string as NSString).paragraphRange(for: editedRange)
-                phase4_hideSyntax(textStorage: textStorage, range: paragraphRange)
             }
         }
 
@@ -396,9 +474,16 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         }
 
         for range in renderRanges.codeRanges {
+            // Look up the block's contentRange — the authoritative content
+            // bounds from MarkdownBlockParser. Passing it ensures the highlighter
+            // touches ONLY code content, never fence characters.
+            let contentRange = blocks.first(where: {
+                if case .codeBlock = $0.type, $0.range == range { return true }
+                return false
+            })?.contentRange
             NotesTextProcessor
                 .getHighlighter()
-                .highlight(in: textStorage, fullRange: range)
+                .highlight(in: textStorage, fullRange: range, contentRange: contentRange)
         }
     }
 
@@ -570,16 +655,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     }
 
                 case .unorderedList, .orderedList, .todoItem:
-                    // Tabs-as-metadata model:
-                    //  - firstLineHeadIndent = slotWidth (constant). The first
-                    //    line's leading TAB characters advance the pen through
-                    //    per-depth tab stops to reach slotWidth + depth*listStep.
-                    //  - headIndent = slotWidth + depth*listStep. Wrapped text on
-                    //    a list line has NO tabs, so headIndent must already be
-                    //    at the correct depth position for wrap alignment.
-                    //  - The marker syntax ("- ", "N. ", "[ ] ") is kern-collapsed
-                    //    in phase4; the drawer reads .listDepth to place the
-                    //    marker glyph into the slot before the text.
+                    // Legacy source-mode list indentation:
+                    //  - firstLineHeadIndent = slotWidth (constant).
+                    //  - headIndent = slotWidth + depth*listStep for wrap alignment.
+                    //  - Tab stops placed at depth-based intervals.
                     let depth = Self.leadingListDepth(value)
                     let listStep = baseSize * 4
                     let slotWidth = baseSize * 2
@@ -666,159 +745,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     }
 
     // MARK: - Phase 4: Unified Syntax Hiding
-
-    /// Single-pass syntax hiding: applies clear color + negative kern to ALL
-    /// syntax ranges from the block model. Runs ONCE after highlighting.
-    func phase4_hideSyntax(textStorage: NSTextStorage, range: NSRange) {
-        guard NotesTextProcessor.hideSyntax else { return }
-
-        // Prevent re-entrant processing from character replacements (e.g., bullet substitution)
-        isRendering = true
-        defer { isRendering = false }
-
-        let affectedBlocks = MarkdownBlockParser.blocks(in: blocks, intersecting: range)
-
-        for block in affectedBlocks {
-            // Dispatch to registered block processors.
-            // Adding a new block visual = one new BlockProcessor file + one entry in blockProcessors.
-            var handled = false
-            for proc in Self.blockProcessors where proc.handles(block.type) {
-                if !proc.skipSyntaxHiding {
-                    for syntaxRange in block.syntaxRanges {
-                        guard syntaxRange.location < textStorage.length,
-                              NSMaxRange(syntaxRange) <= textStorage.length else { continue }
-                        hideSyntaxRange(syntaxRange, in: textStorage)
-                    }
-                }
-                proc.process(block: block, textStorage: textStorage, flagProvider: self)
-                handled = true
-            }
-
-            // Default: hide syntax for blocks with no registered processor
-            if !handled {
-                // Helper: count depth from leading tabs/spaces on the line starting
-                // at `from`, returning (depth, position after whitespace). Tabs are
-                // depth METADATA — not rendered as characters. We do NOT kern-hide
-                // them; instead phase5 sets per-depth tab stops so the tab glyphs
-                // advance the pen to the correct indent position.
-                func hideLeadingWS(from lineStart: Int, upTo lineEnd: Int) -> (depth: Int, afterWS: Int) {
-                    let nsStr = textStorage.string as NSString
-                    var i = lineStart
-                    var depth = 0
-                    var spaces = 0
-                    while i < lineEnd {
-                        let ch = nsStr.character(at: i)
-                        if ch == 0x09 { depth += 1; spaces = 0; i += 1 }
-                        else if ch == 0x20 { spaces += 1; i += 1; if spaces == 4 { depth += 1; spaces = 0 } }
-                        else { break }
-                    }
-                    return (depth, i)
-                }
-
-                if case .unorderedList = block.type {
-                    // For each list item line: hide leading whitespace + "- " with
-                    // kern-collapse (zero width). Stamp .bulletMarker(depth) on the
-                    // marker's first char so the drawer can find the line.
-                    let nsStr = textStorage.string as NSString
-                    var lineStart = block.range.location
-                    let blockEnd = NSMaxRange(block.range)
-                    while lineStart < blockEnd {
-                        let lineRange = nsStr.paragraphRange(for: NSRange(location: lineStart, length: 0))
-                        let lineEnd = NSMaxRange(lineRange)
-                        let (depth, markerStart) = hideLeadingWS(from: lineRange.location, upTo: lineEnd)
-                        if markerStart + 1 < lineEnd {
-                            let ch = nsStr.character(at: markerStart)
-                            if ch == 0x2D || ch == 0x2A || ch == 0x2B { // - * +
-                                let markerRange = NSRange(location: markerStart, length: 2)
-                                hideSyntaxRange(markerRange, in: textStorage)
-                                textStorage.addAttribute(.bulletMarker, value: depth,
-                                                         range: NSRange(location: markerStart, length: 1))
-                                textStorage.addAttribute(.listDepth, value: depth,
-                                                         range: NSRange(location: markerStart, length: 1))
-                            }
-                        }
-                        lineStart = lineEnd
-                        if lineStart <= lineRange.location { break }
-                    }
-                } else if case .orderedList = block.type {
-                    // For each ordered list item: kern-collapse leading WS + "N." +
-                    // optional space. Substitute the marker (1./a./i.) by stamping
-                    // .orderedMarker(String) on the first digit.
-                    let nsStr = textStorage.string as NSString
-                    var lineStart = block.range.location
-                    let blockEnd = NSMaxRange(block.range)
-                    var counters: [Int: Int] = [:]
-                    while lineStart < blockEnd {
-                        let lineRange = nsStr.paragraphRange(for: NSRange(location: lineStart, length: 0))
-                        let lineEnd = NSMaxRange(lineRange)
-                        let (depth, markerStart) = hideLeadingWS(from: lineRange.location, upTo: lineEnd)
-
-                        // Reset deeper counters when depth decreases
-                        for d in counters.keys where d > depth { counters.removeValue(forKey: d) }
-                        counters[depth, default: 0] += 1
-                        let markerText = Self.orderedMarkerText(depth: depth, counter: counters[depth]!)
-
-                        // Scan digits + '.' + optional space
-                        var i = markerStart
-                        while i < lineEnd, nsStr.character(at: i) >= 0x30, nsStr.character(at: i) <= 0x39 {
-                            i += 1
-                        }
-                        if i < lineEnd, nsStr.character(at: i) == 0x2E { i += 1 } // '.'
-                        if i < lineEnd, nsStr.character(at: i) == 0x20 { i += 1 } // space
-                        if i > markerStart {
-                            let syntaxLen = i - markerStart
-                            let syntaxRange = NSRange(location: markerStart, length: syntaxLen)
-                            hideSyntaxRange(syntaxRange, in: textStorage)
-                            textStorage.addAttribute(.orderedMarker, value: markerText,
-                                                     range: NSRange(location: markerStart, length: 1))
-                            textStorage.addAttribute(.listDepth, value: depth,
-                                                     range: NSRange(location: markerStart, length: 1))
-                        }
-
-                        lineStart = lineEnd
-                        if lineStart <= lineRange.location { break }
-                    }
-                } else if case .todoItem(let checked) = block.type {
-                    // todoItem is a single-line block. Hide the entire syntax range
-                    // (already includes leading WS from MarkdownBlockParser fix) and
-                    // stamp .checkboxMarker(Bool) + .listDepth(Int) on first char.
-                    let nsStr = textStorage.string as NSString
-                    for syntaxRange in block.syntaxRanges {
-                        guard syntaxRange.location < textStorage.length,
-                              NSMaxRange(syntaxRange) <= textStorage.length else { continue }
-                        // Compute depth from leading WS within syntax range
-                        var depth = 0
-                        var spaces = 0
-                        var markerStart = syntaxRange.location
-                        var i = syntaxRange.location
-                        let maxI = NSMaxRange(syntaxRange)
-                        while i < maxI {
-                            let ch = nsStr.character(at: i)
-                            if ch == 0x09 { depth += 1; spaces = 0; i += 1; markerStart = i }
-                            else if ch == 0x20 { spaces += 1; i += 1; if spaces == 4 { depth += 1; spaces = 0 }; markerStart = i }
-                            else { break }
-                        }
-                        // Only hide the "- [ ] " marker portion — leading WS is depth
-                        // metadata rendered via paragraph tab stops, not kerned away.
-                        if markerStart < maxI {
-                            let markerKernRange = NSRange(location: markerStart, length: maxI - markerStart)
-                            hideSyntaxRange(markerKernRange, in: textStorage)
-                        }
-                        let stampLoc = min(markerStart, max(syntaxRange.location, maxI - 1))
-                        let stampRange = NSRange(location: stampLoc, length: 1)
-                        textStorage.addAttribute(.checkboxMarker, value: checked, range: stampRange)
-                        textStorage.addAttribute(.listDepth, value: depth, range: stampRange)
-                    }
-                } else {
-                    for syntaxRange in block.syntaxRanges {
-                        guard syntaxRange.location < textStorage.length,
-                              NSMaxRange(syntaxRange) <= textStorage.length else { continue }
-                        hideSyntaxRange(syntaxRange, in: textStorage)
-                    }
-                }
-            }
-        }
-    }
 
     private func loadImages(textStorage: NSTextStorage, checkRange: NSRange) {
         guard let note = editor?.note else { return }
@@ -928,7 +854,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             } else if firstLine.hasPrefix("```math") || firstLine.hasPrefix("```latex") {
                 blockType = .math
             }
-
             guard let type = blockType else { continue }
 
             // Extract the source content (between fences)
@@ -984,7 +909,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     let attachment = NSTextAttachment()
                     let cell = CenteredImageCell(image: image, imageSize: scaledSize, containerWidth: maxWidth)
                     attachment.attachmentCell = cell
-                    attachment.bounds = NSRect(origin: .zero, size: NSSize(width: maxWidth, height: scaledSize.height))
+                    // DO NOT set attachment.bounds — it would override the dynamic
+                    // cellFrame(for:proposedLineFragment:...) query on the cell,
+                    // preventing the image from shrinking when the pane is resized.
 
                     let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
                     let attRange = NSRange(location: 0, length: attachmentString.length)
@@ -1028,8 +955,18 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         #if os(iOS)
             return UIApplication.getVC().view.frame.width - 35
         #else
+            // Prefer the text container width — this is the actual drawable
+            // width inside the text view. Using the scroll view's content
+            // width overshoots by the text container inset and line fragment
+            // padding, causing rendered images to exceed the cellFrame during
+            // layout and appear clipped on the left (negative x offset).
+            if let container = editor?.textContainer {
+                let lfp = container.lineFragmentPadding
+                let w = container.size.width - lfp * 2
+                if w > 0 { return w }
+            }
             if let editorWidth = editor?.enclosingScrollView?.contentView.bounds.width {
-                return editorWidth - 40 // margin for padding
+                return editorWidth - 40
             }
             return CGFloat(UserDefaultsManagement.imagesWidth)
         #endif

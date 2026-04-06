@@ -29,22 +29,11 @@ public protocol EditorDelegate: AnyObject {
     var editorTextContainer: NSTextContainer? { get }
     var editorContentWidth: CGFloat { get }
     var imagesLoaderQueue: OperationQueue { get }
+    /// Save the current note (block-model or legacy path).
+    func save()
 }
 
-/// Processes a block during Phase 4 (syntax hiding + attribute marking).
-public protocol BlockProcessor {
-    /// Block types this processor handles.
-    func handles(_ type: MarkdownBlockType) -> Bool
-
-    /// Whether to skip syntax hiding for blocks this processor handles.
-    /// True for lists (which use character substitution instead of kern hiding).
-    var skipSyntaxHiding: Bool { get }
-
-    /// Process the block: set marker attributes, perform substitutions, etc.
-    func process(block: MarkdownBlock, textStorage: NSMutableAttributedString, flagProvider: RenderingFlagProvider)
-}
-
-/// Default: don't skip syntax hiding.
-public extension BlockProcessor {
-    var skipSyntaxHiding: Bool { false }
-}
+// The legacy BlockProcessor protocol has been removed.
+// Phase 4 (syntax hiding) is fully handled by the block-model
+// DocumentRenderer. BlockquoteProcessor and HorizontalRuleProcessor
+// have been deleted.

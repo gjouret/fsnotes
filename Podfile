@@ -1,6 +1,6 @@
 use_frameworks!
 
-MAC_TARGET_VERSION = '10.14'
+MAC_TARGET_VERSION = '26.0'
 IOS_TARGET_VERSION = '14'
 
 def mac_pods
@@ -79,7 +79,7 @@ post_install do |installer|
       target.name == 'RNCryptor-macOS'
 
       target.build_configurations.each do |config|
-        config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '10.14'
+        config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '26.0'
       end
     end
 

@@ -9,7 +9,7 @@
 import Foundation
 
 public enum RenderedBlockType: String {
-    case mermaid, math, table
+    case mermaid, math, table, pdf
 }
 
 public extension NSAttributedString.Key {

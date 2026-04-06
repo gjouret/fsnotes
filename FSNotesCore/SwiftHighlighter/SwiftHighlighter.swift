@@ -324,13 +324,17 @@ public class SwiftHighlighter {
     public func highlight(
         in attributedString: NSMutableAttributedString,
         fullRange: NSRange,
+        contentRange: NSRange? = nil,
         editedRange: NSRange? = nil
     ) {
         let language = getLanguage(from: attributedString, startingAt: fullRange.location)
         let langDefinition = language.flatMap { getLanguage($0) }
         let shouldHighlightTicks = editedRange.map { fullRange.location == $0.location } ?? true
-        
-        var codeRange = calculateCodeRange(
+
+        // Prefer the authoritative contentRange from the block model (single source
+        // of truth). Fall back to deriving it from fullRange + language for callers
+        // that don't have a block reference.
+        var codeRange = contentRange ?? calculateCodeRange(
             fullRange: fullRange,
             language: language
         )
@@ -366,8 +370,13 @@ public class SwiftHighlighter {
         
         attributedString.fixAttributes(in: codeRange)
         
-        // Apply ticks and lang highlighting
-        if shouldHighlightTicks {
+        // Apply ticks and lang highlighting — but only in source mode. In
+        // hideSyntax (WYSIWYG) mode, phase4_hideSyntax owns the fence
+        // presentation (clear color + negative kern). Re-coloring the fences
+        // here and changing their font breaks the kern-based width collapse
+        // because kern was calibrated against the font that was present when
+        // phase4 ran, and switching to codeFont changes the glyph advance.
+        if shouldHighlightTicks && !NotesTextProcessor.hideSyntax {
             highlightCodeBlockDelimiters(
                 in: attributedString,
                 range: fullRange,
@@ -382,7 +391,7 @@ public class SwiftHighlighter {
         language: String?
     ) -> NSRange {
         let codeStartOffset = language.map { 3 + $0.count } ?? 0
-        
+
         return NSRange(
             location: fullRange.location + codeStartOffset,
             length: max(0, fullRange.length - codeStartOffset - 3)

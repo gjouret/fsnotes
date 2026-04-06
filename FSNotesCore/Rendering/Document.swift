@@ -12,11 +12,6 @@
 //    is RAW code with no fences). They are NEVER rendered into textStorage.
 //  - Round-trip invariant: serialize(parse(markdown)) == markdown, byte-equal.
 //
-//  This file defines the TRACER-BULLET subset of the full block model: only
-//  the block types needed to prove the architecture works end-to-end for
-//  code blocks. The full model (headings, lists, inlines, etc.) will be
-//  added in later phases.
-//
 
 import Foundation
 
@@ -58,9 +53,7 @@ public struct FenceStyle: Equatable {
     }
 }
 
-/// A top-level block in the document. This is the TRACER-BULLET subset.
-/// Additional cases (heading, list, blockquote, inline-bearing paragraph,
-/// table, mermaid, math, etc.) are added in later migration phases.
+/// A top-level block in the document.
 public enum Block: Equatable {
     /// A fenced code block. `content` is the RAW code between the fences
     /// with no fence characters. `language` is the parsed info string
@@ -71,9 +64,8 @@ public enum Block: Equatable {
     /// An ATX heading. `level` is 1–6 (number of leading `#` characters).
     /// `suffix` is everything on the line AFTER the `#` markers, verbatim —
     /// it always begins with a space or is empty, and is preserved exactly
-    /// so the block round-trips byte-equal. Inline styling within the
-    /// heading is not yet parsed (tracer-bullet scope); the renderer
-    /// trims `suffix` to produce the displayed heading text.
+    /// so the block round-trips byte-equal. The renderer trims `suffix`
+    /// to produce the displayed heading text.
     case heading(level: Int, suffix: String)
 
     /// A paragraph: a run of non-empty lines carrying parsed inline
@@ -85,15 +77,13 @@ public enum Block: Equatable {
     /// A list (unordered or ordered). Items carry their original
     /// indent/marker/whitespace verbatim for byte-equal round-trip.
     /// Nesting is represented by each item's `children` (siblings at
-    /// deeper indentation). Tracer-bullet scope: single-line items —
-    /// no lazy continuations, no multi-paragraph items.
+    /// deeper indentation).
     case list(items: [ListItem])
 
     /// A blockquote: a run of consecutive `>`-prefixed lines. Each
     /// line carries its verbatim prefix (`>`, `> `, `>> `, etc.) so
-    /// the block round-trips byte-equal. Tracer-bullet scope: each
-    /// line's content is parsed as inlines only — no recursive
-    /// block structure inside the quote.
+    /// the block round-trips byte-equal. Each line's content is
+    /// parsed as inlines.
     case blockquote(lines: [BlockquoteLine])
 
     /// A horizontal rule (thematic break). `character` is the source
@@ -107,16 +97,56 @@ public enum Block: Equatable {
     case blankLine
 }
 
+/// A checkbox on a todo list item. Preserves the exact source text
+/// (e.g. `[ ]`, `[x]`, `[X]`) and trailing whitespace for byte-equal
+/// round-trip serialization.
+public struct Checkbox: Equatable {
+    /// The raw checkbox text, e.g. "[ ]", "[x]", "[X]".
+    public let text: String
+    /// Whitespace between the checkbox and the inline content (usually " ").
+    public let afterText: String
+
+    public init(text: String, afterText: String) {
+        self.text = text
+        self.afterText = afterText
+    }
+
+    /// Whether this checkbox is checked.
+    public var isChecked: Bool {
+        return text.lowercased().contains("x")
+    }
+
+    /// Return a toggled copy (checked ↔ unchecked), preserving casing style.
+    public func toggled() -> Checkbox {
+        let newText: String
+        if isChecked {
+            newText = text
+                .replacingOccurrences(of: "[x]", with: "[ ]")
+                .replacingOccurrences(of: "[X]", with: "[ ]")
+        } else {
+            newText = text.replacingOccurrences(of: "[ ]", with: "[x]")
+        }
+        return Checkbox(text: newText, afterText: afterText)
+    }
+}
+
 /// A single item within a list. Records the exact source prefix
-/// (`indent` + `marker` + `afterMarker`) so the item round-trips
-/// byte-equal, plus its inline content and any nested sub-items.
+/// (`indent` + `marker` + `afterMarker` + optional `checkbox`)
+/// so the item round-trips byte-equal, plus its inline content
+/// and any nested sub-items.
 ///
 /// Example: "  - hello" → ListItem(indent: "  ", marker: "-",
-/// afterMarker: " ", inline: [.text("hello")], children: []).
+/// afterMarker: " ", checkbox: nil, inline: [.text("hello")],
+/// children: []).
+///
+/// Example: "- [ ] task" → ListItem(indent: "", marker: "-",
+/// afterMarker: " ", checkbox: Checkbox(text: "[ ]", afterText: " "),
+/// inline: [.text("task")], children: []).
 public struct ListItem: Equatable {
     public let indent: String        // leading whitespace before marker
     public let marker: String        // "-", "*", "+", "1.", "2)", etc.
-    public let afterMarker: String   // whitespace between marker and content
+    public let afterMarker: String   // whitespace between marker and content/checkbox
+    public let checkbox: Checkbox?   // nil for regular items, non-nil for todo items
     public let inline: [Inline]      // parsed inline content (no markers)
     public let children: [ListItem]  // nested items at deeper indentation
 
@@ -124,15 +154,23 @@ public struct ListItem: Equatable {
         indent: String,
         marker: String,
         afterMarker: String,
+        checkbox: Checkbox? = nil,
         inline: [Inline],
         children: [ListItem]
     ) {
         self.indent = indent
         self.marker = marker
         self.afterMarker = afterMarker
+        self.checkbox = checkbox
         self.inline = inline
         self.children = children
     }
+
+    /// Whether this item is a todo (has a checkbox).
+    public var isTodo: Bool { return checkbox != nil }
+
+    /// Whether this item is a checked todo.
+    public var isChecked: Bool { return checkbox?.isChecked ?? false }
 }
 
 /// A single line of a blockquote. Records the exact source prefix
@@ -154,12 +192,11 @@ public struct BlockquoteLine: Equatable {
 }
 
 /// An inline run — the leaf content inside a paragraph, heading, list
-/// item, etc. Tracer-bullet subset: text + bold + italic (asterisk
-/// markers only). Underscore emphasis, code spans, links, images,
-/// etc. are added in later phases.
+/// item, etc.
 public indirect enum Inline: Equatable {
     case text(String)
-    case bold([Inline])       // **…**
-    case italic([Inline])     // *…*
-    case code(String)         // `…` — content is raw, never parsed
+    case bold([Inline])          // **…**
+    case italic([Inline])        // *…*
+    case strikethrough([Inline]) // ~~…~~
+    case code(String)            // `…` — content is raw, never parsed
 }

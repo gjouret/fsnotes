@@ -28,12 +28,33 @@ extension EditTextView {
 
     public func save() {
         guard let note = self.note else { return }
-        note.save(attributed: attributedStringForSaving())
+        // Block-model pipeline: serialize Document to markdown
+        // directly, bypassing the attribute-stripping save path.
+        if let markdown = serializeViaBlockModel() {
+            bmLog("💾 save (block-model): \(note.title) — \(markdown.prefix(60))")
+            note.save(markdown: markdown)
+            // Preserve the cached Document from the current projection —
+            // save(markdown:) invalidates it, but the projection's document
+            // is still the correct one.
+            if let doc = documentProjection?.document {
+                note.cachedDocument = doc
+            }
+            return
+        }
+        let saving = attributedStringForSaving()
+        bmLog("💾 save (legacy): \(note.title) — \(saving.string.prefix(60))")
+        note.save(attributed: saving)
     }
 
     func fill(note: Note, highlight: Bool = false, force: Bool = false) {
+        bmLog("📋 fill() called: \(note.title)")
         isScrollPositionSaverLocked = true
 
+        // Clear block-model state BEFORE touching textStorage.
+        // This prevents any textDidChange triggered by the
+        // storage-clearing below from seeing stale block-model state.
+        documentProjection = nil
+        textStorageProcessor?.blockModelActive = false
         textStorageProcessor?.blocks = []
 
         if !note.isLoaded {
@@ -89,8 +110,15 @@ extension EditTextView {
         if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {
             pendingRenderBlockRange = nil
             removeAllInlineTableViews()
-            storage.setAttributedString(content)
+            removeAllInlinePDFViews()
+
+            // Block-model renderer: parses markdown → Document → rendered
+            // attributed string. Falls back to legacy for source mode.
+            if !fillViaBlockModel(note: note) {
+                storage.setAttributedString(content)
+            }
         } else {
+            documentProjection = nil
             storage.setAttributedString(note.content)
         }
 
@@ -98,44 +126,38 @@ extension EditTextView {
             textStorage?.highlightKeyword(search: getSearchText())
         }
 
-        if NotesTextProcessor.hideSyntax, let storage = textStorage, let processor = textStorageProcessor {
-            let codeBlockRanges = processor.codeBlockRanges
-            let string = storage.string as NSString
-            let fenceParaStyle = NSMutableParagraphStyle()
-            fenceParaStyle.maximumLineHeight = CGFloat(UserDefaultsManagement.fontSize) * 0.5
-            fenceParaStyle.lineSpacing = 0
-            let fenceFont = NSFont.systemFont(ofSize: CGFloat(UserDefaultsManagement.fontSize) * 0.5)
-
-            for codeRange in codeBlockRanges {
-                guard codeRange.location < string.length, NSMaxRange(codeRange) <= string.length else { continue }
-                let openingLineRange = string.lineRange(for: NSRange(location: codeRange.location, length: 0))
-                if openingLineRange.length > 0 {
-                    storage.addAttribute(.font, value: fenceFont, range: openingLineRange)
-                    storage.addAttribute(.paragraphStyle, value: fenceParaStyle, range: openingLineRange)
-                    processor.hideSyntaxRange(openingLineRange, in: storage)
-                }
-                let endLoc = NSMaxRange(codeRange)
-                if endLoc > 0 {
-                    let closingLineRange = string.lineRange(for: NSRange(location: endLoc - 1, length: 0))
-                    if closingLineRange.length > 0, closingLineRange.location != openingLineRange.location {
-                        storage.addAttribute(.font, value: fenceFont, range: closingLineRange)
-                        storage.addAttribute(.paragraphStyle, value: fenceParaStyle, range: closingLineRange)
-                        processor.hideSyntaxRange(closingLineRange, in: storage)
+        // When the block-model pipeline rendered this note, all styling
+        // (paragraph styles, syntax hiding, code block rendering) is
+        // already handled — skip legacy post-processing.
+        if documentProjection == nil {
+            // Legacy path: fence lines hidden by phase4_hideSyntax
+            // (per-char kern + clear color), styled by phase5_paragraphStyles.
+            if NotesTextProcessor.hideSyntax {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self,
+                          let storage = self.textStorage,
+                          let processor = self.textStorageProcessor else { return }
+                    let codeRanges = processor.codeBlockRanges
+                    if !codeRanges.isEmpty {
+                        processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
                     }
+                    self.renderTables()
                 }
             }
         }
 
+        // Render inline PDF viewers (works in both block-model and legacy pipelines).
+        // Must run after all text is in storage so regex scanning finds PDF references.
         if NotesTextProcessor.hideSyntax {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self,
-                      let storage = self.textStorage,
-                      let processor = self.textStorageProcessor else { return }
-                let codeRanges = processor.codeBlockRanges
-                if !codeRanges.isEmpty {
-                    processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
-                }
-                self.renderTables()
+                      let storage = self.textStorage else { return }
+                let containerWidth = self.textContainer?.size.width ?? self.frame.width
+                PDFAttachmentProcessor.renderPDFAttachments(
+                    in: storage,
+                    note: note,
+                    containerWidth: containerWidth
+                )
             }
         }
 
@@ -244,5 +266,13 @@ extension EditTextView {
 
     func renderTables() {
         tableController.renderTables()
+    }
+
+    func removeAllInlinePDFViews() {
+        for subview in subviews {
+            if subview is InlinePDFView {
+                subview.removeFromSuperview()
+            }
+        }
     }
 }

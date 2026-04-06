@@ -6,10 +6,10 @@ FSNotes++ is a WYSIWYG markdown editor for macOS, forked from FSNotes. The app r
 
 The codebase currently contains **two rendering architectures running side-by-side**:
 
-1. **Legacy pipeline** (active in the app): text storage = original markdown; rendering via attributes + clear-color/negative-kern hiding + custom LayoutManager drawing. Described in "Rendering Pipeline" below.
-2. **Block-model pipeline** (tracer-bullet, not yet wired into the app): markdown is parsed once into a `Document`; the renderer consumes that tree and emits an NSAttributedString whose `.string` contains ONLY displayed characters. Source markers (`#`, `**`, `-`, `>`, fences, etc.) never reach the rendered output. Described in "Block-Model Rendering (Target Architecture)" below.
+1. **Legacy pipeline** (source mode only): text storage = original markdown; rendering via attributes + clear-color/negative-kern hiding + custom LayoutManager drawing. Described in "Rendering Pipeline" below.
+2. **Block-model pipeline** (active for WYSIWYG mode): markdown is parsed once into a `Document`; the renderer consumes that tree and emits an NSAttributedString whose `.string` contains ONLY displayed characters. Source markers (`#`, `**`, `-`, `>`, fences, etc.) never reach the rendered output. All 7 block types are supported. Editing operations route through `EditingOps` and structural operations (list indent/unindent/exit) use a finite state machine. Described in "Block-Model Rendering (Target Architecture)" and "Editing Finite State Machines" below.
 
-The block model is the migration target. The legacy pipeline stays authoritative until every block type is ported and the rendering boundary is switched.
+The block model is the active rendering pipeline for WYSIWYG mode. The legacy pipeline is preserved for source mode.
 
 **Bundle ID**: `co.fluder.FSNotes` (shared with original FSNotes for same notes folder)
 **Product Name**: `FSNotes++`
@@ -25,9 +25,9 @@ The block model is the migration target. The legacy pipeline stays authoritative
 | FSNotesCore | `FSNotesCore/` | Framework: parsing, highlighting, formatting, serialization |
 | FSNotesTests | `Tests/` | Unit tests, visual snapshots, A/B comparisons |
 
-## Rendering Pipeline
+## Legacy Rendering Pipeline (source mode only)
 
-Every text change triggers `NSTextStorage.didProcessEditing` → `TextStorageProcessor.process()`. The pipeline runs in this order:
+When `blockModelActive == false` (source mode, non-markdown notes), every text change triggers `NSTextStorage.didProcessEditing` → `TextStorageProcessor.process()`. This pipeline is bypassed entirely in WYSIWYG mode — see "Block-Model Rendering" below. The legacy pipeline runs in this order:
 
 ### Stage 1: Markdown Highlighting
 **File**: `FSNotesCore/NotesTextProcessor.swift`
@@ -41,17 +41,10 @@ Applies heading fonts (excluding trailing `\n` — root cause fix for cursor hei
 **Method**: `getHighlighter().highlight(in:fullRange:)`
 Language-specific syntax coloring inside fenced code blocks.
 
-### Stage 3: Phase 4 — Syntax Hiding & Block Processing
-**File**: `FSNotesCore/TextStorageProcessor.swift` → `phase4_hideSyntax()`
-**Owns**: `.kern` (negative, collapses hidden chars), `.foregroundColor` (clear for hidden text), `.bulletMarker`, `.blockquote`, `.horizontalRule`
+### Stage 3: Phase 4 — Syntax Hiding (REMOVED)
+**Status**: Deleted. The block-model `DocumentRenderer` now handles all syntax hiding by never placing markdown markers in `textStorage` in the first place. The functions `phase4_hideSyntax`, `hideSyntaxRange`, `alphaMarker`, `romanMarker`, `orderedMarkerText`, `BlockquoteProcessor`, and `HorizontalRuleProcessor` have been removed.
 
-Hides markdown syntax characters (e.g., `#`, `**`, `~~`, `` ``` ``) using clear color + per-character negative kern. Dispatches to registered `BlockProcessor` implementations:
-- `BlockquoteProcessor` — sets `.blockquote` with nesting depth
-- `HorizontalRuleProcessor` — sets `.horizontalRule`
-
-For unordered lists: hides `-` with clear color (NO negative kern — preserves width for BulletDrawer), hides trailing space with kern, sets `.bulletMarker`.
-
-**Global flag**: `NotesTextProcessor.hideSyntax` controls whether WYSIWYG mode is active.
+**Global flag**: `NotesTextProcessor.hideSyntax` still exists for source-mode inline highlighting via `hideSyntaxIfNecessary()`.
 
 ### Stage 4: Phase 5 — Paragraph Styles
 **File**: `FSNotesCore/TextStorageProcessor.swift` → `phase5_paragraphStyles()`
@@ -128,6 +121,27 @@ Typing attributes are set AFTER `insertText` (not before), because `didProcessEd
 
 ## Formatting Toggle System
 
+### Block-Model Path (WYSIWYG mode)
+
+**Files**: `FSNotesCore/Rendering/EditingOperations.swift`, `FSNotes/View/EditTextView+BlockModel.swift`
+
+Toolbar actions route through block-model operations when `documentProjection` is active:
+
+**Inline trait toggle** (`EditingOps.toggleInlineTrait`):
+- Bold, italic, strikethrough, code — wraps/unwraps selection in the inline tree
+- Works on paragraphs, headings, list items, blockquotes
+- Pure function: (projection, selection range, trait) → (new projection, splice)
+
+**Block-level conversions**:
+- `EditingOps.changeHeadingLevel(level, at:, in:)` — paragraph ↔ heading, level change, toggle off
+- `EditingOps.toggleList(marker:, at:, in:)` — paragraph ↔ list
+- `EditingOps.toggleBlockquote(at:, in:)` — paragraph ↔ blockquote
+- `EditingOps.insertHorizontalRule(at:, in:)` — inserts HR after current block
+
+**Wiring**: `EditTextView+Formatting.swift` tries block-model path first via `toggle*ViaBlockModel()` methods. Falls back to legacy TextFormatter if projection is nil or operation throws.
+
+### Legacy Path (source mode fallback)
+
 **File**: `FSNotesCore/TextFormatter.swift` → `toggleMarkers(open:close:)`
 
 Single generic method for all marker-based formatting:
@@ -143,17 +157,24 @@ Single generic method for all marker-based formatting:
 
 ## Save Pipeline
 
+### Block-Model Path (WYSIWYG mode)
+
+**File**: `FSNotes/View/EditTextView+NoteState.swift` → `save()`
+
+When `documentProjection` is active, save serializes the Document back to markdown via `MarkdownSerializer.serialize()` → `Note.save(markdown:)`. This bypasses `NoteSerializer.prepareForSave()` entirely — no attribute stripping needed because the Document IS the source of truth. The serialized markdown is written directly to disk.
+
+All save call sites route through `EditorDelegate.save()` (protocol method on EditTextView), including TextFormatter's `deinit`.
+
+### Legacy Path (source mode)
+
 **File**: `FSNotesCore/Rendering/NoteSerializer.swift` → `prepareForSave()`
 
 ```
 1. restoreRenderedBlocks() — mermaid/math images → original markdown
-2. unloadTasks()           — checkbox attachments → - [ ] / - [x]
-3. unloadImagesAndFiles()  — image attachments → ![](path)
+2. unloadImagesAndFiles()  — image attachments → ![](path)
 ```
 
-**Safety**: `getFileWrapper()` throws on error (never returns empty FileWrapper). `save(content:)` blocks writes where serialization produces empty from non-empty input.
-
-**Note**: Bullets no longer need restoration — storage always contains original `-` (BulletProcessor removed, replaced by BulletDrawer).
+**Safety**: `getFileWrapper()` throws on error (never returns empty FileWrapper). `save(content:)` and `save(markdown:)` both block writes for empty content.
 
 ## Gutter Icons
 
@@ -194,6 +215,8 @@ Pins persist to `UserDefaults.standard` synchronously on every toggle (with `syn
 - InlineTableView subviews hidden directly during fold
 - Gutter shows `▶`/`▼` carets, H-level badges, `⋯` ellipsis for collapsed headers
 
+**Block-model bridge**: When `blockModelActive == true`, the legacy `blocks` array is populated via `syncBlocksFromProjection()` — maps Document heading blocks to MarkdownBlock entries with rendered blockSpan ranges. This lets the existing fold code work without rewriting it. Unfold restores attributes from the projection's rendered output instead of calling `highlightMarkdown()`.
+
 ## Table Widget
 
 **File**: `FSNotes/Helpers/InlineTableView.swift`
@@ -208,18 +231,21 @@ Three focus states: `.unfocused`, `.hovered`, `.editing`. Rendered as NSTextAtta
 
 **File**: `FSNotesCore/Extensions/NSAttributedStringKey+.swift`
 
-| Key | Type | Set by | Used by |
-|-----|------|--------|---------|
-| `.bulletMarker` | Bool | Phase4 | BulletDrawer |
-| `.horizontalRule` | Bool | HorizontalRuleProcessor | HorizontalRuleDrawer |
-| `.blockquote` | Int (depth) | BlockquoteProcessor | BlockquoteBorderDrawer |
-| `.kbdTag` | Bool | InlineTagRegistry | KbdBoxDrawer |
-| `.todo` | Int (0/1) | AttributedBox | Checkbox click handling |
-| `.listBullet` | String | (legacy) | (legacy) |
-| `.foldedContent` | Bool | toggleFold | LayoutManager gate |
-| `.renderedBlockOriginalMarkdown` | String | Mermaid/math/table renderer | Save pipeline, table copy |
-| `.renderedBlockType` | String | Mermaid/math/table renderer | Table click/copy routing |
-| `.codeFence` | Bool | Phase4 | Code block styling |
+| Key | Type | Set by | Used by | Status |
+|-----|------|--------|---------|--------|
+| `.bulletMarker` | Bool | (legacy only) | BulletDrawer | Orphaned in block-model mode |
+| `.checkboxMarker` | Bool | (legacy only) | CheckboxDrawer | Orphaned in block-model mode |
+| `.orderedMarker` | String | (legacy only) | OrderedMarkerDrawer | Orphaned in block-model mode |
+| `.listDepth` | Int | (legacy only) | LayoutManager | Orphaned in block-model mode |
+| `.horizontalRule` | Bool | (legacy only) | HorizontalRuleDrawer | Orphaned in block-model mode |
+| `.blockquote` | Int (depth) | (legacy only) | BlockquoteBorderDrawer | Orphaned in block-model mode |
+| `.kbdTag` | Bool | InlineTagRegistry | KbdBoxDrawer | Active |
+| `.todo` | Int (0/1) | (legacy only) | Checkbox click handling | Legacy only |
+| `.foldedContent` | Bool | toggleFold | LayoutManager gate | Active (bridged) |
+| `.renderedBlockOriginalMarkdown` | String | Mermaid/math/table renderer | Save pipeline, table copy | Legacy only |
+| `.renderedBlockType` | String | Mermaid/math/table renderer | Table click/copy routing | Legacy only |
+
+**Note**: The block-model pipeline renders bullets, checkboxes, ordered markers, HR, and blockquotes as text characters or paragraph styles directly in the rendered `NSAttributedString` — no custom attributes needed. The legacy LayoutManager drawing for these attributes is skipped when `blockModelActive == true`.
 
 ## Paste Handling
 
@@ -277,12 +303,17 @@ let outputDir = NSHomeDirectory() + "/unit-tests"
 ### Test Files
 | File | Tests | What it verifies |
 |------|-------|-----------------|
+| `ArchitectureEnforcementTests.swift` | 24 | No-kern, no-clear-color, no-markers-in-storage, idempotence |
+| `ListFSMTests.swift` | 30 | List editing FSM transitions (indent, unindent, exit, newItem) |
+| `BlockModelFormattingTests.swift` | 51 | Inline traits, heading/list/blockquote toggle, HR, todo, fold sync |
 | `BlockParserTests.swift` | 35 | Block type detection, ranges, edge cases |
-| `NewLineTransitionTests.swift` | 26+ | Return key transitions, A/B visual comparisons, CMD+T simulation |
-| `TableLayoutTests.swift` | 13 | Table geometry, padding, sizing, visual snapshots |
+| `NewLineTransitionTests.swift` | 26+ | Return key transitions, A/B visual comparisons |
+| `TableLayoutTests.swift` | 15 | Table geometry, padding, sizing, visual snapshots |
+| `RoundTripTests.swift` | 169 | Parse → serialize byte-equal for all block types |
+| `ListMarkerTests.swift` | 10 | Depth counting, visual bullet glyphs |
 | `NoteSerializerTests.swift` | 9 | Save pipeline round-trip |
-| `FoldSnapshotTests.swift` | 2 | Pixel-level fold visibility |
 | `RendererComparisonTests.swift` | 2 | NSTextView rendering |
+| **Total** | **507** | 1 pre-existing failure (TableLayoutTests.test_copyButton_existsOnHover) |
 
 ## Build & Deploy
 
@@ -298,11 +329,12 @@ Use the `xcode-build-deploy` skill. Key steps:
 
 ## Architecture Principles
 
-1. **Storage is markdown**: The text storage always contains original markdown. Rendering is visual only — attributes, hiding, drawing. Never mutate storage for display purposes.
-2. **Each pipeline stage owns specific attributes**: Don't set `.paragraphStyle` outside phase5. Don't set `.font` outside the highlighter. Don't apply `.kern` outside phase4.
+1. **Storage is rendered output** (WYSIWYG mode): `textStorage.string` contains only displayed characters — no markdown markers. Markdown lives on disk and in the Document model. The legacy principle "storage is markdown" applies only to source mode.
+2. **Each pipeline stage owns specific attributes**: Don't set `.paragraphStyle` outside DocumentRenderer. Don't set `.font` outside the renderer. The block model renders without `.kern` or clear-color hiding.
 3. **Fix at the source stage**: When an attribute is wrong, find which stage sets it and fix there. Never patch downstream.
 4. **One general solution**: When a pattern recurs (e.g., typing attributes after Return), solve it once for all cases, not per-case.
 5. **Verify with rendered output**: Unit tests must check actual rendered output (pixels, attribute values), not just data model state.
+6. **Editing mutates the Document**: User edits flow through `EditingOps` which mutates the block model. `textStorage` is re-rendered from the updated Document via splice operations.
 
 ## Block-Model Rendering (Target Architecture)
 
@@ -356,13 +388,14 @@ enum Block {
 
 indirect enum Inline {
     case text(String)
-    case bold([Inline])      // **…**
-    case italic([Inline])    // *…*
-    case code(String)        // `…`
+    case bold([Inline])          // **…**
+    case italic([Inline])        // *…*
+    case strikethrough([Inline]) // ~~…~~
+    case code(String)            // `…`
 }
 ```
 
-`ListItem` carries `indent` / `marker` / `afterMarker` / `inline` / `children` (recursive nesting). `BlockquoteLine` carries `prefix` verbatim (e.g. `"> "`, `">> "`, `"> > "`) + parsed inlines. `FenceStyle` records fence char/length/infoRaw. These "source fingerprints" are preserved for byte-equal round-trip; the renderers never read them.
+`ListItem` carries `indent` / `marker` / `afterMarker` / `checkbox: Checkbox?` / `inline` / `children` (recursive nesting). `Checkbox` has `text` (`"[ ]"`, `"[x]"`, `"[X]"`) and `afterText` (whitespace) — nil for regular items, non-nil for todo items. `BlockquoteLine` carries `prefix` verbatim (e.g. `"> "`, `">> "`, `"> > "`) + parsed inlines. `FenceStyle` records fence char/length/infoRaw. These "source fingerprints" are preserved for byte-equal round-trip; the renderers never read them.
 
 ### The Four Architectural Invariants
 
@@ -375,19 +408,18 @@ All renderers MUST uphold these. Violations fail the build via `ArchitectureEnfo
 
 Plus the **round-trip invariant**: `serialize(parse(x)) == x`, byte-equal, for every valid markdown input.
 
-### Tracer-Bullet Status (169 tests, 0 failures)
+### Block-Model Test Coverage
 
-| Block type            | Round-trip tests | Architecture checks | Files |
-|-----------------------|------------------|---------------------|-------|
-| Code block (fenced)   | 22               | 5 + fence integration | `CodeBlockRenderer.swift` |
-| Heading (ATX 1-6)     | 22               | 4                   | `HeadingRenderer.swift` |
-| Paragraph + inlines   | 19               | 5 + font-trait checks | `ParagraphRenderer.swift`, `InlineRenderer.swift` |
-| Code spans            | 17               | (in paragraph)      | (in InlineRenderer) |
-| List (nested, mixed)  | 26               | 6                   | `ListRenderer.swift` |
-| Horizontal rule       | 15               | 4                   | `HorizontalRuleRenderer.swift` |
-| Blockquote (nested)   | 18               | 4                   | `BlockquoteRenderer.swift` |
-
-Not yet covered: links `[text](url)`, images `![alt](url)`, underscore emphasis (`_italic_`, `__bold__`), tables, task-list checkboxes, YAML frontmatter, mermaid/math, footnotes, reference-style links.
+| Block type            | Round-trip | Architecture | Editing | Files |
+|-----------------------|------------|--------------|---------|-------|
+| Code block (fenced)   | 22         | 5            | insert/delete/split | `CodeBlockRenderer.swift` |
+| Heading (ATX 1-6)     | 22         | 4            | level change, toggle | `HeadingRenderer.swift` |
+| Paragraph + inlines   | 19         | 5            | bold/italic/code/strike | `ParagraphRenderer.swift`, `InlineRenderer.swift` |
+| Code spans            | 17         | (in paragraph)| toggle | (in InlineRenderer) |
+| List (nested, mixed)  | 26         | 6            | 30 FSM + indent/exit | `ListRenderer.swift`, `ListEditingFSM.swift` |
+| Todo list (checkbox)  | 7+18       | (in list)    | toggle, convert | `ListRenderer.swift` |
+| Horizontal rule       | 15         | 4            | insert | `HorizontalRuleRenderer.swift` |
+| Blockquote (nested)   | 18         | 4            | toggle | `BlockquoteRenderer.swift` |
 
 ### Renderer Contract
 
@@ -417,36 +449,83 @@ Every new renderer MUST append fixtures + checks here. The enforcement matrix ru
 
 These are permanent CI tripwires. Failing any of them is an architectural regression, not a cosmetic bug.
 
-### Migration Strategy
+### Adding New Block Types
 
-Tracer-bullet philosophy: prove the architecture end-to-end on one block type, then expand. Each new block type is added in the same tight loop:
+To add a new block type (e.g. tables, YAML frontmatter):
 
-1. Extend `Document.swift` with the new block case + any carrier struct (preserve source fingerprints for round-trip).
+1. Extend `Document.swift` with the new block case + carrier struct (preserve source fingerprints for round-trip).
 2. Extend `MarkdownParser.swift` with a detector; consume the line(s) in the main parse loop.
 3. Extend `MarkdownSerializer.swift` with the matching serializer branch.
 4. Write a new `<Block>Renderer.swift` following the renderer contract.
-5. Write `<Block>RoundTripTests.swift` with flat/nested/edge fixtures and negative-case tests.
-6. Extend `ArchitectureEnforcementTests.swift` with fixtures and the four-invariant matrix.
-7. Add both new files to `FSNotes.xcodeproj/project.pbxproj` (PBXBuildFile, PBXFileReference, Rendering/Tests PBXGroup, Sources build phase).
-8. Run the tracer-bullet test suite — all tests MUST stay green.
-
-Switching the app to the block-model renderer is a **separate future phase** once all block types are covered.
+5. Add editing ops in `EditingOperations.swift` if the block is editable.
+6. Add round-trip + architecture enforcement tests.
+7. Add the new files to `FSNotes.xcodeproj/project.pbxproj`.
 
 ## In-Progress Work
 
-### Block-Model Tracer Bullet (current phase)
-7 of N block types covered (see table above). 169 round-trip + architecture-enforcement tests green. No integration with the live app yet — the block-model renderer runs only in tests.
+### Block-Model Pipeline (Phase 7 — documentation and QA)
+All 7 block types supported (paragraph, heading, codeBlock, blankLine, list, blockquote, horizontalRule). The block-model pipeline is active for all WYSIWYG rendering. All coupling sites have been migrated: fold/unfold bridged via `syncBlocksFromProjection()`, all `highlight()` calls guarded, LayoutManager legacy drawing skipped when block model active. Save path optimized with `Note.save(markdown:)` bypassing `NoteSerializer`. Document caching on Note for performance.
 
-### Bullet Rendering Refactor (Step 1 of 5, legacy pipeline)
-Bullets now use non-destructive rendering: `-` stays in storage, hidden by clear color (width preserved), `•` drawn by BulletDrawer. BulletProcessor (destructive `-`→`•` replacement) removed. `restoreBulletMarkers()` removed from save pipeline.
+## Editing Finite State Machines
 
-**Remaining steps**:
-- Step 2: Checkbox rendering without storage mutation (CheckboxDrawer)
-- Step 3: Update Phase5 indent + block parser (remove attachment detection)
-- Step 4: Update state machine transitions for raw markdown
-- Step 5: Clean up dead code (AttributedBox, .listBullet, loadTasks)
+The block-model pipeline uses finite state machines (FSMs) to define editing behavior for structural elements. Each FSM is a pure function: `(State, Action) -> Transition`. The caller applies the transition to the Document.
+
+### List Editing FSM
+
+Defined in `FSNotesCore/Rendering/ListEditingFSM.swift`. Controls indentation, list exit, and item creation.
+
+**States:** `bodyText` (not in list), `listItem(depth=0)` (top-level), `listItem(depth>0)` (nested)
+
+| State | Action | Transition |
+|-------|--------|------------|
+| bodyText | any key | noOp (stays in bodyText) |
+| depth=0 | Tab (has prev sibling) | indent → depth>0 |
+| depth=0 | Tab (no prev sibling) | noOp |
+| depth=0 | Shift-Tab / Delete-at-home / Return-on-empty | exitToBody → bodyText |
+| depth=0 | Return (non-empty) | newItem → depth=0 |
+| depth>0 | Tab (has prev sibling) | indent (deeper) |
+| depth>0 | Shift-Tab / Delete-at-home / Return-on-empty (depth>1) | unindent (shallower, stays depth>0) |
+| depth>0 | Shift-Tab / Delete-at-home / Return-on-empty (depth=1) | unindent → depth=0 |
+| depth>0 | Return (non-empty) | newItem (same depth) |
+
+**Key behaviors:**
+- **Tab** = indent item (becomes child of previous sibling). Only works if a previous sibling exists.
+- **Shift-Tab** = unindent (depth > 0) or exit list (depth 0).
+- **Delete at home** = same as Shift-Tab (unindent or exit).
+- **Return on empty item** = same as Shift-Tab (unindent or exit).
+- **Return on non-empty item** = insert new item after current.
+- Exiting a list item converts it to a body paragraph.
+- Bullet glyphs cycle by depth: `depth % 4` maps to `[bullet, white bullet, black small square, white small square]`.
+
+### Return Key FSM (Legacy Pipeline)
+
+Defined in `FSNotesCore/TextFormatter.swift` via `newLineTransition()` + `applyTransition()`. Still active for source mode. The block-model pipeline handles Return via `splitListOnNewline` / `splitParagraphOnNewline` / `returnOnEmptyListItem` in `EditingOperations.swift`.
+
+| Context | Transition |
+|---------|------------|
+| Checkbox, empty content | exitTodo |
+| Checkbox, has content | continueCheckbox |
+| Unordered marker, empty content | exitList |
+| Unordered marker, has content | continueUnorderedList |
+| Numbered marker, empty content | exitList |
+| Numbered marker, has content | continueNumberedList |
+| Heading (#) | bodyText |
+| Leading whitespace | continueIndent |
+| Default | bodyText |
+
+### Code Block FSM (Analysis)
+
+Code blocks in the block-model pipeline do NOT need a separate FSM. Their editing model is simpler:
+
+- All content inside a code block is literal text (no formatting, no markers).
+- Tab inserts spaces/tabs (handled by existing `insertIntoBlock` for `.codeBlock`).
+- Return inserts a newline (handled by the code block branch in `insert()` — code blocks accept `\n` as raw content).
+- There is no indentation/unindentation concept for code blocks.
+- Exiting a code block is done by clicking outside it (cursor moves to a different block).
+- Converting a paragraph to a code block (typing ` ``` `) is a future feature not yet implemented.
+
+No FSM is needed because code blocks have no state transitions — all input is treated uniformly as raw text insertion.
 
 ### Known Issues
-- BulletDrawer positioning needs verification in live app
 - `cacheDisplay` doesn't capture LayoutManager.drawBackground — test snapshots miss AttributeDrawer output
-- Two pre-existing test failures: FoldSnapshotTests, RendererComparisonTests
+- One pre-existing test failure: TableLayoutTests.test_copyButton_existsOnHover (UI test)

@@ -2,9 +2,12 @@
 //  MarkdownBlockParser.swift
 //  FSNotes
 //
-//  Block-based FSM parser for markdown documents.
-//  Produces an ordered [MarkdownBlock] array that serves as
-//  the single source of truth for all WYSIWYG rendering.
+//  Legacy block-based FSM parser for markdown documents.
+//  Produces an ordered [MarkdownBlock] array used by the legacy
+//  rendering pipeline (source mode, non-markdown notes) and by
+//  fold/unfold operations. The block-model pipeline
+//  (Document/DocumentRenderer) is now the source of truth for
+//  WYSIWYG rendering.
 //
 
 import Foundation

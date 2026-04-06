@@ -3,7 +3,7 @@
 //  FSNotesTests
 //
 //  Round-trip tests for lists. Exercises the hardest case of the
-//  tracer bullet: nested structure via indentation, preserving the
+//  block model: nested structure via indentation, preserving the
 //  exact source indent + marker + whitespace for byte-equal output.
 //
 //      serialize(parse(markdown)) == markdown  (byte-equal)
@@ -14,7 +14,7 @@
 //    - nested unordered lists (one, two, three levels deep)
 //    - mixed nesting (ordered inside unordered, etc.)
 //    - edge cases: empty items, tab indentation, markers that LOOK
-//      like emphasis or HR (disambiguated by tracer-bullet rules).
+//      like emphasis or HR (disambiguated by parser rules).
 //
 
 import XCTest
@@ -140,7 +140,7 @@ class ListRoundTripTests: XCTestCase {
     // MARK: - Ambiguity with HR / emphasis
 
     func test_roundTrip_tripleDash_notAList() {
-        // "---" is an HR (future work) or literal text (tracer bullet).
+        // "---" is an HR (future work) or literal text (block model).
         // It MUST NOT parse as a list item (double-marker rejection).
         assertRoundTrip("---\n")
     }

@@ -144,7 +144,11 @@ class PreferencesEditorViewController: NSViewController {
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
             if let note = editor.note, let evc = editor.editorViewController {
-                NotesTextProcessor.highlight(attributedString: note.content)
+                // Skip legacy highlight when block model is active —
+                // refillEditArea() re-renders from the Document model.
+                if editor.documentProjection == nil {
+                    NotesTextProcessor.highlight(attributedString: note.content)
+                }
                 evc.disablePreview()
                 evc.refillEditArea()
             }

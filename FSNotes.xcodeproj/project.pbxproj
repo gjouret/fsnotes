@@ -26,6 +26,10 @@
 		C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */; };
 		432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 568C7270DF4C1784CFDD100B /* NoteSerializer.swift */; };
 		DOC0000000000000000000B1 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = DOC0000000000000000000F1 /* Document.swift */; };
+		E2255B899F5A2E6F221D930E /* ListEditingFSM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */; };
+		DDC1196B5E689F71A0A4E357 /* EditingOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F23911779AD1E5392251BC /* EditingOperations.swift */; };
+		0DDDF90E3C3157BC2E504ED2 /* DocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09ADE04F6A3FBE2644A12083 /* DocumentRenderer.swift */; };
+		B75D6B02DEB6DB7341164AD6 /* DocumentProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91EBCEC7290C7A6BBA01C89 /* DocumentProjection.swift */; };
 		MDP0000000000000000000B1 /* MarkdownParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDP0000000000000000000F1 /* MarkdownParser.swift */; };
 		MDS0000000000000000000B1 /* MarkdownSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDS0000000000000000000F1 /* MarkdownSerializer.swift */; };
 		CBR0000000000000000000B1 /* CodeBlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBR0000000000000000000F1 /* CodeBlockRenderer.swift */; };
@@ -53,12 +57,8 @@
 		641131524153165094364521 /* TablePasteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002317541358038191007833 /* TablePasteTests.swift */; };
 		4B8F17CEB746492878496ADF /* InlineTagRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */; };
 		A55520A7B95E5FE26FE360A8 /* BlockProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593E5F031A986B6F265DD161 /* BlockProcessor.swift */; };
-		C64BEA6AA09DA35C8EB3B6F5 /* BlockquoteProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */; };
-		B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */; };
 		8DD5A19ACC1F3603CFB8A270 /* InlineTagRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */; };
 		39719F73DD2051FF45F54FBC /* BlockProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593E5F031A986B6F265DD161 /* BlockProcessor.swift */; };
-		7D8EC60DA5D573D718B18802 /* BlockquoteProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */; };
-		E2D617D3F6BA668F7A67C4C5 /* HorizontalRuleProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */; };
 		2152B725855467CFB329F670 /* AttributeDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */; };
 		C347F26CE5C1E0AB82880BBF /* HorizontalRuleDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */; };
 		641C854C58DB4B33BF6B6C78 /* BulletDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D49CAEA948443F7BE930BF8 /* BulletDrawer.swift */; };
@@ -95,6 +95,8 @@
 		110E40A42EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110E40A32EA039AA00C62F49 /* EditTextView+DragOperation.swift */; };
 		110E40A52EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110E40A32EA039AA00C62F49 /* EditTextView+DragOperation.swift */; };
 		11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
+		C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
+		41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
 		11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
 		11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
 		11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
@@ -632,6 +634,7 @@
 		23EAB390742AF720CE975FAE /* FormattingToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D84 /* FormattingToolbar.swift */; };
 		23EAB390742AF720CE975FB0 /* TableEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */; };
 		BB1234560001000100010001 /* InlineTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010002 /* InlineTableView.swift */; };
+		BB1234560001000100010021 /* InlinePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010020 /* InlinePDFView.swift */; };
 		23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */; };
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
 		23EAB390742AF720CE975FB6 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8C /* AIService.swift */; };
@@ -1029,6 +1032,10 @@
 		62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializerTests.swift; sourceTree = "<group>"; };
 		568C7270DF4C1784CFDD100B /* NoteSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializer.swift; sourceTree = "<group>"; };
 		DOC0000000000000000000F1 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
+		6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListEditingFSM.swift; sourceTree = "<group>"; };
+		A7F23911779AD1E5392251BC /* EditingOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingOperations.swift; sourceTree = "<group>"; };
+		09ADE04F6A3FBE2644A12083 /* DocumentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentRenderer.swift; sourceTree = "<group>"; };
+		A91EBCEC7290C7A6BBA01C89 /* DocumentProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentProjection.swift; sourceTree = "<group>"; };
 		MDP0000000000000000000F1 /* MarkdownParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownParser.swift; sourceTree = "<group>"; };
 		MDS0000000000000000000F1 /* MarkdownSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownSerializer.swift; sourceTree = "<group>"; };
 		CBR0000000000000000000F1 /* CodeBlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockRenderer.swift; sourceTree = "<group>"; };
@@ -1056,8 +1063,6 @@
 		002317541358038191007833 /* TablePasteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TablePasteTests.swift; sourceTree = "<group>"; };
 		C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTagRegistry.swift; sourceTree = "<group>"; };
 		593E5F031A986B6F265DD161 /* BlockProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockProcessor.swift; sourceTree = "<group>"; };
-		D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteProcessor.swift; sourceTree = "<group>"; };
-		CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleProcessor.swift; sourceTree = "<group>"; };
 		B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributeDrawer.swift; sourceTree = "<group>"; };
 		D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleDrawer.swift; sourceTree = "<group>"; };
 		8D49CAEA948443F7BE930BF8 /* BulletDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BulletDrawer.swift; sourceTree = "<group>"; };
@@ -1074,6 +1079,7 @@
 		110E409D2EA0150000C62F49 /* NSTextCheckingResult+.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSTextCheckingResult+.swift"; sourceTree = "<group>"; };
 		110E40A32EA039AA00C62F49 /* EditTextView+DragOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+DragOperation.swift"; sourceTree = "<group>"; };
 		11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+NoteState.swift"; sourceTree = "<group>"; };
+		FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+BlockModel.swift"; sourceTree = "<group>"; };
 		11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Formatting.swift"; sourceTree = "<group>"; };
 		11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Appearance.swift"; sourceTree = "<group>"; };
 		11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Interaction.swift"; sourceTree = "<group>"; };
@@ -1326,6 +1332,7 @@
 		9A36172A2C1AAB13AFAE9D84 /* FormattingToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormattingToolbar.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableEditorViewController.swift; sourceTree = "<group>"; };
 		BB1234560001000100010002 /* InlineTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTableView.swift; sourceTree = "<group>"; };
+		BB1234560001000100010020 /* InlinePDFView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlinePDFView.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRenderer.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8C /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
@@ -1509,10 +1516,12 @@
 			children = (
 				C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */,
 				593E5F031A986B6F265DD161 /* BlockProcessor.swift */,
-				D3E4D032AF2D9E89009DDF48 /* BlockquoteProcessor.swift */,
-				CE87BF19F3E90ACED87C009F /* HorizontalRuleProcessor.swift */,
 				568C7270DF4C1784CFDD100B /* NoteSerializer.swift */,
 				DOC0000000000000000000F1 /* Document.swift */,
+				6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */,
+				A7F23911779AD1E5392251BC /* EditingOperations.swift */,
+				09ADE04F6A3FBE2644A12083 /* DocumentRenderer.swift */,
+				A91EBCEC7290C7A6BBA01C89 /* DocumentProjection.swift */,
 				MDP0000000000000000000F1 /* MarkdownParser.swift */,
 				MDS0000000000000000000F1 /* MarkdownSerializer.swift */,
 				CBR0000000000000000000F1 /* CodeBlockRenderer.swift */,
@@ -2114,6 +2123,7 @@
 				11ABE5E12EEEFCF700E7C9EB /* NotesCounterView.swift */,
 				D797004B1F3DD10700BAD94D /* EditTextView.swift */,
 				11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */,
+				FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */,
 				11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */,
 				11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */,
 				11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */,
@@ -2163,6 +2173,7 @@
 				AA1234560001000100010000 /* PDFExporter.swift */,
 				9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */,
 				BB1234560001000100010002 /* InlineTableView.swift */,
+				BB1234560001000100010020 /* InlinePDFView.swift */,
 				9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */,
 				9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */,
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
@@ -2871,8 +2882,6 @@
 			files = (
 				8DD5A19ACC1F3603CFB8A270 /* InlineTagRegistry.swift in Sources */,
 				39719F73DD2051FF45F54FBC /* BlockProcessor.swift in Sources */,
-				7D8EC60DA5D573D718B18802 /* BlockquoteProcessor.swift in Sources */,
-				E2D617D3F6BA668F7A67C4C5 /* HorizontalRuleProcessor.swift in Sources */,
 
 				11F2D4F72F104322002E4E47 /* Project+Date.swift in Sources */,
 				11598DA42EDCB9B40036E387 /* UIFont+.swift in Sources */,
@@ -3152,10 +3161,12 @@
 				4CDB5D1C50CCB3DEEEC869E7 /* KbdBoxDrawer.swift in Sources */,
 				4B8F17CEB746492878496ADF /* InlineTagRegistry.swift in Sources */,
 				A55520A7B95E5FE26FE360A8 /* BlockProcessor.swift in Sources */,
-				C64BEA6AA09DA35C8EB3B6F5 /* BlockquoteProcessor.swift in Sources */,
-				B38D600A44DD2AE91008F48A /* HorizontalRuleProcessor.swift in Sources */,
 				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
 				DOC0000000000000000000B1 /* Document.swift in Sources */,
+				E2255B899F5A2E6F221D930E /* ListEditingFSM.swift in Sources */,
+				DDC1196B5E689F71A0A4E357 /* EditingOperations.swift in Sources */,
+				0DDDF90E3C3157BC2E504ED2 /* DocumentRenderer.swift in Sources */,
+				B75D6B02DEB6DB7341164AD6 /* DocumentProjection.swift in Sources */,
 				MDP0000000000000000000B1 /* MarkdownParser.swift in Sources */,
 				MDS0000000000000000000B1 /* MarkdownSerializer.swift in Sources */,
 				CBR0000000000000000000B1 /* CodeBlockRenderer.swift in Sources */,
@@ -3318,6 +3329,7 @@
 				D7470D072170E890006B2A92 /* NSTextStorage++.swift in Sources */,
 				110E40A52EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */,
 				11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
+				41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */,
 				11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				11F5A1C22F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
 				11F5A1D22F1A600100AAA001 /* EditTextView+Interaction.swift in Sources */,
@@ -3360,6 +3372,7 @@
 				23EAB390742AF720CE975FAE /* FormattingToolbar.swift in Sources */,
 				23EAB390742AF720CE975FB0 /* TableEditorViewController.swift in Sources */,
 				BB1234560001000100010001 /* InlineTableView.swift in Sources */,
+				BB1234560001000100010021 /* InlinePDFView.swift in Sources */,
 				23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */,
 				23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */,
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,
@@ -3574,6 +3587,7 @@
 				D7E81C371F925B5F00416A91 /* NoteRowView.swift in Sources */,
 				110E40A42EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */,
 				11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
+				C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */,
 				11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				11F5A1C12F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
 				11F5A1D12F1A600100AAA001 /* EditTextView+Interaction.swift in Sources */,

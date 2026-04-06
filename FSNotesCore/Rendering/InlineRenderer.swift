@@ -52,6 +52,10 @@ public enum InlineRenderer {
             var attrs = baseAttributes
             attrs[.font] = applyTrait(.italic, to: baseAttributes[.font] as? PlatformFont)
             return render(children, baseAttributes: attrs)
+        case .strikethrough(let children):
+            var attrs = baseAttributes
+            attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            return render(children, baseAttributes: attrs)
         case .code(let s):
             var attrs = baseAttributes
             let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14

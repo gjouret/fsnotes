@@ -93,13 +93,6 @@ extension NSMutableAttributedString {
         note.attachments = attachments
     }
 
-    public func unloadTasks() -> NSMutableAttributedString {
-        return self
-    }
-
-    public func loadTasks() {
-    }
-    
     public func loadFont() {
         addAttribute(.font, value: UserDefaultsManagement.noteFont, range: NSRange(location: 0, length: length))
     }

@@ -5,7 +5,7 @@
 //  Round-trip tests for ATX headings:
 //      serialize(parse(markdown)) == markdown  (byte-equal)
 //
-//  Headings are the SECOND block type proved by the tracer bullet
+//  Headings are a core block type in the block model
 //  (code blocks were first). They establish that the architecture
 //  generalizes past code blocks.
 //

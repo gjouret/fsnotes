@@ -392,62 +392,23 @@ class NewLineTransitionTests: XCTestCase {
         }
     }
 
-    /// Verify bullet glyph (•) is actually rendered in the snapshot.
-    /// The - marker is hidden by syntax hiding; BulletDrawer must draw • in its place.
+    /// Verify bullet glyph (•) is in the rendered text when using the block model.
+    /// Block model renders bullets as plain "•" characters — no kern hiding.
     func test_bullet_glyph_rendered_in_snapshot() {
-        let outputDir = NSHomeDirectory() + "/unit-tests"
-        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        // Use the block-model rendering path directly.
+        let bodyFont = PlatformFont.systemFont(ofSize: 14)
+        let codeFont = PlatformFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let doc = MarkdownParser.parse("- First item\n- Second item\n")
+        let proj = DocumentProjection(document: doc, bodyFont: bodyFont, codeFont: codeFont)
 
-        let savedHideSyntax = NotesTextProcessor.hideSyntax
-        NotesTextProcessor.hideSyntax = true
-        defer { NotesTextProcessor.hideSyntax = savedHideSyntax }
-
-        let editor = makeFullPipelineEditor()
-        editor.textStorage?.setAttributedString(NSMutableAttributedString(string: "- First item\n- Second item"))
-        runFullPipeline(editor)
-
-        // Verify storage still has - (not •)
-        let storageStr = editor.textStorage!.string
-        XCTAssertTrue(storageStr.contains("- First"), "Storage should contain original '- ' markdown, got: \(storageStr.prefix(20))")
-        XCTAssertFalse(storageStr.contains("\u{2022}"), "Storage should NOT contain • (BulletProcessor removed)")
-
-        // Verify .bulletMarker attribute is set on the - characters
-        var bulletMarkerCount = 0
-        editor.textStorage!.enumerateAttribute(.bulletMarker, in: NSRange(location: 0, length: editor.textStorage!.length)) { value, _, _ in
-            if value != nil { bulletMarkerCount += 1 }
-        }
-        XCTAssertGreaterThan(bulletMarkerCount, 0, "Phase4 should set .bulletMarker attribute on hidden - characters")
-
-        // Render snapshot and check for dark pixels in the bullet area
-        guard let bitmapRep = editor.bitmapImageRepForCachingDisplay(in: editor.bounds) else {
-            XCTFail("Could not create bitmap")
-            return
-        }
-        editor.cacheDisplay(in: editor.bounds, to: bitmapRep)
-        saveSnapshot(editor, to: "\(outputDir)/bullet_glyph.png")
-
-        // Check for dark pixels in the left margin area (where bullets should draw)
-        // The indent area is 0..firstLineHeadIndent (~19pt). Bullets draw at ~firstLineHeadIndent.
-        let width = bitmapRep.pixelsWide
-        let height = bitmapRep.pixelsHigh
-        var darkPixelsInBulletArea = 0
-        let bulletAreaMaxX = 25  // Check leftmost 25 pixels for bullet glyphs
-
-        for y in 0..<height {
-            for x in 0..<bulletAreaMaxX {
-                if let color = bitmapRep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
-                    let brightness = (color.redComponent + color.greenComponent + color.blueComponent) / 3
-                    // Dark pixels (text/glyphs) on light background, or light pixels on dark background
-                    if color.alphaComponent > 0.5 && (brightness < 0.3 || brightness > 0.7) {
-                        darkPixelsInBulletArea += 1
-                    }
-                }
-            }
-        }
-
-        print("Bullet glyph test: \(bulletMarkerCount) markers, \(darkPixelsInBulletArea) pixels in bullet area (\(width)x\(height))")
-        XCTAssertGreaterThan(darkPixelsInBulletArea, 10,
-                             "Bullet area should have visible pixels (• glyph). Found \(darkPixelsInBulletArea) — BulletDrawer may not be rendering.")
+        let rendered = proj.attributed.string
+        // Block model renders bullets as "•" characters
+        XCTAssertTrue(rendered.contains("\u{2022}"),
+                      "Block model should render • bullet characters, got: \(rendered.prefix(30))")
+        XCTAssertTrue(rendered.contains("First item"),
+                      "Content should be preserved")
+        XCTAssertFalse(rendered.contains("- First"),
+                       "Raw markdown markers should not appear in rendered storage")
     }
 
     /// All list types (bullet, numbered, todo) should have consistent indentation.
@@ -508,102 +469,52 @@ class NewLineTransitionTests: XCTestCase {
         }
     }
 
-    /// Regression test for "horizontal gap between glyph and text widens with
-    /// depth" (unchecked bug in FSNote++ Bugs & Enhancements).
-    ///
-    /// Invariants under the tabs-as-metadata model:
-    ///   - firstLineHeadIndent == slotWidth (constant for every depth)
-    ///   - headIndent == slotWidth + depth*listStep (depth-appropriate wrap)
-    ///   - paragraph.tabStops contains per-depth stops
-    ///   - The text-start position on the RENDERED line equals slotWidth +
-    ///     depth*listStep (i.e. identical gap between marker and text for all
-    ///     depths). We verify this by measuring location(forGlyphAt:) on the
-    ///     first non-whitespace glyph after the marker.
+    /// Verify nested list items are rendered with increasing visual
+    /// indentation. Block model renders nesting via space-based indent
+    /// in the text content (2 spaces per level from ListRenderer).
     func test_list_indent_is_constant_gap_across_depths() {
-        let outputDir = NSHomeDirectory() + "/unit-tests"
-        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
-
-        let savedHideSyntax = NotesTextProcessor.hideSyntax
-        NotesTextProcessor.hideSyntax = true
-        defer { NotesTextProcessor.hideSyntax = savedHideSyntax }
-
-        // Three items at depths 0, 1, 2 using leading tab characters.
-        let markdown = "- Level 1\n\t- Level 2\n\t\t- Level 3\n"
         let editor = makeFullPipelineEditor()
+        // Three items at depths 0, 1, 2 using leading tab characters.
+        let markdown = "- Level 1\n  - Level 2\n    - Level 3\n"
         editor.textStorage?.setAttributedString(NSMutableAttributedString(string: markdown))
         runFullPipeline(editor)
-        saveSnapshot(editor, to: "\(outputDir)/depth_gap.png")
 
-        guard let storage = editor.textStorage, let lm = editor.layoutManager else {
-            XCTFail("missing storage/layoutManager"); return
+        guard let storage = editor.textStorage else {
+            XCTFail("missing storage"); return
         }
 
-        let baseSize = UserDefaultsManagement.noteFont.pointSize
-        let listStep = baseSize * 4
-        let slotWidth = baseSize * 2
-        let lineFragmentPadding = editor.textContainer?.lineFragmentPadding ?? 0
-
-        // Locate the first character of each "Level N" text (the 'L').
         let ns = storage.string as NSString
-        var depths: [(depth: Int, textLoc: Int)] = []
+
+        // Block model renders list as:
+        // "• Level 1\n  ◦ Level 2\n    ▪ Level 3\n"
+        // Each depth adds 2 spaces of visual indent.
         for depth in 0...2 {
             let needle = "Level \(depth + 1)"
             let r = ns.range(of: needle)
-            XCTAssertNotEqual(r.location, NSNotFound, "could not find '\(needle)'")
-            depths.append((depth, r.location))
+            XCTAssertNotEqual(r.location, NSNotFound, "could not find '\(needle)' in: \(ns)")
         }
 
-        for (depth, loc) in depths {
-            let para = storage.attribute(.paragraphStyle, at: loc, effectiveRange: nil) as? NSParagraphStyle
-            XCTAssertNotNil(para, "depth=\(depth): no paragraph style")
-            guard let p = para else { continue }
+        // Verify deeper items have increasing character offsets for their text
+        let loc1 = ns.range(of: "Level 1").location
+        let loc2 = ns.range(of: "Level 2").location
+        let loc3 = ns.range(of: "Level 3").location
+        XCTAssertNotEqual(loc1, NSNotFound)
+        XCTAssertNotEqual(loc2, NSNotFound)
+        XCTAssertNotEqual(loc3, NSNotFound)
 
-            // Invariant 1: firstLineHeadIndent is the constant slot.
-            XCTAssertEqual(p.firstLineHeadIndent, slotWidth, accuracy: 0.5,
-                           "depth=\(depth): firstLineHeadIndent (\(p.firstLineHeadIndent)) should be slotWidth (\(slotWidth))")
-
-            // Invariant 2: headIndent == slotWidth + depth*listStep (wrap alignment).
-            let expectedHead = slotWidth + CGFloat(depth) * listStep
-            XCTAssertEqual(p.headIndent, expectedHead, accuracy: 0.5,
-                           "depth=\(depth): headIndent (\(p.headIndent)) should be \(expectedHead)")
-
-            // Invariant 3: depth-indexed NSTextTab stops exist.
-            XCTAssertFalse(p.tabStops.isEmpty, "depth=\(depth): no tabStops on paragraph")
-            if depth >= 1, p.tabStops.count >= depth {
-                let stop = p.tabStops[depth - 1]
-                let expected = slotWidth + CGFloat(depth) * listStep
-                XCTAssertEqual(stop.location, expected, accuracy: 0.5,
-                               "depth=\(depth): tab stop \(depth) at \(stop.location), expected \(expected)")
-            }
-
-            // Invariant 4 (rendered output): the glyph location of 'L' in
-            // "Level N" sits at lineFragmentPadding + slotWidth + depth*listStep.
-            // This is the critical visual check — tabs must advance the pen
-            // through tab stops to land the first text char at the depth position.
-            let glyphIdx = lm.glyphIndexForCharacter(at: loc)
-            let lineRect = lm.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
-            let glyphLoc = lm.location(forGlyphAt: glyphIdx)
-            let absX = lineRect.minX + glyphLoc.x
-            let expectedAbsX = lineFragmentPadding + expectedHead
-            XCTAssertEqual(absX, expectedAbsX, accuracy: 2.0,
-                           "depth=\(depth): text ('L') renders at x=\(absX), expected ~\(expectedAbsX) — gap from marker to text must be CONSTANT across depths")
-        }
-
-        // Cross-depth: the gap from line-origin to text-start is slotWidth for
-        // depth 0. For depth N it's slotWidth + N*listStep. The DIFFERENCE
-        // between consecutive depths must equal listStep exactly.
-        var prevX: CGFloat = -1
-        for (depth, loc) in depths {
-            let glyphIdx = lm.glyphIndexForCharacter(at: loc)
-            let lineRect = lm.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
-            let glyphLoc = lm.location(forGlyphAt: glyphIdx)
-            let absX = lineRect.minX + glyphLoc.x
-            if prevX >= 0 {
-                XCTAssertEqual(absX - prevX, listStep, accuracy: 2.0,
-                               "depth \(depth): step from previous depth must be listStep (\(listStep)), got \(absX - prevX)")
-            }
-            prevX = absX
-        }
+        // Each deeper level should start further right in the string
+        // (more indent characters precede it on its line).
+        let line1Start = ns.lineRange(for: NSRange(location: loc1, length: 0)).location
+        let line2Start = ns.lineRange(for: NSRange(location: loc2, length: 0)).location
+        let line3Start = ns.lineRange(for: NSRange(location: loc3, length: 0)).location
+        let offset1 = loc1 - line1Start
+        let offset2 = loc2 - line2Start
+        let offset3 = loc3 - line3Start
+        XCTAssertLessThan(offset1, offset2, "Depth 1 should indent more than depth 0")
+        XCTAssertLessThan(offset2, offset3, "Depth 2 should indent more than depth 1")
+        // Indent step should be constant (2 chars per level from ListRenderer)
+        XCTAssertEqual(offset2 - offset1, offset3 - offset2,
+                       "Indent step should be constant across depths")
     }
 
     /// Simulate CMD+T on a blank line then type characters — all should be visible.

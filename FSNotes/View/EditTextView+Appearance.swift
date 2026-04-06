@@ -130,7 +130,15 @@ extension EditTextView {
         NotesTextProcessor.hl = nil
 
         guard let note = self.note else { return }
-        NotesTextProcessor.highlight(attributedString: note.content)
+
+        // Block-model path: the renderer will re-highlight from the
+        // Document model when refillEditArea re-renders. Skip the
+        // legacy highlight call — it would apply syntax colors to
+        // note.content (raw markdown) that the block-model pipeline
+        // doesn't use.
+        if documentProjection == nil {
+            NotesTextProcessor.highlight(attributedString: note.content)
+        }
 
         viewDelegate?.refillEditArea(force: true)
     }

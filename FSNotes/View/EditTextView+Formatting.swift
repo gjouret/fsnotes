@@ -13,6 +13,10 @@ extension EditTextView {
         guard let note = self.note, isEditable else { return }
 
         if applyInlineTableCellFormatting("**") { return }
+        if toggleBoldViaBlockModel() {
+            updateToolbarAfterFormatting()
+            return
+        }
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.bold()
@@ -24,6 +28,10 @@ extension EditTextView {
         guard let note = self.note, isEditable else { return }
 
         if applyInlineTableCellFormatting("*") { return }
+        if toggleItalicViaBlockModel() {
+            updateToolbarAfterFormatting()
+            return
+        }
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.italic()
@@ -114,6 +122,11 @@ extension EditTextView {
     @IBAction func strikeMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
+        if toggleStrikethroughViaBlockModel() {
+            updateToolbarAfterFormatting()
+            return
+        }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.strike()
         deselectAfterFormatting()
@@ -151,6 +164,10 @@ extension EditTextView {
         guard let id = sender.identifier?.rawValue else { return }
 
         let code = Int(id.replacingOccurrences(of: "format.h", with: ""))
+        if let level = code, changeHeadingLevelViaBlockModel(level) {
+            return
+        }
+
         var string = String()
         for index in [1, 2, 3, 4, 5, 6] {
             string += "#"
@@ -176,7 +193,9 @@ extension EditTextView {
     }
 
     @IBAction func todo(_ sender: Any) {
-        guard let formatter = getTextFormatter(), isEditable else { return }
+        guard let note = self.note, isEditable else { return }
+        if toggleTodoViaBlockModel() { updateToolbarAfterFormatting(); return }
+        let formatter = TextFormatter(textView: self, note: note)
         formatter.todo()
     }
 
@@ -197,6 +216,8 @@ extension EditTextView {
 
     @IBAction func quoteMenu(_ sender: Any) {
         guard let note = self.note, isEditable, let storage = textStorage else { return }
+        if toggleBlockquoteViaBlockModel() { return }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.quote()
 
@@ -213,12 +234,16 @@ extension EditTextView {
 
     @IBAction func bulletListMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
+        if toggleListViaBlockModel(marker: "-") { return }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.list()
     }
 
     @IBAction func numberedListMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
+        if toggleListViaBlockModel(marker: "1.") { return }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.orderedList()
     }
@@ -251,6 +276,8 @@ extension EditTextView {
 
     @IBAction func horizontalRuleMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
+        if insertHorizontalRuleViaBlockModel() { return }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.horizontalRule()
     }
@@ -269,6 +296,8 @@ extension EditTextView {
 
     private func applyHeader(level: String) {
         guard let note = self.note, isEditable else { return }
+
+        if changeHeadingLevelViaBlockModel(level.count) { return }
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.header(level)

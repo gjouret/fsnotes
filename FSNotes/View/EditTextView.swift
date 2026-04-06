@@ -21,7 +21,17 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
     /// Explicit save boundary for the editor. Reading the storage remains pure;
     /// only this method is allowed to prepare live rendered widgets first.
+    ///
+    /// SAFETY: When the block-model pipeline is active, the textStorage
+    /// contains RENDERED content with no markdown markers. We MUST
+    /// serialize the Document instead of returning the raw storage.
+    /// This is a safety net — all save call sites go through
+    /// `editor.save()`, but this prevents corruption if any other code
+    /// path reads attributedStringForSaving().
     func attributedStringForSaving() -> NSAttributedString {
+        if let markdown = serializeViaBlockModel() {
+            return NSAttributedString(string: markdown)
+        }
         prepareRenderedTablesForSave()
         return attributedString()
     }
@@ -29,11 +39,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     func refreshParagraphRendering(range: NSRange) {
         guard let storage = textStorage else { return }
 
+        // Block-model pipeline owns paragraph styles — skip legacy path.
+        if textStorageProcessor?.blockModelActive == true { return }
+
         if NotesTextProcessor.hideSyntax,
            let processor = textStorageProcessor,
            !processor.blocks.isEmpty {
             processor.phase5_paragraphStyles(textStorage: storage, range: range)
-            processor.phase4_hideSyntax(textStorage: storage, range: range)
         } else {
             storage.updateParagraphStyle(range: range)
         }
@@ -231,6 +243,30 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public func invalidateLayout() {
         if let length = self.textStorage?.length {
             self.textStorage?.layoutManagers.first?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: length), actualCharacterRange: nil)
+        }
+    }
+
+    private var lastLayoutWidth: CGFloat = 0
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let oldWidth = frame.size.width
+        super.setFrameSize(newSize)
+        if abs(newSize.width - oldWidth) > 0.5 {
+            invalidateRenderedBlockAttachmentLayout()
+        }
+        lastLayoutWidth = newSize.width
+    }
+
+    /// Force NSLayoutManager to re-query cellFrame(for:...) on rendered block
+    /// attachments (mermaid/math images) after a width change so they can shrink/grow.
+    private func invalidateRenderedBlockAttachmentLayout() {
+        guard let storage = textStorage, let lm = layoutManager else { return }
+        let full = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.attachment, in: full, options: []) { value, range, _ in
+            guard value is NSTextAttachment else { return }
+            if storage.attribute(.renderedBlockSource, at: range.location, effectiveRange: nil) != nil {
+                lm.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+            }
         }
     }
 

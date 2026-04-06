@@ -64,10 +64,32 @@ public enum ListRenderer {
         ]
         for item in items {
             let indent = String(repeating: " ", count: depth * indentWidth)
-            let bullet = visualBullet(for: item.marker)
-            let prefix = indent + bullet + " "
-            out.append(NSAttributedString(string: prefix, attributes: attrs))
-            out.append(InlineRenderer.render(item.inline, baseAttributes: attrs))
+            if let checkbox = item.checkbox {
+                // Todo item: render checkbox glyph instead of bullet.
+                let cbGlyph = checkbox.isChecked ? "\u{2611}" : "\u{2610}"  // ☑ or ☐
+                let prefix = indent + cbGlyph + " "
+                out.append(NSAttributedString(string: prefix, attributes: attrs))
+                // Render inline content with strikethrough if checked.
+                if checkbox.isChecked {
+                    var checkedAttrs = attrs
+                    #if os(OSX)
+                    checkedAttrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+                    checkedAttrs[.foregroundColor] = NSColor.secondaryLabelColor
+                    #else
+                    checkedAttrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+                    checkedAttrs[.foregroundColor] = UIColor.secondaryLabel
+                    #endif
+                    out.append(InlineRenderer.render(item.inline, baseAttributes: checkedAttrs))
+                } else {
+                    out.append(InlineRenderer.render(item.inline, baseAttributes: attrs))
+                }
+            } else {
+                // Regular list item: render bullet.
+                let bullet = visualBullet(for: item.marker, depth: depth)
+                let prefix = indent + bullet + " "
+                out.append(NSAttributedString(string: prefix, attributes: attrs))
+                out.append(InlineRenderer.render(item.inline, baseAttributes: attrs))
+            }
             out.append(NSAttributedString(string: "\n", attributes: attrs))
             if !item.children.isEmpty {
                 renderItems(item.children, depth: depth + 1,
@@ -76,13 +98,17 @@ public enum ListRenderer {
         }
     }
 
-    /// Map a parsed source marker to its visual rendering.
-    /// Unordered markers (`-`, `*`, `+`) all become "•". Ordered
-    /// markers reuse the parsed "N." or "N)" text directly — that
-    /// IS the visual form.
-    private static func visualBullet(for marker: String) -> String {
+    /// Map a parsed source marker to its visual rendering, varying
+    /// by nesting depth. Unordered markers cycle through four glyphs:
+    ///   depth 0: • (bullet)
+    ///   depth 1: ◦ (white bullet)
+    ///   depth 2: ▪ (black small square)
+    ///   depth 3+: ▫ (white small square), then cycles back
+    /// Ordered markers reuse the parsed "N." or "N)" text directly.
+    public static func visualBullet(for marker: String, depth: Int = 0) -> String {
         if marker == "-" || marker == "*" || marker == "+" {
-            return "\u{2022}"   // •
+            let bullets = ["\u{2022}", "\u{25E6}", "\u{25AA}", "\u{25AB}"]  // • ◦ ▪ ▫
+            return bullets[depth % bullets.count]
         }
         return marker
     }

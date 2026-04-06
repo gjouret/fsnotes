@@ -88,7 +88,11 @@ class TableLayoutTests: XCTestCase {
         let table = makeTable(headers: ["Header"], rows: [["Data"]])
         let layout = table.computeLayout()
 
-        XCTAssertGreaterThanOrEqual(layout.headerHeight, 32) // minCellHeight
+        let fontSize = UserDefaultsManagement.noteFont.pointSize
+        let spacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+        let vPad = max(2, ceil(spacing * 0.75))
+        let expectedMinCellHeight = ceil(fontSize + spacing + vPad * 2 + fontSize * 0.4)
+        XCTAssertGreaterThanOrEqual(layout.headerHeight, expectedMinCellHeight) // minCellHeight (font + spacing relative)
     }
 
     func test_multiLineCell_increasesHeight() {
@@ -96,7 +100,11 @@ class TableLayoutTests: XCTestCase {
         let layout = table.computeLayout()
 
         let rowH = layout.dataRowHeight(0)
-        XCTAssertGreaterThan(rowH, 32) // Should be taller than minCellHeight
+        let fs = UserDefaultsManagement.noteFont.pointSize
+        let sp = CGFloat(UserDefaultsManagement.editorLineSpacing)
+        let vp = max(2, ceil(sp * 0.75))
+        let minH = ceil(fs + sp + vp * 2 + fs * 0.4)
+        XCTAssertGreaterThan(rowH, minH) // Should be taller than minCellHeight
     }
 
     // MARK: - Consistency

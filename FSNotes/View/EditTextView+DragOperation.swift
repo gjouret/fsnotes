@@ -140,7 +140,7 @@ extension EditTextView
         guard let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
               !urls.isEmpty else { return false }
 
-        note.save(attributed: attributedStringForSaving())
+        save()
 
         let group = DispatchGroup()
         let total = urls.count
