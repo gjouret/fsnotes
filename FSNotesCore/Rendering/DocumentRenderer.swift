@@ -89,15 +89,45 @@ public enum DocumentRenderer {
 
             // Apply paragraph styles (spacing, indentation) based on
             // block type. This replicates the essential parts of the
-            // legacy phase5_paragraphStyles.
+            // source-mode phase5_paragraphStyles.
             if blockRange.length > 0 {
-                let paraStyle = paragraphStyle(
-                    for: block,
-                    isFirst: (i == 0),
-                    baseSize: bodyFont.pointSize,
-                    lineSpacing: lineSpacing
-                )
-                out.addAttribute(.paragraphStyle, value: paraStyle, range: blockRange)
+                let needsMerge: Bool
+                switch block {
+                case .blockquote, .list:
+                    // Blockquotes and lists have per-line paragraph styles
+                    // (set by their renderers with indentation). Merge
+                    // block-level spacing into the existing per-line styles
+                    // instead of overwriting them.
+                    needsMerge = true
+                default:
+                    needsMerge = false
+                }
+
+                if needsMerge {
+                    let blockSpacing = paragraphStyle(
+                        for: block,
+                        isFirst: (i == 0),
+                        baseSize: bodyFont.pointSize,
+                        lineSpacing: lineSpacing
+                    )
+                    out.enumerateAttribute(.paragraphStyle, in: blockRange, options: []) { value, range, _ in
+                        if let existing = value as? NSParagraphStyle {
+                            let merged = existing.mutableCopy() as! NSMutableParagraphStyle
+                            merged.paragraphSpacing = blockSpacing.paragraphSpacing
+                            merged.paragraphSpacingBefore = blockSpacing.paragraphSpacingBefore
+                            merged.lineSpacing = blockSpacing.lineSpacing
+                            out.addAttribute(.paragraphStyle, value: merged, range: range)
+                        }
+                    }
+                } else {
+                    let paraStyle = paragraphStyle(
+                        for: block,
+                        isFirst: (i == 0),
+                        baseSize: bodyFont.pointSize,
+                        lineSpacing: lineSpacing
+                    )
+                    out.addAttribute(.paragraphStyle, value: paraStyle, range: blockRange)
+                }
             }
 
             // Inter-block separator: a single "\n" between consecutive
@@ -127,6 +157,11 @@ public enum DocumentRenderer {
             out.append(NSAttributedString(string: "\n", attributes: separatorAttrs))
         }
 
+        // Post-processing: auto-link bare URLs in paragraph/heading text.
+        // This doesn't modify the Document model — bare URLs stay as
+        // plain text and serialize back without [text](url) wrapping.
+        applyAutoLinks(to: out)
+
         return RenderedDocument(
             document: document,
             attributed: out,
@@ -134,11 +169,86 @@ public enum DocumentRenderer {
         )
     }
 
+    // MARK: - Auto-linking
+
+    /// Regex matching bare URLs with protocols (https, http, sftp, file, ftp).
+    static let autolinkRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: "((?:https?|sftp|file|ftp)://[^`\\'\\\"\\>\\s\\*]+)",
+        options: []
+    )
+
+    /// Regex matching bare www. URLs without protocol prefix.
+    static let wwwRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: "(?<=\\s|^)(www\\.[a-zA-Z0-9\\-]+\\.[a-zA-Z]{2,}(?:[/\\?#][^\\s]*)?)",
+        options: [.anchorsMatchLines]
+    )
+
+    /// Scan the rendered attributed string for bare URLs and apply
+    /// `.link` attributes. Skips ranges that already have a `.link`
+    /// attribute (e.g., markdown `[text](url)` links) and ranges
+    /// inside code blocks (monospace font).
+    static func applyAutoLinks(to attrStr: NSMutableAttributedString) {
+        let string = attrStr.string
+        let fullRange = NSRange(location: 0, length: attrStr.length)
+
+        #if os(OSX)
+        let linkColor = NSColor(named: "link") ?? NSColor.systemBlue
+        #else
+        let linkColor = UIColor.systemBlue
+        #endif
+
+        let processMatch: (NSTextCheckingResult) -> Void = { match in
+            var range = match.range
+            guard range.length > 0 else { return }
+
+            let substring = (string as NSString).substring(with: range)
+
+            // Trim trailing punctuation that's unlikely part of the URL.
+            if let last = substring.last, ["!", "?", ";", ":", ".", ","].contains(String(last)) {
+                range = NSRange(location: range.location, length: range.length - 1)
+            }
+
+            // Skip if already linked (e.g., markdown [text](url) link).
+            if attrStr.attribute(.link, at: range.location, effectiveRange: nil) != nil {
+                return
+            }
+
+            // Skip if inside a code block (monospace font).
+            if let font = attrStr.attribute(.font, at: range.location, effectiveRange: nil) as? PlatformFont,
+               font.isFixedPitch || font.fontName.lowercased().contains("mono") || font.fontName.lowercased().contains("courier") {
+                return
+            }
+
+            let urlString = (string as NSString).substring(with: range)
+            let finalURL: String
+            if urlString.hasPrefix("www.") {
+                finalURL = "https://\(urlString)"
+            } else {
+                finalURL = urlString
+            }
+
+            if let url = URL(string: finalURL) {
+                attrStr.addAttribute(.link, value: url, range: range)
+                attrStr.addAttribute(.foregroundColor, value: linkColor, range: range)
+            }
+        }
+
+        autolinkRegex?.enumerateMatches(in: string, options: [], range: fullRange) { match, _, _ in
+            guard let match = match else { return }
+            processMatch(match)
+        }
+
+        wwwRegex?.enumerateMatches(in: string, options: [], range: fullRange) { match, _, _ in
+            guard let match = match else { return }
+            processMatch(match)
+        }
+    }
+
     // MARK: - Paragraph styles
 
     /// Build a paragraph style for a rendered block, matching the
-    /// spacing values from the legacy phase5_paragraphStyles.
-    private static func paragraphStyle(
+    /// spacing values from the source-mode phase5_paragraphStyles.
+    static func paragraphStyle(
         for block: Block,
         isFirst: Bool,
         baseSize: CGFloat,
@@ -150,25 +260,26 @@ public enum DocumentRenderer {
 
         switch block {
         case .heading(let level, _):
+            // Spacing proportional to heading level for clear visual hierarchy.
             switch level {
             case 1:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.67 }
+                if !isFirst { style.paragraphSpacingBefore = baseSize * 1.2 }
                 style.paragraphSpacing = baseSize * 0.67
             case 2:
-                if !isFirst { style.paragraphSpacingBefore = baseSize }
-                style.paragraphSpacing = 16
+                if !isFirst { style.paragraphSpacingBefore = baseSize * 1.0 }
+                style.paragraphSpacing = baseSize * 0.5
             case 3:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.8 }
-                style.paragraphSpacing = 12
+                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.9 }
+                style.paragraphSpacing = baseSize * 0.4
             case 4:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.6 }
-                style.paragraphSpacing = 10
+                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.8 }
+                style.paragraphSpacing = baseSize * 0.35
             case 5:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.5 }
-                style.paragraphSpacing = 8
+                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.7 }
+                style.paragraphSpacing = baseSize * 0.3
             default:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.4 }
-                style.paragraphSpacing = 6
+                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.6 }
+                style.paragraphSpacing = baseSize * 0.25
             }
 
         case .paragraph:
@@ -182,10 +293,14 @@ public enum DocumentRenderer {
         case .blankLine:
             break
 
-        case .list, .blockquote, .horizontalRule:
-            // Structural block types that aren't yet supported by the
-            // new editing pipeline. Basic spacing for read-only display.
+        case .list, .blockquote, .horizontalRule, .table:
+            // Structural block types. Basic spacing for read-only display.
             style.paragraphSpacing = 16
+
+        case .htmlBlock:
+            style.lineSpacing = 0
+            style.paragraphSpacing = 16
+            style.paragraphSpacingBefore = 0
         }
 
         return style
@@ -205,12 +320,17 @@ public enum DocumentRenderer {
             return HeadingRenderer.render(level: level, suffix: suffix, bodyFont: bodyFont)
         case .codeBlock(let language, let content, _):
             return CodeBlockRenderer.render(language: language, content: content, codeFont: codeFont)
-        case .list(let items):
+        case .list(let items, _):
             return ListRenderer.render(items: items, bodyFont: bodyFont)
         case .blockquote(let lines):
             return BlockquoteRenderer.render(lines: lines, bodyFont: bodyFont)
         case .horizontalRule:
             return HorizontalRuleRenderer.render(bodyFont: bodyFont)
+        case .htmlBlock(let raw):
+            // Render HTML blocks as plain text with code font.
+            return CodeBlockRenderer.render(language: nil, content: raw, codeFont: codeFont)
+        case .table(let header, _, let rows, _):
+            return TableTextRenderer.render(header: header, rows: rows, bodyFont: bodyFont)
         case .blankLine:
             // A blank line has no rendered content — it is represented
             // purely by the inter-block "\n" separators on either side.

@@ -162,7 +162,7 @@ extension ViewController {
             return true
             
         case "\(menuId).import":
-            menuItem.title = NSLocalizedString("Import", comment: "File Menu")
+            menuItem.title = NSLocalizedString("Import...", comment: "File Menu")
             return true
             
         case "\(menuId).attach":

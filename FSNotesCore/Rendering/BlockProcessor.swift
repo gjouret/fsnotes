@@ -29,11 +29,11 @@ public protocol EditorDelegate: AnyObject {
     var editorTextContainer: NSTextContainer? { get }
     var editorContentWidth: CGFloat { get }
     var imagesLoaderQueue: OperationQueue { get }
-    /// Save the current note (block-model or legacy path).
+    /// Save the current note (block-model or source-mode path).
     func save()
 }
 
-// The legacy BlockProcessor protocol has been removed.
+// The old BlockProcessor protocol has been removed.
 // Phase 4 (syntax hiding) is fully handled by the block-model
 // DocumentRenderer. BlockquoteProcessor and HorizontalRuleProcessor
 // have been deleted.

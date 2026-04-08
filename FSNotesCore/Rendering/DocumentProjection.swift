@@ -99,6 +99,16 @@ public struct DocumentProjection {
                 return (i, idx - lower)
             }
         }
+        // Cursor past all block spans but still within the rendered string
+        // (e.g. on a trailing newline or at attributed.length). Map to the
+        // last block so that operations like toggleTodoList work when the
+        // cursor is at the document end.
+        if let lastSpan = rendered.blockSpans.last,
+           idx > lastSpan.location + lastSpan.length,
+           idx <= rendered.attributed.length {
+            let lastIndex = rendered.blockSpans.count - 1
+            return (lastIndex, lastSpan.length)
+        }
         return nil
     }
 }

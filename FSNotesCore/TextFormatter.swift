@@ -1061,7 +1061,7 @@ public class TextFormatter {
         setTypingAttributes(font: prefs.noteFont)
 
         // Route through EditorDelegate.save() which handles both
-        // block-model (serialize Document) and legacy (attribute-strip)
+        // block-model (serialize Document) and source-mode (attribute-strip)
         // save paths. Falls back to direct note.save for non-editor views.
         if let editor = textView as? EditorDelegate {
             editor.save()

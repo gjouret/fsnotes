@@ -133,7 +133,7 @@ extension EditTextView {
 
         // Block-model path: the renderer will re-highlight from the
         // Document model when refillEditArea re-renders. Skip the
-        // legacy highlight call — it would apply syntax colors to
+        // source-mode highlight call — it would apply syntax colors to
         // note.content (raw markdown) that the block-model pipeline
         // doesn't use.
         if documentProjection == nil {

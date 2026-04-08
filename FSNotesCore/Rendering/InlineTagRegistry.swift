@@ -58,7 +58,7 @@ public func buildInlineTagDefinitions(baseFont: PlatformFont) -> [InlineTagDefin
         InlineTagDefinition(
             pattern: "<mark>(.*?)</mark>",
             openTagLength: 6, closeTagLength: 7,
-            contentAttributes: [.backgroundColor: PlatformColor(red: 1.0, green: 0.95, blue: 0.0, alpha: 0.3)]
+            contentAttributes: [.backgroundColor: PlatformColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)]
         ),
         // Add new tags here — one entry each:
         // <sub>, <sup>, <abbr>, <ins>, <del>, etc.

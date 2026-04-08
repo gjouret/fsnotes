@@ -84,10 +84,13 @@ class CodeSpanRoundTripTests: XCTestCase {
         assertRoundTrip("a ` b\n")
     }
 
-    func test_roundTrip_doubleBacktick_notCodeSpan() {
-        // Double-backtick spans are not yet supported — must
-        // round-trip verbatim as literal backticks.
-        assertRoundTrip("``code``\n")
+    func test_parse_doubleBacktick_isCodeSpan() {
+        // Double-backtick spans are now supported per CommonMark.
+        let doc = MarkdownParser.parse("``code``\n")
+        guard case .paragraph(let inline) = doc.blocks[0] else {
+            XCTFail("expected paragraph"); return
+        }
+        XCTAssertEqual(inline, [.code("code")])
     }
 
     func test_roundTrip_backtickAtEnd() {

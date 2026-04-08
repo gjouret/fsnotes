@@ -12,7 +12,9 @@
 //    for every valid markdown input.
 //
 //  Supported constructs: fenced code blocks, ATX headings, blank lines,
-//  paragraphs with inline bold/italic/code emphasis, lists (unordered +
+//  paragraphs with inline bold/italic/code/strikethrough emphasis,
+//  backslash escapes, autolinks, raw HTML, entity references, links,
+//  images, hard line breaks, underscore emphasis, lists (unordered +
 //  ordered with nesting), blockquotes, horizontal rules.
 //
 
@@ -33,6 +35,11 @@ public enum MarkdownParser {
         // "a\n" has two parts ("a", "") while "a" has one ("a").
         let lines = splitPreservingTrailingEmpty(markdown)
 
+        // First pass: collect link reference definitions, respecting
+        // code fences. Lines that are link ref defs are consumed and
+        // NOT emitted as blocks.
+        let (refDefs, consumedLines) = collectLinkRefDefs(lines, trailingNewline: markdown.hasSuffix("\n"))
+
         var blocks: [Block] = []
         var i = 0
         var rawBuffer: [String] = []
@@ -40,7 +47,7 @@ public enum MarkdownParser {
         func flushRawBuffer() {
             guard !rawBuffer.isEmpty else { return }
             let text = rawBuffer.joined(separator: "\n")
-            blocks.append(.paragraph(inline: parseInlines(text)))
+            blocks.append(.paragraph(inline: parseInlines(text, refDefs: refDefs)))
             rawBuffer.removeAll(keepingCapacity: true)
         }
 
@@ -54,6 +61,12 @@ public enum MarkdownParser {
                 break
             }
 
+            // Skip lines consumed as link reference definitions.
+            if consumedLines.contains(i) {
+                i += 1
+                continue
+            }
+
             if let fence = detectFenceOpen(line) {
                 flushRawBuffer()
 
@@ -63,23 +76,44 @@ public enum MarkdownParser {
                 var foundClose = false
 
                 while j < lines.count {
-                    if isFenceClose(lines[j], matching: fence) {
+                    let l = lines[j]
+                    // Skip the synthetic trailing "" for file-ending newline
+                    if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") {
+                        break
+                    }
+                    if isFenceClose(l, matching: fence) {
                         foundClose = true
                         break
                     }
-                    contentLines.append(lines[j])
+                    contentLines.append(l)
                     j += 1
                 }
 
-                guard foundClose else {
-                    // Unterminated fence: treat the open line as a plain
-                    // paragraph line to preserve byte-equal round-trip.
-                    rawBuffer.append(line)
-                    i += 1
-                    continue
+                // Strip up to `fence.indent` leading spaces from each
+                // content line (CommonMark indentation removal rule).
+                if fence.indent > 0 {
+                    contentLines = contentLines.map { contentLine in
+                        let lineChars = Array(contentLine)
+                        var strip = 0
+                        while strip < fence.indent && strip < lineChars.count && lineChars[strip] == " " {
+                            strip += 1
+                        }
+                        return String(lineChars[strip...])
+                    }
                 }
 
-                let content = contentLines.joined(separator: "\n")
+                let content: String
+                let advanceTo: Int
+                if foundClose {
+                    content = contentLines.joined(separator: "\n")
+                    advanceTo = j + 1
+                } else {
+                    // Unterminated fence: code block extends to end of
+                    // document (CommonMark rule). No closing fence line.
+                    content = contentLines.joined(separator: "\n")
+                    advanceTo = j
+                }
+
                 let infoTrimmed = fence.infoRaw.trimmingCharacters(in: .whitespaces)
                 let language = infoTrimmed.isEmpty ? nil : infoTrimmed
                 let fenceStyle = FenceStyle(
@@ -88,28 +122,63 @@ public enum MarkdownParser {
                     infoRaw: fence.infoRaw
                 )
                 blocks.append(.codeBlock(language: language, content: content, fence: fenceStyle))
-                i = j + 1
+                i = advanceTo
                 continue
             }
 
             if detectBlockquoteLine(line) != nil {
                 flushRawBuffer()
                 var qLines: [BlockquoteLine] = []
+                // Track inner content lines (after stripping > prefix)
+                // for lazy continuation analysis.
+                var innerContentLines: [String] = []
                 var j = i
                 while j < lines.count {
                     let l = lines[j]
                     if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") {
                         break
                     }
-                    guard let parts = detectBlockquoteLine(l) else { break }
-                    qLines.append(BlockquoteLine(
-                        prefix: parts.prefix,
-                        inline: parseInlines(parts.content)
-                    ))
-                    j += 1
+                    if let parts = detectBlockquoteLine(l) {
+                        // Normal blockquote line with > prefix
+                        qLines.append(BlockquoteLine(
+                            prefix: parts.prefix,
+                            inline: parseInlines(parts.content, refDefs: refDefs)
+                        ))
+                        innerContentLines.append(parts.content)
+                        j += 1
+                    } else if !interruptsLazyContinuation(l)
+                                && blockquoteInnerAllowsLazyContinuation(innerContentLines) {
+                        // Lazy continuation: line without > that continues
+                        // the last paragraph inside the blockquote.
+                        qLines.append(BlockquoteLine(
+                            prefix: "",
+                            inline: parseInlines(l, refDefs: refDefs)
+                        ))
+                        innerContentLines.append(l)
+                        j += 1
+                    } else {
+                        break
+                    }
                 }
                 blocks.append(.blockquote(lines: qLines))
                 i = j
+                continue
+            }
+
+            // Setext heading: paragraph text followed by === (H1) or --- (H2).
+            // Must check BEFORE horizontal rule, because "---" is both a
+            // setext underline and an HR — context determines which.
+            // Exception: if the paragraph is entirely wrapped in emphasis
+            // markers (**...**), it's a bold paragraph + HR, not a heading.
+            if !rawBuffer.isEmpty, let setextLevel = detectSetextUnderline(line),
+               !isEmphasisOnlyParagraph(rawBuffer) {
+                // Combine rawBuffer into the heading text.
+                let headingText = rawBuffer.joined(separator: "\n")
+                rawBuffer.removeAll()
+                // The suffix includes a leading space to match ATX heading
+                // convention (round-trip: setext serializes differently).
+                blocks.append(.heading(level: setextLevel, suffix: " " + headingText))
+                i += 1
                 continue
             }
 
@@ -120,28 +189,94 @@ public enum MarkdownParser {
                 continue
             }
 
-            if parseListLine(line) != nil {
+            // Table detection: a line containing "|" followed by a
+            // separator line ("|", "-", ":", spaces). The raw buffer
+            // might already contain the header line if the parser
+            // buffered it as a paragraph line. Check both cases:
+            // (a) current line is header + next line is separator
+            // (b) rawBuffer has one line (header) + current line is separator
+            if let tableBlock = detectTable(lines: lines, at: i, rawBuffer: rawBuffer, markdown: markdown) {
+                // If the header was in the rawBuffer, remove it.
+                if tableBlock.headerFromBuffer {
+                    rawBuffer.removeLast()
+                }
+                flushRawBuffer()
+                blocks.append(tableBlock.block)
+                i = tableBlock.nextIndex
+                continue
+            }
+
+            if let firstParsed = parseListLine(line),
+               // Don't let a bare marker at EOL (e.g. "*", "1.") interrupt
+               // a paragraph. CommonMark example 285: "foo\n*" is a paragraph,
+               // not a paragraph + list. Only applies when raw buffer has content.
+               !(rawBuffer.count > 0 && firstParsed.afterMarker.isEmpty && firstParsed.content.isEmpty) {
                 flushRawBuffer()
 
-                // Collect a contiguous run of list lines. The run stops
-                // at a blank line, a non-list line, or the synthetic
-                // trailing "" for a file-ending newline.
-                var parsedLines: [ParsedListLine] = []
-                var j = i
+                // Determine the list type from the first item's marker.
+                // A change in bullet character or ordered delimiter
+                // starts a new list (CommonMark rule). This check only
+                // applies to items at the SAME indent level — nested
+                // items can have different marker types (e.g. unordered
+                // list containing ordered sublist).
+                let listType = Self.listMarkerType(firstParsed.marker)
+                let topIndent = firstParsed.indent.count
+
+                // Collect list lines, continuing through blank lines
+                // when the next non-blank line is a list item of the
+                // same type. Track whether any blank lines separate
+                // items (makes the list "loose"). Each item that
+                // follows a blank line gets blankLineBefore = true
+                // for round-trip serialization.
+                var parsedLines: [ParsedListLine] = [firstParsed]
+                var hasBlankLines = false
+                var nextItemFollowsBlank = false
+                var j = i + 1
                 while j < lines.count {
                     let l = lines[j]
                     if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") {
                         break
                     }
-                    if l.isEmpty { break }
-                    guard let parsed = parseListLine(l) else { break }
+                    if l.isEmpty {
+                        // Blank line: peek ahead for another list item
+                        // that belongs to this list. For top-level items,
+                        // the marker type must match. For nested items
+                        // (deeper indent), any marker type is allowed.
+                        var k = j + 1
+                        while k < lines.count && lines[k].isEmpty { k += 1 }
+                        if k < lines.count,
+                           let nextParsed = parseListLine(lines[k]) {
+                            let nextIndent = nextParsed.indent.count
+                            if nextIndent == topIndent && Self.listMarkerType(nextParsed.marker) != listType {
+                                // Top-level item with different marker type — new list.
+                                break
+                            }
+                            // Continue: skip blank line(s), mark as loose.
+                            hasBlankLines = true
+                            nextItemFollowsBlank = true
+                            j = k
+                            continue
+                        } else {
+                            break
+                        }
+                    }
+                    guard var parsed = parseListLine(l) else { break }
+                    // Different marker type at the SAME indent level
+                    // starts a new list. Nested items are allowed to
+                    // have any marker type.
+                    if parsed.indent.count == topIndent &&
+                       Self.listMarkerType(parsed.marker) != listType { break }
+                    if nextItemFollowsBlank {
+                        parsed.blankLineBefore = true
+                        nextItemFollowsBlank = false
+                    }
                     parsedLines.append(parsed)
                     j += 1
                 }
                 let (items, _) = buildItemTree(
-                    lines: parsedLines, from: 0, parentIndent: -1
+                    lines: parsedLines, from: 0, parentIndent: -1, refDefs: refDefs
                 )
-                blocks.append(.list(items: items))
+                blocks.append(.list(items: items, loose: hasBlankLines))
                 i = j
                 continue
             }
@@ -150,6 +285,50 @@ public enum MarkdownParser {
                 flushRawBuffer()
                 blocks.append(.heading(level: heading.level, suffix: heading.suffix))
                 i += 1
+                continue
+            }
+
+            // HTML blocks: detect before paragraph buffer but after
+            // code fences, headings, HR, blockquotes, lists.
+            if let htmlType = detectHTMLBlock(line),
+               // Type 7 cannot interrupt a paragraph (rawBuffer non-empty).
+               !(htmlType == 7 && !rawBuffer.isEmpty) {
+                flushRawBuffer()
+                var htmlLines: [String] = [line]
+                i += 1
+
+                // Check if end condition is met on the opening line itself
+                // (types 1-5 have specific end markers that can appear on
+                // the same line as the start).
+                let endedOnOpeningLine = Self.htmlBlockEndsOnLine(line, type: htmlType)
+
+                if !endedOnOpeningLine {
+                    while i < lines.count {
+                        let nextLine = lines[i]
+                        if i == lines.count - 1 && nextLine.isEmpty && markdown.hasSuffix("\n") {
+                            break
+                        }
+                        if htmlType == 6 || htmlType == 7 {
+                            // Type 6/7: end at blank line (exclusive)
+                            if nextLine.trimmingCharacters(in: .whitespaces).isEmpty { break }
+                        }
+                        htmlLines.append(nextLine)
+                        if htmlType == 1 {
+                            let lower = nextLine.lowercased()
+                            if lower.contains("</pre>") || lower.contains("</script>") || lower.contains("</style>") || lower.contains("</textarea>") { i += 1; break }
+                        } else if htmlType == 2 {
+                            if nextLine.contains("-->") { i += 1; break }
+                        } else if htmlType == 3 {
+                            if nextLine.contains("?>") { i += 1; break }
+                        } else if htmlType == 4 {
+                            if nextLine.contains(">") { i += 1; break }
+                        } else if htmlType == 5 {
+                            if nextLine.contains("]]>") { i += 1; break }
+                        }
+                        i += 1
+                    }
+                }
+                blocks.append(.htmlBlock(raw: htmlLines.joined(separator: "\n")))
                 continue
             }
 
@@ -165,7 +344,7 @@ public enum MarkdownParser {
         }
 
         flushRawBuffer()
-        return Document(blocks: blocks, trailingNewline: markdown.hasSuffix("\n"))
+        return Document(blocks: blocks, trailingNewline: markdown.hasSuffix("\n"), refDefs: refDefs)
     }
 
     // MARK: - Fence detection
@@ -177,44 +356,55 @@ public enum MarkdownParser {
         let fenceChar: Character   // '`' or '~'
         let fenceLength: Int       // number of fence chars (>= 3)
         let infoRaw: String        // info string verbatim (not trimmed)
+        let indent: Int            // 0-3 leading spaces on the opening fence
     }
 
     /// Detect whether `line` opens a fenced code block. Returns the Fence
     /// descriptor if so, nil otherwise.
     ///
-    /// Rule: a fence-open is a line that starts with >= 3
-    /// backticks or >= 3 tildes, optionally followed by an info string.
-    /// Indented fences are NOT matched (we only handle unindented for now).
+    /// Rule: a fence-open is a line that starts with up to 3 leading
+    /// spaces followed by >= 3 backticks or >= 3 tildes, optionally
+    /// followed by an info string. The indent level is tracked so
+    /// content lines can have up to that many leading spaces stripped.
     private static func detectFenceOpen(_ line: String) -> Fence? {
-        guard let first = line.first, first == "`" || first == "~" else { return nil }
+        let chars = Array(line)
+        var i = 0
+        // Allow up to 3 leading spaces
+        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
+        let indent = i
+
+        guard i < chars.count else { return nil }
+        let fenceChar = chars[i]
+        guard fenceChar == "`" || fenceChar == "~" else { return nil }
 
         var count = 0
-        for ch in line {
-            if ch == first { count += 1 } else { break }
-        }
+        while i < chars.count && chars[i] == fenceChar { i += 1; count += 1 }
         guard count >= 3 else { return nil }
 
-        let rest = String(line.dropFirst(count))
+        let rest = String(chars[i...])
 
         // CommonMark: backtick fences cannot contain backticks in their
         // info string. If they do, this isn't a fence open.
-        if first == "`" && rest.contains("`") { return nil }
+        if fenceChar == "`" && rest.contains("`") { return nil }
 
-        return Fence(fenceChar: first, fenceLength: count, infoRaw: rest)
+        return Fence(fenceChar: fenceChar, fenceLength: count, infoRaw: rest, indent: indent)
     }
 
     /// Check whether `line` is a valid close fence for the given open.
-    /// Close fence: only fence chars (>= open length) and optional trailing
-    /// whitespace, no info string.
+    /// Close fence: up to 3 leading spaces, then only fence chars
+    /// (>= open length) and optional trailing whitespace, no info string.
     private static func isFenceClose(_ line: String, matching open: Fence) -> Bool {
+        let chars = Array(line)
+        var i = 0
+        // Allow up to 3 leading spaces
+        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
+
         var count = 0
-        for ch in line {
-            if ch == open.fenceChar { count += 1 } else { break }
-        }
+        while i < chars.count && chars[i] == open.fenceChar { i += 1; count += 1 }
         guard count >= open.fenceLength else { return false }
 
         // Everything after fence chars must be whitespace only.
-        let trailing = line.dropFirst(count)
+        let trailing = chars[i...]
         return trailing.allSatisfy { $0 == " " || $0 == "\t" }
     }
 
@@ -252,171 +442,816 @@ public enum MarkdownParser {
         return (level, suffix)
     }
 
+    // MARK: - HTML block detection
+
+    /// Block-level HTML tag names (CommonMark spec, type 6).
+    private static let htmlBlockTags: Set<String> = [
+        "address", "article", "aside", "base", "basefont", "blockquote", "body",
+        "caption", "center", "col", "colgroup", "dd", "details", "dialog",
+        "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
+        "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6",
+        "head", "header", "hr", "html", "iframe", "legend", "li", "link",
+        "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup",
+        "option", "p", "param", "search", "section", "summary", "table",
+        "tbody", "td", "tfoot", "th", "thead", "title", "tr", "ul"
+    ]
+
+    /// Detect whether a line starts an HTML block and return the type
+    /// (1–7) if so. Returns nil if the line is not an HTML block start.
+    private static func detectHTMLBlock(_ line: String) -> Int? {
+        let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+        guard trimmed.hasPrefix("<") else { return nil }
+        let trimmedStr = String(trimmed)
+
+        // Type 1: <pre, <script, <style, <textarea (case insensitive)
+        let lower = trimmedStr.lowercased()
+        for tag in ["pre", "script", "style", "textarea"] {
+            if lower.hasPrefix("<\(tag)") {
+                let afterTag = lower.dropFirst(tag.count + 1)
+                if afterTag.isEmpty || afterTag.first == " " || afterTag.first == ">"
+                    || afterTag.first == "\t" || afterTag.hasPrefix("\n") {
+                    return 1
+                }
+            }
+        }
+
+        // Type 2: <!--
+        if trimmedStr.hasPrefix("<!--") { return 2 }
+
+        // Type 3: <?
+        if trimmedStr.hasPrefix("<?") { return 3 }
+
+        // Type 4: <!LETTER
+        if trimmedStr.hasPrefix("<!") && trimmedStr.count > 2 {
+            let thirdChar = trimmedStr[trimmedStr.index(trimmedStr.startIndex, offsetBy: 2)]
+            if thirdChar.isLetter && thirdChar.isUppercase { return 4 }
+        }
+
+        // Type 5: <![CDATA[
+        if trimmedStr.hasPrefix("<![CDATA[") { return 5 }
+
+        // Type 6: block-level HTML tag
+        if let tagName = extractHTMLTagName(trimmedStr) {
+            if htmlBlockTags.contains(tagName.lowercased()) {
+                return 6
+            }
+        }
+
+        // Type 7: any other complete open or closing tag on its own line.
+        // The tag must be a complete open tag (with optional attributes,
+        // ending with > or />) or a closing tag (</tagname>), followed
+        // only by optional whitespace. Cannot interrupt a paragraph
+        // (caller must check rawBuffer).
+        if isCompleteHTMLTag(trimmedStr) {
+            return 7
+        }
+
+        return nil
+    }
+
+    /// Check whether a line is a complete HTML open tag or closing tag
+    /// followed only by optional whitespace (type 7 HTML block start).
+    ///
+    /// CommonMark open tag: `< tag_name attribute* /? >`
+    /// - tag_name: ASCII letter followed by (letter|digit|hyphen)*
+    /// - attribute: whitespace+ attr_name (= attr_value)?
+    /// - attr_name: (letter|_|:) (letter|digit|_|.|:|-)*
+    /// - attr_value: unquoted | 'single' | "double"
+    ///
+    /// Closing tag: `</ tag_name whitespace* >`
+    private static func isCompleteHTMLTag(_ line: String) -> Bool {
+        let chars = Array(line)
+        guard chars.count >= 3, chars[0] == "<" else { return false }
+        var i = 1
+
+        let isClosing = chars[i] == "/"
+        if isClosing { i += 1 }
+
+        // Tag name: starts with ASCII letter
+        guard i < chars.count, chars[i].isASCII, chars[i].isLetter else { return false }
+        i += 1
+        while i < chars.count && (chars[i].isASCII && (chars[i].isLetter || chars[i].isNumber) || chars[i] == "-") { i += 1 }
+
+        if isClosing {
+            // Closing tag: optional whitespace then >
+            while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
+            guard i < chars.count, chars[i] == ">" else { return false }
+            i += 1
+        } else {
+            // Open tag: parse zero or more attributes, then optional /, then >
+            // After tag name, must see whitespace, >, or />
+            while i < chars.count {
+                let ch = chars[i]
+                if ch == ">" { i += 1; break }
+                if ch == "/" {
+                    if i + 1 < chars.count && chars[i + 1] == ">" { i += 2; break }
+                    return false // bare / not followed by >
+                }
+                // Must have whitespace before attribute
+                guard ch == " " || ch == "\t" else { return false }
+                // Skip whitespace
+                while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
+                guard i < chars.count else { return false }
+                // Could be > or /> after whitespace
+                if chars[i] == ">" { i += 1; break }
+                if chars[i] == "/" {
+                    if i + 1 < chars.count && chars[i + 1] == ">" { i += 2; break }
+                    return false
+                }
+                // Attribute name: starts with letter, _, or :
+                let ac = chars[i]
+                guard ac.isASCII && ac.isLetter || ac == "_" || ac == ":" else { return false }
+                i += 1
+                while i < chars.count {
+                    let c = chars[i]
+                    if c.isASCII && (c.isLetter || c.isNumber) || c == "_" || c == "." || c == ":" || c == "-" {
+                        i += 1
+                    } else { break }
+                }
+                // Optional whitespace
+                while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
+                guard i < chars.count else { return false }
+                // Optional = value
+                if chars[i] == "=" {
+                    i += 1
+                    // Optional whitespace after =
+                    while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
+                    guard i < chars.count else { return false }
+                    if chars[i] == "\"" {
+                        // Double-quoted value
+                        i += 1
+                        while i < chars.count && chars[i] != "\"" { i += 1 }
+                        guard i < chars.count else { return false }
+                        i += 1 // skip closing "
+                    } else if chars[i] == "'" {
+                        // Single-quoted value
+                        i += 1
+                        while i < chars.count && chars[i] != "'" { i += 1 }
+                        guard i < chars.count else { return false }
+                        i += 1 // skip closing '
+                    } else {
+                        // Unquoted value: non-empty, no spaces/quotes/=/</>
+                        let vStart = i
+                        while i < chars.count && chars[i] != " " && chars[i] != "\t"
+                                && chars[i] != "\"" && chars[i] != "'" && chars[i] != "="
+                                && chars[i] != "<" && chars[i] != ">" && chars[i] != "`" {
+                            i += 1
+                        }
+                        if i == vStart { return false } // empty unquoted value
+                    }
+                }
+            }
+            // Must have ended with >
+            guard i > 0 && chars[i - 1] == ">" else { return false }
+        }
+
+        // Rest of line must be only whitespace
+        while i < chars.count {
+            guard chars[i] == " " || chars[i] == "\t" else { return false }
+            i += 1
+        }
+        return true
+    }
+
+    /// Check whether an HTML block's end condition is met on a given line.
+    /// Used to detect same-line end markers (e.g., `<style>...</style>` on one line).
+    /// Types 6 and 7 end at blank lines, so they never "end on a line" — returns false.
+    private static func htmlBlockEndsOnLine(_ line: String, type: Int) -> Bool {
+        let lower = line.lowercased()
+        switch type {
+        case 1:
+            // End markers for type 1: closing tags for pre/script/style/textarea
+            // anywhere on the line (including the opening line).
+            return lower.contains("</pre>") || lower.contains("</script>")
+                || lower.contains("</style>") || lower.contains("</textarea>")
+        case 2:
+            // End marker: -->  (must appear after the opening <!--)
+            if let range = line.range(of: "<!--") {
+                return line[range.upperBound...].contains("-->")
+            }
+            return false
+        case 3:
+            // End marker: ?>
+            if let range = line.range(of: "<?") {
+                return line[range.upperBound...].contains("?>")
+            }
+            return false
+        case 4:
+            // End marker: >  (after the opening <!)
+            // The opening is <!LETTER, so check from index 2 onward.
+            return line.dropFirst(2).contains(">")
+        case 5:
+            // End marker: ]]>
+            if let range = line.range(of: "<![CDATA[") {
+                return line[range.upperBound...].contains("]]>")
+            }
+            return false
+        default:
+            return false
+        }
+    }
+
+    /// Extract the tag name from a line starting with `<` or `</`.
+    /// Returns the tag name if the character after the tag is a valid
+    /// delimiter (space, tab, >, /, newline, or end of string).
+    private static func extractHTMLTagName(_ line: String) -> String? {
+        let chars = Array(line)
+        guard chars.count >= 2, chars[0] == "<" else { return nil }
+        var i = 1
+        if i < chars.count && chars[i] == "/" { i += 1 }
+        guard i < chars.count, chars[i].isLetter else { return nil }
+        let start = i
+        while i < chars.count && (chars[i].isLetter || chars[i].isNumber || chars[i] == "-") { i += 1 }
+        guard i <= chars.count else { return nil }
+        if i == chars.count { return String(chars[start..<i]) }
+        let next = chars[i]
+        if next == " " || next == "\t" || next == ">" || next == "/" || next == "\n" {
+            return String(chars[start..<i])
+        }
+        return nil
+    }
+
     // MARK: - Inline tokenizer
 
-    /// Parse inline content from a paragraph's raw text. Standard
-    /// scope: consumes `**…**` (bold) and `*…*` (italic) markers. All
-    /// other characters (including `_`, `` ` ``, `[…](…)`) are treated
-    /// as plain text and round-trip verbatim.
+    /// Parse inline content from a paragraph's raw text.
     ///
-    /// Simplified CommonMark flanking rules:
-    /// - An opening `**` or `*` must NOT be followed by whitespace.
-    /// - A closing `**` or `*` must NOT be preceded by whitespace.
-    /// - `**` is matched greedily before `*` to avoid `**x**` parsing
-    ///   as two italic runs.
-    /// - Emphasis may not span across a paragraph boundary (input here
-    ///   is already a single paragraph's text).
-    /// - Unmatched markers stay as literal text.
+    /// Two-phase approach:
+    ///   Phase A (`tokenizeNonEmphasis`): parse everything except emphasis
+    ///     (* and _). Code spans, links, images, autolinks, raw HTML,
+    ///     entities, escapes, line breaks, and strikethrough are all
+    ///     handled here. Delimiter runs of * and _ are emitted as tokens.
+    ///   Phase B (`resolveEmphasis`): process the delimiter stack using
+    ///     the CommonMark spec section 6.2 algorithm. This correctly
+    ///     handles nested emphasis, Rule of 3, underscore word boundaries,
+    ///     and all the complex nesting cases that greedy matching fails on.
     ///
-    /// Byte-equal round-trip: the serializer re-emits the exact marker
-    /// characters that the parser consumed.
-    static func parseInlines(_ text: String) -> [Inline] {
+    /// Precedence order (highest first):
+    /// 1. Backslash escapes (`\*`, `\[`, etc.)
+    /// 2. Hard line breaks (`\\\n` and `  \n`)
+    /// 3. Autolinks (`<scheme:path>`, `<email@domain>`)
+    /// 4. Raw HTML (`<tag>`, `<!-- -->`, `<?...?>`, `<![CDATA[...]]>`)
+    /// 5. Entity references (`&amp;`, `&#123;`, `&#x1F;`)
+    /// 6. Code spans (`` `…` ``)
+    /// 7. Images (`![alt](url)`)
+    /// 8. Links (`[text](url)`)
+    /// 9. Strikethrough (`~~…~~`)
+    /// 10. Emphasis (`*`, `**`, `_`, `__` via delimiter stack)
+
+    /// Pre-scan for all code span ranges in the character array.
+    /// Returns an array of (start, end) pairs where start is the index
+    /// of the first opening backtick and end is the index past the last
+    /// closing backtick. Used to give code spans precedence over
+    /// emphasis, links, and other inline constructs per CommonMark spec.
+    private static func findCodeSpanRanges(_ chars: [Character]) -> [(start: Int, end: Int)] {
+        var ranges: [(start: Int, end: Int)] = []
+        var i = 0
+        while i < chars.count {
+            if chars[i] == "`" {
+                if let match = tryMatchCodeSpan(chars, from: i) {
+                    ranges.append((i, match.endIndex))
+                    i = match.endIndex
+                    continue
+                }
+            }
+            i += 1
+        }
+        return ranges
+    }
+
+    /// Check if a code span starting inside (matchStart, matchEnd) extends
+    /// past matchEnd — meaning the code span crosses the boundary of the
+    /// candidate match and should take precedence (CommonMark rule).
+    private static func codeSpanCrossesBoundary(
+        _ codeSpanRanges: [(start: Int, end: Int)],
+        matchStart: Int, matchEnd: Int
+    ) -> Bool {
+        for cs in codeSpanRanges {
+            if cs.start > matchStart && cs.start < matchEnd && cs.end > matchEnd {
+                return true
+            }
+        }
+        return false
+    }
+
+    // MARK: - Delimiter stack types for CommonMark emphasis algorithm
+
+    /// A token in the intermediate representation between Phase A
+    /// (non-emphasis inline parsing) and Phase B (emphasis resolution).
+    private enum InlineToken {
+        case inline(Inline)                  // already-parsed inline (code, link, etc.)
+        case text(String)                    // raw text needing no further processing
+        case delimiter(DelimiterRun)         // a run of * or _ to be resolved
+    }
+
+    /// A delimiter run on the stack. Tracks the character, remaining
+    /// count (decremented as emphasis is consumed), and flanking status.
+    private class DelimiterRun {
+        let char: Character           // '*' or '_'
+        var count: Int                // remaining delimiter chars (decremented)
+        let originalCount: Int        // original count (for Rule of 3)
+        let canOpen: Bool
+        let canClose: Bool
+        var active: Bool = true       // set to false when removed from stack
+
+        init(char: Character, count: Int, canOpen: Bool, canClose: Bool) {
+            self.char = char
+            self.count = count
+            self.originalCount = count
+            self.canOpen = canOpen
+            self.canClose = canClose
+        }
+    }
+
+    /// Determine whether a delimiter run can open and/or close emphasis.
+    /// Implements CommonMark spec section 6.2 flanking rules.
+    private static func emphasisFlanking(
+        delimChar: Character, before: Character?, after: Character?
+    ) -> (canOpen: Bool, canClose: Bool) {
+        let beforeIsWhitespace = before == nil || isUnicodeWhitespace(before!)
+        let afterIsWhitespace = after == nil || isUnicodeWhitespace(after!)
+        let beforeIsPunct = before != nil && isUnicodePunctuation(before!)
+        let afterIsPunct = after != nil && isUnicodePunctuation(after!)
+
+        // Left-flanking: not followed by whitespace, AND
+        // (not followed by punctuation OR preceded by whitespace/punctuation)
+        let leftFlanking = !afterIsWhitespace &&
+            (!afterIsPunct || beforeIsWhitespace || beforeIsPunct)
+
+        // Right-flanking: not preceded by whitespace, AND
+        // (not preceded by punctuation OR followed by whitespace/punctuation)
+        let rightFlanking = !beforeIsWhitespace &&
+            (!beforeIsPunct || afterIsWhitespace || afterIsPunct)
+
+        let canOpen: Bool
+        let canClose: Bool
+        if delimChar == "*" {
+            canOpen = leftFlanking
+            canClose = rightFlanking
+        } else {
+            // Underscore: stricter rules
+            canOpen = leftFlanking && (!rightFlanking || beforeIsPunct)
+            canClose = rightFlanking && (!leftFlanking || afterIsPunct)
+        }
+        return (canOpen, canClose)
+    }
+
+    static func parseInlines(_ text: String, refDefs: [String: (url: String, title: String?)] = [:]) -> [Inline] {
         guard !text.isEmpty else { return [] }
+
+        // Phase A: tokenize into non-emphasis inlines + delimiter runs
+        let tokens = tokenizeNonEmphasis(text, refDefs: refDefs)
+
+        // Phase B: resolve emphasis using the delimiter stack algorithm
+        return resolveEmphasis(tokens, refDefs: refDefs)
+    }
+
+    /// Phase A: Parse everything EXCEPT emphasis (* and _). Emit delimiter
+    /// runs as tokens to be resolved in Phase B.
+    private static func tokenizeNonEmphasis(
+        _ text: String,
+        refDefs: [String: (url: String, title: String?)]
+    ) -> [InlineToken] {
         let chars = Array(text)
-        var result: [Inline] = []
+        var tokens: [InlineToken] = []
         var plain = ""
         var i = 0
 
+        // Pre-scan code span ranges so we can give them precedence
+        // over emphasis, links, and other constructs (CommonMark spec).
+        let codeSpanRanges = findCodeSpanRanges(chars)
+
         func flushPlain() {
             if !plain.isEmpty {
-                result.append(.text(plain))
+                tokens.append(.text(plain))
                 plain = ""
             }
         }
 
         while i < chars.count {
-            // Code spans have higher precedence than emphasis per
-            // CommonMark: `**` inside backticks stays as literal text.
+            // 1. Backslash escape: \X where X is an ASCII punctuation character
+            if chars[i] == "\\" && i + 1 < chars.count {
+                let next = chars[i + 1]
+                if isPunctuationChar(next) {
+                    flushPlain()
+                    tokens.append(.inline(.escapedChar(next)))
+                    i += 2
+                    continue
+                }
+            }
+            // 2. Hard line break: backslash before newline (\\\n)
+            if chars[i] == "\\" && i + 1 < chars.count && chars[i + 1] == "\n" {
+                flushPlain()
+                tokens.append(.inline(.lineBreak(raw: "\\\n")))
+                i += 2
+                continue
+            }
+            // 3. Hard line break: two or more trailing spaces before \n
+            if chars[i] == " " {
+                var spaceCount = 0
+                var k = i
+                while k < chars.count && chars[k] == " " { k += 1; spaceCount += 1 }
+                if k < chars.count && chars[k] == "\n" && spaceCount >= 2 {
+                    flushPlain()
+                    let raw = String(chars[i...k])
+                    tokens.append(.inline(.lineBreak(raw: raw)))
+                    i = k + 1
+                    continue
+                }
+            }
+            // 4. Autolinks
+            if let match = tryMatchAutolink(chars, from: i) {
+                flushPlain()
+                tokens.append(.inline(.autolink(text: match.text, isEmail: match.isEmail)))
+                i = match.endIndex
+                continue
+            }
+            // 5. Raw HTML
+            if let match = tryMatchRawHTML(chars, from: i) {
+                flushPlain()
+                tokens.append(.inline(.rawHTML(match.html)))
+                i = match.endIndex
+                continue
+            }
+            // 6. Entity references
+            if let match = tryMatchEntity(chars, from: i) {
+                flushPlain()
+                tokens.append(.inline(.entity(match.entity)))
+                i = match.endIndex
+                continue
+            }
+            // 7. Code spans
             if let match = tryMatchCodeSpan(chars, from: i) {
                 flushPlain()
-                result.append(.code(match.inner))
+                tokens.append(.inline(.code(match.inner)))
                 i = match.endIndex
                 continue
             }
-            // Try `~~…~~` (strikethrough) before bold — both use double
-            // markers but different characters.
-            if let match = tryMatchStrikethrough(chars, from: i) {
-                flushPlain()
-                result.append(.strikethrough(parseInlines(match.inner)))
-                i = match.endIndex
-                continue
+            // 8. Images
+            if chars[i] == "!" && i + 1 < chars.count && chars[i + 1] == "[" {
+                if let match = tryMatchImage(chars, from: i, codeSpanRanges: codeSpanRanges) {
+                    if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
+                        flushPlain()
+                        tokens.append(.inline(.image(alt: parseInlines(match.alt, refDefs: refDefs), rawDestination: match.dest)))
+                        i = match.endIndex
+                        continue
+                    }
+                }
+                if !refDefs.isEmpty {
+                    if let match = tryMatchReferenceLink(chars, from: i + 1, refDefs: refDefs) {
+                        if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
+                            flushPlain()
+                            tokens.append(.inline(.image(alt: parseInlines(match.text, refDefs: refDefs), rawDestination: match.dest)))
+                            i = match.endIndex
+                            continue
+                        }
+                    }
+                }
             }
-            // Try `**…**` (bold) — double marker takes precedence over `*`.
-            if let match = tryMatchEmphasis(chars, from: i, markerLength: 2) {
-                flushPlain()
-                result.append(.bold(parseInlines(match.inner)))
-                i = match.endIndex
-                continue
+            // 9. Links
+            if chars[i] == "[" {
+                if let match = tryMatchLink(chars, from: i, codeSpanRanges: codeSpanRanges) {
+                    if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
+                        flushPlain()
+                        tokens.append(.inline(.link(text: parseInlines(match.text, refDefs: refDefs), rawDestination: match.dest)))
+                        i = match.endIndex
+                        continue
+                    }
+                }
+                if !refDefs.isEmpty {
+                    if let match = tryMatchReferenceLink(chars, from: i, refDefs: refDefs) {
+                        if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
+                            flushPlain()
+                            tokens.append(.inline(.link(text: parseInlines(match.text, refDefs: refDefs), rawDestination: match.dest)))
+                            i = match.endIndex
+                            continue
+                        }
+                    }
+                }
             }
-            // Then try `*…*` (italic).
-            if let match = tryMatchEmphasis(chars, from: i, markerLength: 1) {
+            // 10. Strikethrough
+            if chars[i] == "~" {
+                if let match = tryMatchStrikethrough(chars, from: i) {
+                    if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
+                        flushPlain()
+                        tokens.append(.inline(.strikethrough(parseInlines(match.inner, refDefs: refDefs))))
+                        i = match.endIndex
+                        continue
+                    }
+                }
+            }
+            // 11. Delimiter runs (* and _) — emit as tokens for Phase B
+            if chars[i] == "*" || chars[i] == "_" {
                 flushPlain()
-                result.append(.italic(parseInlines(match.inner)))
-                i = match.endIndex
+                let delimChar = chars[i]
+                let runStart = i
+                var runLen = 0
+                while i < chars.count && chars[i] == delimChar { i += 1; runLen += 1 }
+
+                let before: Character? = runStart > 0 ? chars[runStart - 1] : nil
+                let after: Character? = i < chars.count ? chars[i] : nil
+                let (canOpen, canClose) = emphasisFlanking(
+                    delimChar: delimChar, before: before, after: after
+                )
+                let run = DelimiterRun(
+                    char: delimChar, count: runLen,
+                    canOpen: canOpen, canClose: canClose
+                )
+                tokens.append(.delimiter(run))
                 continue
             }
             plain.append(chars[i])
             i += 1
         }
         flushPlain()
-        return result
+        return tokens
     }
 
-    /// Try to match a code span starting at `start`. Rule:
-    /// a single `` ` `` opens the span; the next single `` ` `` closes
-    /// it; the inner content contains no backticks. Byte-equal round-trip
-    /// is preserved by NOT stripping leading/trailing whitespace (unlike
-    /// CommonMark's cosmetic strip rule).
+    /// Phase B: Process the delimiter stack to resolve emphasis.
+    /// Implements the CommonMark algorithm from spec section 6.2.
+    private static func resolveEmphasis(
+        _ tokens: [InlineToken],
+        refDefs: [String: (url: String, title: String?)]
+    ) -> [Inline] {
+        // Build a doubly-linked list of tokens. We use an array and
+        // index-based navigation for simplicity.
+        // Each element is either a resolved Inline, raw text, or a
+        // delimiter run that may still be consumed.
+        struct Node {
+            var token: InlineToken
+            var removed: Bool = false
+        }
+        var nodes = tokens.map { Node(token: $0) }
+
+        // Collect indices of delimiter runs.
+        var delimiterIndices: [Int] = []
+        for (idx, node) in nodes.enumerated() {
+            if case .delimiter = node.token {
+                delimiterIndices.append(idx)
+            }
+        }
+
+        // Process closers: scan left to right for potential closers.
+        // For each closer, search backwards for a matching opener.
+        var closerDIdx = 0
+        while closerDIdx < delimiterIndices.count {
+            let closerIdx = delimiterIndices[closerDIdx]
+            guard !nodes[closerIdx].removed else {
+                closerDIdx += 1
+                continue
+            }
+            guard case .delimiter(let closer) = nodes[closerIdx].token,
+                  closer.canClose, closer.active, closer.count > 0 else {
+                closerDIdx += 1
+                continue
+            }
+
+            // Search backwards for a matching opener.
+            var foundOpener = false
+            var openerDIdx = closerDIdx - 1
+            while openerDIdx >= 0 {
+                let openerIdx = delimiterIndices[openerDIdx]
+                guard !nodes[openerIdx].removed else {
+                    openerDIdx -= 1
+                    continue
+                }
+                guard case .delimiter(let opener) = nodes[openerIdx].token,
+                      opener.canOpen, opener.active, opener.count > 0,
+                      opener.char == closer.char else {
+                    openerDIdx -= 1
+                    continue
+                }
+
+                // Rule of 3: If the closer can open OR the opener can close,
+                // and the sum of their original counts is a multiple of 3,
+                // and neither original count is a multiple of 3, skip.
+                if (closer.canOpen || opener.canClose) {
+                    let sum = opener.originalCount + closer.originalCount
+                    if sum % 3 == 0 && opener.originalCount % 3 != 0 && closer.originalCount % 3 != 0 {
+                        openerDIdx -= 1
+                        continue
+                    }
+                }
+
+                foundOpener = true
+                break
+            }
+
+            if !foundOpener {
+                // No matching opener found. If this closer can't open
+                // either, deactivate it.
+                if !closer.canOpen {
+                    closer.active = false
+                }
+                closerDIdx += 1
+                continue
+            }
+
+            let openerIdx = delimiterIndices[openerDIdx]
+            guard case .delimiter(let opener) = nodes[openerIdx].token else {
+                closerDIdx += 1
+                continue
+            }
+
+            // Determine emphasis type: strong if both have >= 2 chars
+            let isStrong = opener.count >= 2 && closer.count >= 2
+            let consumed = isStrong ? 2 : 1
+            let marker: EmphasisMarker = opener.char == "_" ? .underscore : .asterisk
+
+            // Collect all content between opener and closer into children.
+            var children: [Inline] = []
+            for k in (openerIdx + 1)..<closerIdx {
+                guard !nodes[k].removed else { continue }
+                switch nodes[k].token {
+                case .text(let s):
+                    children.append(.text(s))
+                case .inline(let inl):
+                    children.append(inl)
+                case .delimiter(let run):
+                    if run.count > 0 {
+                        let s = String(repeating: run.char, count: run.count)
+                        children.append(.text(s))
+                    }
+                }
+                nodes[k].removed = true
+            }
+
+            // Also remove delimiter indices between opener and closer.
+            // We'll rebuild delimiterIndices after processing.
+
+            // Consume from opener and closer.
+            opener.count -= consumed
+            closer.count -= consumed
+
+            // Create the emphasis inline.
+            let emphInline: Inline
+            if isStrong {
+                emphInline = .bold(children, marker: marker)
+            } else {
+                emphInline = .italic(children, marker: marker)
+            }
+
+            // Replace the content between opener and closer with the
+            // emphasis node. We insert it right after the opener.
+            // If opener is fully consumed, replace it; otherwise insert after.
+            if opener.count == 0 {
+                nodes[openerIdx] = Node(token: .inline(emphInline))
+            } else {
+                // Insert the emphasis node right after the opener.
+                // We need to find the first non-removed slot after
+                // openerIdx. Since all between are removed, we can
+                // repurpose the first removed slot.
+                var inserted = false
+                for k in (openerIdx + 1)..<closerIdx {
+                    nodes[k] = Node(token: .inline(emphInline))
+                    inserted = true
+                    break
+                }
+                if !inserted {
+                    // No slots between — this shouldn't happen with
+                    // valid emphasis (need content between markers), but
+                    // handle gracefully by replacing the closer slot.
+                    if closer.count == 0 {
+                        nodes[closerIdx] = Node(token: .inline(emphInline))
+                    } else {
+                        // Edge case: insert before closer by repurposing.
+                        // We'll handle this by creating a compound node.
+                        // For now, append to opener.
+                        nodes[openerIdx] = Node(token: .inline(emphInline))
+                    }
+                }
+            }
+
+            // If closer is fully consumed, mark it removed.
+            if closer.count == 0 {
+                if nodes[closerIdx].removed == false {
+                    // Only mark removed if we didn't already repurpose it.
+                    if case .delimiter = nodes[closerIdx].token {
+                        nodes[closerIdx].removed = true
+                    }
+                }
+            }
+            // If opener is fully consumed and we didn't replace it with
+            // the emphasis node, mark it removed.
+            if opener.count == 0 {
+                // Already replaced above — no action needed.
+            }
+
+            // Remove delimiter indices between opener and closer from
+            // the active set (they've been consumed as content).
+            // Rebuild delimiterIndices to stay consistent.
+            delimiterIndices = []
+            for (idx, node) in nodes.enumerated() {
+                if node.removed { continue }
+                if case .delimiter(let run) = node.token, run.count > 0, run.active {
+                    delimiterIndices.append(idx)
+                }
+            }
+
+            // If closer still has remaining count, re-process it.
+            if closer.count > 0 {
+                // Find the closer in the new delimiter indices.
+                if let newCloserDIdx = delimiterIndices.firstIndex(where: {
+                    if case .delimiter(let r) = nodes[$0].token {
+                        return r === closer
+                    }
+                    return false
+                }) {
+                    closerDIdx = newCloserDIdx
+                } else {
+                    closerDIdx = 0
+                }
+            } else {
+                // Closer fully consumed — restart scan.
+                // Find where we should continue: the position after
+                // where opener was.
+                closerDIdx = 0
+                // Advance to the first delimiter after the emphasis we
+                // just created.
+                for (di, idx) in delimiterIndices.enumerated() {
+                    if idx > openerIdx {
+                        closerDIdx = di
+                        break
+                    }
+                    if di == delimiterIndices.count - 1 {
+                        closerDIdx = delimiterIndices.count
+                    }
+                }
+            }
+        }
+
+        // Phase 3: Flatten remaining nodes into [Inline].
+        var result: [Inline] = []
+        for node in nodes {
+            guard !node.removed else { continue }
+            switch node.token {
+            case .text(let s):
+                result.append(.text(s))
+            case .inline(let inl):
+                result.append(inl)
+            case .delimiter(let run):
+                if run.count > 0 {
+                    let s = String(repeating: run.char, count: run.count)
+                    result.append(.text(s))
+                }
+            }
+        }
+
+        // Merge adjacent .text nodes for cleanliness.
+        var merged: [Inline] = []
+        for inl in result {
+            if case .text(let s) = inl, let last = merged.last, case .text(let prev) = last {
+                merged[merged.count - 1] = .text(prev + s)
+            } else {
+                merged.append(inl)
+            }
+        }
+        return merged
+    }
+
+    /// Try to match a code span starting at `start`. CommonMark rule:
+    /// a run of N backticks opens the span, and a run of exactly N
+    /// backticks closes it. The content is taken verbatim (no inline
+    /// parsing). If the content starts AND ends with a space and is
+    /// not entirely spaces, one leading and one trailing space are
+    /// stripped. Line endings in the content are converted to spaces.
     ///
-    /// Double-backtick spans (for content containing a backtick) are
-    /// future work; for now, a `` ` `` followed by more backticks yields
-    /// no match (treated as literal text).
+    /// Note: multi-backtick code spans (e.g. `` `` ` `` ``) will
+    /// normalize to single-backtick on round-trip serialization since
+    /// we store only the inner content in Inline.code.
     private static func tryMatchCodeSpan(
         _ chars: [Character], from start: Int
     ) -> (inner: String, endIndex: Int)? {
         guard start < chars.count, chars[start] == "`" else { return nil }
-        // Reject multi-backtick runs (not yet supported).
-        if start + 1 < chars.count, chars[start + 1] == "`" { return nil }
-        // Scan for the next single backtick.
-        var j = start + 1
-        while j < chars.count {
-            if chars[j] == "`" {
-                // Reject if this backtick is part of a longer run.
-                if j + 1 < chars.count, chars[j + 1] == "`" {
-                    // Longer run encountered — skip past it entirely;
-                    // cannot close against it.
-                    var k = j
-                    while k < chars.count, chars[k] == "`" { k += 1 }
-                    j = k
-                    continue
+        // CommonMark: a backtick string must not be preceded by a backtick
+        if start > 0 && chars[start - 1] == "`" { return nil }
+        // Count opening backtick run length
+        var openLen = 0
+        var j = start
+        while j < chars.count && chars[j] == "`" { j += 1; openLen += 1 }
+        // Scan for closing run of exactly openLen backticks
+        var k = j
+        while k < chars.count {
+            if chars[k] == "`" {
+                var closeLen = 0
+                let closeStart = k
+                while k < chars.count && chars[k] == "`" { k += 1; closeLen += 1 }
+                if closeLen == openLen {
+                    // Found matching close
+                    var inner = String(chars[j..<closeStart])
+                    // Collapse newlines to spaces (CommonMark rule)
+                    inner = inner.replacingOccurrences(of: "\n", with: " ")
+                    // Strip one leading + trailing space if both present
+                    // and content isn't all spaces
+                    if inner.count >= 2 && inner.first == " " && inner.last == " " &&
+                       !inner.allSatisfy({ $0 == " " }) {
+                        inner = String(inner.dropFirst().dropLast())
+                    }
+                    return (inner, k)
                 }
-                let inner = String(chars[(start + 1)..<j])
-                return (inner, j + 1)
+                // closeLen != openLen — keep scanning
+            } else {
+                k += 1
             }
-            j += 1
-        }
-        return nil
-    }
-
-    /// Try to match an emphasis run starting at `start` using a run of
-    /// `markerLength` asterisks. Returns the inner text and the index
-    /// past the closing marker, or nil if no valid run matches.
-    private static func tryMatchEmphasis(
-        _ chars: [Character], from start: Int, markerLength: Int
-    ) -> (inner: String, endIndex: Int)? {
-        // Need at least: open(markerLength) + 1 char + close(markerLength).
-        guard start + markerLength * 2 + 1 <= chars.count else { return nil }
-
-        // Verify exactly `markerLength` asterisks at `start`, and the
-        // char before and after the run is the right kind.
-        for k in 0..<markerLength {
-            if chars[start + k] != "*" { return nil }
-        }
-        // Must not be part of a LONGER asterisk run (else `**` would
-        // match inside `***`, mis-parsing nested emphasis).
-        if start + markerLength < chars.count,
-           chars[start + markerLength] == "*" {
-            // If this is a `**` run but the next char is also `*`,
-            // treat the whole run as literal (we don't support `***`).
-            if markerLength == 2 { return nil }
-            // For single `*`, the next char being `*` means we actually
-            // have `**` which should be handled by the caller — defer.
-            if markerLength == 1 { return nil }
-        }
-        // Flanking: char after the opening marker must not be whitespace.
-        let afterOpen = chars[start + markerLength]
-        if afterOpen == " " || afterOpen == "\t" || afterOpen == "\n" {
-            return nil
-        }
-
-        // Scan forward for a matching close marker.
-        var j = start + markerLength
-        while j + markerLength <= chars.count {
-            // Close candidate at j: `markerLength` asterisks, preceded
-            // by non-whitespace, not part of a longer asterisk run.
-            var allStars = true
-            for k in 0..<markerLength {
-                if chars[j + k] != "*" { allStars = false; break }
-            }
-            if !allStars {
-                j += 1
-                continue
-            }
-            // Not part of a longer run.
-            if j + markerLength < chars.count, chars[j + markerLength] == "*" {
-                // Skip this position — it's inside a longer asterisk run.
-                j += 1
-                continue
-            }
-            // Char before close must not be whitespace.
-            let beforeClose = chars[j - 1]
-            if beforeClose == " " || beforeClose == "\t" || beforeClose == "\n" {
-                j += 1
-                continue
-            }
-            // Valid match.
-            let inner = String(chars[(start + markerLength)..<j])
-            return (inner, j + markerLength)
         }
         return nil
     }
@@ -458,6 +1293,488 @@ public enum MarkdownParser {
         return nil
     }
 
+    // MARK: - Backslash escape helper
+
+    /// Returns true if `ch` is an ASCII punctuation character that can
+    /// be backslash-escaped per CommonMark.
+    private static func isPunctuationChar(_ ch: Character) -> Bool {
+        let punctuation: Set<Character> = [
+            "!", "\"", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".",
+            "/", ":", ";", "<", "=", ">", "?", "@", "[", "\\", "]", "^", "_",
+            "`", "{", "|", "}", "~"
+        ]
+        return punctuation.contains(ch)
+    }
+
+    // MARK: - Autolink detection
+
+    /// Try to match an autolink `<scheme:path>` (URI) or `<local@domain>`
+    /// (email) starting at `start`.
+    private static func tryMatchAutolink(
+        _ chars: [Character], from start: Int
+    ) -> (text: String, isEmail: Bool, endIndex: Int)? {
+        guard start < chars.count, chars[start] == "<" else { return nil }
+        // Scan for closing >
+        var j = start + 1
+        while j < chars.count {
+            if chars[j] == ">" {
+                let inner = String(chars[(start + 1)..<j])
+                // Check if it's a URI autolink (has scheme:)
+                if let colonIdx = inner.firstIndex(of: ":"),
+                   colonIdx > inner.startIndex {
+                    let scheme = inner[..<colonIdx]
+                    // Scheme: [A-Za-z][A-Za-z0-9+.-]{1,31} (CommonMark spec)
+                    if scheme.count >= 2 && scheme.count <= 32 &&
+                       scheme.first!.isASCII && scheme.first!.isLetter &&
+                       scheme.dropFirst().allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "+" || $0 == "-" || $0 == ".") }) {
+                        return (inner, false, j + 1)
+                    }
+                }
+                // Check if it's an email autolink
+                if inner.contains("@") && !inner.contains(" ") && !inner.contains("\\") && inner.count >= 3 {
+                    let parts = inner.split(separator: "@", maxSplits: 1)
+                    if parts.count == 2 && !parts[0].isEmpty && !parts[1].isEmpty {
+                        return (inner, true, j + 1)
+                    }
+                }
+                // Not a valid autolink — bail
+                return nil
+            }
+            // Autolinks can't contain spaces or newlines
+            if chars[j] == " " || chars[j] == "\n" { return nil }
+            j += 1
+        }
+        return nil
+    }
+
+    // MARK: - Raw HTML inline detection
+
+    /// Try to match inline raw HTML starting at `start`. Matches open/close
+    /// tags, HTML comments, processing instructions, CDATA, and declarations.
+    private static func tryMatchRawHTML(
+        _ chars: [Character], from start: Int
+    ) -> (html: String, endIndex: Int)? {
+        guard start < chars.count, chars[start] == "<" else { return nil }
+
+        // HTML comment: <!-- ... -->
+        if start + 3 < chars.count &&
+           chars[start + 1] == "!" && chars[start + 2] == "-" && chars[start + 3] == "-" {
+            var j = start + 4
+            while j + 2 < chars.count {
+                if chars[j] == "-" && chars[j + 1] == "-" && chars[j + 2] == ">" {
+                    let html = String(chars[start...(j + 2)])
+                    return (html, j + 3)
+                }
+                j += 1
+            }
+            return nil
+        }
+
+        // Processing instruction: <? ... ?>
+        if start + 1 < chars.count && chars[start + 1] == "?" {
+            var j = start + 2
+            while j + 1 < chars.count {
+                if chars[j] == "?" && chars[j + 1] == ">" {
+                    let html = String(chars[start...(j + 1)])
+                    return (html, j + 2)
+                }
+                j += 1
+            }
+            return nil
+        }
+
+        // CDATA: <![CDATA[ ... ]]>
+        if start + 8 < chars.count &&
+           String(chars[(start + 1)...(start + 8)]) == "![CDATA[" {
+            var j = start + 9
+            while j + 2 < chars.count {
+                if chars[j] == "]" && chars[j + 1] == "]" && chars[j + 2] == ">" {
+                    let html = String(chars[start...(j + 2)])
+                    return (html, j + 3)
+                }
+                j += 1
+            }
+            return nil
+        }
+
+        // Declaration: <!LETTER ... >
+        if start + 1 < chars.count && chars[start + 1] == "!" {
+            if start + 2 < chars.count && chars[start + 2].isLetter {
+                var j = start + 3
+                while j < chars.count {
+                    if chars[j] == ">" {
+                        let html = String(chars[start...j])
+                        return (html, j + 1)
+                    }
+                    j += 1
+                }
+            }
+            return nil
+        }
+
+        // Open tag: <tagname ...> or </tagname ...>
+        var j = start + 1
+        let isClosing = j < chars.count && chars[j] == "/"
+        if isClosing { j += 1 }
+
+        // Tag name: must start with ASCII letter
+        guard j < chars.count, chars[j].isASCII && chars[j].isLetter else { return nil }
+        j += 1
+        // Rest of tag name: ASCII letters, digits, -
+        while j < chars.count && (chars[j].isASCII && (chars[j].isLetter || chars[j].isNumber || chars[j] == "-")) {
+            j += 1
+        }
+
+        if isClosing {
+            // Closing tag: optional whitespace then > (NO attributes allowed)
+            while j < chars.count && (chars[j] == " " || chars[j] == "\t" || chars[j] == "\n") { j += 1 }
+            guard j < chars.count && chars[j] == ">" else { return nil }
+            let html = String(chars[start...j])
+            return (html, j + 1)
+        }
+
+        // Open tag: validate attributes per CommonMark spec
+        // Attribute: whitespace+ attribute-name (= attribute-value)?
+        // Attribute name: [a-zA-Z_:][a-zA-Z0-9_.:-]*
+        // Attribute value: unquoted | 'single-quoted' | "double-quoted"
+        while j < chars.count {
+            // Skip whitespace
+            let beforeWS = j
+            while j < chars.count && (chars[j] == " " || chars[j] == "\t" || chars[j] == "\n") { j += 1 }
+            guard j < chars.count else { return nil }
+
+            // Self-closing /> or >
+            if chars[j] == "/" {
+                if j + 1 < chars.count && chars[j + 1] == ">" {
+                    let html = String(chars[start...(j + 1)])
+                    return (html, j + 2)
+                }
+                return nil
+            }
+            if chars[j] == ">" {
+                let html = String(chars[start...j])
+                return (html, j + 1)
+            }
+
+            // Must have whitespace before attribute name
+            if j == beforeWS { return nil }
+
+            // Attribute name: [a-zA-Z_:][a-zA-Z0-9_.:-]*
+            guard chars[j].isASCII && (chars[j].isLetter || chars[j] == "_" || chars[j] == ":") else { return nil }
+            j += 1
+            while j < chars.count && chars[j].isASCII &&
+                  (chars[j].isLetter || chars[j].isNumber || chars[j] == "_" || chars[j] == "." || chars[j] == ":" || chars[j] == "-") {
+                j += 1
+            }
+
+            // Optional attribute value: = value
+            // Skip whitespace around =
+            var k = j
+            while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
+            if k < chars.count && chars[k] == "=" {
+                k += 1
+                while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
+                guard k < chars.count else { return nil }
+                if chars[k] == "\"" {
+                    // Double-quoted value
+                    k += 1
+                    while k < chars.count && chars[k] != "\"" { k += 1 }
+                    guard k < chars.count else { return nil }
+                    k += 1 // skip closing "
+                } else if chars[k] == "'" {
+                    // Single-quoted value
+                    k += 1
+                    while k < chars.count && chars[k] != "'" { k += 1 }
+                    guard k < chars.count else { return nil }
+                    k += 1 // skip closing '
+                } else {
+                    // Unquoted value: no spaces, quotes, =, <, >, backtick
+                    guard chars[k] != " " && chars[k] != "\t" && chars[k] != "\n" &&
+                          chars[k] != "\"" && chars[k] != "'" && chars[k] != "=" &&
+                          chars[k] != "<" && chars[k] != ">" && chars[k] != "`" else { return nil }
+                    while k < chars.count && chars[k] != " " && chars[k] != "\t" && chars[k] != "\n" &&
+                          chars[k] != "\"" && chars[k] != "'" && chars[k] != "=" &&
+                          chars[k] != "<" && chars[k] != ">" && chars[k] != "`" {
+                        k += 1
+                    }
+                }
+                j = k
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Entity reference detection
+
+    /// Known HTML5 named entity names (without & and ;).
+    /// This is a subset covering the most common entities.
+    /// CommonMark requires validation against the full HTML5 entity list.
+    private static let knownHTMLEntities: Set<String> = [
+        // Core XML entities
+        "amp", "lt", "gt", "quot", "apos",
+        // Whitespace and special
+        "nbsp", "ensp", "emsp", "thinsp", "shy", "lrm", "rlm", "zwj", "zwnj",
+        // Typography
+        "copy", "reg", "trade", "mdash", "ndash", "hellip", "bull", "middot",
+        "lsquo", "rsquo", "ldquo", "rdquo", "sbquo", "bdquo",
+        "laquo", "raquo", "lsaquo", "rsaquo",
+        "dagger", "Dagger", "permil",
+        // Arrows
+        "larr", "rarr", "uarr", "darr", "harr", "lArr", "rArr", "uArr", "dArr", "hArr",
+        // Math and symbols
+        "sect", "para", "deg", "plusmn", "times", "divide", "micro",
+        "cent", "pound", "euro", "yen", "curren",
+        "iexcl", "iquest", "ordf", "ordm", "not", "macr", "acute",
+        "cedil", "sup1", "sup2", "sup3",
+        "frac14", "frac12", "frac34",
+        "fnof", "minus", "lowast", "radic", "prop", "infin",
+        "ang", "and", "or", "cap", "cup", "int",
+        "there4", "sim", "cong", "asymp", "ne", "equiv", "le", "ge",
+        "sub", "sup", "nsub", "sube", "supe",
+        "oplus", "otimes", "perp", "sdot",
+        "lceil", "rceil", "lfloor", "rfloor", "lang", "rang",
+        "loz", "sum", "prod", "forall", "part", "exist", "empty",
+        "nabla", "isin", "notin", "ni",
+        // Card suits
+        "hearts", "spades", "clubs", "diams",
+        // Greek
+        "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta",
+        "Iota", "Kappa", "Lambda", "Mu", "Nu", "Xi", "Omicron", "Pi",
+        "Rho", "Sigma", "Tau", "Upsilon", "Phi", "Chi", "Psi", "Omega",
+        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+        "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi",
+        "rho", "sigmaf", "sigma", "tau", "upsilon", "phi", "chi", "psi", "omega",
+        "thetasym", "upsih", "piv",
+        // Latin extended
+        "AElig", "Aacute", "Acirc", "Agrave", "Aring", "Atilde", "Auml",
+        "Ccedil", "ETH", "Eacute", "Ecirc", "Egrave", "Euml",
+        "Iacute", "Icirc", "Igrave", "Iuml",
+        "Ntilde", "Oacute", "Ocirc", "Ograve", "Oslash", "Otilde", "Ouml",
+        "THORN", "Uacute", "Ucirc", "Ugrave", "Uuml", "Yacute",
+        "aacute", "acirc", "agrave", "aring", "atilde", "auml",
+        "ccedil", "eacute", "ecirc", "egrave", "euml",
+        "eth", "iacute", "icirc", "igrave", "iuml",
+        "ntilde", "oacute", "ocirc", "ograve", "oslash", "otilde", "ouml",
+        "szlig", "thorn", "uacute", "ucirc", "ugrave", "uuml", "yacute", "yuml",
+        // Additional HTML5 entities from CommonMark spec examples
+        "Dcaron", "HilbertSpace", "DifferentialD",
+        "ClockwiseContourIntegral", "ngE",
+    ]
+
+    /// Try to match an HTML entity reference starting at `start`.
+    /// Matches named (&amp;), decimal (&#123;), and hex (&#x1F;) forms.
+    /// Named entities are validated against a known set of HTML5 entity names.
+    private static func tryMatchEntity(
+        _ chars: [Character], from start: Int
+    ) -> (entity: String, endIndex: Int)? {
+        guard start < chars.count, chars[start] == "&" else { return nil }
+        var j = start + 1
+        guard j < chars.count else { return nil }
+
+        if chars[j] == "#" {
+            // Numeric reference: &#digits; or &#xhex;
+            j += 1
+            guard j < chars.count else { return nil }
+            if chars[j] == "x" || chars[j] == "X" {
+                // Hex: &#x[0-9a-fA-F]+;
+                j += 1
+                let digitStart = j
+                while j < chars.count && chars[j].isHexDigit { j += 1 }
+                guard j > digitStart && j < chars.count && chars[j] == ";" else { return nil }
+                guard j - digitStart <= 6 else { return nil } // Max 6 hex digits
+                // Validate code point range
+                let hexStr = String(chars[digitStart..<j])
+                guard let codePoint = UInt32(hexStr, radix: 16),
+                      codePoint <= 0x10FFFF else { return nil }
+                let entity = String(chars[start...j])
+                return (entity, j + 1)
+            } else {
+                // Decimal: &#[0-9]+;
+                let digitStart = j
+                while j < chars.count && chars[j].isNumber { j += 1 }
+                guard j > digitStart && j < chars.count && chars[j] == ";" else { return nil }
+                guard j - digitStart <= 7 else { return nil } // Max 7 decimal digits
+                // Validate code point range
+                let decStr = String(chars[digitStart..<j])
+                guard let codePoint = UInt32(decStr),
+                      codePoint <= 0x10FFFF else { return nil }
+                let entity = String(chars[start...j])
+                return (entity, j + 1)
+            }
+        } else {
+            // Named reference: &[a-zA-Z][a-zA-Z0-9]+;
+            guard chars[j].isLetter else { return nil }
+            j += 1
+            while j < chars.count && (chars[j].isLetter || chars[j].isNumber) { j += 1 }
+            guard j < chars.count && chars[j] == ";" else { return nil }
+            // Extract the name and validate against known entities
+            let name = String(chars[(start + 1)..<j])
+            guard knownHTMLEntities.contains(name) else { return nil }
+            let entity = String(chars[start...j])
+            return (entity, j + 1)
+        }
+    }
+
+    // MARK: - Link and image detection
+
+    /// Try to match an inline link `[text](destination)` starting at `start`.
+    ///
+    /// CommonMark-compliant destination parsing:
+    /// - Angle-bracketed: `<url with spaces>` — allows spaces, disallows
+    ///   unescaped `<` and newlines
+    /// - Bare: no spaces, no newlines, balanced unescaped parentheses
+    /// - Optional title in quotes after whitespace
+    /// - Empty destination `()` is valid
+    ///
+    /// The returned `dest` is the raw content between `(` and `)` for
+    /// round-trip serialization (includes angle brackets, whitespace, title).
+    private static func tryMatchLink(
+        _ chars: [Character], from start: Int,
+        codeSpanRanges: [(start: Int, end: Int)] = []
+    ) -> (text: String, dest: String, endIndex: Int)? {
+        guard start < chars.count, chars[start] == "[" else { return nil }
+
+        // Find the matching ] — handle nesting, escapes, and code spans.
+        // Positions inside a code span don't count as bracket delimiters.
+        var bracketDepth = 1
+        var j = start + 1
+        while j < chars.count && bracketDepth > 0 {
+            if chars[j] == "\\" && j + 1 < chars.count { j += 2; continue }
+            // Skip past code spans — brackets inside them don't count
+            var inCodeSpan = false
+            for cs in codeSpanRanges {
+                if j >= cs.start && j < cs.end {
+                    j = cs.end
+                    inCodeSpan = true
+                    break
+                }
+            }
+            if inCodeSpan { continue }
+            if chars[j] == "[" { bracketDepth += 1 }
+            else if chars[j] == "]" { bracketDepth -= 1 }
+            j += 1
+        }
+        guard bracketDepth == 0 else { return nil }
+        // j is now past the ]
+        let textEnd = j - 1
+
+        // Must be immediately followed by (
+        guard j < chars.count && chars[j] == "(" else { return nil }
+        let parenOpen = j
+        var k = j + 1
+
+        // Skip optional whitespace (spaces, tabs, up to one newline per spec)
+        while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
+
+        // Empty destination: just )
+        if k < chars.count && chars[k] == ")" {
+            let text = String(chars[(start + 1)..<textEnd])
+            let dest = String(chars[(parenOpen + 1)..<k])
+            return (text, dest, k + 1)
+        }
+
+        // Parse destination
+        if k < chars.count && chars[k] == "<" {
+            // Angle-bracketed destination: scan for matching >
+            k += 1
+            while k < chars.count {
+                if chars[k] == "\\" && k + 1 < chars.count { k += 2; continue }
+                if chars[k] == ">" { break }
+                if chars[k] == "<" || chars[k] == "\n" { return nil }
+                k += 1
+            }
+            guard k < chars.count && chars[k] == ">" else { return nil }
+            k += 1 // skip past >
+        } else {
+            // Bare destination: no spaces, no newlines, balanced parens
+            var parenDepth = 0
+            while k < chars.count {
+                if chars[k] == "\\" && k + 1 < chars.count { k += 2; continue }
+                if chars[k] == " " || chars[k] == "\t" || chars[k] == "\n" { break }
+                if chars[k] == "(" { parenDepth += 1 }
+                else if chars[k] == ")" {
+                    if parenDepth == 0 { break }
+                    parenDepth -= 1
+                }
+                k += 1
+            }
+            // Unbalanced inner parens means invalid destination
+            if parenDepth != 0 { return nil }
+        }
+
+        // Skip optional whitespace before title or closing paren
+        while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
+
+        // Optional title (double-quoted, single-quoted, or parenthesized)
+        if k < chars.count && (chars[k] == "\"" || chars[k] == "'" || chars[k] == "(") {
+            let openQuote = chars[k]
+            let closeQuote: Character = openQuote == "(" ? ")" : openQuote
+            k += 1
+            while k < chars.count {
+                if chars[k] == "\\" && k + 1 < chars.count { k += 2; continue }
+                if chars[k] == closeQuote { k += 1; break }
+                k += 1
+            }
+            // Skip whitespace after title
+            while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
+        }
+
+        // Must end with )
+        guard k < chars.count && chars[k] == ")" else { return nil }
+
+        let text = String(chars[(start + 1)..<textEnd])
+        // rawDestination: everything between ( and ) for round-trip fidelity
+        let dest = String(chars[(parenOpen + 1)..<k])
+        return (text, dest, k + 1)
+    }
+
+    /// Try to match an inline image `![alt](destination)` starting at `start`.
+    private static func tryMatchImage(
+        _ chars: [Character], from start: Int,
+        codeSpanRanges: [(start: Int, end: Int)] = []
+    ) -> (alt: String, dest: String, endIndex: Int)? {
+        guard start + 1 < chars.count, chars[start] == "!", chars[start + 1] == "[" else { return nil }
+        // Reuse link matching starting from the [
+        guard let linkMatch = tryMatchLink(chars, from: start + 1, codeSpanRanges: codeSpanRanges) else { return nil }
+        return (linkMatch.text, linkMatch.dest, linkMatch.endIndex)
+    }
+
+    // MARK: - Unicode character classification helpers
+
+    /// Returns true if `ch` is a Unicode whitespace character.
+    /// Includes all characters from Unicode category Zs plus ASCII
+    /// control whitespace, per CommonMark spec.
+    private static func isUnicodeWhitespace(_ ch: Character) -> Bool {
+        if ch == " " || ch == "\t" || ch == "\n" || ch == "\r" ||
+           ch == "\u{000C}" || ch == "\u{000B}" || ch == "\u{00A0}" {
+            return true
+        }
+        // Check for other Unicode space separators (Zs category)
+        if let scalar = ch.unicodeScalars.first {
+            return scalar.properties.generalCategory == .spaceSeparator
+        }
+        return false
+    }
+
+    /// Returns true if `ch` is a Unicode punctuation character (ASCII
+    /// punctuation + Unicode general categories Pc, Pd, Pe, Pf, Pi, Po, Ps).
+    private static func isUnicodePunctuation(_ ch: Character) -> Bool {
+        // Fast path: ASCII punctuation
+        if isPunctuationChar(ch) { return true }
+        // Slow path: Unicode general category
+        if let scalar = ch.unicodeScalars.first {
+            switch scalar.properties.generalCategory {
+            case .connectorPunctuation, .dashPunctuation, .closePunctuation,
+                 .finalPunctuation, .initialPunctuation, .otherPunctuation,
+                 .openPunctuation:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
     // MARK: - Blockquote detection
 
     /// Detect whether `line` starts with a blockquote marker. The
@@ -476,9 +1793,11 @@ public enum MarkdownParser {
     ///   ">"           → prefix=">",    content=""
     ///   ">  two"      → prefix="> ",   content=" two"
     static func detectBlockquoteLine(_ line: String) -> (prefix: String, content: String)? {
-        guard line.first == ">" else { return nil }
         let chars = Array(line)
         var i = 0
+        // Allow up to 3 leading spaces before >
+        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
+        guard i < chars.count, chars[i] == ">" else { return nil }
         while i < chars.count, chars[i] == ">" {
             i += 1
             // Optionally consume ONE space/tab after this `>`.
@@ -494,27 +1813,236 @@ public enum MarkdownParser {
     // MARK: - Horizontal rule detection
 
     /// Detect whether `line` is a thematic break (horizontal rule).
-    /// Rule: the line consists of EXACTLY a run of
-    /// three-or-more identical `-`, `_`, or `*` characters, with no
-    /// intervening whitespace and no other characters. Returns the
-    /// character and count (needed for byte-equal round-trip), or
-    /// nil otherwise.
-    ///
-    /// Intentionally stricter than CommonMark (which allows spaces
-    /// between markers and up to 3 leading spaces) — this keeps the
-    /// detector unambiguous and preserves the list/HR boundary.
+    /// CommonMark rule: a line containing 3+ of the same character
+    /// (`-`, `*`, or `_`), optionally interspersed with spaces/tabs,
+    /// with up to 3 leading spaces, and nothing else on the line.
+    /// Returns the character and the count of HR characters (not
+    /// spaces), or nil otherwise. Note: spaced HRs like `- - -`
+    /// will be normalized to `---` on round-trip serialization.
     private static func detectHorizontalRule(_ line: String) -> (character: Character, length: Int)? {
-        guard let first = line.first,
-              first == "-" || first == "_" || first == "*" else { return nil }
+        let chars = Array(line)
+        var i = 0
+        // Allow up to 3 leading spaces
+        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
+        guard i < chars.count else { return nil }
+        let hrChar = chars[i]
+        guard hrChar == "-" || hrChar == "*" || hrChar == "_" else { return nil }
         var count = 0
-        for ch in line {
-            if ch == first { count += 1 } else { return nil }
+        while i < chars.count {
+            if chars[i] == hrChar {
+                count += 1
+            } else if chars[i] == " " || chars[i] == "\t" {
+                // spaces/tabs allowed between HR characters
+            } else {
+                return nil // non-HR, non-whitespace character
+            }
+            i += 1
         }
         guard count >= 3 else { return nil }
-        return (first, count)
+        return (hrChar, count)
+    }
+
+    /// Detect a setext heading underline: a line of `===` (H1) or `---` (H2).
+    /// Returns the heading level (1 or 2) if the line is a valid underline.
+    private static func detectSetextUnderline(_ line: String) -> Int? {
+        guard let first = line.first else { return nil }
+        if first == "=" {
+            // All characters must be '='
+            guard line.allSatisfy({ $0 == "=" }) else { return nil }
+            guard line.count >= 1 else { return nil }
+            return 1
+        }
+        if first == "-" {
+            // All characters must be '-'. Need at least 3 to disambiguate
+            // from a list marker.
+            guard line.allSatisfy({ $0 == "-" }) else { return nil }
+            guard line.count >= 3 else { return nil }
+            return 2
+        }
+        return nil
+    }
+
+    /// Check if the raw buffer (paragraph lines) is entirely wrapped in
+    /// emphasis markers (e.g., `**Bold text**`, `*italic*`, `__bold__`,
+    /// `_italic_`). Such paragraphs should NOT be promoted to setext
+    /// headings when followed by `---`.
+    private static func isEmphasisOnlyParagraph(_ buffer: [String]) -> Bool {
+        guard buffer.count == 1 else { return false }
+        let line = buffer[0].trimmingCharacters(in: .whitespaces)
+        // Check for double markers: **...** or __...__
+        if (line.hasPrefix("**") && line.hasSuffix("**") && line.count > 4) ||
+           (line.hasPrefix("__") && line.hasSuffix("__") && line.count > 4) {
+            return true
+        }
+        // Check for single markers: *...* or _..._
+        if (line.hasPrefix("*") && line.hasSuffix("*") && !line.hasPrefix("**") && line.count > 2) ||
+           (line.hasPrefix("_") && line.hasSuffix("_") && !line.hasPrefix("__") && line.count > 2) {
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Table detection
+
+    /// Result of table detection: the block, the next line index to
+    /// continue parsing from, and whether the header was taken from
+    /// the rawBuffer (so the caller can remove it before flushing).
+    private struct TableDetection {
+        let block: Block
+        let nextIndex: Int
+        let headerFromBuffer: Bool
+    }
+
+    /// Try to detect a pipe-delimited table starting at line index `at`.
+    /// Two detection modes:
+    ///  (a) lines[at] is the header, lines[at+1] is the separator.
+    ///  (b) rawBuffer.last is the header, lines[at] is the separator.
+    /// Returns nil if no table is found.
+    private static func detectTable(
+        lines: [String],
+        at i: Int,
+        rawBuffer: [String],
+        markdown: String
+    ) -> TableDetection? {
+        // Mode (a): current line is header, next line is separator.
+        if i + 1 < lines.count {
+            let headerLine = lines[i]
+            let sepLine = lines[i + 1]
+            if !(i + 1 == lines.count - 1 && sepLine.isEmpty && markdown.hasSuffix("\n")),
+               isTableRow(headerLine),
+               isTableSeparator(sepLine) {
+                let headerCells = parseTableRow(headerLine)
+                let alignments = parseAlignments(sepLine)
+                let colCount = headerCells.count
+                var rawLines = [headerLine, sepLine]
+                var dataRows: [[String]] = []
+                var j = i + 2
+                while j < lines.count {
+                    let l = lines[j]
+                    if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") { break }
+                    guard isTableRow(l) else { break }
+                    var row = parseTableRow(l)
+                    // Pad or truncate to match header column count.
+                    while row.count < colCount { row.append("") }
+                    if row.count > colCount { row = Array(row.prefix(colCount)) }
+                    dataRows.append(row)
+                    rawLines.append(l)
+                    j += 1
+                }
+                let raw = rawLines.joined(separator: "\n")
+                return TableDetection(
+                    block: .table(header: headerCells, alignments: alignments, rows: dataRows, raw: raw),
+                    nextIndex: j,
+                    headerFromBuffer: false
+                )
+            }
+        }
+
+        // Mode (b): rawBuffer.last is the header, current line is separator.
+        if !rawBuffer.isEmpty, isTableSeparator(lines[i]) {
+            let headerLine = rawBuffer.last!
+            let sepLine = lines[i]
+            guard isTableRow(headerLine) else { return nil }
+            let headerCells = parseTableRow(headerLine)
+            let alignments = parseAlignments(sepLine)
+            let colCount = headerCells.count
+            var rawLines = [headerLine, sepLine]
+            var dataRows: [[String]] = []
+            var j = i + 1
+            while j < lines.count {
+                let l = lines[j]
+                if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") { break }
+                guard isTableRow(l) else { break }
+                var row = parseTableRow(l)
+                while row.count < colCount { row.append("") }
+                if row.count > colCount { row = Array(row.prefix(colCount)) }
+                dataRows.append(row)
+                rawLines.append(l)
+                j += 1
+            }
+            let raw = rawLines.joined(separator: "\n")
+            return TableDetection(
+                block: .table(header: headerCells, alignments: alignments, rows: dataRows, raw: raw),
+                nextIndex: j,
+                headerFromBuffer: true
+            )
+        }
+
+        return nil
+    }
+
+    /// Check if a line looks like a table row (contains at least one `|`).
+    private static func isTableRow(_ line: String) -> Bool {
+        return line.contains("|")
+    }
+
+    /// Check if a line is a table separator row: all cells contain only
+    /// `-`, `:`, and spaces (with at least one `-` per cell).
+    private static func isTableSeparator(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") && trimmed.contains("-") else { return false }
+        let cells = parseTableRow(line)
+        guard !cells.isEmpty else { return false }
+        for cell in cells {
+            let c = cell.trimmingCharacters(in: .whitespaces)
+            if c.isEmpty { return false }
+            for ch in c {
+                guard ch == "-" || ch == ":" || ch == " " else { return false }
+            }
+            // Must have at least one dash.
+            guard c.contains("-") else { return false }
+        }
+        return true
+    }
+
+    /// Parse column alignments from a separator row.
+    private static func parseAlignments(_ line: String) -> [TableAlignment] {
+        let cells = parseTableRow(line)
+        return cells.map { cell -> TableAlignment in
+            let c = cell.trimmingCharacters(in: .whitespaces)
+            let left = c.hasPrefix(":")
+            let right = c.hasSuffix(":")
+            if left && right { return .center }
+            if right { return .right }
+            if left { return .left }
+            return .none
+        }
+    }
+
+    /// Split a pipe-delimited row into cell strings, trimming whitespace
+    /// from each cell. Handles leading and trailing `|`.
+    private static func parseTableRow(_ line: String) -> [String] {
+        var work = line
+        // Strip leading/trailing pipes if present.
+        let trimmed = work.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("|") {
+            work = String(trimmed.dropFirst())
+        }
+        if work.hasSuffix("|") {
+            work = String(work.dropLast())
+        }
+        let parts = work.split(separator: "|", omittingEmptySubsequences: false)
+        return parts.map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     // MARK: - List detection
+
+    /// Classify a list marker into its "type" for determining whether
+    /// two list items belong to the same list. CommonMark rule: a
+    /// change in bullet character (`-`, `*`, `+`) or ordered delimiter
+    /// (`.` vs `)`) starts a new list.
+    /// Returns: the bullet character for unordered, or the delimiter
+    /// character for ordered (e.g. "." or ")").
+    static func listMarkerType(_ marker: String) -> String {
+        if marker == "-" || marker == "*" || marker == "+" {
+            return marker
+        }
+        // Ordered: digits + delimiter. The delimiter is the last char.
+        if let last = marker.last {
+            return String(last)
+        }
+        return marker
+    }
 
     /// A single line parsed as a list item: split into leading
     /// indentation, the marker itself, the whitespace after the
@@ -525,6 +2053,7 @@ public enum MarkdownParser {
         let afterMarker: String   // whitespace between marker and content/checkbox
         let checkbox: Checkbox?   // "[ ]", "[x]", "[X]" for todo items
         let content: String       // remainder of the line after checkbox/afterMarker
+        var blankLineBefore: Bool = false // true if blank line(s) preceded this item
     }
 
     /// Detect whether `line` is a list item. Rules:
@@ -571,15 +2100,25 @@ public enum MarkdownParser {
 
         let marker = String(chars[markerStart..<i])
 
-        // afterMarker: require at least one space/tab UNLESS we're
-        // at end of line (allow "-" with no content — rejected above
-        // as "-" alone has no whitespace, so we only accept "- " or
-        // marker followed by whitespace).
+        // afterMarker: require at least one space/tab, OR the marker
+        // is at end of line (empty list item, e.g. "-\n", "1.\n").
+        // CommonMark allows empty items where the marker is the entire
+        // line content.
         let afterStart = i
         while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-        // Special case: marker at end of line with no whitespace
-        // ("-" alone) — not a list item.
-        if i == afterStart { return nil }
+        if i == afterStart {
+            // Marker at end of line with no whitespace — valid empty
+            // list item per CommonMark (e.g. "-\n", "1.\n", "*\n").
+            if i == chars.count {
+                return ParsedListLine(
+                    indent: indent, marker: marker,
+                    afterMarker: "", checkbox: nil,
+                    content: ""
+                )
+            }
+            // Marker followed by non-whitespace — not a list item.
+            return nil
+        }
         let afterMarker = String(chars[afterStart..<i])
 
         // Detect checkbox: "[ ] ", "[x] ", "[X] " at the start of
@@ -635,7 +2174,8 @@ public enum MarkdownParser {
     /// strictly greater than `parentIndent`. Items whose indent falls
     /// below `siblingIndent` pop the recursion back to the caller.
     static func buildItemTree(
-        lines: [ParsedListLine], from: Int, parentIndent: Int
+        lines: [ParsedListLine], from: Int, parentIndent: Int,
+        refDefs: [String: (url: String, title: String?)] = [:]
     ) -> (items: [ListItem], endIndex: Int) {
         guard from < lines.count else { return ([], from) }
         let siblingIndent = lines[from].indent.count
@@ -656,11 +2196,11 @@ public enum MarkdownParser {
                 // subsequent sibling at shallower indent), stop here.
                 break
             }
-            let inline = parseInlines(cur.content)
+            let inline = parseInlines(cur.content, refDefs: refDefs)
             // Try to collect children at a deeper indent immediately
             // following this item.
             let (children, nextI) = buildItemTree(
-                lines: lines, from: i + 1, parentIndent: siblingIndent
+                lines: lines, from: i + 1, parentIndent: siblingIndent, refDefs: refDefs
             )
             items.append(ListItem(
                 indent: cur.indent,
@@ -668,11 +2208,484 @@ public enum MarkdownParser {
                 afterMarker: cur.afterMarker,
                 checkbox: cur.checkbox,
                 inline: inline,
-                children: children
+                children: children,
+                blankLineBefore: cur.blankLineBefore
             ))
             i = nextI
         }
         return (items, i)
+    }
+
+    // MARK: - Link reference definition collection
+
+    /// Scan all lines for link reference definitions (first pass).
+    /// Returns the collected definitions (case-insensitive label lookup)
+    /// and the set of line indices that were consumed.
+    /// Respects code fences — lines inside fenced code blocks are not
+    /// scanned for link ref defs.
+    private static func collectLinkRefDefs(
+        _ lines: [String], trailingNewline: Bool
+    ) -> (defs: [String: (url: String, title: String?)], consumed: Set<Int>) {
+        var defs: [String: (url: String, title: String?)] = [:]
+        var consumed: Set<Int> = []
+        var inCodeFence = false
+        var openFenceChar: Character = "`"
+        var openFenceLength = 0
+
+        let effectiveCount = (trailingNewline && lines.last == "") ? lines.count - 1 : lines.count
+        var i = 0
+        while i < effectiveCount {
+            let line = lines[i]
+
+            // Track code fences to avoid matching inside them.
+            if !inCodeFence {
+                if let fence = detectFenceOpen(line) {
+                    inCodeFence = true
+                    openFenceChar = fence.fenceChar
+                    openFenceLength = fence.fenceLength
+                    i += 1
+                    continue
+                }
+            } else {
+                // Check for closing fence.
+                let fence = Fence(fenceChar: openFenceChar, fenceLength: openFenceLength, infoRaw: "", indent: 0)
+                if isFenceClose(line, matching: fence) {
+                    inCodeFence = false
+                }
+                i += 1
+                continue
+            }
+
+            // Try to parse starting at this line as a (possibly multi-line) link reference definition.
+            if let parsed = tryParseLinkRefDef(lines, startIndex: i, effectiveCount: effectiveCount) {
+                let key = normalizeLabel(parsed.label)
+                // First definition wins (CommonMark rule).
+                if defs[key] == nil {
+                    defs[key] = (url: parsed.url, title: parsed.title)
+                }
+                for j in i..<(i + parsed.linesConsumed) {
+                    consumed.insert(j)
+                }
+                i += parsed.linesConsumed
+            } else {
+                i += 1
+            }
+        }
+        return (defs, consumed)
+    }
+
+    /// Normalize a link reference label for case-insensitive matching.
+    /// Collapses whitespace runs to a single space and lowercases.
+    private static func normalizeLabel(_ label: String) -> String {
+        label.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ").joined(separator: " ")
+            .split(separator: "\t").joined(separator: " ")
+    }
+
+    /// Check if a string is only whitespace (spaces/tabs).
+    private static func isBlankLine(_ s: String) -> Bool {
+        s.allSatisfy { $0 == " " || $0 == "\t" }
+    }
+
+    /// ASCII punctuation characters that can be backslash-escaped per CommonMark spec.
+    private static let asciiPunctuationChars: Set<Character> = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+    /// Check if a character is ASCII punctuation (valid after backslash escape).
+    private static func isASCIIPunctuation(_ ch: Character) -> Bool {
+        asciiPunctuationChars.contains(ch)
+    }
+
+    /// Build a rawDestination string from a URL and optional title.
+    /// Wraps URLs containing spaces in angle brackets so that
+    /// `extractURLAndTitle` can round-trip them correctly.
+    /// Uses single-quote delimiters for titles containing double-quotes
+    /// (and vice versa) so extractURLAndTitle parses them correctly.
+    private static func buildRawDest(url: String, title: String?) -> String {
+        let urlPart: String
+        if url.contains(" ") || url.contains("\t") {
+            urlPart = "<\(url)>"
+        } else {
+            urlPart = url
+        }
+        if let title = title {
+            // Choose delimiter that doesn't appear in the title.
+            // extractURLAndTitle doesn't process escapes in titles,
+            // so we must use a delimiter not present in the content.
+            if !title.contains("\"") {
+                return "\(urlPart) \"\(title)\""
+            } else if !title.contains("'") {
+                return "\(urlPart) '\(title)'"
+            } else {
+                // Both quote types present — use " and escape embedded "
+                // extractURLAndTitle skips \" when scanning for closing "
+                let escaped = title.replacingOccurrences(of: "\"", with: "\\\"")
+                return "\(urlPart) \"\(escaped)\""
+            }
+        }
+        return urlPart
+    }
+
+    // MARK: - Lazy continuation support
+
+    /// Check whether a line would interrupt lazy continuation of a
+    /// paragraph inside a blockquote. CommonMark §5.1: a lazy
+    /// continuation line is any line that is not blank and does not
+    /// start a block-level construct that can interrupt a paragraph.
+    ///
+    /// Constructs that interrupt:
+    /// - Blank line
+    /// - Blockquote marker `>`
+    /// - ATX heading `# ...`
+    /// - Fenced code opening ``` or ~~~
+    /// - Thematic break (HR)
+    /// - List item with <= 3 spaces indent
+    /// - HTML block (types 1-6 only; type 7 cannot interrupt a paragraph)
+    private static func interruptsLazyContinuation(_ line: String) -> Bool {
+        // Blank line
+        if isBlankLine(line) || line.isEmpty { return true }
+        // Blockquote marker
+        if detectBlockquoteLine(line) != nil { return true }
+        // ATX heading
+        if detectHeading(line) != nil { return true }
+        // Fenced code opening
+        if detectFenceOpen(line) != nil { return true }
+        // Thematic break / HR
+        if detectHorizontalRule(line) != nil { return true }
+        // List item with <= 3 spaces of indent (4+ spaces = indented code
+        // block context, which cannot interrupt a paragraph)
+        if let parsed = parseListLine(line) {
+            let spaceCount = parsed.indent.filter { $0 == " " }.count
+                + parsed.indent.filter { $0 == "\t" }.count * 4
+            if spaceCount <= 3 { return true }
+        }
+        // HTML block start (types 1-6 can interrupt a paragraph; type 7 cannot)
+        if let htmlType = detectHTMLBlock(line), htmlType <= 6 { return true }
+        return false
+    }
+
+    /// Check whether the inner content of collected blockquote lines
+    /// ends in a paragraph context (as opposed to a code block or
+    /// open code fence), which is required for lazy continuation.
+    private static func blockquoteInnerAllowsLazyContinuation(_ contentLines: [String]) -> Bool {
+        guard !contentLines.isEmpty else { return false }
+
+        // Check for an open (unclosed) code fence
+        var openFence: Fence? = nil
+        for inner in contentLines {
+            if let fence = openFence {
+                if isFenceClose(inner, matching: fence) {
+                    openFence = nil
+                }
+            } else if let fence = detectFenceOpen(inner) {
+                openFence = fence
+            }
+        }
+        // If there's an unclosed code fence, lazy continuation is not allowed
+        if openFence != nil { return false }
+
+        // Check if the last non-blank inner line is an indented code block
+        // (4+ spaces of leading indent). Indented code blocks don't support
+        // lazy continuation.
+        if let lastNonBlank = contentLines.last(where: { !isBlankLine($0) && !$0.isEmpty }) {
+            let leadingSpaces = lastNonBlank.prefix(while: { $0 == " " }).count
+            if leadingSpaces >= 4 { return false }
+        }
+
+        // Check if the last line is blank (empty blockquote line ">")
+        // — a blank line inside a blockquote ends the paragraph.
+        if let lastInner = contentLines.last, isBlankLine(lastInner) || lastInner.isEmpty {
+            return false
+        }
+
+        return true
+    }
+
+    /// Try to parse a multi-line link reference definition starting at `startIndex`.
+    /// Returns the parsed label, url, optional title, and how many lines were consumed.
+    /// CommonMark allows:
+    ///   - URL on the next line after `[label]:`
+    ///   - Title on the next line after the URL
+    ///   - Multi-line titles (spanning lines until the closing quote, broken by blank lines)
+    private static func tryParseLinkRefDef(
+        _ lines: [String], startIndex: Int, effectiveCount: Int
+    ) -> (label: String, url: String, title: String?, linesConsumed: Int)? {
+        let line = lines[startIndex]
+        let chars = Array(line)
+        var i = 0
+
+        // Up to 3 leading spaces.
+        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
+        guard i < chars.count && chars[i] == "[" else { return nil }
+        i += 1
+
+        // Find closing ] for label.
+        let labelStart = i
+        while i < chars.count && chars[i] != "]" && chars[i] != "[" {
+            if chars[i] == "\\" && i + 1 < chars.count { i += 1 }
+            i += 1
+        }
+        guard i < chars.count && chars[i] == "]" else { return nil }
+        let label = String(chars[labelStart..<i])
+        guard !label.isEmpty else { return nil }
+        i += 1
+
+        // Must be followed by `:`.
+        guard i < chars.count && chars[i] == ":" else { return nil }
+        i += 1
+
+        // Skip whitespace.
+        while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
+
+        var currentLine = startIndex
+        var linesConsumed = 1
+
+        // If nothing remains on this line after `[label]:`, URL must be on next line.
+        if i >= chars.count {
+            // Need a next line for the URL.
+            let nextLine = startIndex + 1
+            guard nextLine < effectiveCount && !isBlankLine(lines[nextLine]) else { return nil }
+            currentLine = nextLine
+            linesConsumed = 2
+            // Parse destination from next line.
+            let result = parseDestinationAndTitle(lines, lineIndex: currentLine, charOffset: 0,
+                                                  startIndex: startIndex, linesConsumed: linesConsumed,
+                                                  effectiveCount: effectiveCount, label: label)
+            return result
+        }
+
+        // Parse destination from current position on the first line.
+        return parseDestinationAndTitle(lines, lineIndex: currentLine, charOffset: i,
+                                        startIndex: startIndex, linesConsumed: linesConsumed,
+                                        effectiveCount: effectiveCount, label: label)
+    }
+
+    /// Parse destination and optional title from the given line and character offset.
+    /// Handles multi-line titles and title-on-next-line.
+    private static func parseDestinationAndTitle(
+        _ lines: [String], lineIndex: Int, charOffset: Int,
+        startIndex: Int, linesConsumed: Int, effectiveCount: Int, label: String
+    ) -> (label: String, url: String, title: String?, linesConsumed: Int)? {
+        let lineStr = lines[lineIndex]
+        let chars = Array(lineStr)
+        var i = charOffset
+        var consumed = linesConsumed
+
+        // Skip leading whitespace on continuation lines.
+        while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
+
+        // Parse destination.
+        guard i < chars.count else { return nil }
+        var url = ""
+        if chars[i] == "<" {
+            // Angle-bracketed destination.
+            i += 1
+            let urlStart = i
+            while i < chars.count && chars[i] != ">" {
+                if chars[i] == "\\" && i + 1 < chars.count { i += 1 }
+                i += 1
+            }
+            guard i < chars.count else { return nil }
+            url = String(chars[urlStart..<i])
+            i += 1
+        } else {
+            // Bare destination: no spaces, balanced parens.
+            let urlStart = i
+            var parenDepth = 0
+            while i < chars.count && chars[i] != " " && chars[i] != "\t" {
+                if chars[i] == "(" { parenDepth += 1 }
+                else if chars[i] == ")" {
+                    if parenDepth == 0 { break }
+                    parenDepth -= 1
+                }
+                if chars[i] == "\\" && i + 1 < chars.count { i += 1 }
+                i += 1
+            }
+            url = String(chars[urlStart..<i])
+        }
+
+        // URL must not be empty for bare destinations (angle-bracket <> is OK).
+        if url.isEmpty && !(i > 0 && chars[i - 1] == ">") {
+            // Check if char before urlStart was '<' — if angle brackets produced empty, that's ok.
+            // Otherwise, empty bare URL is not valid.
+            return nil
+        }
+
+        // Skip whitespace after URL.
+        while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
+
+        // --- Try to parse title ---
+
+        // Case 1: Title starts on same line as URL.
+        if i < chars.count && (chars[i] == "\"" || chars[i] == "'" || chars[i] == "(") {
+            let open = chars[i]
+            let close: Character = open == "(" ? ")" : open
+            i += 1
+            var titleChars: [Character] = []
+            // Scan for closing quote, possibly spanning multiple lines.
+            var titleLine = lineIndex
+            var ti = i
+            while true {
+                let tChars = Array(lines[titleLine])
+                while ti < tChars.count {
+                    if tChars[ti] == close {
+                        // Found closing quote. Rest of this line must be whitespace only.
+                        ti += 1
+                        while ti < tChars.count {
+                            if tChars[ti] != " " && tChars[ti] != "\t" { return nil }
+                            ti += 1
+                        }
+                        let title = String(titleChars)
+                        let totalConsumed = titleLine - startIndex + 1
+                        return (label, url, title, totalConsumed)
+                    }
+                    if tChars[ti] == "\\" && ti + 1 < tChars.count {
+                        let next = tChars[ti + 1]
+                        if isASCIIPunctuation(next) {
+                            // Valid backslash escape — consume \ and keep the char.
+                            titleChars.append(next)
+                        } else {
+                            // Not a valid escape — preserve both characters.
+                            titleChars.append("\\")
+                            titleChars.append(next)
+                        }
+                        ti += 2
+                    } else {
+                        titleChars.append(tChars[ti])
+                        ti += 1
+                    }
+                }
+                // Title continues on next line.
+                titleLine += 1
+                if titleLine >= effectiveCount || isBlankLine(lines[titleLine]) {
+                    // Blank line breaks a multi-line title — entire def is invalid.
+                    return nil
+                }
+                titleChars.append("\n")
+                ti = 0
+            }
+        }
+
+        // Case 2: Nothing after URL on this line — valid def without title,
+        // but also check if next line starts a title.
+        if i >= chars.count {
+            // Check next line for a title.
+            let nextTitleLine = lineIndex + 1
+            if nextTitleLine < effectiveCount && !isBlankLine(lines[nextTitleLine]) {
+                let nextChars = Array(lines[nextTitleLine])
+                var ni = 0
+                while ni < nextChars.count && (nextChars[ni] == " " || nextChars[ni] == "\t") { ni += 1 }
+                if ni < nextChars.count && (nextChars[ni] == "\"" || nextChars[ni] == "'" || nextChars[ni] == "(") {
+                    let open = nextChars[ni]
+                    let close: Character = open == "(" ? ")" : open
+                    ni += 1
+                    var titleChars: [Character] = []
+                    var titleLine = nextTitleLine
+                    var ti = ni
+                    while true {
+                        let tChars = Array(lines[titleLine])
+                        while ti < tChars.count {
+                            if tChars[ti] == close {
+                                // Found closing quote. Rest must be whitespace.
+                                ti += 1
+                                while ti < tChars.count {
+                                    if tChars[ti] != " " && tChars[ti] != "\t" {
+                                        // Title line has trailing content like `"title" ok` —
+                                        // the title is invalid. But the def is still valid
+                                        // without the title (the next line is NOT consumed).
+                                        return (label, url, nil, lineIndex - startIndex + 1)
+                                    }
+                                    ti += 1
+                                }
+                                let title = String(titleChars)
+                                let totalConsumed = titleLine - startIndex + 1
+                                return (label, url, title, totalConsumed)
+                            }
+                            if tChars[ti] == "\\" && ti + 1 < tChars.count {
+                                titleChars.append(tChars[ti + 1])
+                                ti += 2
+                            } else {
+                                titleChars.append(tChars[ti])
+                                ti += 1
+                            }
+                        }
+                        titleLine += 1
+                        if titleLine >= effectiveCount || isBlankLine(lines[titleLine]) {
+                            // Multi-line title broken by blank — title invalid,
+                            // but def still valid without title.
+                            return (label, url, nil, lineIndex - startIndex + 1)
+                        }
+                        titleChars.append("\n")
+                        ti = 0
+                    }
+                }
+            }
+            // No title found — valid def without title.
+            return (label, url, nil, consumed)
+        }
+
+        // Case 3: Non-whitespace, non-title content after URL — not a valid link ref def.
+        return nil
+    }
+
+    // MARK: - Reference link matching
+
+    /// Try to match a reference link at position `start` in the character
+    /// array. Handles three forms:
+    /// - Full reference: `[text][label]`
+    /// - Collapsed reference: `[text][]`
+    /// - Shortcut reference: `[text]` (not followed by `(`)
+    ///
+    /// Returns the link text, resolved destination, and the index past
+    /// the match, or nil if no reference link was found.
+    private static func tryMatchReferenceLink(
+        _ chars: [Character], from start: Int,
+        refDefs: [String: (url: String, title: String?)]
+    ) -> (text: String, dest: String, endIndex: Int)? {
+        guard start < chars.count && chars[start] == "[" else { return nil }
+
+        // Find closing ] for the text part.
+        var j = start + 1
+        var depth = 1
+        while j < chars.count && depth > 0 {
+            if chars[j] == "\\" && j + 1 < chars.count { j += 2; continue }
+            if chars[j] == "[" { depth += 1 }
+            if chars[j] == "]" { depth -= 1 }
+            j += 1
+        }
+        guard depth == 0 else { return nil }
+        let textEnd = j - 1
+        let text = String(chars[(start + 1)..<textEnd])
+
+        // Check what follows the closing ].
+        if j < chars.count && chars[j] == "[" {
+            // Full or collapsed reference: [text][label] or [text][].
+            let labelStart = j + 1
+            var k = labelStart
+            while k < chars.count && chars[k] != "]" {
+                if chars[k] == "\\" && k + 1 < chars.count { k += 1 }
+                k += 1
+            }
+            guard k < chars.count else { return nil }
+            let label = String(chars[labelStart..<k])
+            let normalizedLabel = label.isEmpty ? text : label
+            let key = normalizeLabel(normalizedLabel)
+            if let def = refDefs[key] {
+                let rawDest = buildRawDest(url: def.url, title: def.title)
+                return (text, rawDest, k + 1)
+            }
+            return nil
+        }
+
+        // Shortcut reference: [text] not followed by ( or [.
+        // Don't match if followed by ( — that's an inline link.
+        if j < chars.count && chars[j] == "(" { return nil }
+        let key = normalizeLabel(text)
+        if let def = refDefs[key] {
+            let rawDest = buildRawDest(url: def.url, title: def.title)
+            return (text, rawDest, j)
+        }
+        return nil
     }
 
     // MARK: - Line splitting

@@ -201,7 +201,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             self?.drawGridLines(in: context)
         }
 
-        scrollView = NSScrollView()
+        scrollView = HorizontalScrollView()
         scrollView.documentView = gridDocumentView
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = false
@@ -1616,27 +1616,37 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Scroll Behavior
 
-    /// Vertical scrolling passes through to the parent text view (scrolls the note).
-    /// Horizontal scrolling is captured by the table's scroll view (for wide tables).
-    override func scrollWheel(with event: NSEvent) {
-        // If the scroll is primarily horizontal AND the table needs horizontal scrolling,
-        // let the table's scroll view handle it.
-        let isHorizontal = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
-        let tableNeedsHScroll = gridDocumentView.frame.width > scrollView.frame.width
-
-        if isHorizontal && tableNeedsHScroll {
-            scrollView.scrollWheel(with: event)
-        } else {
-            // Forward vertical scrolls to parent (EditTextView's enclosing scroll view)
-            superview?.scrollWheel(with: event)
-        }
-    }
-
     // MARK: - Intrinsic Size
 
     override var intrinsicContentSize: NSSize {
         let L = computeLayout()
         return NSSize(width: L.scrollWidth, height: L.totalHeight)
+    }
+}
+
+// MARK: - Horizontal-Only Scroll View
+
+/// A scroll view that only handles horizontal scrolling. Vertical scroll
+/// events are forwarded to the next responder (the editor's scroll view),
+/// preventing the table widget from capturing page-level vertical scrolls.
+///
+/// This is critical because NSScrollView's default scrollWheel(with:)
+/// consumes ALL scroll events before the parent InlineTableView ever sees
+/// them. Without this subclass, the InlineTableView.scrollWheel override
+/// is dead code — the inner NSScrollView intercepts first.
+private class HorizontalScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        let isHorizontal = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+        let needsHScroll = (documentView?.frame.width ?? 0) > frame.width
+
+        if isHorizontal && needsHScroll {
+            // Horizontal scroll on a wide table — handle it here.
+            super.scrollWheel(with: event)
+        } else {
+            // Vertical scroll (or horizontal on a non-scrollable table) —
+            // forward to the editor's scroll view via the responder chain.
+            nextResponder?.scrollWheel(with: event)
+        }
     }
 }
 

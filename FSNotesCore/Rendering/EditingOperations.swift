@@ -14,9 +14,10 @@
 //  - Single source of truth: the new Document is the authoritative
 //    post-edit state. The splice is derived from the new Document, not
 //    composed heuristically.
-//  - Block-granular splices: insertion/deletion inside block[i] produces
-//    a splice whose range is the OLD blockSpans[i], replaced by the
-//    NEW rendered output for block[i]. Sibling blocks are untouched.
+//  - Character-granular splices: insertion/deletion inside block[i]
+//    diffs the old and new rendered output to find the minimal changed
+//    substring. A 1-char edit produces a 1-char splice, even in a
+//    7000-char block. Sibling blocks are untouched.
 //
 //  Supported operations:
 //  - Single-block insertion/deletion with inline-tree navigation.
@@ -127,15 +128,30 @@ public enum EditingOps {
                 // separator, count rendered chars = string.count.
                 result.newCursorPosition = storageIndex + string.count
                 return result
-            case .list(let items):
+            case .list(let items, _):
                 if string == "\n" {
                     do {
                         let newBlocks = try splitListOnNewline(
                             items: items, at: offsetInBlock, blockIndex: blockIndex, in: projection
                         )
                         var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
-                        let lastIdx = blockIndex + newBlocks.count - 1
-                        result.newCursorPosition = result.newProjection.blockSpans[lastIdx].location
+                        // Cursor goes to the start of the new item's inline
+                        // content within the list. Re-flatten the new list
+                        // to find the entry that was just inserted.
+                        let blockSpan = result.newProjection.blockSpans[blockIndex]
+                        if case .list(let newItems, _) = result.newProjection.document.blocks[blockIndex] {
+                            let newEntries = flattenList(newItems)
+                            // The new item is the one whose startOffset is
+                            // just after the split point. Find the first
+                            // entry whose startOffset > offsetInBlock.
+                            if let newEntry = newEntries.first(where: { $0.startOffset > offsetInBlock }) {
+                                result.newCursorPosition = blockSpan.location + newEntry.startOffset + newEntry.prefixLength
+                            } else {
+                                result.newCursorPosition = blockSpan.location + blockSpan.length
+                            }
+                        } else {
+                            result.newCursorPosition = blockSpan.location
+                        }
                         return result
                     } catch EditingError.unsupported(let reason) where reason.contains("empty item return") {
                         // FSM: empty item → exit or unindent.
@@ -151,14 +167,27 @@ public enum EditingOps {
                         lines: lines, at: offsetInBlock, blockIndex: blockIndex, in: projection
                     )
                     var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
-                    let lastIdx = blockIndex + newBlocks.count - 1
-                    result.newCursorPosition = result.newProjection.blockSpans[lastIdx].location
+                    // Cursor goes to the new line's inline start.
+                    let blockSpan = result.newProjection.blockSpans[blockIndex]
+                    if case .blockquote(let newLines) = result.newProjection.document.blocks[blockIndex] {
+                        let newFlat = flattenBlockquote(newLines)
+                        if let newEntry = newFlat.first(where: { $0.startOffset > offsetInBlock }) {
+                            result.newCursorPosition = blockSpan.location + newEntry.startOffset + newEntry.prefixLength
+                        } else {
+                            result.newCursorPosition = blockSpan.location + blockSpan.length
+                        }
+                    } else {
+                        result.newCursorPosition = blockSpan.location
+                    }
                     return result
                 }
                 throw EditingError.unsupported(
                     reason: "multi-line paste in blockquote not supported"
                 )
-            case .heading, .horizontalRule, .blankLine:
+            case .htmlBlock:
+                // HTML blocks accept any content verbatim, like code blocks.
+                break
+            case .heading, .horizontalRule, .blankLine, .table:
                 throw EditingError.unsupported(
                     reason: "newline insertion in \(describe(oldBlock)) not supported"
                 )
@@ -207,19 +236,18 @@ public enum EditingOps {
             throw EditingError.notInsideBlock(storageIndex: endIndex)
         }
         if startBlock != endBlock {
-            // Merge adjacent blocks when delete crosses exactly
-            // one block boundary (backspace at block start, or selection
-            // spanning the separator).
-            if endBlock == startBlock + 1 {
-                var result = try mergeAdjacentBlocks(
-                    startBlock: startBlock, startOffset: startOffset,
-                    endBlock: endBlock, endOffset: endOffset,
-                    in: projection
-                )
-                result.newCursorPosition = storageRange.location
-                return result
-            }
-            throw EditingError.crossBlockRange
+            // Merge blocks when delete crosses one or more block boundaries.
+            // For a 2-block span this is the common backspace-at-block-start
+            // case. For 3+ blocks (multi-line selection delete), all
+            // intermediate blocks are removed and the surviving tails of
+            // the first and last blocks are merged into a single block.
+            var result = try mergeAdjacentBlocks(
+                startBlock: startBlock, startOffset: startOffset,
+                endBlock: endBlock, endOffset: endOffset,
+                in: projection
+            )
+            result.newCursorPosition = storageRange.location
+            return result
         }
         let oldBlock = projection.document.blocks[startBlock]
         let newBlock = try deleteInBlock(oldBlock, from: startOffset, to: endOffset)
@@ -260,35 +288,230 @@ public enum EditingOps {
     ) throws -> EditResult {
         precondition(!newBlocks.isEmpty, "replaceBlocks requires at least one new block")
 
+        // Fast path: single-block replacement where the block kind is
+        // unchanged (the common case for typing/deleting characters).
+        // Re-renders ONLY the changed block instead of the entire document.
+        if newBlocks.count == 1,
+           sameBlockKind(projection.document.blocks[blockIndex], newBlocks[0]) {
+            return replaceBlockFast(
+                atIndex: blockIndex,
+                with: newBlocks[0],
+                in: projection
+            )
+        }
+
+        // Slow path: structural changes (splits, merges, block-type
+        // changes). Full re-render of all blocks.
+        return replaceBlocksSlow(
+            atIndex: blockIndex,
+            with: newBlocks,
+            in: projection
+        )
+    }
+
+    /// Fast path for single-block, same-kind replacement. Renders only
+    /// the changed block, patches the attributed string and blockSpans
+    /// in-place, and diffs for a minimal character-level splice.
+    private static func replaceBlockFast(
+        atIndex blockIndex: Int,
+        with newBlock: Block,
+        in projection: DocumentProjection
+    ) -> EditResult {
+        // 1. Build the new Document.
+        var newDoc = projection.document
+        newDoc.blocks[blockIndex] = newBlock
+
+        // 2. Render ONLY the changed block.
+        let blockRendered = DocumentRenderer.renderBlock(
+            newBlock, bodyFont: projection.bodyFont, codeFont: projection.codeFont
+        )
+
+        // 3. Apply paragraph style to the rendered block (same logic as
+        //    DocumentRenderer.render()).
+        let lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
+        let mutableBlock = NSMutableAttributedString(attributedString: blockRendered)
+        if mutableBlock.length > 0 {
+            let needsMerge: Bool
+            switch newBlock {
+            case .blockquote, .list:
+                // Blockquotes and lists have per-line paragraph styles
+                // (indentation per depth). Merge block-level spacing
+                // into existing styles — same logic as DocumentRenderer.render().
+                needsMerge = true
+            default:
+                needsMerge = false
+            }
+
+            if needsMerge {
+                let blockSpacing = DocumentRenderer.paragraphStyle(
+                    for: newBlock,
+                    isFirst: (blockIndex == 0),
+                    baseSize: projection.bodyFont.pointSize,
+                    lineSpacing: lineSpacing
+                )
+                mutableBlock.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: mutableBlock.length), options: []) { value, range, _ in
+                    if let existing = value as? NSParagraphStyle {
+                        let merged = existing.mutableCopy() as! NSMutableParagraphStyle
+                        merged.paragraphSpacing = blockSpacing.paragraphSpacing
+                        merged.paragraphSpacingBefore = blockSpacing.paragraphSpacingBefore
+                        merged.lineSpacing = blockSpacing.lineSpacing
+                        mutableBlock.addAttribute(.paragraphStyle, value: merged, range: range)
+                    }
+                }
+            } else {
+                let paraStyle = DocumentRenderer.paragraphStyle(
+                    for: newBlock,
+                    isFirst: (blockIndex == 0),
+                    baseSize: projection.bodyFont.pointSize,
+                    lineSpacing: lineSpacing
+                )
+                mutableBlock.addAttribute(
+                    .paragraphStyle, value: paraStyle,
+                    range: NSRange(location: 0, length: mutableBlock.length)
+                )
+            }
+        }
+
+        // 4. Apply auto-links to the rendered block.
+        DocumentRenderer.applyAutoLinks(to: mutableBlock)
+
+        // 5. Patch the full attributed string: copy old, replace the
+        //    old block span with the newly rendered block.
+        let oldSpan = projection.blockSpans[blockIndex]
+        let patchedAttr = NSMutableAttributedString(attributedString: projection.attributed)
+        patchedAttr.replaceCharacters(in: oldSpan, with: mutableBlock)
+
+        // 6. Rebuild blockSpans. The changed block's span has a new
+        //    length; all subsequent spans shift by the length delta.
+        let lengthDelta = mutableBlock.length - oldSpan.length
+        var patchedSpans = projection.blockSpans
+        patchedSpans[blockIndex] = NSRange(location: oldSpan.location, length: mutableBlock.length)
+        for i in (blockIndex + 1)..<patchedSpans.count {
+            patchedSpans[i] = NSRange(
+                location: patchedSpans[i].location + lengthDelta,
+                length: patchedSpans[i].length
+            )
+        }
+
+        // 7. Build the new projection from the patched data.
+        let renderedDoc = RenderedDocument(
+            document: newDoc,
+            attributed: patchedAttr,
+            blockSpans: patchedSpans
+        )
+        let newProjection = DocumentProjection(
+            rendered: renderedDoc,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont
+        )
+
+        // 8. Narrow to minimal splice via character diff.
+        return narrowSplice(
+            oldString: projection.attributed.string,
+            oldRange: oldSpan,
+            newReplacement: mutableBlock,
+            newProjection: newProjection
+        )
+    }
+
+    /// Slow path: full re-render of all blocks. Used for structural
+    /// changes (splits, block-type changes, multi-block replacements).
+    private static func replaceBlocksSlow(
+        atIndex blockIndex: Int,
+        with newBlocks: [Block],
+        in projection: DocumentProjection
+    ) -> EditResult {
         // Build the new Document by splicing the block list.
         var newDoc = projection.document
         newDoc.blocks.replaceSubrange(blockIndex...blockIndex, with: newBlocks)
 
-        // Produce the new projection (full re-render). This is the
-        // authoritative post-edit state with correct paragraph styles,
-        // collapsed blankLine separators, etc.
+        // Produce the new projection (full re-render).
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
             codeFont: projection.codeFont
         )
 
-        // Extract the splice replacement from the new projection.
-        // It covers the new blocks' spans plus the inter-block
-        // separators between them.
+        let oldSpan = projection.blockSpans[blockIndex]
         let firstNewSpan = newProjection.blockSpans[blockIndex]
         let lastNewSpan = newProjection.blockSpans[blockIndex + newBlocks.count - 1]
-        let spliceStart = firstNewSpan.location
-        let spliceEnd = NSMaxRange(lastNewSpan)
-        let replacementRange = NSRange(location: spliceStart, length: spliceEnd - spliceStart)
-        let replacement = newProjection.attributed.attributedSubstring(from: replacementRange)
+        let newSpanStart = firstNewSpan.location
+        let newSpanEnd = NSMaxRange(lastNewSpan)
+        let newSpanLength = newSpanEnd - newSpanStart
 
-        let oldSpan = projection.blockSpans[blockIndex]
+        let replacement = newProjection.attributed.attributedSubstring(
+            from: NSRange(location: newSpanStart, length: newSpanLength)
+        )
+
+        return narrowSplice(
+            oldString: projection.attributed.string,
+            oldRange: oldSpan,
+            newReplacement: replacement,
+            newProjection: newProjection
+        )
+    }
+
+    /// Check whether two blocks have the same discriminator (kind)
+    /// without comparing their content. Used to gate the fast path —
+    /// if the kind changes, separators and paragraph styles may differ,
+    /// so we fall through to the full re-render.
+    private static func sameBlockKind(_ a: Block, _ b: Block) -> Bool {
+        switch (a, b) {
+        case (.paragraph, .paragraph),
+             (.codeBlock, .codeBlock),
+             (.list, .list),
+             (.blockquote, .blockquote),
+             (.blankLine, .blankLine),
+             (.htmlBlock, .htmlBlock),
+             (.horizontalRule, .horizontalRule):
+            return true
+        case (.heading(let la, _), .heading(let lb, _)):
+            // Same kind only if same level — different levels get
+            // different paragraph styles.
+            return la == lb
+        default:
+            return false
+        }
+    }
+
+    /// Narrow a block-granular splice to character-granular by diffing
+    /// the old and new rendered strings. Prevents NSLayoutManager from
+    /// scrolling when it sees a large replaced region.
+    private static func narrowSplice(
+        oldString: String,
+        oldRange: NSRange,
+        newReplacement: NSAttributedString,
+        newProjection: DocumentProjection
+    ) -> EditResult {
+        let oldStr = (oldString as NSString).substring(with: oldRange)
+        let newStr = newReplacement.string
+        let oldChars = Array(oldStr.unicodeScalars)
+        let newChars = Array(newStr.unicodeScalars)
+        let minLen = min(oldChars.count, newChars.count)
+
+        var commonPrefix = 0
+        while commonPrefix < minLen && oldChars[commonPrefix] == newChars[commonPrefix] {
+            commonPrefix += 1
+        }
+        var commonSuffix = 0
+        while commonSuffix < (minLen - commonPrefix)
+                && oldChars[oldChars.count - 1 - commonSuffix] == newChars[newChars.count - 1 - commonSuffix] {
+            commonSuffix += 1
+        }
+
+        let narrowRange = NSRange(
+            location: oldRange.location + commonPrefix,
+            length: oldChars.count - commonPrefix - commonSuffix
+        )
+        let narrowRepLen = newChars.count - commonPrefix - commonSuffix
+        let narrowRep = narrowRepLen > 0
+            ? newReplacement.attributedSubstring(from: NSRange(location: commonPrefix, length: narrowRepLen))
+            : NSAttributedString(string: "")
 
         return EditResult(
             newProjection: newProjection,
-            spliceRange: oldSpan,
-            spliceReplacement: replacement
+            spliceRange: narrowRange,
+            spliceReplacement: narrowRep
         )
     }
 
@@ -303,9 +526,15 @@ public enum EditingOps {
     ///   paragraph + blankLine → paragraph
     ///   blankLine  + paragraph → paragraph
     ///   blankLine  + blankLine → blankLine
+    ///   heading + anything → heading (preserves heading level)
+    ///   anything + heading → first block type wins (heading demoted to paragraph)
+    ///   paragraph + heading → paragraph (heading text appended)
+    ///   blankLine + heading → heading (blank removed, heading preserved)
+    ///   codeBlock, list, blockquote merges → paragraph (flattened)
     ///
-    /// Other combinations (heading, codeBlock, list, etc.) throw
-    /// `.unsupported`.
+    /// The first block's type wins when both have inline content.
+    /// If the first block is empty (blankLine/HR), the second block's
+    /// type wins.
     private static func mergeAdjacentBlocks(
         startBlock: Int,
         startOffset: Int,
@@ -315,37 +544,99 @@ public enum EditingOps {
     ) throws -> EditResult {
         let blockA = projection.document.blocks[startBlock]
         let blockB = projection.document.blocks[endBlock]
+        let spanA = projection.blockSpans[startBlock]
+        let spanB = projection.blockSpans[endBlock]
 
-        // Compute what remains of each block after deleting the
-        // specified range tails.
-        let remainA = try remainingInlineSuffix(of: blockA, keepingUpTo: startOffset)
-        let remainB = try remainingInlinePrefix(of: blockB, droppingUpTo: endOffset)
+        // Determine what survives from block A (everything before
+        // startOffset) and block B (everything after endOffset).
+        // Use deleteInBlock to properly handle all block types
+        // including lists and blockquotes.
+        let blockALength = spanA.length
+        let blockBLength = spanB.length
 
-        // Merge the two remainders into a single block.
-        let merged: Block
-        switch (remainA, remainB) {
+        // Truncate block A: keep [0, startOffset), delete [startOffset, end).
+        let truncatedA: Block?
+        if startOffset == 0 {
+            // Nothing survives from block A.
+            truncatedA = nil
+        } else if startOffset >= blockALength {
+            // All of block A survives.
+            truncatedA = blockA
+        } else {
+            truncatedA = try? deleteInBlock(blockA, from: startOffset, to: blockALength)
+        }
+
+        // Truncate block B: delete [0, endOffset), keep [endOffset, end).
+        let truncatedB: Block?
+        if endOffset >= blockBLength {
+            // Nothing survives from block B.
+            truncatedB = nil
+        } else if endOffset == 0 {
+            // All of block B survives.
+            truncatedB = blockB
+        } else {
+            truncatedB = try? deleteInBlock(blockB, from: 0, to: endOffset)
+        }
+
+        // Determine the merged result. When both boundaries have
+        // surviving content, merge their inline trees into a paragraph.
+        let replacementBlocks: [Block]
+        switch (truncatedA, truncatedB) {
         case (.some(let a), .some(let b)):
-            merged = .paragraph(inline: a + b)
+            // Both boundary blocks have surviving content. Extract
+            // inline trees and concatenate, preserving formatting.
+            let inlinesA = extractInlines(from: a)
+            let inlinesB = extractInlines(from: b)
+            if inlinesA.isEmpty && inlinesB.isEmpty {
+                replacementBlocks = [.blankLine]
+            } else {
+                replacementBlocks = [.paragraph(inline: inlinesA + inlinesB)]
+            }
         case (.some(let a), .none):
-            merged = .paragraph(inline: a)
+            // Only block A survives — keep its type.
+            replacementBlocks = [a]
         case (.none, .some(let b)):
-            merged = .paragraph(inline: b)
+            // Only block B survives — keep its type.
+            replacementBlocks = [b]
         case (.none, .none):
-            merged = .blankLine
+            // Both blocks are fully consumed. If there are no blocks
+            // at all after removing [startBlock...endBlock], insert a
+            // blank line so the document is never empty.
+            let totalBlocks = projection.document.blocks.count
+            let removedCount = endBlock - startBlock + 1
+            if removedCount >= totalBlocks {
+                replacementBlocks = [.paragraph(inline: [.text("")])]
+            } else {
+                replacementBlocks = []
+            }
         }
 
         // Build new document: remove blocks[startBlock...endBlock],
-        // insert `merged` at startBlock.
+        // insert replacement(s).
         var newDoc = projection.document
-        newDoc.blocks.replaceSubrange(startBlock...endBlock, with: [merged])
+        newDoc.blocks.replaceSubrange(startBlock...endBlock, with: replacementBlocks)
 
         // Splice range: from start of blockA's span to end of blockB's
         // span, INCLUDING the separator "\n" between them.
-        let spanA = projection.blockSpans[startBlock]
-        let spanB = projection.blockSpans[endBlock]
         let spliceStart = spanA.location
         let spliceEnd = spanB.location + spanB.length
-        let spliceRange = NSRange(location: spliceStart, length: spliceEnd - spliceStart)
+        // Also consume the trailing separator "\n" after the last
+        // block if it exists (so we don't leave a stale newline).
+        let maxSpliceEnd: Int
+        if endBlock < projection.document.blocks.count - 1 {
+            // There are blocks after endBlock — the separator "\n"
+            // after endBlock is at spanB.location + spanB.length.
+            // Include it in the splice range when we're removing
+            // blocks entirely.
+            if replacementBlocks.isEmpty {
+                maxSpliceEnd = min(spliceEnd + 1, projection.attributed.length)
+            } else {
+                maxSpliceEnd = spliceEnd
+            }
+        } else {
+            maxSpliceEnd = spliceEnd
+        }
+        let spliceRange = NSRange(location: spliceStart, length: maxSpliceEnd - spliceStart)
 
         let newProjection = DocumentProjection(
             document: newDoc,
@@ -353,15 +644,27 @@ public enum EditingOps {
             codeFont: projection.codeFont
         )
 
-        // Extract the merged block's rendered content from the new
-        // projection (includes paragraph styles).
-        let mergedSpan = newProjection.blockSpans[startBlock]
-        let mergedRendered = newProjection.attributed.attributedSubstring(from: mergedSpan)
+        // Extract the replacement content from the new projection.
+        let replacement: NSAttributedString
+        if replacementBlocks.isEmpty {
+            replacement = NSAttributedString(string: "")
+        } else {
+            let firstSpan = newProjection.blockSpans[startBlock]
+            let lastSpan = newProjection.blockSpans[startBlock + replacementBlocks.count - 1]
+            let repStart = firstSpan.location
+            let repEnd = lastSpan.location + lastSpan.length
+            replacement = newProjection.attributed.attributedSubstring(
+                from: NSRange(location: repStart, length: repEnd - repStart)
+            )
+        }
 
-        return EditResult(
-            newProjection: newProjection,
-            spliceRange: spliceRange,
-            spliceReplacement: mergedRendered
+        // Narrow the splice to only the changed characters to avoid
+        // NSLayoutManager scroll-on-large-replace.
+        return narrowSplice(
+            oldString: projection.attributed.string,
+            oldRange: spliceRange,
+            newReplacement: replacement,
+            newProjection: newProjection
         )
     }
 
@@ -392,6 +695,9 @@ public enum EditingOps {
         case .codeBlock(_, let content, _):
             let (before, _) = splitInlines([.text(content)], at: keepCount)
             return before
+        case .htmlBlock(let raw):
+            let (before, _) = splitInlines([.text(raw)], at: keepCount)
+            return before
         case .list, .blockquote:
             // For merging purposes, extract the block's rendered text as
             // a flat paragraph. This converts the block type but
@@ -399,6 +705,10 @@ public enum EditingOps {
             let rendered = blockRenderedText(block)
             let (before, _) = splitInlines([.text(rendered)], at: keepCount)
             return before
+        case .table:
+            // Table rendered content is a text grid. On merge, treat
+            // as having no inline remainder (like HR).
+            return nil
         }
     }
 
@@ -426,10 +736,35 @@ public enum EditingOps {
         case .codeBlock(_, let content, _):
             let (_, after) = splitInlines([.text(content)], at: dropCount)
             return after
+        case .htmlBlock(let raw):
+            let (_, after) = splitInlines([.text(raw)], at: dropCount)
+            return after
         case .list, .blockquote:
             let rendered = blockRenderedText(block)
             let (_, after) = splitInlines([.text(rendered)], at: dropCount)
             return after
+        case .table:
+            return nil
+        }
+    }
+
+    /// Extract the inline tree from a block, preserving formatting.
+    /// For structured blocks (lists, blockquotes) the content is
+    /// flattened to plain text inlines. For paragraphs, the inline
+    /// tree is returned as-is to preserve bold/italic/etc.
+    private static func extractInlines(from block: Block) -> [Inline] {
+        switch block {
+        case .paragraph(let inline): return inline
+        case .heading(_, let suffix):
+            let l = leadingWhitespaceCount(in: suffix)
+            let t = trailingWhitespaceCount(in: suffix)
+            let displayed = String(suffix.dropFirst(l).dropLast(t))
+            return [.text(displayed)]
+        case .codeBlock(_, let content, _): return [.text(content)]
+        case .htmlBlock(let raw): return [.text(raw)]
+        case .list, .blockquote, .horizontalRule, .blankLine, .table:
+            let text = blockRenderedText(block)
+            return text.isEmpty ? [] : [.text(text)]
         }
     }
 
@@ -443,11 +778,13 @@ public enum EditingOps {
             let t = trailingWhitespaceCount(in: suffix)
             return String(suffix.dropFirst(l).dropLast(t))
         case .codeBlock(_, let content, _): return content
-        case .list(let items): return listItemsToText(items, depth: 0)
+        case .htmlBlock(let raw): return raw
+        case .list(let items, _): return listItemsToText(items, depth: 0)
         case .blockquote(let lines):
             return lines.map { inlinesToText($0.inline) }.joined(separator: "\n")
         case .horizontalRule: return ""
         case .blankLine: return ""
+        case .table(_, _, _, let raw): return raw
         }
     }
 
@@ -459,9 +796,16 @@ public enum EditingOps {
         switch inline {
         case .text(let s): return s
         case .code(let s): return s
-        case .bold(let c): return inlinesToText(c)
-        case .italic(let c): return inlinesToText(c)
+        case .bold(let c, _): return inlinesToText(c)
+        case .italic(let c, _): return inlinesToText(c)
         case .strikethrough(let c): return inlinesToText(c)
+        case .link(let text, _): return inlinesToText(text)
+        case .image(let alt, _): return inlinesToText(alt)
+        case .autolink(let text, _): return text
+        case .escapedChar(let ch): return String(ch)
+        case .lineBreak: return "\n"
+        case .rawHTML(let html): return html
+        case .entity(let raw): return raw
         }
     }
 
@@ -699,11 +1043,15 @@ public enum EditingOps {
             // containing the inserted text.
             return .paragraph(inline: [.text(string)])
 
-        case .list(let items):
+        case .list(let items, _):
             return try insertIntoList(items: items, offsetInBlock: offsetInBlock, string: string)
 
         case .blockquote(let lines):
             return try insertIntoBlockquote(lines: lines, offsetInBlock: offsetInBlock, string: string)
+
+        case .htmlBlock(let raw):
+            let newRaw = spliceString(raw, at: offsetInBlock, replacing: 0, with: string)
+            return .htmlBlock(raw: newRaw)
 
         case .horizontalRule:
             // HR has no editable content — typing on it inserts a new
@@ -713,6 +1061,11 @@ public enum EditingOps {
             // type above/below the HR, not on it.
             throw EditingError.unsupported(
                 reason: "horizontalRule is read-only"
+            )
+
+        case .table:
+            throw EditingError.unsupported(
+                reason: "table is read-only"
             )
         }
     }
@@ -767,16 +1120,24 @@ public enum EditingOps {
             // blankLines via mergeAdjacentBlocks.
             return .blankLine
 
-        case .list(let items):
+        case .list(let items, _):
             return try deleteInList(items: items, from: fromOffset, to: toOffset)
 
         case .blockquote(let lines):
             return try deleteInBlockquote(lines: lines, from: fromOffset, to: toOffset)
 
+        case .htmlBlock(let raw):
+            let newRaw = spliceString(raw, at: fromOffset, replacing: length, with: "")
+            return .htmlBlock(raw: newRaw)
+
         case .horizontalRule:
             // HR has no editable content — deletes within it are no-ops.
             // Cross-block deletion (backspace from next block) is handled
             // by mergeAdjacentBlocks.
+            return block
+
+        case .table:
+            // Table has no editable content — deletes within it are no-ops.
             return block
         }
     }
@@ -808,9 +1169,10 @@ public enum EditingOps {
         var entries: [FlatListEntry] = []
         var offset = startOffset
         for (i, item) in items.enumerated() {
-            let visualIndent = depth * 2 // matches ListRenderer.indentWidth
-            let bullet = listVisualBullet(for: item.marker, depth: depth)
-            let prefixLen = visualIndent + bullet.count + 1 // indent + bullet + " "
+            // Prefix is always 1 character: the attachment (bullet or
+            // checkbox). No separator character — visual gap is
+            // controlled by NSParagraphStyle headIndent.
+            let prefixLen = 1
             let inlineLen = inlinesLength(item.inline)
             let entryPath = path + [i]
             entries.append(FlatListEntry(
@@ -1007,7 +1369,7 @@ public enum EditingOps {
         var entries: [FlatQuoteLine] = []
         var offset = 0
         for (i, qLine) in lines.enumerated() {
-            let prefixLen = qLine.level * 2 // matches BlockquoteRenderer.indentPerLevel
+            let prefixLen = 0 // indentation is via paragraph style, no visible characters
             let inlineLen = inlinesLength(qLine.inline)
             entries.append(FlatQuoteLine(
                 line: qLine, lineIndex: i,
@@ -1163,9 +1525,16 @@ public enum EditingOps {
         switch node {
         case .text(let s): return s.count
         case .code(let s): return s.count
-        case .bold(let c): return c.reduce(0) { $0 + inlineLength($1) }
-        case .italic(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .bold(let c, _): return c.reduce(0) { $0 + inlineLength($1) }
+        case .italic(let c, _): return c.reduce(0) { $0 + inlineLength($1) }
         case .strikethrough(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .link(let text, _): return text.reduce(0) { $0 + inlineLength($1) }
+        case .image(let alt, _): return alt.reduce(0) { $0 + inlineLength($1) }
+        case .autolink(let text, _): return text.count
+        case .escapedChar: return 1
+        case .lineBreak: return 1
+        case .rawHTML(let html): return html.count
+        case .entity(let raw): return raw.count
         }
     }
 
@@ -1199,18 +1568,43 @@ public enum EditingOps {
                     let idx = s.index(s.startIndex, offsetBy: localOffset)
                     before.append(.code(String(s[..<idx])))
                     after.append(.code(String(s[idx...])))
-                case .bold(let children):
+                case .bold(let children, let marker):
                     let (b, a) = splitInlines(children, at: localOffset)
-                    before.append(.bold(b))
-                    after.append(.bold(a))
-                case .italic(let children):
+                    before.append(.bold(b, marker: marker))
+                    after.append(.bold(a, marker: marker))
+                case .italic(let children, let marker):
                     let (b, a) = splitInlines(children, at: localOffset)
-                    before.append(.italic(b))
-                    after.append(.italic(a))
+                    before.append(.italic(b, marker: marker))
+                    after.append(.italic(a, marker: marker))
                 case .strikethrough(let children):
                     let (b, a) = splitInlines(children, at: localOffset)
                     before.append(.strikethrough(b))
                     after.append(.strikethrough(a))
+                case .link(let text, let dest):
+                    let (b, a) = splitInlines(text, at: localOffset)
+                    before.append(.link(text: b, rawDestination: dest))
+                    after.append(.link(text: a, rawDestination: dest))
+                case .image(let alt, let dest):
+                    let (b, a) = splitInlines(alt, at: localOffset)
+                    before.append(.image(alt: b, rawDestination: dest))
+                    after.append(.image(alt: a, rawDestination: dest))
+                case .autolink(let text, _):
+                    let idx = text.index(text.startIndex, offsetBy: localOffset)
+                    before.append(.text(String(text[..<idx])))
+                    after.append(.text(String(text[idx...])))
+                case .rawHTML(let html):
+                    let idx = html.index(html.startIndex, offsetBy: localOffset)
+                    before.append(.rawHTML(String(html[..<idx])))
+                    after.append(.rawHTML(String(html[idx...])))
+                case .entity(let raw):
+                    let idx = raw.index(raw.startIndex, offsetBy: localOffset)
+                    before.append(.text(String(raw[..<idx])))
+                    after.append(.text(String(raw[idx...])))
+                case .escapedChar, .lineBreak:
+                    // Length 1 — cannot be split within; goes entirely before or after.
+                    // Since localOffset > 0 and nodeLen == 1, localOffset == 1 == nodeLen,
+                    // which means offset >= acc + nodeLen, handled above. This is unreachable.
+                    before.append(node)
                 }
             }
             acc += nodeLen
@@ -1255,12 +1649,26 @@ public enum EditingOps {
                 runs.append(LeafRun(path: path, text: s, isCode: false))
             case .code(let s):
                 runs.append(LeafRun(path: path, text: s, isCode: true))
-            case .bold(let children):
+            case .bold(let children, _):
                 walkFlatten(children, path: &path, into: &runs)
-            case .italic(let children):
+            case .italic(let children, _):
                 walkFlatten(children, path: &path, into: &runs)
             case .strikethrough(let children):
                 walkFlatten(children, path: &path, into: &runs)
+            case .link(let text, _):
+                walkFlatten(text, path: &path, into: &runs)
+            case .image(let alt, _):
+                walkFlatten(alt, path: &path, into: &runs)
+            case .autolink(let text, _):
+                runs.append(LeafRun(path: path, text: text, isCode: false))
+            case .escapedChar(let ch):
+                runs.append(LeafRun(path: path, text: String(ch), isCode: false))
+            case .lineBreak:
+                runs.append(LeafRun(path: path, text: "\n", isCode: false))
+            case .rawHTML(let html):
+                runs.append(LeafRun(path: path, text: html, isCode: false))
+            case .entity(let raw):
+                runs.append(LeafRun(path: path, text: raw, isCode: false))
             }
             path.removeLast()
         }
@@ -1331,7 +1739,12 @@ public enum EditingOps {
             switch inline {
             case .text: return .text(newText)
             case .code: return .code(newText)
-            case .bold, .italic, .strikethrough:
+            case .autolink: return .text(newText)
+            case .escapedChar: return .text(newText)
+            case .lineBreak: return .text(newText)
+            case .rawHTML: return .rawHTML(newText)
+            case .entity: return .entity(newText)
+            case .bold, .italic, .strikethrough, .link, .image:
                 // Path exhausted on a container: should not happen
                 // when paths come from `flatten`. Leave unchanged.
                 return inline
@@ -1340,21 +1753,29 @@ public enum EditingOps {
         let idx = path.first!
         let rest = Array(path.dropFirst())
         switch inline {
-        case .text, .code:
+        case .text, .code, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
             // Cannot descend into a leaf.
             return inline
-        case .bold(let children):
+        case .bold(let children, let marker):
             var c = children
             c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
-            return .bold(c)
-        case .italic(let children):
+            return .bold(c, marker: marker)
+        case .italic(let children, let marker):
             var c = children
             c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
-            return .italic(c)
+            return .italic(c, marker: marker)
         case .strikethrough(let children):
             var c = children
             c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
             return .strikethrough(c)
+        case .link(let text, let dest):
+            var c = text
+            c[idx] = replaceLeafText(in: text[idx], path: rest, newText: newText)
+            return .link(text: c, rawDestination: dest)
+        case .image(let alt, let dest):
+            var c = alt
+            c[idx] = replaceLeafText(in: alt[idx], path: rest, newText: newText)
+            return .image(alt: c, rawDestination: dest)
         }
     }
 
@@ -1407,6 +1828,8 @@ public enum EditingOps {
         case .list:           return "list"
         case .blockquote:     return "blockquote"
         case .horizontalRule: return "horizontalRule"
+        case .htmlBlock:      return "htmlBlock"
+        case .table:          return "table"
         case .blankLine:      return "blankLine"
         }
     }
@@ -1471,7 +1894,7 @@ public enum EditingOps {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
         }
         let block = projection.document.blocks[blockIndex]
-        guard case .list(let items) = block else {
+        guard case .list(let items, _) = block else {
             throw EditingError.unsupported(reason: "indentListItem: not a list block")
         }
 
@@ -1517,7 +1940,7 @@ public enum EditingOps {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
         }
         let block = projection.document.blocks[blockIndex]
-        guard case .list(let items) = block else {
+        guard case .list(let items, _) = block else {
             throw EditingError.unsupported(reason: "unindentListItem: not a list block")
         }
 
@@ -1565,7 +1988,7 @@ public enum EditingOps {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
         }
         let block = projection.document.blocks[blockIndex]
-        guard case .list(let items) = block else {
+        guard case .list(let items, _) = block else {
             throw EditingError.unsupported(reason: "exitListItem: not a list block")
         }
 
@@ -1920,7 +2343,7 @@ public enum EditingOps {
             let leadingWS = String(suffix.prefix(leading))
             newBlock = .heading(level: level, suffix: leadingWS + newText)
 
-        case .list(let items):
+        case .list(let items, _):
             let entries = flattenList(items)
             guard let (entryIdx, inlineOffset) = listEntryContaining(
                 entries: entries, offset: offsetStart, forInsertion: false
@@ -2000,10 +2423,11 @@ public enum EditingOps {
             let newBlock = Block.list(items: [item])
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
             let newSpan = result.newProjection.blockSpans[blockIndex]
-            result.newCursorPosition = newSpan.location + newSpan.length
+            // Place cursor after bullet + space (start of text content).
+            result.newCursorPosition = newSpan.location + 1
             return result
 
-        case .list(let items):
+        case .list(let items, _):
             // Unwrap: each top-level item becomes a paragraph.
             let newBlocks = items.map { item -> Block in
                 .paragraph(inline: item.inline)
@@ -2091,6 +2515,71 @@ public enum EditingOps {
         return result
     }
 
+    // MARK: - Block swap (move up/down)
+
+    /// Swap block at `blockIndex` with the block above it.
+    /// Returns the new projection and a splice covering both blocks.
+    public static func moveBlockUp(
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex > 0 else {
+            throw EditingError.unsupported(reason: "Cannot move first block up")
+        }
+        return try swapBlocks(blockIndex - 1, blockIndex, in: projection)
+    }
+
+    /// Swap block at `blockIndex` with the block below it.
+    public static func moveBlockDown(
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex < projection.document.blocks.count - 1 else {
+            throw EditingError.unsupported(reason: "Cannot move last block down")
+        }
+        return try swapBlocks(blockIndex, blockIndex + 1, in: projection)
+    }
+
+    /// Swap two adjacent blocks in the document. `indexA` must be < `indexB`.
+    private static func swapBlocks(
+        _ indexA: Int,
+        _ indexB: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        var newDoc = projection.document
+        let blockA = newDoc.blocks[indexA]
+        let blockB = newDoc.blocks[indexB]
+        newDoc.blocks[indexA] = blockB
+        newDoc.blocks[indexB] = blockA
+
+        // Splice covers both blocks + the separator between them.
+        let spanA = projection.blockSpans[indexA]
+        let spanB = projection.blockSpans[indexB]
+        let spliceStart = spanA.location
+        let spliceEnd = spanB.location + spanB.length
+        let spliceRange = NSRange(location: spliceStart, length: spliceEnd - spliceStart)
+
+        let newProjection = DocumentProjection(
+            document: newDoc,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont
+        )
+
+        // Extract the rendered content for the swapped region.
+        let newSpanA = newProjection.blockSpans[indexA]
+        let newSpanB = newProjection.blockSpans[indexB]
+        let newStart = newSpanA.location
+        let newEnd = newSpanB.location + newSpanB.length
+        let newRange = NSRange(location: newStart, length: newEnd - newStart)
+        let replacement = newProjection.attributed.attributedSubstring(from: newRange)
+
+        return EditResult(
+            newProjection: newProjection,
+            spliceRange: spliceRange,
+            spliceReplacement: replacement
+        )
+    }
+
     // MARK: - Todo checkbox toggle
 
     /// Toggle the checkbox on a list item at `storageIndex`.
@@ -2105,7 +2594,7 @@ public enum EditingOps {
         }
         let block = projection.document.blocks[blockIndex]
 
-        guard case .list(let items) = block else {
+        guard case .list(let items, _) = block else {
             throw EditingError.unsupported(reason: "toggleTodoCheckbox: not a list block")
         }
 
@@ -2174,10 +2663,11 @@ public enum EditingOps {
             let newBlock = Block.list(items: [item])
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
             let newSpan = result.newProjection.blockSpans[blockIndex]
-            result.newCursorPosition = newSpan.location + newSpan.length
+            // Place cursor after checkbox + space (start of text content).
+            result.newCursorPosition = newSpan.location + 1
             return result
 
-        case .list(let items):
+        case .list(let items, _):
             // If all top-level items have checkboxes, remove them.
             // Otherwise, add unchecked checkboxes to items that lack them.
             let allTodo = items.allSatisfy { $0.checkbox != nil }
@@ -2206,9 +2696,42 @@ public enum EditingOps {
             result.newCursorPosition = storageIndex
             return result
 
+        case .blankLine:
+            // Convert blank line to a todo item with empty text.
+            let item = ListItem(
+                indent: "", marker: "-",
+                afterMarker: " ",
+                checkbox: Checkbox(text: "[ ]", afterText: " "),
+                inline: [], children: []
+            )
+            let newBlock = Block.list(items: [item])
+            var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+            let newSpan = result.newProjection.blockSpans[blockIndex]
+            // Place cursor after checkbox + space (start of text content).
+            result.newCursorPosition = newSpan.location + 1
+            return result
+
+        case .heading(_, let suffix):
+            // Convert heading to a todo item, preserving the text.
+            let leading = leadingWhitespaceCount(in: suffix)
+            let trailing = trailingWhitespaceCount(in: suffix)
+            let displayed = String(suffix.dropFirst(leading).dropLast(trailing))
+            let item = ListItem(
+                indent: "", marker: "-",
+                afterMarker: " ",
+                checkbox: Checkbox(text: "[ ]", afterText: " "),
+                inline: [.text(displayed)], children: []
+            )
+            let newBlock = Block.list(items: [item])
+            var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+            let newSpan = result.newProjection.blockSpans[blockIndex]
+            // Place cursor after checkbox + space (start of text content).
+            result.newCursorPosition = newSpan.location + 1
+            return result
+
         default:
             throw EditingError.unsupported(
-                reason: "toggleTodoList: not a paragraph or list"
+                reason: "toggleTodoList: unsupported block type"
             )
         }
     }
@@ -2297,9 +2820,11 @@ public enum EditingOps {
                 }
                 // Descend.
                 switch node {
-                case .bold(let c): current = c
-                case .italic(let c): current = c
+                case .bold(let c, _): current = c
+                case .italic(let c, _): current = c
                 case .strikethrough(let c): current = c
+                case .link(let text, _): current = text
+                case .image(let alt, _): current = alt
                 default: return false
                 }
             }
@@ -2320,8 +2845,8 @@ public enum EditingOps {
 
         let wrapped: Inline
         switch trait {
-        case .bold:          wrapped = .bold(middle)
-        case .italic:        wrapped = .italic(middle)
+        case .bold:          wrapped = .bold(middle, marker: .asterisk)
+        case .italic:        wrapped = .italic(middle, marker: .asterisk)
         case .strikethrough: wrapped = .strikethrough(middle)
         case .code:
             // Code wrapping: flatten the middle to plain text.
@@ -2352,9 +2877,9 @@ public enum EditingOps {
             if nodeStart >= from && nodeEnd <= to {
                 // Fully inside the selection.
                 switch (node, trait) {
-                case (.bold(let children), .bold):
+                case (.bold(let children, _), .bold):
                     result.append(contentsOf: children)
-                case (.italic(let children), .italic):
+                case (.italic(let children, _), .italic):
                     result.append(contentsOf: children)
                 case (.strikethrough(let children), .strikethrough):
                     result.append(contentsOf: children)
@@ -2362,11 +2887,11 @@ public enum EditingOps {
                     result.append(.text(s))
                 default:
                     // Different trait or leaf — recurse if container.
-                    result.append(unwrapTraitInNode(node, trait: trait, from: from - nodeStart, to: to - nodeStart))
+                    result.append(contentsOf: unwrapTraitInNode(node, trait: trait, from: from - nodeStart, to: to - nodeStart))
                 }
             } else if nodeEnd > from && nodeStart < to {
                 // Partially overlaps — recurse into children.
-                result.append(unwrapTraitInNode(node, trait: trait, from: from - nodeStart, to: to - nodeStart))
+                result.append(contentsOf: unwrapTraitInNode(node, trait: trait, from: from - nodeStart, to: to - nodeStart))
             } else {
                 // Outside selection — keep unchanged.
                 result.append(node)
@@ -2376,34 +2901,100 @@ public enum EditingOps {
         return cleanInlines(result)
     }
 
+    /// Unwrap a trait within a single inline node that partially overlaps
+    /// the selection [from, to).
+    ///
+    /// When the node's own trait matches the target, we split the children
+    /// into three segments:
+    ///   1. [0, from)  — stays wrapped in the trait
+    ///   2. [from, to) — unwrapped (trait removed)
+    ///   3. [to, end)  — stays wrapped in the trait
+    ///
+    /// When the node's trait doesn't match, we recurse into children
+    /// preserving the wrapper.
     private static func unwrapTraitInNode(
         _ node: Inline,
         trait: InlineTrait,
         from: Int,
         to: Int
-    ) -> Inline {
+    ) -> [Inline] {
+        let clampedFrom = max(from, 0)
+
         switch node {
-        case .bold(let children):
+        case .bold(let children, let marker):
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
             if trait == .bold {
-                // Remove this bold wrapper, keep children.
-                // But we need to handle partial overlap — for simplicity,
-                // unwrap the entire node.
-                return .bold(unwrapTrait(children, trait: trait, from: max(from, 0), to: min(to, inlinesLength(children))))
+                return splitAndUnwrap(children, wrapWith: { .bold($0, marker: marker) }, from: clampedFrom, to: clampedTo)
             }
-            return .bold(unwrapTrait(children, trait: trait, from: max(from, 0), to: min(to, inlinesLength(children))))
-        case .italic(let children):
+            return [.bold(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo), marker: marker)]
+        case .italic(let children, let marker):
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
             if trait == .italic {
-                return .italic(unwrapTrait(children, trait: trait, from: max(from, 0), to: min(to, inlinesLength(children))))
+                return splitAndUnwrap(children, wrapWith: { .italic($0, marker: marker) }, from: clampedFrom, to: clampedTo)
             }
-            return .italic(unwrapTrait(children, trait: trait, from: max(from, 0), to: min(to, inlinesLength(children))))
+            return [.italic(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo), marker: marker)]
         case .strikethrough(let children):
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
             if trait == .strikethrough {
-                return .strikethrough(unwrapTrait(children, trait: trait, from: max(from, 0), to: min(to, inlinesLength(children))))
+                return splitAndUnwrap(children, wrapWith: { .strikethrough($0) }, from: clampedFrom, to: clampedTo)
             }
-            return .strikethrough(unwrapTrait(children, trait: trait, from: max(from, 0), to: min(to, inlinesLength(children))))
-        case .text, .code:
-            return node
+            return [.strikethrough(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
+        case .link(let text, let dest):
+            let len = inlinesLength(text)
+            let clampedTo = min(to, len)
+            return [.link(text: unwrapTrait(text, trait: trait, from: clampedFrom, to: clampedTo), rawDestination: dest)]
+        case .image(let alt, let dest):
+            let len = inlinesLength(alt)
+            let clampedTo = min(to, len)
+            return [.image(alt: unwrapTrait(alt, trait: trait, from: clampedFrom, to: clampedTo), rawDestination: dest)]
+        case .text, .code, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
+            return [node]
         }
+    }
+
+    /// Split children at [from, to), keeping the portions outside the
+    /// range wrapped via `wrapWith` and leaving the inside unwrapped.
+    private static func splitAndUnwrap(
+        _ children: [Inline],
+        wrapWith: ([Inline]) -> Inline,
+        from: Int,
+        to: Int
+    ) -> [Inline] {
+        var result: [Inline] = []
+        let len = inlinesLength(children)
+
+        // Part before selection — stays wrapped
+        if from > 0 {
+            let (beforePart, _) = splitInlines(children, at: from)
+            let cleaned = cleanInlines(beforePart)
+            if !cleaned.isEmpty {
+                result.append(wrapWith(cleaned))
+            }
+        }
+
+        // Part inside selection — unwrapped (trait removed)
+        let innerStart = max(from, 0)
+        let innerEnd = min(to, len)
+        if innerStart < innerEnd {
+            let (_, afterStart) = splitInlines(children, at: innerStart)
+            let (middle, _) = splitInlines(afterStart, at: innerEnd - innerStart)
+            let cleaned = cleanInlines(middle)
+            result.append(contentsOf: cleaned)
+        }
+
+        // Part after selection — stays wrapped
+        if to < len {
+            let (_, afterPart) = splitInlines(children, at: to)
+            let cleaned = cleanInlines(afterPart)
+            if !cleaned.isEmpty {
+                result.append(wrapWith(cleaned))
+            }
+        }
+
+        return result
     }
 
     /// Remove empty text nodes and merge adjacent text nodes.
@@ -2421,18 +3012,39 @@ public enum EditingOps {
             case .code(let s):
                 if s.isEmpty { continue }
                 result.append(node)
-            case .bold(let children):
+            case .bold(let children, let marker):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
-                result.append(.bold(cleaned))
-            case .italic(let children):
+                result.append(.bold(cleaned, marker: marker))
+            case .italic(let children, let marker):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
-                result.append(.italic(cleaned))
+                result.append(.italic(cleaned, marker: marker))
             case .strikethrough(let children):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
                 result.append(.strikethrough(cleaned))
+            case .link(let text, let dest):
+                let cleaned = cleanInlines(text)
+                if cleaned.isEmpty { continue }
+                result.append(.link(text: cleaned, rawDestination: dest))
+            case .image(let alt, let dest):
+                let cleaned = cleanInlines(alt)
+                if cleaned.isEmpty { continue }
+                result.append(.image(alt: cleaned, rawDestination: dest))
+            case .autolink(let text, _):
+                if text.isEmpty { continue }
+                result.append(node)
+            case .escapedChar:
+                result.append(node)
+            case .lineBreak:
+                result.append(node)
+            case .rawHTML(let html):
+                if html.isEmpty { continue }
+                result.append(node)
+            case .entity(let raw):
+                if raw.isEmpty { continue }
+                result.append(node)
             }
         }
         return result

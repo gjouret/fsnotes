@@ -26,6 +26,24 @@ class EditingOperationsTests: XCTestCase {
         return DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
     }
 
+    /// Return the storage offset where the inline content of a list
+    /// item begins. `blockIndex` selects the list block (default 0),
+    /// `itemIndex` selects the flat-list entry (default 0). The offset
+    /// is derived from the projection — NOT hardcoded — so it adapts
+    /// automatically when the rendering format changes.
+    private func listInlineStart(
+        in proj: DocumentProjection,
+        blockIndex: Int = 0,
+        itemIndex: Int = 0
+    ) -> Int {
+        guard case .list(let items, _) = proj.document.blocks[blockIndex] else {
+            fatalError("Block \(blockIndex) is not a list")
+        }
+        let entries = EditingOps.flattenListPublic(items)
+        let entry = entries[itemIndex]
+        return proj.blockSpans[blockIndex].location + entry.startOffset + entry.prefixLength
+    }
+
     /// Apply an EditResult's splice to the old attributed string and
     /// assert it equals the new projection's rendered output. This is
     /// the "splice invariant": splicing the old storage produces the
@@ -52,8 +70,8 @@ class EditingOperationsTests: XCTestCase {
         let r = try EditingOps.insert("X", at: 0, in: p)
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "Xhello\n")
         XCTAssertEqual(r.newProjection.attributed.string, "Xhello\n")
-        XCTAssertEqual(r.spliceRange, NSRange(location: 0, length: 5))
-        XCTAssertEqual(r.spliceReplacement.string, "Xhello")
+        XCTAssertEqual(r.spliceRange, NSRange(location: 0, length: 0))
+        XCTAssertEqual(r.spliceReplacement.string, "X")
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -126,9 +144,9 @@ class EditingOperationsTests: XCTestCase {
         let r = try EditingOps.insert("X", at: 8, in: p)
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "# Title\nboXdy\n")
         XCTAssertEqual(r.newProjection.attributed.string, "Title\nboXdy\n")
-        // Splice range must equal block[1]'s OLD span, not the whole document
-        XCTAssertEqual(r.spliceRange, NSRange(location: 6, length: 4))
-        XCTAssertEqual(r.spliceReplacement.string, "boXdy")
+        // Splice range is character-granular: just the insertion point
+        XCTAssertEqual(r.spliceRange, NSRange(location: 8, length: 0))
+        XCTAssertEqual(r.spliceReplacement.string, "X")
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -317,9 +335,7 @@ class EditingOperationsTests: XCTestCase {
         let r = try EditingOps.insert("\n", at: 5, in: p)
         XCTAssertEqual(r.newProjection.attributed.string, "hello\n\n world\n")
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "hello\n\n world\n")
-        // Splice range = old block's span. Replacement = new-blocks rendered, joined by \n.
-        XCTAssertEqual(r.spliceRange, NSRange(location: 0, length: 11))
-        XCTAssertEqual(r.spliceReplacement.string, "hello\n\n world")
+        // Splice is character-granular: only the changed portion.
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -328,7 +344,6 @@ class EditingOperationsTests: XCTestCase {
         // Split at offset 0 → [paragraph(""), paragraph("hello")]
         let r = try EditingOps.insert("\n", at: 0, in: p)
         XCTAssertEqual(r.newProjection.attributed.string, "\nhello\n")
-        XCTAssertEqual(r.spliceReplacement.string, "\nhello")
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -337,7 +352,6 @@ class EditingOperationsTests: XCTestCase {
         // Split at offset 5 (end of "hello") → [paragraph("hello"), paragraph("")]
         let r = try EditingOps.insert("\n", at: 5, in: p)
         XCTAssertEqual(r.newProjection.attributed.string, "hello\n\n")
-        XCTAssertEqual(r.spliceReplacement.string, "hello\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -402,9 +416,7 @@ class EditingOperationsTests: XCTestCase {
         let r = try EditingOps.insert("\n", at: 10, in: p)
         // Expected: "Title\nbody\n\n text\n" (blankLine between split halves).
         XCTAssertEqual(r.newProjection.attributed.string, "Title\nbody\n\n text\n")
-        // Splice range must be block[1]'s OLD span, not the whole doc.
-        XCTAssertEqual(r.spliceRange, NSRange(location: 6, length: 9))
-        XCTAssertEqual(r.spliceReplacement.string, "body\n\n text")
+        // Splice is character-granular: only the changed portion.
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -510,20 +522,52 @@ class EditingOperationsTests: XCTestCase {
         assertSpliceInvariant(old: p, result: r)
     }
 
-    func test_merge_nonAdjacentBlocks_throws() {
-        // Three blocks, delete spanning blocks 0 and 2 → throws.
+    func test_delete_multipleBlocks_succeeds() throws {
+        // Three paragraphs: "a", "b", "c". Delete all content across
+        // all 3 blocks. Should produce a single empty paragraph.
         let doc = Document(blocks: [
             .paragraph(inline: [.text("a")]),
             .paragraph(inline: [.text("b")]),
             .paragraph(inline: [.text("c")])
         ], trailingNewline: true)
         let p = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
-        // Rendered "a\nb\nc\n". Delete [0,5) spans blocks 0 and 2.
-        XCTAssertThrowsError(try EditingOps.delete(range: NSRange(location: 0, length: 5), in: p)) { err in
-            guard case EditingError.crossBlockRange = err else {
-                XCTFail("expected crossBlockRange, got \(err)"); return
-            }
-        }
+        XCTAssertEqual(p.attributed.string, "a\nb\nc\n")
+        // Delete [0,5) spans blocks 0 through 2 — removes "a\nb\nc".
+        let r = try EditingOps.delete(range: NSRange(location: 0, length: 5), in: p)
+        // Should leave empty paragraph.
+        XCTAssertEqual(r.newProjection.document.blocks.count, 1)
+    }
+
+    func test_delete_middleBlocks_mergesBoundaries() throws {
+        // Four paragraphs: "abc", "xx", "yy", "def". Delete selection
+        // spanning from middle of first to middle of last: "c\nxx\nyy\nd"
+        let doc = Document(blocks: [
+            .paragraph(inline: [.text("abc")]),
+            .paragraph(inline: [.text("xx")]),
+            .paragraph(inline: [.text("yy")]),
+            .paragraph(inline: [.text("def")])
+        ], trailingNewline: true)
+        let p = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
+        XCTAssertEqual(p.attributed.string, "abc\nxx\nyy\ndef\n")
+        // Delete [2,11): "c\nxx\nyy\nd" → keeps "ab" + "ef"
+        let r = try EditingOps.delete(range: NSRange(location: 2, length: 9), in: p)
+        XCTAssertEqual(r.newProjection.attributed.string, "abef\n")
+        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "abef\n")
+    }
+
+    func test_delete_multipleBlocks_preservesFormatting() throws {
+        // Delete across 3 blocks, boundary blocks have formatting.
+        let doc = Document(blocks: [
+            .paragraph(inline: [.bold([.text("bold")])]),
+            .paragraph(inline: [.text("middle")]),
+            .paragraph(inline: [.italic([.text("italic")])])
+        ], trailingNewline: true)
+        let p = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
+        XCTAssertEqual(p.attributed.string, "bold\nmiddle\nitalic\n")
+        // Delete from end of bold to start of italic: "d\nmiddle\n"
+        // Keeps "bol" from first block, "italic" from last.
+        let r = try EditingOps.delete(range: NSRange(location: 3, length: 9), in: p)
+        XCTAssertEqual(r.newProjection.attributed.string, "bolitalic\n")
     }
 
     func test_merge_headingWithParagraph_succeeds() throws {
@@ -536,6 +580,95 @@ class EditingOperationsTests: XCTestCase {
         // Heading is downgraded to paragraph.
         XCTAssertTrue(serialized.contains("Titlehello"), "Merge should combine heading text with paragraph text")
         XCTAssertFalse(serialized.contains("#"), "Heading marker should not survive merge into paragraph")
+    }
+
+    func test_merge_blankLineWithHeading_preservesHeading() throws {
+        // BlankLine + heading: the blank is removed, heading is preserved.
+        let p = project("\n## Hello\n")
+        // Block 0 = blankLine (rendered as "\n" → span [0,0) empty),
+        // Block 1 = heading "Hello".
+        // Delete separator between blankLine and heading.
+        let blankSpan = p.blockSpans[0]
+        let headingSpan = p.blockSpans[1]
+        let sepLoc = blankSpan.location + blankSpan.length
+        let r = try EditingOps.delete(range: NSRange(location: sepLoc, length: 1), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("## Hello"), "Heading should be preserved when merging with blank line")
+    }
+
+    func test_merge_paragraphWithHeading_producesParagraph() throws {
+        // Paragraph + heading: result is a paragraph (heading demoted).
+        let p = project("text\n## Hello\n")
+        // Delete the last char of paragraph + separator + first char of heading
+        // to force cross-block merge.
+        let paraSpan = p.blockSpans[0]
+        let r = try EditingOps.delete(range: NSRange(location: paraSpan.length - 1, length: 2), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertFalse(serialized.contains("#"), "Heading should be demoted to paragraph when merging into paragraph")
+    }
+
+    // MARK: - Block swap (move up/down)
+
+    func test_moveBlockUp_swapsWithPrevious() throws {
+        let p = project("First\n## Second\n")
+        let r = try EditingOps.moveBlockUp(blockIndex: 1, in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.hasPrefix("## Second"), "Heading should move to top")
+        XCTAssertTrue(serialized.contains("\nFirst\n"), "Paragraph should move below heading")
+    }
+
+    func test_moveBlockDown_swapsWithNext() throws {
+        let p = project("## Title\nbody\n")
+        let r = try EditingOps.moveBlockDown(blockIndex: 0, in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.hasPrefix("body"), "Paragraph should move to top")
+        XCTAssertTrue(serialized.contains("\n## Title\n"), "Heading should move below paragraph")
+    }
+
+    func test_moveBlockUp_firstBlock_throws() {
+        let p = project("First\nSecond\n")
+        XCTAssertThrowsError(try EditingOps.moveBlockUp(blockIndex: 0, in: p))
+    }
+
+    func test_moveBlockDown_lastBlock_throws() {
+        let p = project("First\nSecond\n")
+        let lastIdx = p.document.blocks.count - 1
+        XCTAssertThrowsError(try EditingOps.moveBlockDown(blockIndex: lastIdx, in: p))
+    }
+
+    // MARK: - Cursor position after Return in lists/blockquotes
+
+    func test_returnInList_cursorGoesToNewItem() throws {
+        // "- hello" → press Return after "hel" → "- hel\n- lo"
+        // Cursor should be at start of "lo" (after the bullet prefix of the new item).
+        let p = project("- hello\n")
+        let inlineStart = listInlineStart(in: p)
+        let r = try EditingOps.insert("\n", at: inlineStart + 3, in: p) // 3 chars into "hello"
+        let rendered = r.newProjection.attributed.string
+        // Should contain two items: "• hel" and "• lo".
+        XCTAssertTrue(rendered.contains("lo"), "New item should contain 'lo'")
+        // Cursor should be at the start of "lo", not at position 0.
+        XCTAssertGreaterThan(r.newCursorPosition, 0, "Cursor must not be at position 0")
+        // Cursor should be after the "• " prefix of the new item.
+        let cursorChar = rendered[rendered.index(rendered.startIndex, offsetBy: r.newCursorPosition)]
+        XCTAssertEqual(String(cursorChar), "l", "Cursor should be at start of 'lo' text, got char at pos \(r.newCursorPosition): '\(cursorChar)'")
+    }
+
+    func test_returnInList_cursorGoesToEndOfPrefix() throws {
+        // "- abc" → Return at end → "- abc\n- "
+        // Cursor should be at the new empty item (after prefix).
+        let p = project("- abc\n")
+        let inlineStart = listInlineStart(in: p)
+        let r = try EditingOps.insert("\n", at: inlineStart + 3, in: p) // end of "abc"
+        XCTAssertGreaterThan(r.newCursorPosition, 0, "Cursor must not jump to top")
+    }
+
+    func test_returnInBlockquote_cursorGoesToNewLine() throws {
+        // "> hello" → Return after "hel" → "> hel\n> lo"
+        let p = project("> hello\n")
+        // Rendered: "  hello\n" (2-char indent). "hel" starts at 2, so offset 5.
+        let r = try EditingOps.insert("\n", at: 5, in: p)
+        XCTAssertGreaterThan(r.newCursorPosition, 0, "Cursor must not jump to top")
     }
 
     // MARK: - Multi-line paste (Multi-line paste)
@@ -651,36 +784,36 @@ class EditingOperationsTests: XCTestCase {
 
     func test_insert_list_singleItem() throws {
         let p = project("- hello\n")
-        // Rendered: "• hello" (7 chars). Prefix "• " = 2 chars, inline "hello" = 5 chars.
+        let inl = listInlineStart(in: p)
         // Insert "X" at inline offset 2 → "heXllo"
-        let r = try EditingOps.insert("X", at: 4, in: p) // 2 (prefix) + 2 (inline offset)
+        let r = try EditingOps.insert("X", at: inl + 2, in: p)
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "- heXllo\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
     func test_insert_list_multiItem() throws {
         let p = project("- one\n- two\n")
-        // Rendered: "• one\n• two" (11 chars).
-        // Item 0: prefix "• " (2) + "one" (3) = 5 chars, then "\n"
-        // Item 1: prefix "• " (2) + "two" (3) = 5 chars
-        // Insert "X" at start of second item's inline content: offset = 6 + 2 = 8
-        let r = try EditingOps.insert("X", at: 8, in: p)
+        // Insert "X" at start of second item's inline content.
+        let inl1 = listInlineStart(in: p, itemIndex: 1)
+        let r = try EditingOps.insert("X", at: inl1, in: p)
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "- one\n- Xtwo\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
     func test_delete_list_item() throws {
         let p = project("- hello\n")
+        let inl = listInlineStart(in: p)
         // Delete "l" at inline offset 3 → "helo"
-        let r = try EditingOps.delete(range: NSRange(location: 5, length: 1), in: p) // 2 (prefix) + 3
+        let r = try EditingOps.delete(range: NSRange(location: inl + 3, length: 1), in: p)
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "- helo\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
     func test_list_returnKey_splitsItem() throws {
         let p = project("- hello\n")
+        let inl = listInlineStart(in: p)
         // Split "hello" at offset 3 → "hel" and "lo"
-        let r = try EditingOps.insert("\n", at: 5, in: p) // 2 (prefix) + 3
+        let r = try EditingOps.insert("\n", at: inl + 3, in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
         XCTAssertEqual(serialized, "- hel\n- lo\n")
     }
@@ -688,8 +821,9 @@ class EditingOperationsTests: XCTestCase {
     func test_insert_list_roundTrip() throws {
         let md = "- one\n- two\n- three\n"
         let p = project(md)
-        // Insert at end of first item
-        let r = try EditingOps.insert("!", at: 5, in: p) // prefix 2 + "one" 3
+        let inl = listInlineStart(in: p)
+        // Insert at end of first item ("one" = 3 chars)
+        let r = try EditingOps.insert("!", at: inl + 3, in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
         let reparsed = MarkdownParser.parse(serialized)
         let reserialized = MarkdownSerializer.serialize(reparsed)
@@ -700,17 +834,17 @@ class EditingOperationsTests: XCTestCase {
 
     func test_insert_blockquote_singleLine() throws {
         let p = project("> hello\n")
-        // Rendered: "  hello" (7 chars). Prefix "  " = 2 chars (level 1 × 2), inline "hello" = 5.
+        // Rendered: "hello" (5 chars). No space prefix — indentation is via paragraph style.
         // Insert "X" at inline offset 2 → "heXllo"
-        let r = try EditingOps.insert("X", at: 4, in: p) // 2 (prefix) + 2
+        let r = try EditingOps.insert("X", at: 2, in: p)
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "> heXllo\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
     func test_delete_blockquote_line() throws {
         let p = project("> hello\n")
-        // Delete "l" at inline offset 3
-        let r = try EditingOps.delete(range: NSRange(location: 5, length: 1), in: p) // 2 + 3
+        // Delete "l" at inline offset 3 (rendered: "hello", offset 3 = "l")
+        let r = try EditingOps.delete(range: NSRange(location: 3, length: 1), in: p)
         XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "> helo\n")
         assertSpliceInvariant(old: p, result: r)
     }
@@ -718,7 +852,7 @@ class EditingOperationsTests: XCTestCase {
     func test_blockquote_returnKey_splitsLine() throws {
         let p = project("> hello\n")
         // Split at offset 3 in inline → "> hel" and "> lo"
-        let r = try EditingOps.insert("\n", at: 5, in: p)
+        let r = try EditingOps.insert("\n", at: 3, in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
         XCTAssertEqual(serialized, "> hel\n> lo\n")
     }
@@ -727,7 +861,8 @@ class EditingOperationsTests: XCTestCase {
         let md = "> line one\n> line two\n"
         let p = project(md)
         // Insert at end of first line's inline content
-        let r = try EditingOps.insert("!", at: 10, in: p) // prefix 2 + "line one" 8
+        // Rendered: "line one\nline two" — "line one" = 8 chars
+        let r = try EditingOps.insert("!", at: 8, in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
         let reparsed = MarkdownParser.parse(serialized)
         let reserialized = MarkdownSerializer.serialize(reparsed)
@@ -754,5 +889,120 @@ class EditingOperationsTests: XCTestCase {
             MarkdownSerializer.serialize(r.newProjection.document),
             "---\n"
         )
+    }
+
+    // MARK: - List Return key cursor position
+
+    func test_list_returnKey_cursorPosition_endOfFirstItem() throws {
+        let p = project("- item one\n- item two\n")
+        let inl0 = listInlineStart(in: p, itemIndex: 0)
+        // Press Return at end of "item one" (8 chars)
+        let r = try EditingOps.insert("\n", at: inl0 + 8, in: p)
+
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertEqual(serialized, "- item one\n- \n- item two\n")
+
+        // Cursor should be at inline start of new empty item, not 0.
+        let newInl = listInlineStart(in: r.newProjection, itemIndex: 1)
+        XCTAssertGreaterThan(r.newCursorPosition, 0,
+            "Cursor should not be at position 0 (top of list)")
+        XCTAssertEqual(r.newCursorPosition, newInl,
+            "Cursor should be at start of new item's inline content")
+    }
+
+    func test_list_returnKey_cursorPosition_midItem() throws {
+        let p = project("- hello\n")
+        let inl = listInlineStart(in: p)
+        // Split "hello" 3 chars in → "hel"|"lo"
+        let r = try EditingOps.insert("\n", at: inl + 3, in: p)
+
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertEqual(serialized, "- hel\n- lo\n")
+
+        // Cursor should be at inline start of second item ("lo").
+        let newInl1 = listInlineStart(in: r.newProjection, itemIndex: 1)
+        XCTAssertGreaterThan(r.newCursorPosition, 0,
+            "Cursor should not be at position 0 (top of list)")
+        XCTAssertEqual(r.newCursorPosition, newInl1,
+            "Cursor should be at start of second item's inline content")
+    }
+
+    func test_list_returnKey_cursorPosition_threeItems_splitSecond() throws {
+        let p = project("- one\n- two\n- three\n")
+        let inl1 = listInlineStart(in: p, itemIndex: 1)
+        // End of item 1 inline ("two" = 3 chars)
+        let r = try EditingOps.insert("\n", at: inl1 + 3, in: p)
+
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertEqual(serialized, "- one\n- two\n- \n- three\n")
+
+        // New empty item is at index 2 in the result.
+        let newInl2 = listInlineStart(in: r.newProjection, itemIndex: 2)
+        XCTAssertGreaterThan(r.newCursorPosition, 0,
+            "Cursor should not be at position 0 (top of list)")
+        XCTAssertEqual(r.newCursorPosition, newInl2,
+            "Cursor should be at start of new empty item's inline content")
+    }
+
+    func test_list_returnKey_cursorPosition_todoItem() throws {
+        let p = project("- [ ] buy milk\n")
+        let inl = listInlineStart(in: p)
+        // End of inline "buy milk" (8 chars)
+        let r = try EditingOps.insert("\n", at: inl + 8, in: p)
+
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertEqual(serialized, "- [ ] buy milk\n- [ ] \n")
+
+        XCTAssertGreaterThan(r.newCursorPosition, 0,
+            "Cursor should not be at position 0 (top of list) for todo items")
+    }
+
+    func test_list_returnKey_cursorPosition_afterParagraph() throws {
+        let p = project("Hello world\n\n- item one\n- item two\n")
+        // Find list block index dynamically.
+        let listBlockIdx = p.document.blocks.firstIndex {
+            if case .list = $0 { return true }; return false
+        }!
+        let inl0 = listInlineStart(in: p, blockIndex: listBlockIdx, itemIndex: 0)
+        // End of "item one" (8 chars)
+        let r = try EditingOps.insert("\n", at: inl0 + 8, in: p)
+
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("- item one\n- \n- item two\n"),
+            "Should split item one and insert empty item")
+
+        let listSpan = p.blockSpans[listBlockIdx]
+        XCTAssertGreaterThan(r.newCursorPosition, listSpan.location,
+            "Cursor should be within the list block, not at document start")
+    }
+
+    func test_list_returnKey_cursorPosition_nestedItem() throws {
+        let p = project("- parent\n  - child\n")
+        let inl0 = listInlineStart(in: p, itemIndex: 0)
+        // End of "parent" (6 chars)
+        let r = try EditingOps.insert("\n", at: inl0 + 6, in: p)
+
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("- parent\n"),
+            "Parent item should be preserved")
+        XCTAssertGreaterThan(r.newCursorPosition, inl0 + 6,
+            "Cursor should be past parent item, not at top of list")
+    }
+
+    func test_list_returnKey_cursorNotAtZero() throws {
+        let p = project("- hello\n")
+        let inl = listInlineStart(in: p)
+        // End of "hello" (5 chars)
+        let r = try EditingOps.insert("\n", at: inl + 5, in: p)
+
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertEqual(serialized, "- hello\n- \n")
+
+        // Cursor should be at inline start of new empty item.
+        let newInl1 = listInlineStart(in: r.newProjection, itemIndex: 1)
+        XCTAssertNotEqual(r.newCursorPosition, 0,
+            "BUG: cursor went to position 0 (top of list) instead of new item")
+        XCTAssertEqual(r.newCursorPosition, newInl1,
+            "Cursor should be at inline start of new empty item")
     }
 }

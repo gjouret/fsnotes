@@ -68,24 +68,29 @@ final class SidebarDisplayController {
     }
 
     func toggleVisibility() {
+        guard let splitView = viewController.sidebarSplitView,
+              let first = splitView.subviews.first else { return }
+
         if isVisible {
-            UserDefaultsManagement.sidebarTableWidth = viewController.sidebarSplitView.subviews[0].frame.width
-            viewController.sidebarSplitView.setPosition(0, ofDividerAt: 0)
+            UserDefaultsManagement.sidebarTableWidth = first.frame.width
+            splitView.setPosition(0, ofDividerAt: 0)
         } else {
-            viewController.sidebarSplitView.setPosition(UserDefaultsManagement.sidebarTableWidth, ofDividerAt: 0)
+            splitView.setPosition(UserDefaultsManagement.sidebarTableWidth, ofDividerAt: 0)
             viewController.reloadSideBar()
         }
 
-        viewController.editor.updateTextContainerInset()
+        viewController.editor?.updateTextContainerInset()
     }
 
     func checkConstraint() {
-        if viewController.sidebarSplitView.subviews[0].frame.width > 50 {
+        let sidebarWidth = viewController.sidebarSplitView?.subviews.first?.frame.width ?? 0
+
+        if sidebarWidth > 50 {
             viewController.searchTopConstraint.constant = 8
             return
         }
 
-        if UserDefaultsManagement.hideSidebarTable || viewController.sidebarSplitView.subviews[0].frame.width < 50 {
+        if UserDefaultsManagement.hideSidebarTable || sidebarWidth < 50 {
             viewController.searchTopConstraint.constant = 25
             return
         }
@@ -94,7 +99,8 @@ final class SidebarDisplayController {
     }
 
     var isVisible: Bool {
-        return Int(viewController.sidebarSplitView.subviews[0].frame.width) != 0
+        guard let first = viewController.sidebarSplitView?.subviews.first else { return false }
+        return Int(first.frame.width) != 0
     }
 
     private func select(item: Any?) {

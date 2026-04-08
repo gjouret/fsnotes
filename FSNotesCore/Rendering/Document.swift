@@ -23,9 +23,21 @@ public struct Document: Equatable {
     /// that serialize(parse(x)) == x byte-equal.
     public var trailingNewline: Bool
 
-    public init(blocks: [Block] = [], trailingNewline: Bool = true) {
+    /// Link reference definitions collected during parsing. Stored on
+    /// the Document so that renderers (e.g. CommonMarkHTMLRenderer) can
+    /// resolve reference links when re-parsing heading suffixes.
+    /// Not compared for Equatable — structural equality is block-based.
+    public var refDefs: [String: (url: String, title: String?)]
+
+    public init(blocks: [Block] = [], trailingNewline: Bool = true,
+                refDefs: [String: (url: String, title: String?)] = [:]) {
         self.blocks = blocks
         self.trailingNewline = trailingNewline
+        self.refDefs = refDefs
+    }
+
+    public static func == (lhs: Document, rhs: Document) -> Bool {
+        lhs.blocks == rhs.blocks && lhs.trailingNewline == rhs.trailingNewline
     }
 }
 
@@ -78,7 +90,9 @@ public enum Block: Equatable {
     /// indent/marker/whitespace verbatim for byte-equal round-trip.
     /// Nesting is represented by each item's `children` (siblings at
     /// deeper indentation).
-    case list(items: [ListItem])
+    /// `loose` is true when blank lines separate list items (affects
+    /// HTML rendering: loose items are wrapped in `<p>` tags).
+    case list(items: [ListItem], loose: Bool = false)
 
     /// A blockquote: a run of consecutive `>`-prefixed lines. Each
     /// line carries its verbatim prefix (`>`, `> `, `>> `, etc.) so
@@ -92,6 +106,18 @@ public enum Block: Equatable {
     /// byte-equal round-trip. The renderer always emits a normalized
     /// visual representation and does NOT read these fields.
     case horizontalRule(character: Character, length: Int)
+
+    /// An HTML block: raw HTML content that should be passed through
+    /// verbatim. Stored as the raw source lines joined by newlines.
+    /// CommonMark defines 7 types of HTML blocks; all are stored the
+    /// same way — just the raw source text.
+    case htmlBlock(raw: String)
+
+    /// A pipe-delimited markdown table. `header` holds the raw cell
+    /// strings from the header row, `alignments` from the separator
+    /// row, and `rows` from the data rows. The `raw` string preserves
+    /// the exact source text for byte-equal round-trip serialization.
+    case table(header: [String], alignments: [TableAlignment], rows: [[String]], raw: String)
 
     /// A literal blank line separating blocks.
     case blankLine
@@ -149,6 +175,9 @@ public struct ListItem: Equatable {
     public let checkbox: Checkbox?   // nil for regular items, non-nil for todo items
     public let inline: [Inline]      // parsed inline content (no markers)
     public let children: [ListItem]  // nested items at deeper indentation
+    /// True if one or more blank lines preceded this item in the source.
+    /// Used for tight/loose detection and round-trip serialization.
+    public let blankLineBefore: Bool
 
     public init(
         indent: String,
@@ -156,7 +185,8 @@ public struct ListItem: Equatable {
         afterMarker: String,
         checkbox: Checkbox? = nil,
         inline: [Inline],
-        children: [ListItem]
+        children: [ListItem],
+        blankLineBefore: Bool = false
     ) {
         self.indent = indent
         self.marker = marker
@@ -164,6 +194,7 @@ public struct ListItem: Equatable {
         self.checkbox = checkbox
         self.inline = inline
         self.children = children
+        self.blankLineBefore = blankLineBefore
     }
 
     /// Whether this item is a todo (has a checkbox).
@@ -191,12 +222,31 @@ public struct BlockquoteLine: Equatable {
     }
 }
 
+/// Column alignment in a markdown table.
+public enum TableAlignment: Equatable {
+    case left, center, right, none
+}
+
+/// The delimiter character used for emphasis markers. Carried on bold/italic
+/// so that `_text_` round-trips as `_text_` (not `*text*`).
+public enum EmphasisMarker: Equatable {
+    case asterisk   // * or **
+    case underscore // _ or __
+}
+
 /// An inline run — the leaf content inside a paragraph, heading, list
 /// item, etc.
 public indirect enum Inline: Equatable {
     case text(String)
-    case bold([Inline])          // **…**
-    case italic([Inline])        // *…*
-    case strikethrough([Inline]) // ~~…~~
-    case code(String)            // `…` — content is raw, never parsed
+    case bold([Inline], marker: EmphasisMarker = .asterisk)
+    case italic([Inline], marker: EmphasisMarker = .asterisk)
+    case strikethrough([Inline])       // ~~…~~
+    case code(String)                  // `…` — content is raw, never parsed
+    case link(text: [Inline], rawDestination: String)       // [text](url "title")
+    case image(alt: [Inline], rawDestination: String)       // ![alt](url "title")
+    case autolink(text: String, isEmail: Bool)              // <url> or <email>
+    case escapedChar(Character)        // \* \[ etc. — literal escaped character
+    case lineBreak(raw: String)        // "  \n" or "\\\n" — hard line break
+    case rawHTML(String)               // <tag>, </tag>, <!-- -->, etc.
+    case entity(String)                // &amp; &#123; &#x1F; — raw entity text
 }

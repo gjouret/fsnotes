@@ -42,7 +42,7 @@ extension EditTextView {
             return
         }
         let saving = attributedStringForSaving()
-        bmLog("💾 save (legacy): \(note.title) — \(saving.string.prefix(60))")
+        bmLog("💾 save (source-mode): \(note.title) — \(saving.string.prefix(60))")
         note.save(attributed: saving)
     }
 
@@ -105,6 +105,11 @@ extension EditTextView {
         typingAttributes.removeAll()
         typingAttributes[.font] = UserDefaultsManagement.noteFont
 
+        // Ensure left margin includes gutter width when in WYSIWYG mode.
+        // This prevents the "narrow left margin on startup" bug where
+        // configure() ran before hideSyntax was set.
+        updateTextContainerInset()
+
         guard let storage = textStorage else { return }
 
         if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {
@@ -113,7 +118,7 @@ extension EditTextView {
             removeAllInlinePDFViews()
 
             // Block-model renderer: parses markdown → Document → rendered
-            // attributed string. Falls back to legacy for source mode.
+            // attributed string. Falls back to source-mode pipeline if needed.
             if !fillViaBlockModel(note: note) {
                 storage.setAttributedString(content)
             }
@@ -128,10 +133,14 @@ extension EditTextView {
 
         // When the block-model pipeline rendered this note, all styling
         // (paragraph styles, syntax hiding, code block rendering) is
-        // already handled — skip legacy post-processing.
+        // already handled — skip source-mode post-processing.
+        //
+        // IMPORTANT: All async work (tables, PDFs) that can change layout
+        // must complete BEFORE we restore scroll position. We batch them
+        // into a single async block and restore scroll position at the
+        // end, keeping the scroll lock held throughout.
         if documentProjection == nil {
-            // Legacy path: fence lines hidden by phase4_hideSyntax
-            // (per-char kern + clear color), styled by phase5_paragraphStyles.
+            // Source-mode path
             if NotesTextProcessor.hideSyntax {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self,
@@ -142,26 +151,34 @@ extension EditTextView {
                         processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
                     }
                     self.renderTables()
+                    self.renderPDFsAndRestoreScroll(note: note)
                 }
+            } else {
+                viewDelegate?.restoreScrollPosition()
+            }
+        } else {
+            // Block-model path.
+            if NotesTextProcessor.hideSyntax {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self,
+                          let storage = self.textStorage,
+                          let processor = self.textStorageProcessor else { return }
+                    // Render mermaid/math code blocks to images.
+                    // syncBlocksFromProjection already populated the
+                    // source-mode blocks array, so codeBlockRanges works.
+                    let codeRanges = processor.codeBlockRanges
+                    if !codeRanges.isEmpty {
+                        processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
+                    }
+                    // Render tables via the source-mode mechanism.
+                    self.renderTables()
+                    self.renderPDFsAndRestoreScroll(note: note)
+                }
+            } else {
+                viewDelegate?.restoreScrollPosition()
             }
         }
 
-        // Render inline PDF viewers (works in both block-model and legacy pipelines).
-        // Must run after all text is in storage so regex scanning finds PDF references.
-        if NotesTextProcessor.hideSyntax {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self,
-                      let storage = self.textStorage else { return }
-                let containerWidth = self.textContainer?.size.width ?? self.frame.width
-                PDFAttachmentProcessor.renderPDFAttachments(
-                    in: storage,
-                    note: note,
-                    containerWidth: containerWidth
-                )
-            }
-        }
-
-        viewDelegate?.restoreScrollPosition()
         needsDisplay = true
     }
 
@@ -200,10 +217,8 @@ extension EditTextView {
     }
 
     func saveSelectedRange() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, let note = self.note else { return }
-            note.setSelectedRange(range: self.selectedRange)
-        }
+        guard let note = self.note else { return }
+        note.setSelectedRange(range: self.selectedRange)
     }
 
     func getCursorScrollFraction() -> CGFloat {
@@ -230,12 +245,30 @@ extension EditTextView {
         return search.stringValue
     }
 
-    public func scrollToCursor() {
-        let cursorRange = NSMakeRange(self.selectedRange().location, 0)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.scrollRangeToVisible(cursorRange)
+    /// Render PDF attachments then restore scroll position. Called at
+    /// the end of fill()'s async pipeline to ensure scroll restoration
+    /// happens AFTER all layout-affecting work is done.
+    private func renderPDFsAndRestoreScroll(note: Note) {
+        if let storage = self.textStorage {
+            let containerWidth = self.textContainer?.size.width ?? self.frame.width
+            PDFAttachmentProcessor.renderPDFAttachments(
+                in: storage,
+                note: note,
+                containerWidth: containerWidth
+            )
         }
+        viewDelegate?.restoreScrollPosition()
+    }
+
+    public func scrollToCursor() {
+        // Ensure layout is up-to-date before scrolling, then scroll
+        // synchronously. The previous async 100ms delay caused race
+        // conditions with other cursor-setting operations.
+        if let lm = layoutManager, let tc = textContainer {
+            lm.ensureLayout(for: tc)
+        }
+        let cursorRange = NSMakeRange(self.selectedRange().location, 0)
+        scrollRangeToVisible(cursorRange)
     }
 
     public func hasFocus() -> Bool {

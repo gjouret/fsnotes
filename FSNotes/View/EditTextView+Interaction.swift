@@ -47,18 +47,23 @@ extension EditTextView {
             }
         }
 
-        let range = selectedRange
         if handleTodo(event) {
-            self.window?.makeFirstResponder(self)
-            setSelectedRange(range)
-            self.window?.makeFirstResponder(nil)
+            // Todo checkbox was toggled. Don't change cursor position
+            // or focus state — just save and return.
+            saveSelectedRange()
             return
         }
 
         dragDetected = false
+        skipLoadSelectedRange = true
         super.mouseDown(with: event)
 
-        if NotesTextProcessor.hideSyntax, let storage = textStorage {
+        // Source mode only: skip past clear-color hidden syntax characters.
+        // In WYSIWYG mode (block model active), there are no clear-color
+        // characters — the block model renders without markdown markers.
+        if NotesTextProcessor.hideSyntax,
+           textStorageProcessor?.blockModelActive != true,
+           let storage = textStorage {
             var loc = selectedRange().location
             while loc < storage.length {
                 let color = storage.attribute(.foregroundColor, at: loc, effectiveRange: nil) as? NSColor
@@ -85,7 +90,7 @@ extension EditTextView {
 
     public func triggerCodeBlockRenderingIfNeeded() {
         #if os(OSX)
-        // Block-model pipeline handles its own rendering — skip legacy
+        // Block-model pipeline handles its own rendering — skip source-mode
         // mermaid/math rendering when it's active.
         if textStorageProcessor?.blockModelActive == true { return }
 
@@ -266,18 +271,24 @@ extension EditTextView {
     public func isTodo(_ location: Int) -> Bool {
         guard let storage = self.textStorage else { return false }
 
-        // Block-model path: check for checkbox glyphs (☐/☑).
+        // Block-model path: check for checkbox attachment (NSTextAttachment).
         if documentProjection != nil {
             let range = (storage.string as NSString).paragraphRange(
                 for: NSRange(location: location, length: 0)
             )
             let string = storage.attributedSubstring(from: range).string
             let trimmed = string.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("\u{2610}") || trimmed.hasPrefix("\u{2611}") {
-                // Check if the click is in the checkbox area (first few chars).
-                let prefixEnd = range.location + (string.count - trimmed.count) + 2
-                if location >= range.location && location <= prefixEnd {
-                    return true
+            // Checkbox renders as attachment char \u{FFFC}
+            if trimmed.hasPrefix("\u{FFFC}") {
+                // Verify it's actually a checkbox attachment
+                let indentLen = string.count - trimmed.count
+                let attachIdx = range.location + indentLen
+                if attachIdx < storage.length,
+                   storage.attribute(.attachment, at: attachIdx, effectiveRange: nil) is CheckboxTextAttachment {
+                    // Click target is exactly the attachment character (1 char).
+                    if location == attachIdx {
+                        return true
+                    }
                 }
             }
             return false

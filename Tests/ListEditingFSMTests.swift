@@ -173,28 +173,26 @@ class ListEditingFSMTests: XCTestCase {
 
     func test_stateDetection_firstItem_depth0() {
         let proj = makeProjection("- alpha\n- beta\n")
-        // "• alpha" — cursor in "alpha" (first item, no previous sibling)
-        // rendered: "• alpha\n◦ ..." — no wait, flat list has all depth 0
-        // rendered: "• alpha\n• beta"
-        let state = ListEditingFSM.detectState(storageIndex: 2, in: proj)
+        // rendered: "￼alpha\n￼beta" — cursor in "alpha" inline (offset 1)
+        let state = ListEditingFSM.detectState(storageIndex: 1, in: proj)
         XCTAssertEqual(state, .listItem(depth: 0, hasPreviousSibling: false))
     }
 
     func test_stateDetection_secondItem_depth0() {
         let proj = makeProjection("- alpha\n- beta\n")
-        // rendered: "• alpha\n• beta" — cursor in "beta" (second item)
-        // "• alpha" = 7 chars, "\n" = 1, "• beta" starts at 8
-        // inline of second item starts at 8 + 2 = 10
-        let state = ListEditingFSM.detectState(storageIndex: 10, in: proj)
+        // rendered: "￼alpha\n￼beta"
+        // "￼alpha" = 6 chars, "\n" = 1, "￼beta" prefix = 1
+        // inline of second item starts at 6 + 1 + 1 = 8
+        let state = ListEditingFSM.detectState(storageIndex: 8, in: proj)
         XCTAssertEqual(state, .listItem(depth: 0, hasPreviousSibling: true))
     }
 
     func test_stateDetection_nestedItem_depth1() {
         let proj = makeProjection("- parent\n  - child\n")
-        // rendered: "• parent\n  ◦ child"
-        // "• parent" = 8, "\n" = 1, "  ◦ child" starts at 9
-        // inline starts at 9 + 4 = 13 (2 indent + 1 bullet + 1 space)
-        let state = ListEditingFSM.detectState(storageIndex: 13, in: proj)
+        // rendered: "￼parent\n￼child"
+        // "￼parent" = 1 + 6 = 7, "\n" = 1, child prefix = 1 (attachment)
+        // child inline starts at 7 + 1 + 1 = 9
+        let state = ListEditingFSM.detectState(storageIndex: 9, in: proj)
         XCTAssertEqual(state, .listItem(depth: 1, hasPreviousSibling: false))
     }
 
@@ -203,10 +201,10 @@ class ListEditingFSMTests: XCTestCase {
     func test_indent_secondItem_becomesChildOfFirst() {
         let proj = makeProjection("- alpha\n- beta\n")
         // Indent the second item.
-        // rendered: "• alpha\n• beta" — "beta" inline starts at 10
-        let result = try! EditingOps.indentListItem(at: 10, in: proj)
+        // rendered: "￼alpha\n￼beta" — "beta" inline starts at 6 + 1 + 1 = 8
+        let result = try! EditingOps.indentListItem(at: 8, in: proj)
         let newDoc = result.newProjection.document
-        guard case .list(let items) = newDoc.blocks[0] else {
+        guard case .list(let items, _) = newDoc.blocks[0] else {
             XCTFail("Expected list block"); return
         }
         // After indent: one top-level item with one child.
@@ -218,12 +216,14 @@ class ListEditingFSMTests: XCTestCase {
     func test_indent_firstItem_fails() {
         let proj = makeProjection("- alpha\n- beta\n")
         // Try to indent the first item (no previous sibling).
-        XCTAssertThrowsError(try EditingOps.indentListItem(at: 2, in: proj))
+        // alpha inline starts at prefix 1, so offset 1 is inside alpha.
+        XCTAssertThrowsError(try EditingOps.indentListItem(at: 1, in: proj))
     }
 
     func test_indent_roundTrip() {
         let proj = makeProjection("- alpha\n- beta\n")
-        let result = try! EditingOps.indentListItem(at: 10, in: proj)
+        // beta inline starts at 8
+        let result = try! EditingOps.indentListItem(at: 8, in: proj)
         let serialized = MarkdownSerializer.serialize(result.newProjection.document)
         // After indenting, beta should be a child of alpha.
         XCTAssertTrue(serialized.contains("  - beta"), "Serialized should have indented beta: \(serialized)")
@@ -233,10 +233,11 @@ class ListEditingFSMTests: XCTestCase {
 
     func test_unindent_childItem_becomesTopLevel() {
         let proj = makeProjection("- alpha\n  - beta\n")
-        // "• alpha\n  ◦ beta" — beta inline starts at 9 + 4 = 13
-        let result = try! EditingOps.unindentListItem(at: 13, in: proj)
+        // "￼alpha\n￼beta" — alpha = 1 + 5 = 6, "\n" = 1, child prefix = 1
+        // beta inline starts at 6 + 1 + 1 = 8
+        let result = try! EditingOps.unindentListItem(at: 8, in: proj)
         let newDoc = result.newProjection.document
-        guard case .list(let items) = newDoc.blocks[0] else {
+        guard case .list(let items, _) = newDoc.blocks[0] else {
             XCTFail("Expected list block"); return
         }
         XCTAssertEqual(items.count, 2, "Should have two top-level items")
@@ -246,13 +247,14 @@ class ListEditingFSMTests: XCTestCase {
 
     func test_unindent_topLevel_throws() {
         let proj = makeProjection("- alpha\n- beta\n")
-        // alpha is at depth 0.
-        XCTAssertThrowsError(try EditingOps.unindentListItem(at: 2, in: proj))
+        // alpha is at depth 0. Inline starts at 1.
+        XCTAssertThrowsError(try EditingOps.unindentListItem(at: 1, in: proj))
     }
 
     func test_unindent_roundTrip() {
         let proj = makeProjection("- alpha\n  - beta\n")
-        let result = try! EditingOps.unindentListItem(at: 13, in: proj)
+        // beta inline starts at 8
+        let result = try! EditingOps.unindentListItem(at: 8, in: proj)
         let serialized = MarkdownSerializer.serialize(result.newProjection.document)
         // After unindent, beta is top-level.
         XCTAssertTrue(serialized.contains("- alpha\n"), "Should have alpha at top level")
@@ -263,8 +265,8 @@ class ListEditingFSMTests: XCTestCase {
 
     func test_exit_singleItem_becomesParagraph() {
         let proj = makeProjection("- hello\n")
-        // "• hello" — inline starts at 2
-        let result = try! EditingOps.exitListItem(at: 2, in: proj)
+        // "￼hello" — inline starts at 1
+        let result = try! EditingOps.exitListItem(at: 1, in: proj)
         let newDoc = result.newProjection.document
         // The list should be gone; replaced with a paragraph.
         XCTAssertTrue(newDoc.blocks.contains { if case .paragraph = $0 { return true }; return false },
@@ -275,8 +277,8 @@ class ListEditingFSMTests: XCTestCase {
 
     func test_exit_secondItem_listRemains() {
         let proj = makeProjection("- alpha\n- beta\n")
-        // Exit "beta" (second item). inline at 10.
-        let result = try! EditingOps.exitListItem(at: 10, in: proj)
+        // Exit "beta" (second item). inline at 6 + 1 + 1 = 8.
+        let result = try! EditingOps.exitListItem(at: 8, in: proj)
         let newDoc = result.newProjection.document
         // alpha stays in a list, beta becomes a paragraph.
         XCTAssertTrue(newDoc.blocks.contains { if case .list = $0 { return true }; return false },
@@ -294,8 +296,8 @@ class ListEditingFSMTests: XCTestCase {
             ])
         ])
         let proj = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
-        // Inline content starts at prefix length = 0 + 1 + 1 = 2
-        let result = try! EditingOps.exitListItem(at: 2, in: proj)
+        // Inline content starts at prefix length = 1 (attachment only)
+        let result = try! EditingOps.exitListItem(at: 1, in: proj)
         let newDoc = result.newProjection.document
         XCTAssertTrue(newDoc.blocks.contains { if case .blankLine = $0 { return true }; return false },
                       "Empty item exit should produce blankLine")
@@ -312,9 +314,9 @@ class ListEditingFSMTests: XCTestCase {
         ])
         let proj = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
         // Second item (empty) — find its inline position.
-        // "• keep\n• " — "keep" = 4, prefix = 2, total first item = 6, "\n" = 1, second prefix = 2
-        // inline of empty second item starts at 6 + 1 + 2 = 9
-        let result = try! EditingOps.returnOnEmptyListItem(at: 9, in: proj)
+        // "￼keep" = 1 + 4 = 5, "\n" = 1, second prefix = 1
+        // inline of empty second item starts at 5 + 1 + 1 = 7
+        let result = try! EditingOps.returnOnEmptyListItem(at: 7, in: proj)
         let newDoc = result.newProjection.document
         // The empty item should have exited (depth 0 → exitToBody).
         XCTAssertFalse(newDoc.blocks.isEmpty)
@@ -329,12 +331,13 @@ class ListEditingFSMTests: XCTestCase {
             ])
         ])
         let proj = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
-        // "• parent\n  ◦ " — parent = 8, "\n" = 1, child prefix = 4 (2 indent + 1 bullet + 1 space)
-        // child inline starts at 8 + 1 + 4 = 13
-        let result = try! EditingOps.returnOnEmptyListItem(at: 13, in: proj)
+        // "￼parent\n￼" — parent prefix = 1 (attachment), text = 6, "\n" = 1,
+        // child prefix = 1 (attachment), inline empty.
+        // child inline starts at 1 + 6 + 1 + 1 = 9
+        let result = try! EditingOps.returnOnEmptyListItem(at: 9, in: proj)
         let newDoc = result.newProjection.document
         // The empty nested item should have been unindented (depth 1 → unindent).
-        guard case .list(let items) = newDoc.blocks[0] else {
+        guard case .list(let items, _) = newDoc.blocks[0] else {
             XCTFail("Expected list block"); return
         }
         // Should now have 2 top-level items (parent + the unindented empty item).
@@ -373,14 +376,14 @@ class ListEditingFSMTests: XCTestCase {
 
     func test_isAtHomePosition_true() {
         let proj = makeProjection("- hello\n")
-        // "• hello" — inline starts at 2
-        XCTAssertTrue(ListEditingFSM.isAtHomePosition(storageIndex: 2, in: proj))
+        // "￼hello" — inline starts at 1
+        XCTAssertTrue(ListEditingFSM.isAtHomePosition(storageIndex: 1, in: proj))
     }
 
     func test_isAtHomePosition_false_midWord() {
         let proj = makeProjection("- hello\n")
-        // offset 4 = "ll" in hello
-        XCTAssertFalse(ListEditingFSM.isAtHomePosition(storageIndex: 4, in: proj))
+        // offset 3 = "ll" in hello (1 prefix + 2 into "hello")
+        XCTAssertFalse(ListEditingFSM.isAtHomePosition(storageIndex: 3, in: proj))
     }
 
     func test_isAtHomePosition_false_paragraph() {
@@ -397,12 +400,14 @@ class ListEditingFSMTests: XCTestCase {
             ])
         ])
         let proj = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
-        XCTAssertTrue(ListEditingFSM.isCurrentItemEmpty(storageIndex: 2, in: proj))
+        // Inline starts at prefix 1 (attachment)
+        XCTAssertTrue(ListEditingFSM.isCurrentItemEmpty(storageIndex: 1, in: proj))
     }
 
     func test_isCurrentItemEmpty_false() {
         let proj = makeProjection("- hello\n")
-        XCTAssertFalse(ListEditingFSM.isCurrentItemEmpty(storageIndex: 2, in: proj))
+        // Inline starts at 1
+        XCTAssertFalse(ListEditingFSM.isCurrentItemEmpty(storageIndex: 1, in: proj))
     }
 
     // MARK: - 10. Indent then unindent round-trip
@@ -411,8 +416,8 @@ class ListEditingFSMTests: XCTestCase {
         let original = "- alpha\n- beta\n"
         let proj = makeProjection(original)
 
-        // Indent beta.
-        let afterIndent = try! EditingOps.indentListItem(at: 10, in: proj)
+        // Indent beta. inline at 6 + 1 + 1 = 8
+        let afterIndent = try! EditingOps.indentListItem(at: 8, in: proj)
         // Find beta in the indented projection.
         let indentedEntries = EditingOps.flattenListPublic(
             afterIndent.newProjection.document.blocks[0].listItems!
@@ -432,7 +437,7 @@ class ListEditingFSMTests: XCTestCase {
 
 private extension Block {
     var listItems: [ListItem]? {
-        if case .list(let items) = self { return items }
+        if case .list(let items, _) = self { return items }
         return nil
     }
 }

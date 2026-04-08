@@ -52,16 +52,18 @@ public enum HeadingRenderer {
 
     /// Heading font: derive a bold heading-scaled font from the body
     /// font. Levels 1–6 map to progressively smaller sizes.
+    /// Scale factors match the source-mode renderer (NotesTextProcessor)
+    /// so headings look identical in WYSIWYG and markdown modes.
     private static func headingFont(level: Int, bodyFont: PlatformFont) -> PlatformFont {
         let baseSize = bodyFont.pointSize
         let scale: CGFloat
         switch level {
         case 1: scale = 2.0
-        case 2: scale = 1.5
-        case 3: scale = 1.25
-        case 4: scale = 1.0
-        case 5: scale = 0.875
-        default: scale = 0.85
+        case 2: scale = 1.7
+        case 3: scale = 1.4
+        case 4: scale = 1.2
+        case 5: scale = 1.1
+        default: scale = 1.05  // H6: slightly larger than body
         }
         let size = baseSize * scale
         #if os(OSX)

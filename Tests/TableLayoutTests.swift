@@ -179,13 +179,16 @@ class TableLayoutTests: XCTestCase {
     // MARK: - Copy Button
 
     func test_copyButton_existsOnHover() {
+        // The copy button was moved from InlineTableView to the gutter
+        // (GutterController.drawIcons). rebuild() now explicitly removes
+        // any copy button subview. Verify the button is NOT a subview.
         let table = makeTable(headers: ["A", "B"], rows: [["1", "2"]])
         table.focusState = .hovered
         table.rebuild(skipCollect: true)
 
-        // Copy button should exist in hovered state
-        let copyBtn = table.subviews.compactMap { $0 as? GlassButton }.last
-        XCTAssertNotNil(copyBtn, "Copy button should be present when hovered")
+        let buttons = table.subviews.compactMap { $0 as? GlassButton }
+        XCTAssertTrue(buttons.isEmpty,
+                      "Copy button should not be a subview — it lives in the gutter now")
     }
 
     func test_copyButton_absentWhenUnfocused() {

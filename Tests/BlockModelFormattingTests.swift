@@ -117,6 +117,38 @@ class BlockModelFormattingTests: XCTestCase {
         assertSpliceInvariant(old: proj, result: result)
     }
 
+    func test_toggleBold_partialUnwrap_middleWord() throws {
+        // "**these three words**" → select "three" → unbold
+        // Expected: "**these **three** words**"
+        // i.e., "these " stays bold, "three" becomes plain, " words" stays bold
+        let proj = project("**these three words**\n")
+        // Rendered: "these three words" (17 chars). "three" is at offset 6, length 5.
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
+        assertRoundTrip(result, expected: "**these **three** words**\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_toggleBold_partialUnwrap_firstWord() throws {
+        // "**these three words**" → select "these" → unbold
+        let proj = project("**these three words**\n")
+        // "these" is at offset 0, length 5.
+        let sel = NSRange(location: 0, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
+        assertRoundTrip(result, expected: "these** three words**\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_toggleBold_partialUnwrap_lastWord() throws {
+        // "**these three words**" → select "words" → unbold
+        let proj = project("**these three words**\n")
+        // "words" is at offset 12, length 5.
+        let sel = NSRange(location: 12, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
+        assertRoundTrip(result, expected: "**these three **words\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
     func test_toggleBold_zeroLengthNoOp() throws {
         let proj = project("Hello\n")
         let sel = NSRange(location: 3, length: 0)
@@ -273,10 +305,14 @@ class BlockModelFormattingTests: XCTestCase {
 
     func test_toggleBold_inListItem() throws {
         let proj = project("- Hello world\n")
-        // Rendered: "• Hello world"
-        // "Hello" starts after "• " (2 chars). Select "Hello" (offset 2, length 5).
-        let span = proj.blockSpans[0]
-        let sel = NSRange(location: span.location + 2, length: 5)
+        // "Hello" starts after the attachment prefix. Derive offset
+        // from flattenList so it adapts to rendering format changes.
+        guard case .list(let items, _) = proj.document.blocks[0] else {
+            XCTFail("expected list"); return
+        }
+        let entries = EditingOps.flattenListPublic(items)
+        let inlineStart = proj.blockSpans[0].location + entries[0].startOffset + entries[0].prefixLength
+        let sel = NSRange(location: inlineStart, length: 5) // "Hello"
         let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
         assertRoundTrip(result, expected: "- **Hello** world\n")
     }
@@ -285,10 +321,10 @@ class BlockModelFormattingTests: XCTestCase {
 
     func test_toggleBold_inBlockquote() throws {
         let proj = project("> Hello world\n")
-        // Rendered: "  Hello world" (2-space indent).
-        // "Hello" starts at offset 2, length 5.
+        // Rendered: "Hello world" (indentation via paragraph style, no space chars).
+        // "Hello" starts at offset 0, length 5.
         let span = proj.blockSpans[0]
-        let sel = NSRange(location: span.location + 2, length: 5)
+        let sel = NSRange(location: span.location, length: 5)
         let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
         assertRoundTrip(result, expected: "> **Hello** world\n")
     }
@@ -348,7 +384,7 @@ class BlockModelFormattingTests: XCTestCase {
 
     func test_todoParser_setsCheckbox() {
         let doc = MarkdownParser.parse("- [ ] Task\n")
-        guard case .list(let items) = doc.blocks.first else {
+        guard case .list(let items, _) = doc.blocks.first else {
             XCTFail("Expected list block"); return
         }
         XCTAssertNotNil(items.first?.checkbox, "Todo should have checkbox")
@@ -358,7 +394,7 @@ class BlockModelFormattingTests: XCTestCase {
 
     func test_todoParser_checkedCheckbox() {
         let doc = MarkdownParser.parse("- [x] Done\n")
-        guard case .list(let items) = doc.blocks.first else {
+        guard case .list(let items, _) = doc.blocks.first else {
             XCTFail("Expected list block"); return
         }
         XCTAssertNotNil(items.first?.checkbox)
@@ -367,7 +403,7 @@ class BlockModelFormattingTests: XCTestCase {
 
     func test_todoParser_regularItemNoCheckbox() {
         let doc = MarkdownParser.parse("- Regular\n")
-        guard case .list(let items) = doc.blocks.first else {
+        guard case .list(let items, _) = doc.blocks.first else {
             XCTFail("Expected list block"); return
         }
         XCTAssertNil(items.first?.checkbox, "Regular item should not have checkbox")
@@ -377,17 +413,17 @@ class BlockModelFormattingTests: XCTestCase {
 
     func test_todoUnchecked_rendering() {
         let proj = project("- [ ] Task\n")
-        // Rendered should contain ☐ (unchecked box), not "[ ]"
+        // Rendered should contain attachment character (checkbox is an NSTextAttachment)
         let text = proj.attributed.string
-        XCTAssertTrue(text.contains("\u{2610}"), "Unchecked todo should render ☐, got: \(text)")
+        XCTAssertTrue(text.contains("\u{FFFC}"), "Unchecked todo should render as attachment, got: \(text)")
         XCTAssertFalse(text.contains("[ ]"), "Rendered text should not contain raw checkbox syntax")
     }
 
     func test_todoChecked_rendering() {
         let proj = project("- [x] Done\n")
-        // Rendered should contain ☑ (checked box)
+        // Rendered should contain attachment character (checkbox is an NSTextAttachment)
         let text = proj.attributed.string
-        XCTAssertTrue(text.contains("\u{2611}"), "Checked todo should render ☑, got: \(text)")
+        XCTAssertTrue(text.contains("\u{FFFC}"), "Checked todo should render as attachment, got: \(text)")
         XCTAssertFalse(text.contains("[x]"), "Rendered text should not contain raw checkbox syntax")
     }
 

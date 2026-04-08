@@ -13,13 +13,20 @@ class EditorScrollView: NSScrollView {
 
     override var isFindBarVisible: Bool {
         set {
-            // macOS 10.14 margin hack
-            if #available(OSX 10.14, *) {
-                if let clip = self.subviews.first as? NSClipView {
-                    clip.contentInsets.top = newValue ? 60 : 10
-
-                    if newValue, let documentView = self.documentView {
+            if let clip = self.subviews.first as? NSClipView {
+                if newValue {
+                    clip.contentInsets.top = 60
+                    if let documentView = self.documentView {
                         documentView.scroll(NSPoint(x: 0, y: -60))
+                    }
+                } else {
+                    clip.contentInsets.top = 10
+                    // Restore scroll position so the note doesn't retain
+                    // the extra whitespace from the find bar offset.
+                    if let documentView = self.documentView {
+                        let currentOrigin = documentView.visibleRect.origin
+                        let restored = NSPoint(x: currentOrigin.x, y: max(0, currentOrigin.y))
+                        documentView.scroll(restored)
                     }
                 }
             }

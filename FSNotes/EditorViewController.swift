@@ -86,6 +86,9 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         ])
 
         self.formattingToolbar = toolbar
+
+        // Hide toolbar when not in WYSIWYG mode on startup
+        toolbar.isHidden = !UserDefaultsManagement.wysiwygMode
     }
         
     deinit {
@@ -112,7 +115,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                     ? [.command, .option, .shift]
                     : [.command, .shift]
                     
-                    menuItem.title = NSLocalizedString("Empty Bin", comment: "")
+                    menuItem.title = NSLocalizedString("Empty Trash", comment: "")
                     return true
                 }
             case "fileMenu":
@@ -518,10 +521,10 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         // Re-fill the note from disk content. This is the single path for
         // both directions:
         //   → WYSIWYG: fill() calls fillViaBlockModel(), which parses
-        //     markdown → Document → rendered attributed string. No legacy
+        //     markdown → Document → rendered attributed string. No
         //     highlighting, phase4, or phase5 needed.
         //   → Source: fill() sets textStorage to raw markdown content.
-        //     The legacy process() pipeline handles syntax coloring.
+        //     The source-mode process() pipeline handles syntax coloring.
         if let note = editor.note {
             editor.fill(note: note)
         }
@@ -1433,7 +1436,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         if editor.isEditable {
             note.isBlocked = true
 
-            editor.textStorage?.removeHighlight()
             editor.save()
 
             updateLastEditedStatus()
@@ -1520,8 +1522,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             
             vc.notesTableView.deselectNotes()
             vc.storage.searchQuery.dropFilter()
-            vc.editor.string = text
-            vc.editor.note = note
+            vc.editor.fill(note: note)
             vc.search.stringValue.removeAll()
         }
         

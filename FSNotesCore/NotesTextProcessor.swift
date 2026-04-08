@@ -799,6 +799,13 @@ public class NotesTextProcessor {
         NotesTextProcessor.strictItalicRegex.matches(string, range: paragraphRange) { (result) -> Void in
             guard let range = result?.range(at: 3) else { return }
 
+            // Skip emphasis inside code blocks (e.g. __init__ in Python)
+            if let codeRanges = codeBlockRanges {
+                for codeRange in codeRanges {
+                    if NSIntersectionRange(codeRange, range).length > 0 { return }
+                }
+            }
+
             if NotesTextProcessor.isLink(attributedString: attributedString, range: range) {
                 return
             }
@@ -822,6 +829,13 @@ public class NotesTextProcessor {
         // We detect and process bolds
         NotesTextProcessor.strictBoldRegex.matches(string, range: paragraphRange) { (result) -> Void in
             guard let range = result?.range(at: 3) else { return }
+
+            // Skip emphasis inside code blocks (e.g. __init__ in Python)
+            if let codeRanges = codeBlockRanges {
+                for codeRange in codeRanges {
+                    if NSIntersectionRange(codeRange, range).length > 0 { return }
+                }
+            }
 
             let boldString = attributedString.attributedSubstring(from: range)
             if boldString.string.contains("__") || boldString.string == "_" {
@@ -885,9 +899,16 @@ public class NotesTextProcessor {
 //            attributedString.addAttribute(.foregroundColor, value: NotesTextProcessor.syntaxColor, range: postRange)
 //        }
 
-        // We detect and process bolds
+        // We detect and process strikethrough
         NotesTextProcessor.strikeRegex.matches(string, range: paragraphRange) { (result) -> Void in
             guard let range = result?.range else { return }
+
+            // Skip strikethrough inside code blocks
+            if let codeRanges = codeBlockRanges {
+                for codeRange in codeRanges {
+                    if NSIntersectionRange(codeRange, range).length > 0 { return }
+                }
+            }
 
             attributedString.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: NSRange(location: range.location + 2, length: range.length - 4))
 

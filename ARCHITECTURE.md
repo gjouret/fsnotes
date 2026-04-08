@@ -6,10 +6,10 @@ FSNotes++ is a WYSIWYG markdown editor for macOS, forked from FSNotes. The app r
 
 The codebase currently contains **two rendering architectures running side-by-side**:
 
-1. **Legacy pipeline** (source mode only): text storage = original markdown; rendering via attributes + clear-color/negative-kern hiding + custom LayoutManager drawing. Described in "Rendering Pipeline" below.
+1. **Source-mode pipeline** (source mode only): text storage = original markdown; rendering via attributes + clear-color/negative-kern hiding + custom LayoutManager drawing. Described in "Rendering Pipeline" below.
 2. **Block-model pipeline** (active for WYSIWYG mode): markdown is parsed once into a `Document`; the renderer consumes that tree and emits an NSAttributedString whose `.string` contains ONLY displayed characters. Source markers (`#`, `**`, `-`, `>`, fences, etc.) never reach the rendered output. All 7 block types are supported. Editing operations route through `EditingOps` and structural operations (list indent/unindent/exit) use a finite state machine. Described in "Block-Model Rendering (Target Architecture)" and "Editing Finite State Machines" below.
 
-The block model is the active rendering pipeline for WYSIWYG mode. The legacy pipeline is preserved for source mode.
+The block model is the active rendering pipeline for WYSIWYG mode. The source-mode pipeline is preserved for source mode.
 
 **Bundle ID**: `co.fluder.FSNotes` (shared with original FSNotes for same notes folder)
 **Product Name**: `FSNotes++`
@@ -25,9 +25,9 @@ The block model is the active rendering pipeline for WYSIWYG mode. The legacy pi
 | FSNotesCore | `FSNotesCore/` | Framework: parsing, highlighting, formatting, serialization |
 | FSNotesTests | `Tests/` | Unit tests, visual snapshots, A/B comparisons |
 
-## Legacy Rendering Pipeline (source mode only)
+## Source-Mode Rendering Pipeline (source mode only)
 
-When `blockModelActive == false` (source mode, non-markdown notes), every text change triggers `NSTextStorage.didProcessEditing` → `TextStorageProcessor.process()`. This pipeline is bypassed entirely in WYSIWYG mode — see "Block-Model Rendering" below. The legacy pipeline runs in this order:
+When `blockModelActive == false` (source mode, non-markdown notes), every text change triggers `NSTextStorage.didProcessEditing` → `TextStorageProcessor.process()`. This pipeline is bypassed entirely in WYSIWYG mode — see "Block-Model Rendering" below. The source-mode pipeline runs in this order:
 
 ### Stage 1: Markdown Highlighting
 **File**: `FSNotesCore/NotesTextProcessor.swift`
@@ -69,7 +69,7 @@ Custom visual elements drawn during layout, without modifying storage:
 - `BlockquoteBorderDrawer` — draws left border for `.blockquote`
 - `KbdBoxDrawer` — draws rounded box for `.kbdTag`
 
-**Fold gate**: `unfoldedRanges(in:)` filters ALL rendering — folded content never reaches any drawer.
+**Fold gate**: `unfoldedRanges(in:)` filters ALL rendering -- folded content never reaches any drawer.
 
 ## Block Model
 
@@ -138,9 +138,9 @@ Toolbar actions route through block-model operations when `documentProjection` i
 - `EditingOps.toggleBlockquote(at:, in:)` — paragraph ↔ blockquote
 - `EditingOps.insertHorizontalRule(at:, in:)` — inserts HR after current block
 
-**Wiring**: `EditTextView+Formatting.swift` tries block-model path first via `toggle*ViaBlockModel()` methods. Falls back to legacy TextFormatter if projection is nil or operation throws.
+**Wiring**: `EditTextView+Formatting.swift` tries block-model path first via `toggle*ViaBlockModel()` methods. Falls back to source-mode TextFormatter if projection is nil or operation throws.
 
-### Legacy Path (source mode fallback)
+### Source-Mode Path (source mode fallback)
 
 **File**: `FSNotesCore/TextFormatter.swift` → `toggleMarkers(open:close:)`
 
@@ -165,7 +165,7 @@ When `documentProjection` is active, save serializes the Document back to markdo
 
 All save call sites route through `EditorDelegate.save()` (protocol method on EditTextView), including TextFormatter's `deinit`.
 
-### Legacy Path (source mode)
+### Source-Mode Path (source mode)
 
 **File**: `FSNotesCore/Rendering/NoteSerializer.swift` → `prepareForSave()`
 
@@ -215,7 +215,7 @@ Pins persist to `UserDefaults.standard` synchronously on every toggle (with `syn
 - InlineTableView subviews hidden directly during fold
 - Gutter shows `▶`/`▼` carets, H-level badges, `⋯` ellipsis for collapsed headers
 
-**Block-model bridge**: When `blockModelActive == true`, the legacy `blocks` array is populated via `syncBlocksFromProjection()` — maps Document heading blocks to MarkdownBlock entries with rendered blockSpan ranges. This lets the existing fold code work without rewriting it. Unfold restores attributes from the projection's rendered output instead of calling `highlightMarkdown()`.
+**Block-model bridge**: When `blockModelActive == true`, the source-mode `blocks` array is populated via `syncBlocksFromProjection()` — maps Document heading blocks to MarkdownBlock entries with rendered blockSpan ranges. This lets the existing fold code work without rewriting it. Unfold restores attributes from the projection's rendered output instead of calling `highlightMarkdown()`.
 
 ## Table Widget
 
@@ -233,19 +233,19 @@ Three focus states: `.unfocused`, `.hovered`, `.editing`. Rendered as NSTextAtta
 
 | Key | Type | Set by | Used by | Status |
 |-----|------|--------|---------|--------|
-| `.bulletMarker` | Bool | (legacy only) | BulletDrawer | Orphaned in block-model mode |
-| `.checkboxMarker` | Bool | (legacy only) | CheckboxDrawer | Orphaned in block-model mode |
-| `.orderedMarker` | String | (legacy only) | OrderedMarkerDrawer | Orphaned in block-model mode |
-| `.listDepth` | Int | (legacy only) | LayoutManager | Orphaned in block-model mode |
-| `.horizontalRule` | Bool | (legacy only) | HorizontalRuleDrawer | Orphaned in block-model mode |
-| `.blockquote` | Int (depth) | (legacy only) | BlockquoteBorderDrawer | Orphaned in block-model mode |
+| `.bulletMarker` | Bool | (source-mode only) | BulletDrawer | Orphaned in block-model mode |
+| `.checkboxMarker` | Bool | (source-mode only) | CheckboxDrawer | Orphaned in block-model mode |
+| `.orderedMarker` | String | (source-mode only) | OrderedMarkerDrawer | Orphaned in block-model mode |
+| `.listDepth` | Int | (source-mode only) | LayoutManager | Orphaned in block-model mode |
+| `.horizontalRule` | Bool | (source-mode only) | HorizontalRuleDrawer | Orphaned in block-model mode |
+| `.blockquote` | Int (depth) | (source-mode only) | BlockquoteBorderDrawer | Orphaned in block-model mode |
 | `.kbdTag` | Bool | InlineTagRegistry | KbdBoxDrawer | Active |
-| `.todo` | Int (0/1) | (legacy only) | Checkbox click handling | Legacy only |
+| `.todo` | Int (0/1) | (source-mode only) | Checkbox click handling | Source-mode only |
 | `.foldedContent` | Bool | toggleFold | LayoutManager gate | Active (bridged) |
-| `.renderedBlockOriginalMarkdown` | String | Mermaid/math/table renderer | Save pipeline, table copy | Legacy only |
-| `.renderedBlockType` | String | Mermaid/math/table renderer | Table click/copy routing | Legacy only |
+| `.renderedBlockOriginalMarkdown` | String | Mermaid/math/table renderer | Save pipeline, table copy | Source-mode only |
+| `.renderedBlockType` | String | Mermaid/math/table renderer | Table click/copy routing | Source-mode only |
 
-**Note**: The block-model pipeline renders bullets, checkboxes, ordered markers, HR, and blockquotes as text characters or paragraph styles directly in the rendered `NSAttributedString` — no custom attributes needed. The legacy LayoutManager drawing for these attributes is skipped when `blockModelActive == true`.
+**Note**: The block-model pipeline renders bullets, checkboxes, ordered markers, HR, and blockquotes as text characters or paragraph styles directly in the rendered `NSAttributedString` — no custom attributes needed. The source-mode LayoutManager drawing for these attributes is skipped when `blockModelActive == true`.
 
 ## Paste Handling
 
@@ -329,7 +329,7 @@ Use the `xcode-build-deploy` skill. Key steps:
 
 ## Architecture Principles
 
-1. **Storage is rendered output** (WYSIWYG mode): `textStorage.string` contains only displayed characters — no markdown markers. Markdown lives on disk and in the Document model. The legacy principle "storage is markdown" applies only to source mode.
+1. **Storage is rendered output** (WYSIWYG mode): `textStorage.string` contains only displayed characters — no markdown markers. Markdown lives on disk and in the Document model. The source-mode principle "storage is markdown" applies only to source mode.
 2. **Each pipeline stage owns specific attributes**: Don't set `.paragraphStyle` outside DocumentRenderer. Don't set `.font` outside the renderer. The block model renders without `.kern` or clear-color hiding.
 3. **Fix at the source stage**: When an attribute is wrong, find which stage sets it and fix there. Never patch downstream.
 4. **One general solution**: When a pattern recurs (e.g., typing attributes after Return), solve it once for all cases, not per-case.
@@ -464,7 +464,7 @@ To add a new block type (e.g. tables, YAML frontmatter):
 ## In-Progress Work
 
 ### Block-Model Pipeline (Phase 7 — documentation and QA)
-All 7 block types supported (paragraph, heading, codeBlock, blankLine, list, blockquote, horizontalRule). The block-model pipeline is active for all WYSIWYG rendering. All coupling sites have been migrated: fold/unfold bridged via `syncBlocksFromProjection()`, all `highlight()` calls guarded, LayoutManager legacy drawing skipped when block model active. Save path optimized with `Note.save(markdown:)` bypassing `NoteSerializer`. Document caching on Note for performance.
+All 7 block types supported (paragraph, heading, codeBlock, blankLine, list, blockquote, horizontalRule). The block-model pipeline is active for all WYSIWYG rendering. All coupling sites have been migrated: fold/unfold bridged via `syncBlocksFromProjection()`, all `highlight()` calls guarded, LayoutManager source-mode drawing skipped when block model active. Save path optimized with `Note.save(markdown:)` bypassing `NoteSerializer`. Document caching on Note for performance.
 
 ## Editing Finite State Machines
 
@@ -497,7 +497,7 @@ Defined in `FSNotesCore/Rendering/ListEditingFSM.swift`. Controls indentation, l
 - Exiting a list item converts it to a body paragraph.
 - Bullet glyphs cycle by depth: `depth % 4` maps to `[bullet, white bullet, black small square, white small square]`.
 
-### Return Key FSM (Legacy Pipeline)
+### Return Key FSM (Source-Mode Pipeline)
 
 Defined in `FSNotesCore/TextFormatter.swift` via `newLineTransition()` + `applyTransition()`. Still active for source mode. The block-model pipeline handles Return via `splitListOnNewline` / `splitParagraphOnNewline` / `returnOnEmptyListItem` in `EditingOperations.swift`.
 
@@ -512,6 +512,30 @@ Defined in `FSNotesCore/TextFormatter.swift` via `newLineTransition()` + `applyT
 | Heading (#) | bodyText |
 | Leading whitespace | continueIndent |
 | Default | bodyText |
+
+### Block Merge Operations (Delete at Block Boundary)
+
+When the user presses Delete/Backspace at a block boundary, `EditingOps.delete()` calls `mergeAdjacentBlocks()` to combine two adjacent blocks. The merge rules are:
+
+| Block A (first/upper) | Block B (second/lower) | Result |
+|------------------------|------------------------|--------|
+| paragraph | paragraph | paragraph (inlines concatenated) |
+| paragraph | blankLine | paragraph (blank removed) |
+| blankLine | paragraph | paragraph (blank removed) |
+| blankLine | blankLine | blankLine |
+| paragraph | heading | paragraph (heading demoted, text appended) |
+| heading | paragraph | paragraph (heading demoted, text concatenated) |
+| heading | heading | paragraph (both demoted, text concatenated) |
+| blankLine | heading | heading (blank removed, heading preserved) |
+| any | codeBlock | paragraph (code flattened to text) |
+| any | list | paragraph (list text flattened) |
+| any | blockquote | paragraph (blockquote text flattened) |
+
+**Key principle:** Cross-block merges always produce a **paragraph**, with two exceptions:
+1. When the first block is empty (blankLine/HR) and the second is a heading, the heading is preserved.
+2. When both blocks have no content, the result is a blankLine.
+
+The merge extracts inline content from both blocks via `remainingInlineSuffix` / `remainingInlinePrefix`, which handle all block types.
 
 ### Code Block FSM (Analysis)
 

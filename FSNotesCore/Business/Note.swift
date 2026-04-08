@@ -799,6 +799,11 @@ public class Note: NSObject  {
         if write(attributedString: attrStr) {
             sharedStorage.add(self)
         }
+
+        // Reset isBlocked so the file system watcher can detect
+        // external changes. (Source-mode save resets this in its
+        // async BlockOperation; block-model save is synchronous.)
+        isBlocked = false
     }
 
     public func save(content: NSMutableAttributedString) {

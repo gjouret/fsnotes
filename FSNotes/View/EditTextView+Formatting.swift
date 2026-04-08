@@ -18,6 +18,7 @@ extension EditTextView {
             return
         }
 
+        clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.bold()
         deselectAfterFormatting()
@@ -33,6 +34,7 @@ extension EditTextView {
             return
         }
 
+        clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.italic()
         deselectAfterFormatting()
@@ -127,6 +129,7 @@ extension EditTextView {
             return
         }
 
+        clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.strike()
         deselectAfterFormatting()
@@ -136,6 +139,7 @@ extension EditTextView {
     @IBAction func highlightMenu(_ sender: Any) {
         guard let note = self.note, isEditable, note.isMarkdown() else { return }
 
+        clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.highlight()
         deselectAfterFormatting()
@@ -195,6 +199,7 @@ extension EditTextView {
     @IBAction func todo(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
         if toggleTodoViaBlockModel() { updateToolbarAfterFormatting(); return }
+        clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.todo()
     }
@@ -255,17 +260,43 @@ extension EditTextView {
     }
 
     @IBAction func insertTableMenu(_ sender: Any) {
-        guard let _ = textStorage, isEditable else { return }
+        guard let note = self.note, let _ = textStorage, isEditable else { return }
 
         let tableMarkdown = "|  |  |\n|--|--|\n|  |  |"
-        let insertRange = selectedRange()
-        let prefix = insertRange.location > 0 ? "\n" : ""
-        insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
 
-        if NotesTextProcessor.hideSyntax {
-            renderTables()
+        if documentProjection != nil {
+            // Block-model mode: inserting multi-line table text via
+            // EditingOps.insert would split it into separate paragraph
+            // blocks (one per line). Instead, insert directly into the
+            // note's raw markdown and re-fill so the parser groups all
+            // table lines into a single paragraph block.
+            let cursorPos = selectedRange().location
+            if let projection = documentProjection {
+                var markdown = MarkdownSerializer.serialize(projection.document)
+                // Map rendered cursor position → approximate markdown position.
+                // For simplicity, clamp to content length.
+                let insertPos = min(cursorPos, markdown.count)
+                let idx = markdown.index(markdown.startIndex, offsetBy: insertPos)
+                let prefix = insertPos > 0 && !markdown[markdown.index(before: idx)...].hasPrefix("\n") ? "\n" : ""
+                markdown.insert(contentsOf: prefix + tableMarkdown + "\n", at: idx)
+                note.content = NSMutableAttributedString(string: markdown)
+                note.cachedDocument = nil
+                fill(note: note)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                 self?.focusFirstInlineTableCell()
+            }
+        } else {
+            // Source-mode path.
+            let insertRange = selectedRange()
+            let prefix = insertRange.location > 0 ? "\n" : ""
+            insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
+
+            if NotesTextProcessor.hideSyntax {
+                renderTables()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.focusFirstInlineTableCell()
+                }
             }
         }
     }

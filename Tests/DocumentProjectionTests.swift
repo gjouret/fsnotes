@@ -110,7 +110,11 @@ class DocumentProjectionTests: XCTestCase {
     func test_blockContaining_outsideAllBlocks() {
         let p = project("# Hi\nyo\n")
         // Length = 6 ("Hi\nyo\n"). Position 6 is past the trailing '\n'.
-        XCTAssertNil(p.blockContaining(storageIndex: 6))
+        // Maps to the last block (paragraph "yo") so cursor-at-end
+        // operations (e.g. toggleTodoList) work.
+        let atEnd = p.blockContaining(storageIndex: 6)
+        XCTAssertEqual(atEnd?.blockIndex, 1)
+        XCTAssertEqual(atEnd?.offsetInBlock, 2)
         // Negative
         XCTAssertNil(p.blockContaining(storageIndex: -1))
     }

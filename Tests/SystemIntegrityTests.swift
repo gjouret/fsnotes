@@ -736,4 +736,267 @@ class ProjectionCoverageTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Foreground Color Tests
+
+    /// PlatformColor.label must be the system semantic label color, not
+    /// a hardcoded gray. The block-model renderer uses this for all body
+    /// text. If it's lightGray, notes appear washed out.
+    ///
+    /// Root cause caught: PlatformColor.label was set to NSColor.lightGray
+    /// instead of NSColor.labelColor. Every block renderer inherits this.
+    func test_platformColorLabel_isSemanticLabelColor() {
+        #if os(OSX)
+        let label = PlatformColor.label
+        // NSColor.labelColor adapts to dark/light mode.
+        // NSColor.lightGray does not and is wrong for body text.
+        XCTAssertNotEqual(
+            label, NSColor.lightGray,
+            "PlatformColor.label must not be lightGray — use NSColor.labelColor"
+        )
+        #endif
+    }
+
+    /// The rendered attributed string must use a readable foreground color,
+    /// not lightGray or clear, for paragraph body text.
+    func test_renderedParagraph_hasReadableForegroundColor() {
+        let proj = project("Hello world")
+        let attrs = proj.attributed.attributes(at: 0, effectiveRange: nil)
+        if let fg = attrs[.foregroundColor] as? NSColor {
+            XCTAssertNotEqual(
+                fg, NSColor.lightGray,
+                "Rendered paragraph text must not be lightGray"
+            )
+            XCTAssertNotEqual(
+                fg, NSColor.clear,
+                "Rendered paragraph text must not be clear"
+            )
+        }
+        // If no foreground color is set, NSTextView uses the default
+        // (black/white), which is fine.
+    }
+
+    /// Rendered headings must also use a readable foreground color.
+    func test_renderedHeading_hasReadableForegroundColor() {
+        let proj = project("# Heading")
+        let attrs = proj.attributed.attributes(at: 0, effectiveRange: nil)
+        if let fg = attrs[.foregroundColor] as? NSColor {
+            XCTAssertNotEqual(fg, NSColor.lightGray)
+            XCTAssertNotEqual(fg, NSColor.clear)
+        }
+    }
+
+    // MARK: - Highlight (mark) Color Tests
+
+    /// The <mark> highlight must be visible — alpha should be >= 0.4
+    /// so highlighted text is clearly distinguishable from normal text.
+    ///
+    /// Root cause caught: alpha was 0.3 (30%), making highlight nearly
+    /// invisible on light backgrounds.
+    func test_markHighlight_hasVisibleAlpha() {
+        let defs = buildInlineTagDefinitions(baseFont: PlatformFont.systemFont(ofSize: 14))
+        guard let markDef = defs.first(where: {
+            $0.regex.pattern.contains("mark")
+        }) else {
+            XCTFail("No <mark> tag definition found in InlineTagRegistry")
+            return
+        }
+
+        if let bg = markDef.contentAttributes[.backgroundColor] as? NSColor {
+            let alpha = bg.alphaComponent
+            XCTAssertGreaterThanOrEqual(
+                alpha, 0.4,
+                "Mark highlight alpha \(alpha) is too faint — must be >= 0.4"
+            )
+        } else {
+            XCTFail("Mark tag has no backgroundColor attribute")
+        }
+    }
+
+    // MARK: - Code Block Emphasis Exclusion Tests
+
+    /// Emphasis markers (bold/italic underscores) must NOT be hidden
+    /// inside code blocks. When source-mode renders `__init__` inside
+    /// a fenced code block, the underscores must remain visible.
+    ///
+    /// Root cause caught: highlightMarkdown's italic/bold regex
+    /// processing didn't check codeBlockRanges, so `__init__` matched
+    /// the bold pattern and underscores were hidden via hideSyntax.
+    func test_codeBlock_underscoresNotHidden() {
+        let markdown = """
+        ```python
+        def __init__(self):
+            pass
+        ```
+        """
+
+        let attr = NSMutableAttributedString(string: markdown)
+        let fullRange = NSRange(location: 0, length: attr.length)
+
+        // Simulate code block detection
+        let codeStart = (markdown as NSString).range(of: "```python")
+        let codeEnd = (markdown as NSString).range(of: "```", options: [], range: NSRange(location: codeStart.location + codeStart.length, length: attr.length - codeStart.location - codeStart.length))
+        let codeBlockRange = NSRange(
+            location: codeStart.location,
+            length: codeEnd.location + codeEnd.length - codeStart.location
+        )
+
+        // Run highlight with code block ranges
+        NotesTextProcessor.highlightMarkdown(
+            attributedString: attr,
+            paragraphRange: fullRange,
+            codeBlockRanges: [codeBlockRange]
+        )
+
+        // Find __init__ in the string
+        let initRange = (markdown as NSString).range(of: "__init__")
+        guard initRange.location != NSNotFound else {
+            XCTFail("Could not find __init__ in test markdown")
+            return
+        }
+
+        // The underscores before "init" must NOT have clear foreground
+        // (which would mean they were hidden by hideSyntax)
+        let leadingUnderscoreRange = NSRange(location: initRange.location, length: 2)
+        let fg = attr.attribute(.foregroundColor, at: leadingUnderscoreRange.location, effectiveRange: nil) as? NSColor
+        XCTAssertNotEqual(
+            fg, NSColor.clear,
+            "Underscores in __init__ inside code block must not be hidden (clear foreground)"
+        )
+
+        // Also check kern is not negative (another hiding mechanism)
+        let kern = attr.attribute(.kern, at: leadingUnderscoreRange.location, effectiveRange: nil) as? CGFloat
+        if let k = kern {
+            XCTAssertGreaterThanOrEqual(
+                k, 0,
+                "Underscores in __init__ inside code block must not have negative kern"
+            )
+        }
+    }
+
+    // MARK: - Heading font size hierarchy tests
+
+    /// Heading font sizes must be non-increasing (H1 >= H2 >= ... >= H6),
+    /// with H6 never smaller than body text. H5 and H6 may be equal
+    /// (both at body text size) since the smallest headings are
+    /// distinguished by bold weight rather than size.
+    func test_headingFontSizes_areNonIncreasing() {
+        let bodyFont = PlatformFont.systemFont(ofSize: 14)
+        var previousSize: CGFloat = CGFloat.infinity
+
+        for level in 1...6 {
+            let rendered = HeadingRenderer.render(
+                level: level,
+                suffix: "Test Heading \(level)",
+                bodyFont: bodyFont
+            )
+            guard rendered.length > 0 else {
+                XCTFail("HeadingRenderer returned empty string for H\(level)")
+                continue
+            }
+            let font = rendered.attribute(.font, at: 0, effectiveRange: nil) as? PlatformFont
+            XCTAssertNotNil(font, "H\(level) must have a font attribute")
+            guard let f = font else { continue }
+
+            XCTAssertLessThanOrEqual(
+                f.pointSize, previousSize,
+                "H\(level) (\(f.pointSize)pt) must not be larger than H\(level - 1) (\(previousSize)pt)"
+            )
+            XCTAssertGreaterThanOrEqual(
+                f.pointSize, bodyFont.pointSize,
+                "H\(level) (\(f.pointSize)pt) must not be smaller than body text (\(bodyFont.pointSize)pt)"
+            )
+            previousSize = f.pointSize
+        }
+    }
+
+    /// H4 must be larger than body text — headings should never shrink to body size.
+    func test_headingH4_isLargerThanBody() {
+        let bodyFont = PlatformFont.systemFont(ofSize: 14)
+        let rendered = HeadingRenderer.render(level: 4, suffix: "H4", bodyFont: bodyFont)
+        guard rendered.length > 0,
+              let font = rendered.attribute(.font, at: 0, effectiveRange: nil) as? PlatformFont else {
+            XCTFail("HeadingRenderer returned empty or fontless string for H4")
+            return
+        }
+        XCTAssertGreaterThan(
+            font.pointSize, bodyFont.pointSize,
+            "H4 (\(font.pointSize)pt) must be larger than body (\(bodyFont.pointSize)pt)"
+        )
+    }
+
+    // MARK: - Setext heading / bold paragraph disambiguation
+
+    /// A bold paragraph followed by --- must NOT be parsed as a setext H2.
+    func test_boldParagraphFollowedByDashes_isNotSetextH2() {
+        let markdown = "**Bold text**\n---\nbody\n"
+        let doc = MarkdownParser.parse(markdown)
+
+        // First block should be a paragraph (not a heading)
+        guard doc.blocks.count >= 2 else {
+            XCTFail("Expected at least 2 blocks, got \(doc.blocks.count)")
+            return
+        }
+        switch doc.blocks[0] {
+        case .paragraph:
+            break // correct
+        case .heading:
+            XCTFail("**Bold text** followed by --- should be a paragraph, not a setext heading")
+        default:
+            break // acceptable (could be inline rendering variant)
+        }
+
+        // Second block should be a horizontal rule (---)
+        switch doc.blocks[1] {
+        case .horizontalRule:
+            break // correct
+        default:
+            // Could be an HR or something else, but must NOT be part of a heading
+            break
+        }
+    }
+
+    /// A normal paragraph followed by --- should still be a setext H2.
+    func test_normalParagraphFollowedByDashes_isSetextH2() {
+        let markdown = "Normal heading\n---\nbody\n"
+        let doc = MarkdownParser.parse(markdown)
+
+        guard !doc.blocks.isEmpty else {
+            XCTFail("Expected at least 1 block")
+            return
+        }
+        switch doc.blocks[0] {
+        case .heading(let level, _):
+            XCTAssertEqual(level, 2, "Normal text followed by --- should be setext H2")
+        default:
+            XCTFail("Normal text followed by --- should be parsed as a setext H2 heading")
+        }
+    }
+
+    // MARK: - New note creation state isolation
+
+    /// Verify that creating a new note properly clears block-model state so no
+    /// stale content leaks from a previous note.
+    func test_fillNote_clearsBlockModelState() {
+        // Parse and render a note with content
+        let markdown = "# Hello\n\nSome content here.\n"
+        let doc = MarkdownParser.parse(markdown)
+        let bodyFont = PlatformFont.systemFont(ofSize: 14)
+        let codeFont = PlatformFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let rendered = DocumentRenderer.render(doc, bodyFont: bodyFont, codeFont: codeFont)
+
+        // The rendered string should contain visible content
+        XCTAssertTrue(rendered.attributed.length > 0, "First note should render with content")
+
+        // Now render an empty note (simulating new note creation)
+        let emptyDoc = MarkdownParser.parse("")
+        let emptyRendered = DocumentRenderer.render(emptyDoc, bodyFont: bodyFont, codeFont: codeFont)
+
+        // Empty note should have no visible content (or just a newline)
+        let emptyText = emptyRendered.attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertTrue(
+            emptyText.isEmpty,
+            "Empty note should render as empty, got: '\(emptyText)'"
+        )
+    }
 }

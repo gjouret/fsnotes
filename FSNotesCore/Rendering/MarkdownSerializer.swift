@@ -47,8 +47,18 @@ public enum MarkdownSerializer {
         case .paragraph(let inline):
             return serializeInlines(inline)
 
-        case .list(let items):
-            return items.map { serializeItem($0) }.joined(separator: "\n")
+        case .list(let items, _):
+            // Use per-item blankLineBefore for round-trip fidelity:
+            // items that followed blank lines in the source get "\n\n"
+            // separator; others get "\n".
+            var result = ""
+            for (idx, item) in items.enumerated() {
+                if idx > 0 {
+                    result += item.blankLineBefore ? "\n\n" : "\n"
+                }
+                result += serializeItem(item)
+            }
+            return result
 
         case .blockquote(let qLines):
             return qLines
@@ -57,6 +67,13 @@ public enum MarkdownSerializer {
 
         case .horizontalRule(let character, let length):
             return String(repeating: character, count: length)
+
+        case .htmlBlock(let raw):
+            return raw
+
+        case .table(_, _, _, let raw):
+            // Round-trip: emit the exact source text that was parsed.
+            return raw
 
         case .blankLine:
             return ""
@@ -91,14 +108,30 @@ public enum MarkdownSerializer {
             switch inline {
             case .text(let s):
                 out += s
-            case .bold(let children):
-                out += "**" + serializeInlines(children) + "**"
-            case .italic(let children):
-                out += "*" + serializeInlines(children) + "*"
+            case .bold(let children, let marker):
+                let m = marker == .underscore ? "__" : "**"
+                out += m + serializeInlines(children) + m
+            case .italic(let children, let marker):
+                let m = marker == .underscore ? "_" : "*"
+                out += m + serializeInlines(children) + m
             case .strikethrough(let children):
                 out += "~~" + serializeInlines(children) + "~~"
             case .code(let s):
                 out += "`" + s + "`"
+            case .link(let text, let rawDest):
+                out += "[" + serializeInlines(text) + "](" + rawDest + ")"
+            case .image(let alt, let rawDest):
+                out += "![" + serializeInlines(alt) + "](" + rawDest + ")"
+            case .autolink(let text, _):
+                out += "<" + text + ">"
+            case .escapedChar(let ch):
+                out += "\\" + String(ch)
+            case .lineBreak(let raw):
+                out += raw
+            case .rawHTML(let html):
+                out += html
+            case .entity(let raw):
+                out += raw
             }
         }
         return out

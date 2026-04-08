@@ -144,7 +144,7 @@ class PreferencesEditorViewController: NSViewController {
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
             if let note = editor.note, let evc = editor.editorViewController {
-                // Skip legacy highlight when block model is active —
+                // Skip source-mode highlight when block model is active —
                 // refillEditArea() re-renders from the Document model.
                 if editor.documentProjection == nil {
                     NotesTextProcessor.highlight(attributedString: note.content)

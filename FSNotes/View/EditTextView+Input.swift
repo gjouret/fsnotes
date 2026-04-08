@@ -140,6 +140,14 @@ extension EditTextView {
             return false
         }
 
+        // Block model is active but couldn't handle this specific edit
+        // (e.g. nil replacementString from a click). Don't fall through
+        // to source-mode processing — that would corrupt the rendered state.
+        if textStorageProcessor?.blockModelActive == true {
+            return super.shouldChangeText(in: range, replacementString: replacementString)
+        }
+
+        // Source/markdown mode: source-mode processing path.
         note.resetAttributesCache()
         scheduleTagScan(for: note)
         deleteUnusedImages(checkRange: range)

@@ -61,9 +61,9 @@ extension PlatformColor {
 
     public static var label: PlatformColor {
         #if os(OSX)
-        return NSColor.lightGray
+        return NSColor.labelColor
         #else
-        return UIColor.lightGray
+        return UIColor.label
         #endif
     }
 }

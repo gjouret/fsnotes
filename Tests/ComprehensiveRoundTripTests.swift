@@ -125,6 +125,8 @@ A final paragraph to end the document.
             case .list:           lists += 1
             case .blockquote:     blockquotes += 1
             case .horizontalRule: rules += 1
+            case .htmlBlock:      break  // count not tracked
+            case .table:          break  // count not tracked
             case .blankLine:      blanks += 1
             }
         }
@@ -134,7 +136,9 @@ A final paragraph to end the document.
         XCTAssertEqual(headings, 3, "headings")
         XCTAssertEqual(paragraphs, 5, "paragraphs")
         XCTAssertEqual(codeBlocks, 3, "code blocks")
-        XCTAssertEqual(lists, 3, "lists")
+        // Two unordered dash lists separated by blank line merge into
+        // one loose list (CommonMark behavior), plus one ordered list = 2.
+        XCTAssertEqual(lists, 2, "lists")
         XCTAssertEqual(blockquotes, 3, "blockquotes")
         XCTAssertEqual(rules, 3, "horizontal rules")
         XCTAssertGreaterThan(blanks, 0, "blank lines")

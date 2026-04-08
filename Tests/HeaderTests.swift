@@ -87,16 +87,15 @@ class HeaderTests: XCTestCase {
     }
 
     // Documents the known bug: a **Bold** paragraph followed by '---' gets
-    // promoted to setext H2 because the parser treats any paragraph as a
-    // valid setext title — even a pure bold/italic emphasis line.
-    func test_blockParser_boldParagraphFollowedByDashes_becomesSetextH2() {
+    // Bold-only paragraph followed by "---" should NOT become setext H2.
+    // Previously (documented bug), emphasis-only paragraphs were
+    // incorrectly promoted to setext H2. This is now fixed.
+    func test_blockParser_boldParagraphFollowedByDashes_notSetextH2() {
         let text = "**Bold text**\n---\nbody\n"
         let blocks = MarkdownBlockParser.parse(string: text as NSString)
         let has = blocks.contains { if case .headingSetext(let l) = $0.type { return l == 2 }; return false }
-        // This documents current behaviour: we ARE promoting emphasis-only
-        // lines to H2. When this is fixed, flip the assertion.
-        XCTAssertTrue(has,
-                      "BUG (documented): emphasis-only paragraph + '---' becomes setext H2")
+        XCTAssertFalse(has,
+                       "Bold-only paragraph + '---' should not become setext H2")
     }
 
     // MARK: - Full pipeline: H1..H6 font sizes are distinct and monotonic

@@ -144,17 +144,13 @@ class CodeBlockRoundTripTests: XCTestCase {
         XCTAssertEqual(content, "")
     }
 
-    func test_parse_unterminatedFenceTreatedAsRawText() {
-        // Unterminated fence: the whole thing becomes raw text (preserves round-trip).
+    func test_parse_unterminatedFenceExtendsToEnd() {
+        // CommonMark: unterminated fence extends to end of document.
         let input = "```\nno close fence\n"
         let doc = MarkdownParser.parse(input)
-        // Should NOT contain a codeBlock — everything is raw.
-        for block in doc.blocks {
-            if case .codeBlock = block {
-                XCTFail("unterminated fence should not parse as codeBlock")
-            }
+        guard case .codeBlock(_, let content, _) = doc.blocks[0] else {
+            XCTFail("expected codeBlock for unterminated fence"); return
         }
-        // And must round-trip.
-        XCTAssertEqual(MarkdownSerializer.serialize(doc), input)
+        XCTAssertEqual(content, "no close fence")
     }
 }

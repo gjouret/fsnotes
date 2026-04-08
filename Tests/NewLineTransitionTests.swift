@@ -392,8 +392,8 @@ class NewLineTransitionTests: XCTestCase {
         }
     }
 
-    /// Verify bullet glyph (•) is in the rendered text when using the block model.
-    /// Block model renders bullets as plain "•" characters — no kern hiding.
+    /// Verify bullets are rendered as NSTextAttachment characters.
+    /// Block model renders bullets as attachments — no kern hiding, no raw markers.
     func test_bullet_glyph_rendered_in_snapshot() {
         // Use the block-model rendering path directly.
         let bodyFont = PlatformFont.systemFont(ofSize: 14)
@@ -402,9 +402,9 @@ class NewLineTransitionTests: XCTestCase {
         let proj = DocumentProjection(document: doc, bodyFont: bodyFont, codeFont: codeFont)
 
         let rendered = proj.attributed.string
-        // Block model renders bullets as "•" characters
-        XCTAssertTrue(rendered.contains("\u{2022}"),
-                      "Block model should render • bullet characters, got: \(rendered.prefix(30))")
+        // Block model renders bullets as NSTextAttachment characters
+        XCTAssertTrue(rendered.contains("\u{FFFC}"),
+                      "Block model should render bullet attachments, got: \(rendered.prefix(30))")
         XCTAssertTrue(rendered.contains("First item"),
                       "Content should be preserved")
         XCTAssertFalse(rendered.contains("- First"),

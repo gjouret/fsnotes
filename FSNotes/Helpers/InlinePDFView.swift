@@ -276,13 +276,13 @@ class PDFAttachmentCell: NSTextAttachmentCell {
 
 /// Scans textStorage for `![title](path.pdf)` patterns and replaces
 /// them with inline PDFView attachments. Works in both block-model
-/// and legacy rendering pipelines.
+/// and source-mode rendering pipelines.
 enum PDFAttachmentProcessor {
 
     /// Scan the text storage for PDF attachment references and replace
     /// them with live PDFView attachments.
     ///
-    /// Call this AFTER the main rendering pass (block-model or legacy)
+    /// Call this AFTER the main rendering pass (block-model or source-mode)
     /// has populated textStorage. It regex-scans for `![...](*.pdf)`
     /// and replaces each match with a single attachment character
     /// hosting an InlinePDFView.

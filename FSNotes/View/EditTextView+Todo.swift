@@ -52,7 +52,7 @@ extension EditTextView {
         // Walk blocks and remove checked items from lists.
         var modified = false
         for (i, block) in newDoc.blocks.enumerated().reversed() {
-            guard case .list(let items) = block else { continue }
+            guard case .list(let items, _) = block else { continue }
             let filtered = removeCheckedItems(from: items)
             if filtered.count != countAllItems(items) {
                 modified = true

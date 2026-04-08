@@ -39,7 +39,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     func refreshParagraphRendering(range: NSRange) {
         guard let storage = textStorage else { return }
 
-        // Block-model pipeline owns paragraph styles — skip legacy path.
+        // Block-model pipeline owns paragraph styles — skip source-mode path.
         if textStorageProcessor?.blockModelActive == true { return }
 
         if NotesTextProcessor.hideSyntax,
@@ -90,8 +90,25 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             textStorage?.removeHighlight()
         }
 
+        // Determine if this becomeFirstResponder was triggered by the
+        // user clicking inside this editor. In Cocoa, the window calls
+        // makeFirstResponder BEFORE routing the mouseDown event, so our
+        // mouseDown override hasn't run yet and skipLoadSelectedRange is
+        // still false. If we call loadSelectedRange here, it scrolls to
+        // the saved cursor position and the subsequent mouseDown places
+        // the cursor at the wrong character (because the view scrolled
+        // out from under the mouse), causing a large spurious selection.
+        let isClickInSelf: Bool = {
+            guard let event = NSApp.currentEvent, event.type == .leftMouseDown else { return false }
+            let point = self.convert(event.locationInWindow, from: nil)
+            return self.bounds.contains(point)
+        }()
+
         if skipLoadSelectedRange {
             skipLoadSelectedRange = false
+        } else if isClickInSelf {
+            // The mouse click will handle cursor placement in mouseDown.
+            // Do NOT restore saved cursor/scroll here.
         } else {
             loadSelectedRange()
         }
@@ -390,6 +407,16 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     override var textContainerOrigin: NSPoint {
         let origin = super.textContainerOrigin
         return NSPoint(x: origin.x, y: origin.y - 7)
+    }
+
+    override func scrollRangeToVisible(_ range: NSRange) {
+        // During block-model storage splicing (isRendering == true),
+        // NSLayoutManager._resizeTextViewForTextContainer calls
+        // scrollRangeToVisible with the entire edited region. That
+        // causes a scroll jump. The block-model edit path handles
+        // cursor positioning itself — no scrolling is needed.
+        if textStorageProcessor?.isRendering == true { return }
+        super.scrollRangeToVisible(range)
     }
 
     // drawGutterIcons moved to GutterController

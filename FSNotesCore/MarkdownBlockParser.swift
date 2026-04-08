@@ -2,8 +2,8 @@
 //  MarkdownBlockParser.swift
 //  FSNotes
 //
-//  Legacy block-based FSM parser for markdown documents.
-//  Produces an ordered [MarkdownBlock] array used by the legacy
+//  Source-mode block-based FSM parser for markdown documents.
+//  Produces an ordered [MarkdownBlock] array used by the source-mode
 //  rendering pipeline (source mode, non-markdown notes) and by
 //  fold/unfold operations. The block-model pipeline
 //  (Document/DocumentRenderer) is now the source of truth for
@@ -214,7 +214,7 @@ public class MarkdownBlockParser {
             let clampedRange = NSRange(location: lineRange.location, length: clampedEnd - lineRange.location)
 
             let line = string.substring(with: clampedRange)
-            let lineType = classifyLine(line)
+            let lineType = classifyLine(line, string: string)
 
             processLine(lineType: lineType, line: line, lineRange: clampedRange, string: string)
 
@@ -231,7 +231,7 @@ public class MarkdownBlockParser {
 
     // MARK: - Line Classification
 
-    private func classifyLine(_ line: String) -> LineType {
+    private func classifyLine(_ line: String, string: NSString? = nil) -> LineType {
         let trimmed = line.trimmingCharacters(in: .newlines)
 
         // Empty line
@@ -284,7 +284,7 @@ public class MarkdownBlockParser {
         // Setext underline: === or ---  (only if previous block is paragraph).
         // This must be checked before horizontalRule so "Title\n---" is parsed
         // as a heading, not as a paragraph followed by <hr>.
-        if isSetextUnderline(trimmed) {
+        if isSetextUnderline(trimmed, string: string) {
             return .setextUnderline(level: trimmed.hasPrefix("=") ? 1 : 2)
         }
 
@@ -342,13 +342,25 @@ public class MarkdownBlockParser {
         return stripped.allSatisfy { $0 == first }
     }
 
-    private func isSetextUnderline(_ line: String) -> Bool {
+    private func isSetextUnderline(_ line: String, string: NSString? = nil) -> Bool {
         let stripped = line.trimmingCharacters(in: .whitespaces)
         if stripped.count < 2 { return false }
         if stripped.allSatisfy({ $0 == "=" }) { return true }
-        // --- could be HR or setext — setext only if previous block is paragraph
+        // --- could be HR or setext — setext only if previous block is a plain
+        // paragraph that doesn't start with emphasis markers (**, *, __, _).
+        // A bold paragraph like "**Bold text**\n---" should be paragraph + HR,
+        // not a setext H2.
         if stripped.allSatisfy({ $0 == "-" }) {
             if let lastBlock = blocks.last, case .paragraph = lastBlock.type {
+                // Check the previous block's content for emphasis markers
+                if let str = string {
+                    let content = str.substring(with: lastBlock.contentRange)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if content.hasPrefix("**") || content.hasPrefix("__") ||
+                       content.hasPrefix("*") || content.hasPrefix("_") {
+                        return false
+                    }
+                }
                 return true
             }
         }

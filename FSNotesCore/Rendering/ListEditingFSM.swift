@@ -137,7 +137,7 @@ public enum ListEditingFSM {
             return .bodyText
         }
         let block = projection.document.blocks[blockIndex]
-        guard case .list(let items) = block else {
+        guard case .list(let items, _) = block else {
             return .bodyText
         }
 
@@ -172,7 +172,7 @@ public enum ListEditingFSM {
             return false
         }
         let block = projection.document.blocks[blockIndex]
-        guard case .list(let items) = block else {
+        guard case .list(let items, _) = block else {
             return false
         }
         let entries = EditingOps.flattenListPublic(items)
@@ -193,7 +193,7 @@ public enum ListEditingFSM {
             return false
         }
         let block = projection.document.blocks[blockIndex]
-        guard case .list(let items) = block else {
+        guard case .list(let items, _) = block else {
             return false
         }
         let entries = EditingOps.flattenListPublic(items)

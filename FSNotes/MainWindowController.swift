@@ -26,6 +26,31 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     
     func windowDidResize(_ notification: Notification) {
         refreshEditArea()
+        restoreCollapsedPanesIfNeeded()
+    }
+
+    /// When the window expands after being shrunk (e.g. half-screen → full),
+    /// NSSplitView autosave may leave panes collapsed at 0. Detect this and
+    /// restore them to their saved widths.
+    private func restoreCollapsedPanesIfNeeded() {
+        guard let vc = ViewController.shared() else { return }
+
+        // Restore sidebar if it was collapsed by resize (not intentionally hidden)
+        if !UserDefaultsManagement.hideSidebarTable {
+            let sidebarWidth = vc.sidebarSplitView.subviews.first?.frame.width ?? 0
+            if sidebarWidth < 1 {
+                let savedWidth = UserDefaultsManagement.sidebarTableWidth
+                if savedWidth > 50 {
+                    vc.sidebarSplitView.setPosition(savedWidth, ofDividerAt: 0)
+                }
+            }
+        }
+
+        // Restore notes list if it was collapsed by resize
+        let notesListWidth = vc.splitView.subviews.first?.frame.width ?? 0
+        if notesListWidth < 10 {
+            vc.splitView.setPosition(300, ofDividerAt: 0)
+        }
     }
         
     func makeNew() {

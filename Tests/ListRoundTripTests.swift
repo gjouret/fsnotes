@@ -153,7 +153,7 @@ class ListRoundTripTests: XCTestCase {
 
     func test_parse_flatList() {
         let doc = MarkdownParser.parse("- a\n- b\n")
-        guard case .list(let items) = doc.blocks[0] else {
+        guard case .list(let items, _) = doc.blocks[0] else {
             XCTFail("expected list block"); return
         }
         XCTAssertEqual(items.count, 2)
@@ -167,7 +167,7 @@ class ListRoundTripTests: XCTestCase {
 
     func test_parse_nestedList() {
         let doc = MarkdownParser.parse("- a\n  - b\n  - c\n- d\n")
-        guard case .list(let items) = doc.blocks[0] else {
+        guard case .list(let items, _) = doc.blocks[0] else {
             XCTFail("expected list block"); return
         }
         XCTAssertEqual(items.count, 2)
@@ -182,7 +182,7 @@ class ListRoundTripTests: XCTestCase {
 
     func test_parse_orderedList() {
         let doc = MarkdownParser.parse("1. a\n2. b\n")
-        guard case .list(let items) = doc.blocks[0] else {
+        guard case .list(let items, _) = doc.blocks[0] else {
             XCTFail("expected list block"); return
         }
         XCTAssertEqual(items.count, 2)

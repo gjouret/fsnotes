@@ -161,7 +161,7 @@ extension ViewController {
         self.sidebarSplitView.autosaveName = "SidebarSplitView"
         self.splitView.autosaveName = "EditorSplitView"
 
-        if self.splitView.subviews[0].frame.width < 10 {
+        if (self.splitView.subviews.first?.frame.width ?? 0) < 10 {
             self.splitView.setPosition(300, ofDividerAt: 0)
         }
 
@@ -228,6 +228,7 @@ extension ViewController {
 
     func configureEditor() {
         NotesTextProcessor.hideSyntax = UserDefaultsManagement.wysiwygMode
+        bmLog("⚙️ configureEditor: wysiwygMode=\(UserDefaultsManagement.wysiwygMode), hideSyntax=\(NotesTextProcessor.hideSyntax)")
 
         self.editor?.linkTextAttributes = [
             .foregroundColor: NSColor.init(named: "link")!

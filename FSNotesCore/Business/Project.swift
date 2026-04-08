@@ -355,19 +355,27 @@ public class Project: NSObject {
     }
 
     public func loadPins(for notes: [Note]) {
-    #if CLOUD_RELATED_BLOCK
-        for note in notes {
-            note.isPinned = false
-        }
-        
+        // Read pin state from UserDefaults (crash-safe) or iCloud KVS.
+        // This ensures pins survive force-quit, not just graceful shutdown.
+        let key = "co.fluder.fsnotes.pins.shared"
+
+        var names: [String]?
+        #if CLOUD_RELATED_BLOCK
         let store = NSUbiquitousKeyValueStore.default
-        let names = store.array(forKey: "co.fluder.fsnotes.pins.shared") as? [String] ?? []
-        let pinned = Set(names)
-        
+        store.synchronize()
+        names = store.array(forKey: key) as? [String]
+        #endif
+
+        if names == nil {
+            names = UserDefaults.standard.array(forKey: key) as? [String]
+        }
+
+        guard let pinnedPaths = names else { return }
+        let pinned = Set(pinnedPaths)
+
         for note in notes {
             note.isPinned = pinned.contains(note.getRelatedPath())
         }
-    #endif
     }
     
     func fileExist(fileName: String, ext: String) -> Bool {        

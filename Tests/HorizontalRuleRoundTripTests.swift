@@ -86,9 +86,14 @@ class HorizontalRuleRoundTripTests: XCTestCase {
         assertRoundTrip("--*\n")
     }
 
-    func test_roundTrip_dashWithSpace_notHR() {
-        // Space between chars: strict parser rejects.
-        assertRoundTrip("- - -\n")
+    func test_parse_dashWithSpace_isHR() {
+        // CommonMark: spaces between HR chars are allowed.
+        let doc = MarkdownParser.parse("- - -\n")
+        guard case .horizontalRule(let char, let len) = doc.blocks[0] else {
+            XCTFail("expected .horizontalRule, got \(doc.blocks[0])"); return
+        }
+        XCTAssertEqual(char, "-")
+        XCTAssertEqual(len, 3)
     }
 
     // MARK: - Structural parse verification

@@ -146,11 +146,23 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     /// path (drawGlyphs, drawBackground) calls this before drawing.
     private func unfoldedRanges(in glyphRange: NSRange) -> [NSRange] {
         guard let ts = textStorage else { return [glyphRange] }
-        let charRange = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
-        guard charRange.length > 0 else { return [glyphRange] }
+
+        // Clamp glyphRange to valid glyph count — after edits the
+        // layout system can pass ranges that exceed numberOfGlyphs.
+        let maxGlyph = numberOfGlyphs
+        guard maxGlyph > 0 else { return [] }
+        let clampedGlyph = NSRange(
+            location: min(glyphRange.location, maxGlyph),
+            length: min(glyphRange.length, maxGlyph - min(glyphRange.location, maxGlyph))
+        )
+        guard clampedGlyph.length > 0 else { return [] }
+
+        let charRange = characterRange(forGlyphRange: clampedGlyph, actualGlyphRange: nil)
+        guard charRange.length > 0,
+              NSMaxRange(charRange) <= ts.length else { return [] }
 
         var result: [NSRange] = []
-        var currentStart = glyphRange.location
+        var currentStart = clampedGlyph.location
         ts.enumerateAttribute(.foldedContent, in: charRange) { value, attrCharRange, _ in
             if value != nil {
                 let foldedGlyphs = self.glyphRange(forCharacterRange: attrCharRange, actualCharacterRange: nil)
@@ -160,12 +172,12 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 currentStart = NSMaxRange(foldedGlyphs)
             }
         }
-        let end = NSMaxRange(glyphRange)
+        let end = NSMaxRange(clampedGlyph)
         if currentStart < end {
             result.append(NSRange(location: currentStart, length: end - currentStart))
         }
 
-        return result.isEmpty ? [glyphRange] : result
+        return result.isEmpty ? [clampedGlyph] : result
     }
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
@@ -209,6 +221,10 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
         #endif
         for range in unfoldedRanges(in: glyphsToShow) {
+            guard range.length > 0,
+                  NSMaxRange(range) <= numberOfGlyphs else { continue }
+            let cr = characterRange(forGlyphRange: range, actualGlyphRange: nil)
+            guard NSMaxRange(cr) <= (textStorage?.length ?? 0) else { continue }
             super.drawGlyphs(forGlyphRange: range, at: origin)
         }
     }
@@ -224,21 +240,52 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             return
         }
 
-        // Apply fold gate: only draw backgrounds for unfolded ranges
+        // Bail out during block-model splice operations — textStorage may
+        // be mid-mutation and attribute enumeration would hit stale ranges.
+        if let processor = ts.delegate as? TextStorageProcessor, processor.isRendering {
+            super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+            return
+        }
+
+        // Apply fold gate: only draw backgrounds for unfolded ranges.
+        // Each sub-range is re-validated before use — after deletes,
+        // the character range backing a glyph range can exceed
+        // textStorage.length, causing AppKit's attribute enumeration
+        // to trap.
         for range in unfoldedRanges(in: glyphsToShow) {
+            // Re-validate: glyph range must map to a valid character range.
+            guard range.length > 0,
+                  NSMaxRange(range) <= numberOfGlyphs else { continue }
+            let charRangeForRange = characterRange(forGlyphRange: range, actualGlyphRange: nil)
+            guard charRangeForRange.length > 0,
+                  NSMaxRange(charRangeForRange) <= ts.length else { continue }
+
             drawCodeBlockBackground(forGlyphRange: range, at: origin)
             drawHeaderBottomBorders(forGlyphRange: range, at: origin)
 
-            // Legacy attribute-based drawing: bullets, checkboxes, ordered
-            // markers, and custom attribute drawers. Only needed in legacy
+            let blockModelActive = (ts.delegate as? TextStorageProcessor)?.blockModelActive ?? false
+
+            // Blockquote vertical bars: drawn in BOTH source-mode and
+            // block-model mode. The block-model renderer sets .blockquote
+            // with the nesting depth on rendered blockquote lines.
+            if let ctx = NSGraphicsContext.current?.cgContext,
+               let tc = textContainers.first {
+                let bqDrawer = BlockquoteBorderDrawer()
+                drawAttributeRanges(drawer: bqDrawer, forGlyphRange: range, at: origin,
+                                    layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
+            }
+
+            // Source-mode attribute-based drawing: bullets, checkboxes, ordered
+            // markers, and other custom attribute drawers. Only needed in source
             // mode — the block-model pipeline renders these inline as text
             // characters, not as LayoutManager-drawn glyphs.
-            let blockModelActive = (ts.delegate as? TextStorageProcessor)?.blockModelActive ?? false
             if NotesTextProcessor.hideSyntax,
                !blockModelActive,
                let ctx = NSGraphicsContext.current?.cgContext,
                let tc = textContainers.first {
                 for drawer in Self.attributeDrawers {
+                    // Skip blockquote — already drawn above for both modes.
+                    if drawer.attributeKey == .blockquote { continue }
                     drawAttributeRanges(drawer: drawer, forGlyphRange: range, at: origin,
                                         layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
                 }
@@ -334,7 +381,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     private func drawCheckboxMarkers(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint,
                                      textStorage: NSTextStorage, context: CGContext) {
         let noteFont = UserDefaultsManagement.noteFont
-        let cbFont = NSFont.systemFont(ofSize: noteFont.pointSize * 1.3)
+        let cbFont = NSFont.systemFont(ofSize: noteFont.pointSize * 2.0)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: cbFont, .foregroundColor: NSColor.textColor
         ]

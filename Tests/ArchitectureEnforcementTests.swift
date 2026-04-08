@@ -448,24 +448,28 @@ class ArchitectureEnforcementTests: XCTestCase {
     /// `N.`, `N)`) appear in the rendered output — unordered items
     /// render as "• ", ordered items re-emit the numeric marker as
     /// visual text, indentation is normalized to 2-space-per-level.
+    // Bullet and ordered markers are rendered as NSTextAttachment
+    // characters (\u{FFFC}) with no separator. Visual indentation and
+    // glyph-to-text gap are handled via NSParagraphStyle headIndent.
+    private static let A = "\u{FFFC}"  // attachment replacement char
     private static let listFixtures: [(name: String, source: String, expectedRendered: String)] = [
-        ("flat_dash_one",      "- a\n",                             "• a"),
-        ("flat_dash_three",    "- a\n- b\n- c\n",                   "• a\n• b\n• c"),
-        ("flat_star",          "* x\n* y\n",                        "• x\n• y"),
-        ("flat_plus",          "+ x\n+ y\n",                        "• x\n• y"),
-        ("ordered_dot",        "1. first\n2. second\n",             "1. first\n2. second"),
-        ("ordered_paren",      "1) one\n2) two\n",                  "1) one\n2) two"),
-        ("nested_two_deep",    "- a\n  - b\n  - c\n- d\n",          "• a\n  ◦ b\n  ◦ c\n• d"),
-        ("nested_three_deep",  "- a\n  - b\n    - c\n- d\n",        "• a\n  ◦ b\n    ▪ c\n• d"),
-        ("ordered_in_unord",   "- a\n  1. one\n  2. two\n",         "• a\n  1. one\n  2. two"),
-        ("bold_in_item",       "- this is **bold** text\n",         "• this is bold text"),
-        ("code_in_item",       "- call `foo()` here\n",             "• call foo() here"),
+        ("flat_dash_one",      "- a\n",                             "\(A)a"),
+        ("flat_dash_three",    "- a\n- b\n- c\n",                   "\(A)a\n\(A)b\n\(A)c"),
+        ("flat_star",          "* x\n* y\n",                        "\(A)x\n\(A)y"),
+        ("flat_plus",          "+ x\n+ y\n",                        "\(A)x\n\(A)y"),
+        ("ordered_dot",        "1. first\n2. second\n",             "\(A)first\n\(A)second"),
+        ("ordered_paren",      "1) one\n2) two\n",                  "\(A)one\n\(A)two"),
+        ("nested_two_deep",    "- a\n  - b\n  - c\n- d\n",          "\(A)a\n\(A)b\n\(A)c\n\(A)d"),
+        ("nested_three_deep",  "- a\n  - b\n    - c\n- d\n",        "\(A)a\n\(A)b\n\(A)c\n\(A)d"),
+        ("ordered_in_unord",   "- a\n  1. one\n  2. two\n",         "\(A)a\n\(A)one\n\(A)two"),
+        ("bold_in_item",       "- this is **bold** text\n",         "\(A)this is bold text"),
+        ("code_in_item",       "- call `foo()` here\n",             "\(A)call foo() here"),
     ]
 
     func test_listRenderer_noNegativeKern() {
         for fixture in Self.listFixtures {
             let doc = MarkdownParser.parse(fixture.source)
-            guard case .list(let items) = doc.blocks[0] else {
+            guard case .list(let items, _) = doc.blocks[0] else {
                 XCTFail("[\(fixture.name)] first block is not a list"); continue
             }
             let rendered = ListRenderer.render(items: items, bodyFont: bodyFont())
@@ -476,7 +480,7 @@ class ArchitectureEnforcementTests: XCTestCase {
     func test_listRenderer_noClearForeground() {
         for fixture in Self.listFixtures {
             let doc = MarkdownParser.parse(fixture.source)
-            guard case .list(let items) = doc.blocks[0] else {
+            guard case .list(let items, _) = doc.blocks[0] else {
                 XCTFail("[\(fixture.name)] first block is not a list"); continue
             }
             let rendered = ListRenderer.render(items: items, bodyFont: bodyFont())
@@ -491,7 +495,7 @@ class ArchitectureEnforcementTests: XCTestCase {
         // visual text (that IS their display form).
         for fixture in Self.listFixtures {
             let doc = MarkdownParser.parse(fixture.source)
-            guard case .list(let items) = doc.blocks[0] else {
+            guard case .list(let items, _) = doc.blocks[0] else {
                 XCTFail("[\(fixture.name)] first block is not a list"); continue
             }
             let rendered = ListRenderer.render(items: items, bodyFont: bodyFont())
@@ -515,7 +519,7 @@ class ArchitectureEnforcementTests: XCTestCase {
         }
         for fixture in unorderedOnly {
             let doc = MarkdownParser.parse(fixture.source)
-            guard case .list(let items) = doc.blocks[0] else { continue }
+            guard case .list(let items, _) = doc.blocks[0] else { continue }
             let rendered = ListRenderer.render(items: items, bodyFont: bodyFont())
             for marker in ["-", "*", "+"] {
                 XCTAssertFalse(
@@ -530,7 +534,7 @@ class ArchitectureEnforcementTests: XCTestCase {
     func test_listRenderer_isIdempotent() {
         for fixture in Self.listFixtures {
             let doc = MarkdownParser.parse(fixture.source)
-            guard case .list(let items) = doc.blocks[0] else { continue }
+            guard case .list(let items, _) = doc.blocks[0] else { continue }
             let a = ListRenderer.render(items: items, bodyFont: bodyFont())
             let b = ListRenderer.render(items: items, bodyFont: bodyFont())
             XCTAssertEqual(
@@ -544,7 +548,7 @@ class ArchitectureEnforcementTests: XCTestCase {
         // Semantic check: a bold run inside a list item carries the
         // bold font trait at its range.
         let doc = MarkdownParser.parse("- this is **bold** text\n")
-        guard case .list(let items) = doc.blocks[0] else {
+        guard case .list(let items, _) = doc.blocks[0] else {
             XCTFail("expected list"); return
         }
         let rendered = ListRenderer.render(items: items, bodyFont: bodyFont())
@@ -575,15 +579,17 @@ class ArchitectureEnforcementTests: XCTestCase {
     /// the expected rendered string. Source `>` markers must NEVER
     /// appear in the rendered output.
     private static let blockquoteFixtures: [(name: String, source: String, expectedRendered: String)] = [
-        ("simple",          "> hello\n",                   "  hello"),
-        ("twoLines",        "> a\n> b\n",                  "  a\n  b"),
-        ("nestedTight",     ">> deep\n",                   "    deep"),
-        ("nestedSpaced",    "> > deep\n",                  "    deep"),
-        ("mixedLevels",     "> outer\n>> inner\n",         "  outer\n    inner"),
-        ("boldInside",      "> this is **bold** text\n",   "  this is bold text"),
-        ("codeInside",      "> call `foo()` here\n",       "  call foo() here"),
-        ("emptyLine",       ">\n",                         "  "),
-        ("noSpaceAfter",    ">hello\n",                    "  hello"),
+        // Indentation is now via .paragraphStyle (headIndent/firstLineHeadIndent),
+        // NOT literal space characters. The rendered string contains only content text.
+        ("simple",          "> hello\n",                   "hello"),
+        ("twoLines",        "> a\n> b\n",                  "a\nb"),
+        ("nestedTight",     ">> deep\n",                   "deep"),
+        ("nestedSpaced",    "> > deep\n",                  "deep"),
+        ("mixedLevels",     "> outer\n>> inner\n",         "outer\ninner"),
+        ("boldInside",      "> this is **bold** text\n",   "this is bold text"),
+        ("codeInside",      "> call `foo()` here\n",       "call foo() here"),
+        ("emptyLine",       ">\n",                         ""),
+        ("noSpaceAfter",    ">hello\n",                    "hello"),
     ]
 
     func test_blockquoteRenderer_noNegativeKern() {
@@ -626,6 +632,53 @@ class ArchitectureEnforcementTests: XCTestCase {
                 "source: \(quoted(fixture.source)) | expected: \(quoted(fixture.expectedRendered)) | rendered: \(quoted(rendered.string))"
             )
         }
+    }
+
+    func test_blockquoteRenderer_setsBlockquoteAttributeWithNestingDepth() {
+        // Verify that the .blockquote attribute is set with the correct
+        // nesting level so LayoutManager can draw vertical bars.
+        let source = "> outer\n>> inner\n>>> deep\n"
+        let doc = MarkdownParser.parse(source)
+        guard case .blockquote(let lines) = doc.blocks[0] else {
+            XCTFail("expected .blockquote"); return
+        }
+        let rendered = BlockquoteRenderer.render(lines: lines, bodyFont: bodyFont())
+        // "outer" should have .blockquote = 1
+        let outerRange = (rendered.string as NSString).range(of: "outer")
+        let outerDepth = rendered.attribute(.blockquote, at: outerRange.location, effectiveRange: nil) as? Int
+        XCTAssertEqual(outerDepth, 1, ".blockquote depth for level-1 line should be 1")
+
+        // "inner" should have .blockquote = 2
+        let innerRange = (rendered.string as NSString).range(of: "inner")
+        let innerDepth = rendered.attribute(.blockquote, at: innerRange.location, effectiveRange: nil) as? Int
+        XCTAssertEqual(innerDepth, 2, ".blockquote depth for level-2 line should be 2")
+
+        // "deep" should have .blockquote = 3
+        let deepRange = (rendered.string as NSString).range(of: "deep")
+        let deepDepth = rendered.attribute(.blockquote, at: deepRange.location, effectiveRange: nil) as? Int
+        XCTAssertEqual(deepDepth, 3, ".blockquote depth for level-3 line should be 3")
+    }
+
+    func test_blockquoteRenderer_setsLeftIndentation() {
+        // Verify paragraph style has left indentation to clear the vertical bars.
+        let source = "> hello\n>> nested\n"
+        let doc = MarkdownParser.parse(source)
+        guard case .blockquote(let lines) = doc.blocks[0] else {
+            XCTFail("expected .blockquote"); return
+        }
+        let rendered = BlockquoteRenderer.render(lines: lines, bodyFont: bodyFont())
+
+        let helloRange = (rendered.string as NSString).range(of: "hello")
+        let helloStyle = rendered.attribute(.paragraphStyle, at: helloRange.location, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertNotNil(helloStyle, "Level-1 line should have a paragraph style")
+        XCTAssertGreaterThan(helloStyle?.headIndent ?? 0, 0, "Level-1 line should have positive headIndent")
+        XCTAssertGreaterThan(helloStyle?.firstLineHeadIndent ?? 0, 0, "Level-1 line should have positive firstLineHeadIndent")
+
+        let nestedRange = (rendered.string as NSString).range(of: "nested")
+        let nestedStyle = rendered.attribute(.paragraphStyle, at: nestedRange.location, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertNotNil(nestedStyle, "Level-2 line should have a paragraph style")
+        XCTAssertGreaterThan(nestedStyle?.headIndent ?? 0, helloStyle?.headIndent ?? 0,
+                             "Level-2 indentation should be greater than level-1")
     }
 
     func test_blockquoteRenderer_isIdempotent() {

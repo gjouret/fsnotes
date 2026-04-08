@@ -105,10 +105,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// kern, and clear-foreground to storage that has no markdown markers.
     public var blockModelActive = false
 
-    // MARK: - Legacy Block Array
+    // MARK: - Source-Mode Block Array
 
-    /// Legacy block array used by fold/unfold and the legacy rendering
-    /// pipeline (source mode). When blockModelActive==true, populated
+    /// Source-mode block array used by fold/unfold and the source-mode
+    /// rendering pipeline. When blockModelActive==true, populated
     /// via syncBlocksFromProjection() instead of updateBlockModel().
     public var blocks: [MarkdownBlock] = []
     private var pendingRenderedBlockIDs = Set<UUID>()
@@ -142,7 +142,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     // MARK: - Block Model Sync for Fold/Unfold
 
-    /// Populate the legacy `blocks` array from a DocumentProjection so
+    /// Populate the source-mode `blocks` array from a DocumentProjection so
     /// that fold/unfold (which reads `blocks`) works when
     /// `blockModelActive == true`.
     ///
@@ -176,10 +176,19 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             case .heading(let level, _):
                 blockType = .heading(level: level)
             case .paragraph:
-                blockType = .paragraph
+                // Check if this paragraph's rendered content looks like a
+                // markdown table (lines starting/ending with `|` and a
+                // separator row). If so, tag it as .table so renderTables()
+                // can pick it up and overlay the table widget.
+                let content = projection.attributed.attributedSubstring(from: span).string
+                if Self.looksLikeTable(content) {
+                    blockType = .table
+                } else {
+                    blockType = .paragraph
+                }
             case .codeBlock(let lang, _, _):
                 blockType = .codeBlock(language: lang)
-            case .list(let items):
+            case .list(let items, _):
                 // Determine list type from first item
                 if items.first?.checkbox != nil {
                     blockType = .todoItem(checked: items.first?.isChecked ?? false)
@@ -193,8 +202,12 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 blockType = .blockquote
             case .horizontalRule:
                 blockType = .horizontalRule
+            case .htmlBlock:
+                blockType = .paragraph  // HTML blocks render as plain text blocks
             case .blankLine:
                 blockType = .empty
+            case .table:
+                blockType = .table
             }
 
             var mb = MarkdownBlock(
@@ -209,6 +222,25 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             newBlocks.append(mb)
         }
         blocks = newBlocks
+    }
+
+    /// Heuristic: does the text content look like a markdown table?
+    /// Requires at least 2 lines starting with `|`, and a separator line
+    /// containing `|--` or `|:--` patterns.
+    private static func looksLikeTable(_ text: String) -> Bool {
+        let lines = text.components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard lines.count >= 2 else { return false }
+        // First line must start with |
+        guard lines[0].trimmingCharacters(in: .whitespaces).hasPrefix("|") else { return false }
+        // Must have a separator row (|--|, |:--|, etc.)
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("|") && trimmed.contains("--") {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Header Fold/Unfold

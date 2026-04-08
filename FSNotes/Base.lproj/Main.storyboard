@@ -92,7 +92,7 @@ CA
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="k4G-pB-1AO"/>
-                                        <menuItem title="Import" image="square.and.arrow.down" catalog="system" keyEquivalent="O" localization="NO" mirroring="NO" identifier="fileMenu.import" id="O8Z-cg-XnH">
+                                        <menuItem title="Import..." image="square.and.arrow.down" catalog="system" keyEquivalent="O" localization="NO" mirroring="NO" identifier="fileMenu.import" id="O8Z-cg-XnH">
                                             <connections>
                                                 <action selector="importNote:" target="Ady-hI-5gd" id="r4z-z3-fFc"/>
                                             </connections>
@@ -708,9 +708,9 @@ CA
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="Ljl-jP-3qX"/>
-                                        <menuItem title="Sort By" image="arrow.up.arrow.down" catalog="system" id="rHB-xF-GgG">
+                                        <menuItem title="Sort Notes By" image="arrow.up.arrow.down" catalog="system" id="rHB-xF-GgG">
                                             <modifierMask key="keyEquivalentModifierMask"/>
-                                            <menu key="submenu" title="Sort By" identifier="viewSortBy" id="05n-RU-nOV">
+                                            <menu key="submenu" title="Sort Notes By" identifier="viewSortBy" id="05n-RU-nOV">
                                                 <items>
                                                     <menuItem title="None (Global Default)" tag="0" identifier="SB.none" id="nSB-Gd-0nE">
                                                         <modifierMask key="keyEquivalentModifierMask"/>

@@ -44,11 +44,11 @@ public enum InlineRenderer {
         switch inline {
         case .text(let s):
             return NSAttributedString(string: s, attributes: baseAttributes)
-        case .bold(let children):
+        case .bold(let children, _):
             var attrs = baseAttributes
             attrs[.font] = applyTrait(.bold, to: baseAttributes[.font] as? PlatformFont)
             return render(children, baseAttributes: attrs)
-        case .italic(let children):
+        case .italic(let children, _):
             var attrs = baseAttributes
             attrs[.font] = applyTrait(.italic, to: baseAttributes[.font] as? PlatformFont)
             return render(children, baseAttributes: attrs)
@@ -61,6 +61,30 @@ public enum InlineRenderer {
             let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14
             attrs[.font] = PlatformFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
             return NSAttributedString(string: s, attributes: attrs)
+        case .link(let text, let rawDest):
+            var attrs = baseAttributes
+            if let url = URL(string: rawDest) {
+                attrs[.link] = url
+            }
+            return render(text, baseAttributes: attrs)
+        case .image(let alt, _):
+            // Render alt text as plain text for now; image attachments come later
+            return render(alt, baseAttributes: baseAttributes)
+        case .autolink(let text, let isEmail):
+            var attrs = baseAttributes
+            let urlString = isEmail ? "mailto:\(text)" : text
+            if let url = URL(string: urlString) {
+                attrs[.link] = url
+            }
+            return NSAttributedString(string: text, attributes: attrs)
+        case .escapedChar(let ch):
+            return NSAttributedString(string: String(ch), attributes: baseAttributes)
+        case .lineBreak:
+            return NSAttributedString(string: "\n", attributes: baseAttributes)
+        case .rawHTML(let html):
+            return NSAttributedString(string: html, attributes: baseAttributes)
+        case .entity(let raw):
+            return NSAttributedString(string: raw, attributes: baseAttributes)
         }
     }
 

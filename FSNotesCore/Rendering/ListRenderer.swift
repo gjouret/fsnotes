@@ -31,8 +31,38 @@ import UIKit
 
 public enum ListRenderer {
 
-    /// Width of one level of visual indentation (space characters).
-    private static let indentWidth = 2
+    // ── Style constants (all font-relative) ──────────────────────────
+    //
+    // Every visual dimension scales from bodyFont.pointSize so lists
+    // look proportional at any font size.
+    //
+    // Three independent concerns:
+    //   cellScale   — how wide the attachment cell is (controls gap to text)
+    //   bulletDraw  — how large bullet glyphs (•◦▪▫) render
+    //   numberDraw  — how large ordered markers (1. 2.) render
+    //
+    // Checkboxes use SF Symbols and scale via checkboxDraw.
+
+    /// Nesting indent as a multiple of bodyFont.pointSize.
+    static let indentScale: CGFloat = 1.8
+
+    /// Cell width as a multiple of bodyFont.pointSize.
+    /// The gap between glyph and text = cellScale - visual glyph width.
+    static let cellScale: CGFloat = 2.0
+
+    /// Bullet shape diameter as a fraction of bodyFont.capHeight.
+    /// Shapes are drawn directly via Core Graphics — no font metrics.
+    static let bulletSizeScale: CGFloat = 0.7
+
+    /// Font size for ordered markers (1., 2.) as multiple of bodyFont.pointSize.
+    /// Numbers fill their em-square, so 1× body size looks natural.
+    static let numberDrawScale: CGFloat = 1.0
+
+    /// SF Symbol point size for checkboxes as multiple of bodyFont.pointSize.
+    static let checkboxDrawScale: CGFloat = 1.2
+
+    // Legacy compatibility alias used by BulletAttachment.make / CheckboxAttachment.make
+    static let glyphScale: CGFloat = cellScale
 
     /// Render a list to an attributed string. The output is a
     /// newline-separated sequence of rendered items, with no trailing
@@ -62,13 +92,32 @@ public enum ListRenderer {
             .font: bodyFont,
             .foregroundColor: PlatformColor.label
         ]
+
+        // Hanging indent: the glyph attachment sits at firstLineHeadIndent.
+        // Text follows immediately after the cell, and headIndent equals
+        // firstLineHeadIndent + cellWidth so wrapped lines align exactly
+        // with the first-line text. The visual gap between the visible
+        // glyph drawing and the text comes from the cell being larger
+        // than the drawn glyph (the glyph is centered in its cell).
+        let glyphSize = bodyFont.pointSize * glyphScale
+        let depthIndent = CGFloat(depth) * bodyFont.pointSize * indentScale
+        let textIndent = depthIndent + glyphSize
+        let paraStyle = NSMutableParagraphStyle()
+        paraStyle.firstLineHeadIndent = depthIndent
+        paraStyle.headIndent = textIndent
+
+        var ordinal = 0  // Running counter for ordered items at this level
+
         for item in items {
-            let indent = String(repeating: " ", count: depth * indentWidth)
+            let lineStart = out.length
             if let checkbox = item.checkbox {
-                // Todo item: render checkbox glyph instead of bullet.
-                let cbGlyph = checkbox.isChecked ? "\u{2611}" : "\u{2610}"  // ☑ or ☐
-                let prefix = indent + cbGlyph + " "
-                out.append(NSAttributedString(string: prefix, attributes: attrs))
+                // Todo item: render checkbox via NSTextAttachment.
+                // No separator char — gap is built into attachment bounds.
+                let cbAttachment = CheckboxAttachment.make(
+                    checked: checkbox.isChecked,
+                    font: bodyFont
+                )
+                out.append(cbAttachment)
                 // Render inline content with strikethrough if checked.
                 if checkbox.isChecked {
                     var checkedAttrs = attrs
@@ -84,12 +133,26 @@ public enum ListRenderer {
                     out.append(InlineRenderer.render(item.inline, baseAttributes: attrs))
                 }
             } else {
-                // Regular list item: render bullet.
-                let bullet = visualBullet(for: item.marker, depth: depth)
-                let prefix = indent + bullet + " "
-                out.append(NSAttributedString(string: prefix, attributes: attrs))
+                // Regular list item: render bullet via attachment.
+                // No separator char — gap is built into attachment bounds.
+                let bulletGlyph: String
+                if isOrderedMarker(item.marker) {
+                    ordinal += 1
+                    bulletGlyph = "\(ordinal)."
+                } else {
+                    bulletGlyph = visualBullet(for: item.marker, depth: depth)
+                }
+                let bulletAttachment = BulletAttachment.make(
+                    glyph: bulletGlyph,
+                    font: bodyFont
+                )
+                out.append(bulletAttachment)
                 out.append(InlineRenderer.render(item.inline, baseAttributes: attrs))
             }
+            // Apply paragraph style to this item's line.
+            let lineRange = NSRange(location: lineStart, length: out.length - lineStart)
+            out.addAttribute(.paragraphStyle, value: paraStyle, range: lineRange)
+
             out.append(NSAttributedString(string: "\n", attributes: attrs))
             if !item.children.isEmpty {
                 renderItems(item.children, depth: depth + 1,
@@ -98,18 +161,311 @@ public enum ListRenderer {
         }
     }
 
-    /// Map a parsed source marker to its visual rendering, varying
-    /// by nesting depth. Unordered markers cycle through four glyphs:
+    /// Whether a marker is an ordered list marker (e.g. "1.", "2)").
+    public static func isOrderedMarker(_ marker: String) -> Bool {
+        return marker != "-" && marker != "*" && marker != "+"
+    }
+
+    /// Map an unordered source marker to its visual glyph, varying
+    /// by nesting depth:
     ///   depth 0: • (bullet)
     ///   depth 1: ◦ (white bullet)
     ///   depth 2: ▪ (black small square)
     ///   depth 3+: ▫ (white small square), then cycles back
-    /// Ordered markers reuse the parsed "N." or "N)" text directly.
     public static func visualBullet(for marker: String, depth: Int = 0) -> String {
         if marker == "-" || marker == "*" || marker == "+" {
             let bullets = ["\u{2022}", "\u{25E6}", "\u{25AA}", "\u{25AB}"]  // • ◦ ▪ ▫
             return bullets[depth % bullets.count]
         }
         return marker
+    }
+}
+
+// MARK: - Bullet Attachment
+
+/// Renders a bullet glyph (•, ◦, ▪, ▫, or ordered "1.") as an
+/// NSTextAttachment so the glyph can be sized independently of the
+/// body font without affecting line height.
+#if os(OSX)
+private class BulletAttachmentCell: NSTextAttachmentCell {
+    let glyph: String
+    let cellWidth: CGFloat
+    let bodyPointSize: CGFloat
+    let cellHeight: CGFloat
+
+    init(glyph: String, cellWidth: CGFloat, bodyPointSize: CGFloat) {
+        self.glyph = glyph
+        self.cellWidth = cellWidth
+        self.bodyPointSize = bodyPointSize
+        // Height matches body font line height so the cell doesn't
+        // inflate line spacing. Width controls the gap to text.
+        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+        self.cellHeight = bodyFont.ascender + abs(bodyFont.descender)
+        super.init()
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    override func cellSize() -> NSSize {
+        return NSSize(width: cellWidth, height: cellHeight)
+    }
+
+    override func cellBaselineOffset() -> NSPoint {
+        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+        return NSPoint(x: 0, y: -abs(bodyFont.descender))
+    }
+
+    /// Which shape to draw for unordered bullet glyphs.
+    private enum BulletShape {
+        case filledCircle   // depth 0: •
+        case openCircle     // depth 1: ◦
+        case filledSquare   // depth 2: ▪
+        case openSquare     // depth 3: ▫
+    }
+
+    private var bulletShape: BulletShape? {
+        switch glyph {
+        case "\u{2022}": return .filledCircle
+        case "\u{25E6}": return .openCircle
+        case "\u{25AA}": return .filledSquare
+        case "\u{25AB}": return .openSquare
+        default: return nil
+        }
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+        let baseline = cellFrame.minY + abs(bodyFont.descender)
+        let capCenter = baseline + bodyFont.capHeight / 2
+
+        if let shape = bulletShape {
+            // Draw shape directly — no font metrics involved.
+            let diameter = bodyFont.capHeight * ListRenderer.bulletSizeScale
+            let x = cellFrame.minX
+            let y = capCenter - diameter / 2
+            let rect = NSRect(x: x, y: y, width: diameter, height: diameter)
+            let color = PlatformColor.labelColor
+            color.setFill()
+            color.setStroke()
+            switch shape {
+            case .filledCircle:
+                NSBezierPath(ovalIn: rect).fill()
+            case .openCircle:
+                let path = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
+                path.lineWidth = 1.0
+                path.stroke()
+            case .filledSquare:
+                NSBezierPath(rect: rect).fill()
+            case .openSquare:
+                let path = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
+                path.lineWidth = 1.0
+                path.stroke()
+            }
+        } else {
+            // Ordered marker (1., 2., etc.) — draw at body font size,
+            // baseline-aligned with the body text.
+            let font = PlatformFont.systemFont(
+                ofSize: bodyPointSize * ListRenderer.numberDrawScale,
+                weight: .regular
+            )
+            let color = PlatformColor.labelColor
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: color,
+            ]
+            let str = glyph as NSString
+            // Align baselines: draw point y = baseline - font ascender
+            // (in non-flipped coords, draw point is bottom of bounding box).
+            let x = cellFrame.minX
+            let y = baseline - abs(font.descender)
+            str.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+        }
+    }
+}
+#endif
+
+/// NSTextAttachment subclass with value-based equality so that
+/// two renders of the same bullet produce equal attachments (required
+/// by the idempotency test).
+public class BulletTextAttachment: NSTextAttachment {
+    public let glyph: String
+    public let glyphSize: CGFloat
+
+    public init(glyph: String, size: CGFloat) {
+        self.glyph = glyph
+        self.glyphSize = size
+        super.init(data: nil, ofType: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    public override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? BulletTextAttachment else { return false }
+        return glyph == other.glyph && glyphSize == other.glyphSize
+    }
+
+    public override var hash: Int {
+        var h = Hasher()
+        h.combine(glyph)
+        h.combine(glyphSize)
+        return h.finalize()
+    }
+}
+
+public enum BulletAttachment {
+    /// Create an attributed string containing a single bullet glyph
+    /// attachment character. Cell width = cellScale × font.pointSize.
+    /// Cell height = body font line height (ascender + |descender|).
+    public static func make(
+        glyph: String,
+        font: PlatformFont
+    ) -> NSAttributedString {
+        let cellWidth = font.pointSize * ListRenderer.cellScale
+        let cellHeight = font.ascender + abs(font.descender)
+        let attachment = BulletTextAttachment(glyph: glyph, size: cellWidth)
+        #if os(OSX)
+        let cell = BulletAttachmentCell(
+            glyph: glyph,
+            cellWidth: cellWidth,
+            bodyPointSize: font.pointSize
+        )
+        attachment.attachmentCell = cell
+        #endif
+        attachment.bounds = CGRect(
+            x: 0, y: -abs(font.descender),
+            width: cellWidth, height: cellHeight
+        )
+        let result = NSMutableAttributedString(attachment: attachment)
+        result.addAttribute(.font, value: font, range: NSRange(location: 0, length: result.length))
+        return result
+    }
+}
+
+// MARK: - Checkbox Attachment
+
+/// Renders a checkbox as an NSTextAttachment using SF Symbols so the
+/// glyph size doesn't affect line height and the style matches the
+/// toolbar icons.
+#if os(OSX)
+private class CheckboxAttachmentCell: NSTextAttachmentCell {
+    let isChecked: Bool
+    let cellWidth: CGFloat
+    let bodyPointSize: CGFloat
+    let cellHeight: CGFloat
+
+    init(checked: Bool, cellWidth: CGFloat, bodyPointSize: CGFloat) {
+        self.isChecked = checked
+        self.cellWidth = cellWidth
+        self.bodyPointSize = bodyPointSize
+        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+        self.cellHeight = bodyFont.ascender + abs(bodyFont.descender)
+        super.init()
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    override func cellSize() -> NSSize {
+        return NSSize(width: cellWidth, height: cellHeight)
+    }
+
+    override func cellBaselineOffset() -> NSPoint {
+        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+        return NSPoint(x: 0, y: -abs(bodyFont.descender))
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        let symbolName = isChecked ? "checkmark.square" : "square"
+        let color = NSColor.secondaryLabelColor
+        let drawSize = bodyPointSize * ListRenderer.checkboxDrawScale
+        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: drawSize, weight: .regular)
+            let configured = img.withSymbolConfiguration(config) ?? img
+            let tinted = configured.tinted(with: color)
+            let imgSize = tinted.size
+            // Align checkbox center with body text cap-height center.
+            let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+            let baseline = cellFrame.minY + abs(bodyFont.descender)
+            let textCenter = baseline + bodyFont.capHeight / 2
+            let x = cellFrame.minX
+            let y = textCenter - imgSize.height / 2
+            tinted.draw(in: NSRect(x: x, y: y, width: imgSize.width, height: imgSize.height))
+        }
+    }
+}
+
+private extension NSImage {
+    func tinted(with color: NSColor) -> NSImage {
+        let img = self.copy() as! NSImage
+        img.lockFocus()
+        color.set()
+        NSRect(origin: .zero, size: img.size).fill(using: .sourceAtop)
+        img.unlockFocus()
+        img.isTemplate = false
+        return img
+    }
+}
+#endif
+
+/// NSTextAttachment subclass with value-based equality so that
+/// two renders of the same checkbox produce equal attachments.
+public class CheckboxTextAttachment: NSTextAttachment {
+    public let isChecked: Bool
+    public let boxSize: CGFloat
+
+    public init(checked: Bool, size: CGFloat) {
+        self.isChecked = checked
+        self.boxSize = size
+        super.init(data: nil, ofType: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    public override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? CheckboxTextAttachment else { return false }
+        return isChecked == other.isChecked && boxSize == other.boxSize
+    }
+
+    public override var hash: Int {
+        var h = Hasher()
+        h.combine(isChecked)
+        h.combine(boxSize)
+        return h.finalize()
+    }
+}
+
+public enum CheckboxAttachment {
+    /// Create an attributed string containing a single checkbox
+    /// attachment character. Cell width = cellScale × font.pointSize.
+    /// Cell height = body font line height.
+    public static func make(
+        checked: Bool,
+        font: PlatformFont
+    ) -> NSAttributedString {
+        let cellWidth = font.pointSize * ListRenderer.cellScale
+        let cellHeight = font.ascender + abs(font.descender)
+        let attachment = CheckboxTextAttachment(checked: checked, size: cellWidth)
+        #if os(OSX)
+        let cell = CheckboxAttachmentCell(
+            checked: checked,
+            cellWidth: cellWidth,
+            bodyPointSize: font.pointSize
+        )
+        attachment.attachmentCell = cell
+        #endif
+        attachment.bounds = CGRect(
+            x: 0, y: -abs(font.descender),
+            width: cellWidth, height: cellHeight
+        )
+        let result = NSMutableAttributedString(attachment: attachment)
+        result.addAttribute(.font, value: font, range: NSRange(location: 0, length: result.length))
+        return result
     }
 }
