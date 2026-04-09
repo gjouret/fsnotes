@@ -133,7 +133,6 @@ extension EditTextView {
     /// - Parameters:
     ///   - result: The EditResult from EditingOps.
     ///   - actionName: Human-readable undo action name (e.g. "Typing", "Bold").
-    ///   - scroll: Whether to scroll the cursor into view (default true).
     private func applyEditResultWithUndo(
         _ result: EditResult,
         actionName: String
@@ -204,7 +203,7 @@ extension EditTextView {
         guard let storage = textStorage else { return }
 
         // Capture current state for redo BEFORE restoring.
-        let currentProjection = documentProjection!
+        guard let currentProjection = documentProjection else { return }
         let currentCursor = selectedRange()
 
         // Replace textStorage with the old rendered output.

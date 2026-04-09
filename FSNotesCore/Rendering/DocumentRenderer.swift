@@ -91,43 +91,14 @@ public enum DocumentRenderer {
             // block type. This replicates the essential parts of the
             // source-mode phase5_paragraphStyles.
             if blockRange.length > 0 {
-                let needsMerge: Bool
-                switch block {
-                case .blockquote, .list:
-                    // Blockquotes and lists have per-line paragraph styles
-                    // (set by their renderers with indentation). Merge
-                    // block-level spacing into the existing per-line styles
-                    // instead of overwriting them.
-                    needsMerge = true
-                default:
-                    needsMerge = false
-                }
-
-                if needsMerge {
-                    let blockSpacing = paragraphStyle(
-                        for: block,
-                        isFirst: (i == 0),
-                        baseSize: bodyFont.pointSize,
-                        lineSpacing: lineSpacing
-                    )
-                    out.enumerateAttribute(.paragraphStyle, in: blockRange, options: []) { value, range, _ in
-                        if let existing = value as? NSParagraphStyle {
-                            let merged = existing.mutableCopy() as! NSMutableParagraphStyle
-                            merged.paragraphSpacing = blockSpacing.paragraphSpacing
-                            merged.paragraphSpacingBefore = blockSpacing.paragraphSpacingBefore
-                            merged.lineSpacing = blockSpacing.lineSpacing
-                            out.addAttribute(.paragraphStyle, value: merged, range: range)
-                        }
-                    }
-                } else {
-                    let paraStyle = paragraphStyle(
-                        for: block,
-                        isFirst: (i == 0),
-                        baseSize: bodyFont.pointSize,
-                        lineSpacing: lineSpacing
-                    )
-                    out.addAttribute(.paragraphStyle, value: paraStyle, range: blockRange)
-                }
+                applyParagraphStyle(
+                    to: out,
+                    range: blockRange,
+                    block: block,
+                    isFirst: (i == 0),
+                    baseSize: bodyFont.pointSize,
+                    lineSpacing: lineSpacing
+                )
             }
 
             // Inter-block separator: a single "\n" between consecutive
@@ -306,6 +277,51 @@ public enum DocumentRenderer {
         return style
     }
 
+    /// Apply the appropriate paragraph style to a rendered block within an attributed string.
+    /// For blockquotes and lists, merges spacing into existing per-line styles (preserving
+    /// indentation). For all other block types, overwrites with a single style.
+    ///
+    /// - Parameters:
+    ///   - attrStr: The mutable attributed string containing the block.
+    ///   - range: The range within `attrStr` that corresponds to the block.
+    ///   - block: The block type (determines merge vs overwrite behavior).
+    ///   - isFirst: Whether this is the first block in the document.
+    ///   - baseSize: The body font point size.
+    ///   - lineSpacing: The user's configured line spacing.
+    static func applyParagraphStyle(
+        to attrStr: NSMutableAttributedString,
+        range: NSRange,
+        block: Block,
+        isFirst: Bool,
+        baseSize: CGFloat,
+        lineSpacing: CGFloat
+    ) {
+        guard range.length > 0 else { return }
+
+        switch block {
+        case .blockquote, .list:
+            let blockSpacing = paragraphStyle(
+                for: block, isFirst: isFirst,
+                baseSize: baseSize, lineSpacing: lineSpacing
+            )
+            attrStr.enumerateAttribute(.paragraphStyle, in: range, options: []) { value, subRange, _ in
+                if let existing = value as? NSParagraphStyle {
+                    let merged = existing.mutableCopy() as! NSMutableParagraphStyle
+                    merged.paragraphSpacing = blockSpacing.paragraphSpacing
+                    merged.paragraphSpacingBefore = blockSpacing.paragraphSpacingBefore
+                    merged.lineSpacing = blockSpacing.lineSpacing
+                    attrStr.addAttribute(.paragraphStyle, value: merged, range: subRange)
+                }
+            }
+        default:
+            let paraStyle = paragraphStyle(
+                for: block, isFirst: isFirst,
+                baseSize: baseSize, lineSpacing: lineSpacing
+            )
+            attrStr.addAttribute(.paragraphStyle, value: paraStyle, range: range)
+        }
+    }
+
     /// Render a single block. Dispatches to the per-block renderer.
     /// Output contains NO trailing newline — the caller owns separators.
     public static func renderBlock(
@@ -329,8 +345,8 @@ public enum DocumentRenderer {
         case .htmlBlock(let raw):
             // Render HTML blocks as plain text with code font.
             return CodeBlockRenderer.render(language: nil, content: raw, codeFont: codeFont)
-        case .table(let header, _, let rows, _):
-            return TableTextRenderer.render(header: header, rows: rows, bodyFont: bodyFont)
+        case .table(let header, let alignments, let rows, let raw):
+            return TableTextRenderer.render(header: header, rows: rows, alignments: alignments, rawMarkdown: raw, bodyFont: bodyFont)
         case .blankLine:
             // A blank line has no rendered content — it is represented
             // purely by the inter-block "\n" separators on either side.

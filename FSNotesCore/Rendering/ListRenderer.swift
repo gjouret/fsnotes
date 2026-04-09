@@ -61,8 +61,6 @@ public enum ListRenderer {
     /// SF Symbol point size for checkboxes as multiple of bodyFont.pointSize.
     static let checkboxDrawScale: CGFloat = 1.2
 
-    // Legacy compatibility alias used by BulletAttachment.make / CheckboxAttachment.make
-    static let glyphScale: CGFloat = cellScale
 
     /// Render a list to an attributed string. The output is a
     /// newline-separated sequence of rendered items, with no trailing
@@ -99,7 +97,7 @@ public enum ListRenderer {
         // with the first-line text. The visual gap between the visible
         // glyph drawing and the text comes from the cell being larger
         // than the drawn glyph (the glyph is centered in its cell).
-        let glyphSize = bodyFont.pointSize * glyphScale
+        let glyphSize = bodyFont.pointSize * cellScale
         let depthIndent = CGFloat(depth) * bodyFont.pointSize * indentScale
         let textIndent = depthIndent + glyphSize
         let paraStyle = NSMutableParagraphStyle()
@@ -190,16 +188,13 @@ public enum ListRenderer {
 private class BulletAttachmentCell: NSTextAttachmentCell {
     let glyph: String
     let cellWidth: CGFloat
-    let bodyPointSize: CGFloat
+    let bodyFont: PlatformFont
     let cellHeight: CGFloat
 
     init(glyph: String, cellWidth: CGFloat, bodyPointSize: CGFloat) {
         self.glyph = glyph
         self.cellWidth = cellWidth
-        self.bodyPointSize = bodyPointSize
-        // Height matches body font line height so the cell doesn't
-        // inflate line spacing. Width controls the gap to text.
-        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+        self.bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
         self.cellHeight = bodyFont.ascender + abs(bodyFont.descender)
         super.init()
     }
@@ -213,7 +208,6 @@ private class BulletAttachmentCell: NSTextAttachmentCell {
     }
 
     override func cellBaselineOffset() -> NSPoint {
-        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
         return NSPoint(x: 0, y: -abs(bodyFont.descender))
     }
 
@@ -236,7 +230,6 @@ private class BulletAttachmentCell: NSTextAttachmentCell {
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
-        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
         let baseline = cellFrame.minY + abs(bodyFont.descender)
         let capCenter = baseline + bodyFont.capHeight / 2
 
@@ -266,20 +259,18 @@ private class BulletAttachmentCell: NSTextAttachmentCell {
         } else {
             // Ordered marker (1., 2., etc.) — draw at body font size,
             // baseline-aligned with the body text.
-            let font = PlatformFont.systemFont(
-                ofSize: bodyPointSize * ListRenderer.numberDrawScale,
+            let numberFont = PlatformFont.systemFont(
+                ofSize: bodyFont.pointSize * ListRenderer.numberDrawScale,
                 weight: .regular
             )
             let color = PlatformColor.labelColor
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
+                .font: numberFont,
                 .foregroundColor: color,
             ]
             let str = glyph as NSString
-            // Align baselines: draw point y = baseline - font ascender
-            // (in non-flipped coords, draw point is bottom of bounding box).
             let x = cellFrame.minX
-            let y = baseline - abs(font.descender)
+            let y = baseline - abs(numberFont.descender)
             str.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
         }
     }
@@ -354,15 +345,25 @@ public enum BulletAttachment {
 private class CheckboxAttachmentCell: NSTextAttachmentCell {
     let isChecked: Bool
     let cellWidth: CGFloat
-    let bodyPointSize: CGFloat
+    let bodyFont: PlatformFont
     let cellHeight: CGFloat
+    let cachedImage: NSImage?
 
     init(checked: Bool, cellWidth: CGFloat, bodyPointSize: CGFloat) {
         self.isChecked = checked
         self.cellWidth = cellWidth
-        self.bodyPointSize = bodyPointSize
-        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
+        self.bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
         self.cellHeight = bodyFont.ascender + abs(bodyFont.descender)
+        // Pre-render the tinted SF Symbol once instead of every draw call.
+        let symbolName = checked ? "checkmark.square" : "square"
+        let drawSize = bodyPointSize * ListRenderer.checkboxDrawScale
+        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: drawSize, weight: .regular)
+            let configured = img.withSymbolConfiguration(config) ?? img
+            self.cachedImage = configured.tinted(with: NSColor.secondaryLabelColor)
+        } else {
+            self.cachedImage = nil
+        }
         super.init()
     }
 
@@ -375,27 +376,17 @@ private class CheckboxAttachmentCell: NSTextAttachmentCell {
     }
 
     override func cellBaselineOffset() -> NSPoint {
-        let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
         return NSPoint(x: 0, y: -abs(bodyFont.descender))
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
-        let symbolName = isChecked ? "checkmark.square" : "square"
-        let color = NSColor.secondaryLabelColor
-        let drawSize = bodyPointSize * ListRenderer.checkboxDrawScale
-        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: drawSize, weight: .regular)
-            let configured = img.withSymbolConfiguration(config) ?? img
-            let tinted = configured.tinted(with: color)
-            let imgSize = tinted.size
-            // Align checkbox center with body text cap-height center.
-            let bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
-            let baseline = cellFrame.minY + abs(bodyFont.descender)
-            let textCenter = baseline + bodyFont.capHeight / 2
-            let x = cellFrame.minX
-            let y = textCenter - imgSize.height / 2
-            tinted.draw(in: NSRect(x: x, y: y, width: imgSize.width, height: imgSize.height))
-        }
+        guard let tinted = cachedImage else { return }
+        let imgSize = tinted.size
+        let baseline = cellFrame.minY + abs(bodyFont.descender)
+        let textCenter = baseline + bodyFont.capHeight / 2
+        let x = cellFrame.minX
+        let y = textCenter - imgSize.height / 2
+        tinted.draw(in: NSRect(x: x, y: y, width: imgSize.width, height: imgSize.height))
     }
 }
 

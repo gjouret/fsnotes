@@ -206,7 +206,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 blockType = .paragraph  // HTML blocks render as plain text blocks
             case .blankLine:
                 blockType = .empty
-            case .table:
+            case .table(_, _, _, let raw):
                 blockType = .table
             }
 
@@ -218,6 +218,12 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             // Preserve collapsed state from previous blocks at the same index
             if previousCollapsed[i] == true {
                 mb.collapsed = true
+            }
+            // Carry original markdown for table blocks so renderTables()
+            // can parse the pipe-delimited source (the rendered storage
+            // uses spaces/box-drawing, not pipes).
+            if case .table(_, _, _, let raw) = block {
+                mb.rawMarkdown = raw
             }
             newBlocks.append(mb)
         }

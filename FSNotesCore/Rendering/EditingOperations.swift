@@ -326,51 +326,17 @@ public enum EditingOps {
             newBlock, bodyFont: projection.bodyFont, codeFont: projection.codeFont
         )
 
-        // 3. Apply paragraph style to the rendered block (same logic as
-        //    DocumentRenderer.render()).
+        // 3. Apply paragraph style to the rendered block.
         let lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
         let mutableBlock = NSMutableAttributedString(attributedString: blockRendered)
-        if mutableBlock.length > 0 {
-            let needsMerge: Bool
-            switch newBlock {
-            case .blockquote, .list:
-                // Blockquotes and lists have per-line paragraph styles
-                // (indentation per depth). Merge block-level spacing
-                // into existing styles — same logic as DocumentRenderer.render().
-                needsMerge = true
-            default:
-                needsMerge = false
-            }
-
-            if needsMerge {
-                let blockSpacing = DocumentRenderer.paragraphStyle(
-                    for: newBlock,
-                    isFirst: (blockIndex == 0),
-                    baseSize: projection.bodyFont.pointSize,
-                    lineSpacing: lineSpacing
-                )
-                mutableBlock.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: mutableBlock.length), options: []) { value, range, _ in
-                    if let existing = value as? NSParagraphStyle {
-                        let merged = existing.mutableCopy() as! NSMutableParagraphStyle
-                        merged.paragraphSpacing = blockSpacing.paragraphSpacing
-                        merged.paragraphSpacingBefore = blockSpacing.paragraphSpacingBefore
-                        merged.lineSpacing = blockSpacing.lineSpacing
-                        mutableBlock.addAttribute(.paragraphStyle, value: merged, range: range)
-                    }
-                }
-            } else {
-                let paraStyle = DocumentRenderer.paragraphStyle(
-                    for: newBlock,
-                    isFirst: (blockIndex == 0),
-                    baseSize: projection.bodyFont.pointSize,
-                    lineSpacing: lineSpacing
-                )
-                mutableBlock.addAttribute(
-                    .paragraphStyle, value: paraStyle,
-                    range: NSRange(location: 0, length: mutableBlock.length)
-                )
-            }
-        }
+        DocumentRenderer.applyParagraphStyle(
+            to: mutableBlock,
+            range: NSRange(location: 0, length: mutableBlock.length),
+            block: newBlock,
+            isFirst: (blockIndex == 0),
+            baseSize: projection.bodyFont.pointSize,
+            lineSpacing: lineSpacing
+        )
 
         // 4. Apply auto-links to the rendered block.
         DocumentRenderer.applyAutoLinks(to: mutableBlock)

@@ -48,6 +48,10 @@ public struct MarkdownBlock {
     public var syntaxRanges: [NSRange]      // Ranges of syntax chars to hide in WYSIWYG
     public var collapsed: Bool = false      // For future expand/collapse feature
     public var renderMode: BlockRenderMode = .source  // Current display mode
+    /// Original markdown source for blocks whose rendered output differs
+    /// from the source (e.g. tables in block-model mode). Used by
+    /// renderTables() to parse the table without reading storage.
+    public var rawMarkdown: String?
 
     public init(
         id: UUID = UUID(),

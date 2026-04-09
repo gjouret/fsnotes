@@ -56,55 +56,56 @@ class TableRenderController {
 
     // MARK: - Table Rendering
 
-    /// Render markdown tables as InlineTableView widgets.
+    /// Configure TableBlockAttachment instances with InlineTableView widgets.
+    /// In block-model mode, the renderer emits each table as a single
+    /// attachment character (TableBlockAttachment). This method walks
+    /// storage, finds those attachments, and sets up the live
+    /// InlineTableView cell on each one. No text replacement — just
+    /// cell configuration on existing attachment characters.
     func renderTables() {
         guard let textView = textView,
-              let storage = textView.textStorage,
-              let processor = textView.textStorageProcessor else { return }
+              let storage = textView.textStorage else { return }
         guard NotesTextProcessor.hideSyntax else { return }
 
-        let string = storage.string as NSString
+        let fullRange = NSRange(location: 0, length: storage.length)
+        let maxWidth = getTableMaxWidth()
 
-        for block in processor.blocks {
-            guard case .table = block.type else { continue }
-            guard block.range.location < string.length,
-                  NSMaxRange(block.range) <= string.length else { continue }
+        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, _ in
+            guard let tableAtt = value as? TableBlockAttachment else { return }
 
-            // Check if already rendered
-            if block.range.length == 1,
-               let att = storage.attribute(.attachment, at: block.range.location, effectiveRange: nil) as? NSTextAttachment,
-               att.attachmentCell is InlineTableAttachmentCell {
-                continue
+            // Already configured — skip.
+            if tableAtt.attachmentCell is InlineTableAttachmentCell { return }
+
+            // Build TableData from the attachment's parsed data.
+            let nsAlignments = tableAtt.alignments.map { align -> NSTextAlignment in
+                switch align {
+                case .left, .none: return .left
+                case .center: return .center
+                case .right: return .right
+                }
             }
+            let data = TableUtility.TableData(
+                headers: tableAtt.header,
+                rows: tableAtt.rows,
+                alignments: nsAlignments
+            )
 
-            let tableMarkdown = string.substring(with: block.range)
-            guard let data = TableUtility.parse(markdown: tableMarkdown) else { continue }
-
-            let maxWidth = getTableMaxWidth()
             let tableView = InlineTableView()
             tableView.configure(with: data)
             tableView.containerWidth = maxWidth
             tableView.isFocused = false
             tableView.rebuild()
 
-            let attachment = NSTextAttachment()
             let cell = InlineTableAttachmentCell(tableView: tableView, size: tableView.intrinsicContentSize)
-            attachment.attachmentCell = cell
-            attachment.bounds = NSRect(origin: .zero, size: tableView.intrinsicContentSize)
+            tableAtt.attachmentCell = cell
+            tableAtt.bounds = NSRect(origin: .zero, size: tableView.intrinsicContentSize)
 
-            let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
-            let attRange = NSRange(location: 0, length: attachmentString.length)
-            attachmentString.addAttributes([
-                .renderedBlockOriginalMarkdown: tableMarkdown,
-                .renderedBlockSource: tableMarkdown,
+            // Tag the attachment character with block metadata for save.
+            storage.addAttributes([
+                .renderedBlockOriginalMarkdown: tableAtt.rawMarkdown,
+                .renderedBlockSource: tableAtt.rawMarkdown,
                 .renderedBlockType: RenderedBlockType.table.rawValue
-            ], range: attRange)
-
-            processor.isRendering = true
-            storage.beginEditing()
-            storage.replaceCharacters(in: block.range, with: attachmentString)
-            processor.isRendering = false
-            storage.endEditing()
+            ], range: range)
         }
     }
 
