@@ -169,6 +169,7 @@ extension EditTextView {
 
         let code = Int(id.replacingOccurrences(of: "format.h", with: ""))
         if let level = code, changeHeadingLevelViaBlockModel(level) {
+            updateToolbarAfterFormatting()
             return
         }
 
@@ -221,7 +222,10 @@ extension EditTextView {
 
     @IBAction func quoteMenu(_ sender: Any) {
         guard let note = self.note, isEditable, let storage = textStorage else { return }
-        if toggleBlockquoteViaBlockModel() { return }
+        if toggleBlockquoteViaBlockModel() {
+            updateToolbarAfterFormatting()
+            return
+        }
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.quote()
@@ -239,7 +243,10 @@ extension EditTextView {
 
     @IBAction func bulletListMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
-        if toggleListViaBlockModel(marker: "-") { return }
+        if toggleListViaBlockModel(marker: "-") {
+            updateToolbarAfterFormatting()
+            return
+        }
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.list()
@@ -247,7 +254,10 @@ extension EditTextView {
 
     @IBAction func numberedListMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
-        if toggleListViaBlockModel(marker: "1.") { return }
+        if toggleListViaBlockModel(marker: "1.") {
+            updateToolbarAfterFormatting()
+            return
+        }
 
         let formatter = TextFormatter(textView: self, note: note)
         formatter.orderedList()

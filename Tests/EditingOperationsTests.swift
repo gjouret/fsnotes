@@ -387,13 +387,56 @@ class EditingOperationsTests: XCTestCase {
         assertSpliceInvariant(old: p, result: r)
     }
 
-    func test_newline_inHeading_throws() {
+    func test_newline_inHeading_splitsHeading() throws {
+        // "# Title\n" → rendered "Title\n"
         let p = project("# Title\n")
-        XCTAssertThrowsError(try EditingOps.insert("\n", at: 3, in: p)) { err in
-            guard case EditingError.unsupported = err else {
-                XCTFail("expected unsupported, got \(err)"); return
-            }
-        }
+        XCTAssertEqual(p.attributed.string, "Title\n")
+        // Insert "\n" at offset 3 (after "Tit") — splits heading into heading + blank + paragraph
+        let r = try EditingOps.insert("\n", at: 3, in: p)
+        // Heading keeps "Tit", blank line, then new paragraph gets "le"
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("# Tit\n"), "Should have heading 'Tit': \(serialized)")
+        XCTAssertTrue(serialized.contains("le\n"), "Should have paragraph 'le': \(serialized)")
+        // Cursor should be at start of new paragraph (after blank line)
+        let paraBlockIdx = 2  // heading, blankLine, paragraph
+        let paraBlockStart = r.newProjection.blockSpans[paraBlockIdx].location
+        XCTAssertEqual(r.newCursorPosition, paraBlockStart)
+        assertSpliceInvariant(old: p, result: r)
+    }
+    
+    func test_newline_atEndOfHeading_createsParagraph() throws {
+        // "# Title\n" → rendered "Title\n"
+        let p = project("# Title\n")
+        XCTAssertEqual(p.attributed.string, "Title\n")
+        // Insert "\n" at offset 5 (end of "Title") — creates blank paragraph after
+        let r = try EditingOps.insert("\n", at: 5, in: p)
+        // Heading stays "# Title", new blank paragraph after
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("# Title\n"), "Should preserve heading: \(serialized)")
+        // Should have a blank line after
+        XCTAssertTrue(serialized.contains("\n\n") || serialized.hasSuffix("\n\n"), "Should have blank line: \(serialized)")
+        // Cursor should be at start of new blank line
+        let secondBlockStart = r.newProjection.blockSpans[1].location
+        XCTAssertEqual(r.newCursorPosition, secondBlockStart)
+        assertSpliceInvariant(old: p, result: r)
+    }
+    
+    func test_newline_atStartOfHeading_createsParagraphBefore() throws {
+        // "# Title\n" → rendered "Title\n"
+        let p = project("# Title\n")
+        XCTAssertEqual(p.attributed.string, "Title\n")
+        // Insert "\n" at offset 0 (start of heading) — creates blank paragraph before
+        let r = try EditingOps.insert("\n", at: 0, in: p)
+        // First block becomes blank (or paragraph), heading keeps "Title"
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        // The heading text should be preserved
+        XCTAssertTrue(serialized.contains("Title"), "Should preserve heading text: \(serialized)")
+        // Should have 2 or 3 blocks (blank/para + heading, or blank + para if text moved)
+        XCTAssertGreaterThan(r.newProjection.blockSpans.count, 1, "Should have created additional block")
+        // Cursor should be at a valid position within the document
+        XCTAssertGreaterThanOrEqual(r.newCursorPosition, 0)
+        XCTAssertLessThanOrEqual(r.newCursorPosition, r.newProjection.attributed.length)
+        assertSpliceInvariant(old: p, result: r)
     }
 
     func test_multilineInsert_intoHeading_throws() {

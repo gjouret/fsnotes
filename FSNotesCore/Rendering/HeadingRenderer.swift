@@ -37,7 +37,19 @@ public enum HeadingRenderer {
     ) -> NSAttributedString {
         // Architectural invariant: the rendered string must contain ONLY
         // the displayed heading text. It MUST NOT contain `#` characters.
-        let displayed = suffix.trimmingCharacters(in: .whitespaces)
+        //
+        // Strip ONLY leading spaces/tabs (the required separator after
+        // the `#` markers in CommonMark). Trailing whitespace is preserved
+        // so the rendered length always matches the logical suffix length
+        // minus the leading separator — otherwise editing-offset →
+        // suffix-offset mapping breaks as soon as the user types a
+        // trailing space into a heading (the document grows but the
+        // rendered storage doesn't, stranding the cursor past the end).
+        // See EditingOps.insertIntoBlock(.heading).
+        var displayed = Substring(suffix)
+        while let first = displayed.first, first == " " || first == "\t" {
+            displayed = displayed.dropFirst()
+        }
 
         let font = headingFont(level: level, bodyFont: bodyFont)
         let attrs: [NSAttributedString.Key: Any] = [
@@ -45,7 +57,7 @@ public enum HeadingRenderer {
             .foregroundColor: PlatformColor.label
         ]
         return InlineRenderer.render(
-            [.text(displayed)],
+            [.text(String(displayed))],
             baseAttributes: attrs
         )
     }

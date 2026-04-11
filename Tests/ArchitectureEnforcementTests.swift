@@ -236,25 +236,27 @@ class ArchitectureEnforcementTests: XCTestCase {
     }
 
     func test_headingRenderer_containsNoHashCharacters() {
-        // The rendered heading must contain ONLY the trimmed displayed
-        // text. No `#` characters, no leading/trailing whitespace from
-        // the source line.
+        // The rendered heading must contain the suffix with ONLY its
+        // leading whitespace separator stripped. No `#` characters.
+        // Trailing whitespace IS preserved — otherwise the editing
+        // pipeline cannot map rendered offsets to suffix offsets when
+        // the user types a trailing space into a heading. See
+        // HeadingRenderer.swift and EditingOps.insertIntoBlock(.heading).
         for fixture in Self.headingFixtures {
             let rendered = HeadingRenderer.render(
                 level: fixture.level,
                 suffix: fixture.suffix,
                 bodyFont: bodyFont()
             )
-            let expected = fixture.suffix.trimmingCharacters(in: .whitespaces)
-            // rendered.string == trimmed(suffix) enforces that no
-            // leading `#` markers leaked through the parser. Note that
-            // `#` may legitimately appear inside body content (e.g.
-            // "the # symbol is fine"); that is not a violation.
+            var expected = Substring(fixture.suffix)
+            while let first = expected.first, first == " " || first == "\t" {
+                expected = expected.dropFirst()
+            }
             XCTAssertEqual(
-                rendered.string, expected,
-                "ARCHITECTURE VIOLATION [\(fixture.name)]: rendered heading string diverges from trimmed suffix. " +
+                rendered.string, String(expected),
+                "ARCHITECTURE VIOLATION [\(fixture.name)]: rendered heading string diverges from leading-stripped suffix. " +
                 "Heading `#` markers must not appear in the rendered output. " +
-                "expected: \(quoted(expected)) | rendered: \(quoted(rendered.string))"
+                "expected: \(quoted(String(expected))) | rendered: \(quoted(rendered.string))"
             )
         }
     }

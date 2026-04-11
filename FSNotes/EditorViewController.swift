@@ -1506,7 +1506,29 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         }
 
         let note = Note(name: name, project: project)
+        
+        // In WYSIWYG mode, start new blank notes with "# " so the block-model
+        // pipeline renders it as a proper H1 heading with an empty content
+        // slot the user can type into directly. The suffix " " (single space)
+        // is the required CommonMark separator after the `#` marker; the
+        // block-model heading renderer strips it from the rendered output
+        // so the block appears empty, and insertIntoBlock(.heading) routes
+        // the first keystroke through its empty-heading branch.
+        if NotesTextProcessor.hideSyntax && text.isEmpty {
+            text = "# "
+            note.setSelectedRange(range: NSRange(location: 0, length: 0))
+        } else if text.isEmpty {
+            note.setSelectedRange(range: NSRange(location: 0, length: 0))
+        } else if name.isEmpty {
+            note.setSelectedRange(range: NSRange(location: text.count, length: 0))
+        } else {
+            // Place cursor after the title (after "# " + name + "\n\n")
+            let titlePosition = 2 + name.count + 2
+            note.setSelectedRange(range: NSRange(location: titlePosition, length: 0))
+        }
+        
         note.content = NSMutableAttributedString(string: text)
+        
         if note.save() {
             Storage.shared().add(note)
         }
@@ -1539,20 +1561,13 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 }
             
                 vc.focusEditArea()
-
-                // In WYSIWYG mode, start new blank notes in H1 so the first
-                // line becomes the title. Insert "# " (hidden) and set typing
-                // attributes to header font.
-                if NotesTextProcessor.hideSyntax && text.isEmpty {
-                    let formatter = TextFormatter(textView: vc.editor, note: note)
-                    formatter.header("#")
-                    // Set typing attributes to H1 font
-                    let baseFontSize = CGFloat(UserDefaultsManagement.fontSize)
-                    let headerFont = NSFont.boldSystemFont(ofSize: baseFontSize * 2.0)
-                    vc.editor.typingAttributes = [
-                        .font: headerFont,
-                        .foregroundColor: NotesTextProcessor.fontColor
-                    ]
+                
+                // In WYSIWYG mode with new blank notes, the block-model renders "# " as an H1
+                // header with the "# " hidden. The cursor should be at position 0 in the
+                // rendered text (after the hidden "# "), ready for typing the title.
+                // Check for both old "# " and new "# \u{200B}" patterns
+                if NotesTextProcessor.hideSyntax && (text == "# " || text == "# \u{200B}") {
+                    vc.editor.setSelectedRange(NSRange(location: 0, length: 0))
                 }
 
                 NSApp.activate(ignoringOtherApps: true)

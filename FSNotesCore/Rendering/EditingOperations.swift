@@ -187,7 +187,56 @@ public enum EditingOps {
             case .htmlBlock:
                 // HTML blocks accept any content verbatim, like code blocks.
                 break
-            case .heading, .horizontalRule, .blankLine, .table:
+            case .heading(let level, let suffix):
+                if string == "\n" {
+                    // Return in heading: split at cursor position
+                    // HeadingRenderer strips ONLY leading whitespace from
+                    // the suffix — trailing whitespace is rendered. So
+                    // rendered offset `o` maps to suffix offset `o + leading`
+                    // and the displayed count is `suffix.count - leading`.
+                    let leading = leadingWhitespaceCount(in: suffix)
+                    let displayedCount = suffix.count - leading
+                    _ = displayedCount
+
+                    // offsetInBlock is in rendered coordinates (0..displayedCount)
+                    // We need to split the suffix at this offset
+                    let suffixOffset = offsetInBlock + leading
+                    let beforeSuffix = String(suffix.prefix(suffixOffset))
+                    let afterSuffix = String(suffix.dropFirst(suffixOffset))
+                    
+                    // Build new blocks: heading with before text, then blank/paragraph for after
+                    var newBlocks: [Block] = []
+                    
+                    // First block: heading with text before cursor (trimmed)
+                    let headingText = beforeSuffix.trimmingCharacters(in: .whitespaces)
+                    if headingText.isEmpty && level > 0 {
+                        // Empty heading becomes blank line
+                        newBlocks.append(.blankLine)
+                    } else {
+                        newBlocks.append(.heading(level: level, suffix: " " + headingText))
+                    }
+                    
+                    // Second block: paragraph with text after cursor, or blank line
+                    let paraText = afterSuffix.trimmingCharacters(in: .whitespaces)
+                    if paraText.isEmpty {
+                        newBlocks.append(.blankLine)
+                    } else {
+                        // Add blankLine between heading and paragraph for proper markdown separation
+                        newBlocks.append(.blankLine)
+                        newBlocks.append(.paragraph(inline: [.text(paraText)]))
+                    }
+                    
+                    var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+                    // Cursor goes to start of the paragraph (after blankLine if present)
+                    let paraBlockIdx = paraText.isEmpty ? blockIndex + 1 : blockIndex + 2
+                    result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
+                    return result
+                }
+                throw EditingError.unsupported(
+                    reason: "multi-line paste in heading not supported"
+                )
+                
+            case .horizontalRule, .blankLine, .table:
                 throw EditingError.unsupported(
                     reason: "newline insertion in \(describe(oldBlock)) not supported"
                 )
@@ -373,7 +422,7 @@ public enum EditingOps {
 
         // 8. Narrow to minimal splice via character diff.
         return narrowSplice(
-            oldString: projection.attributed.string,
+            oldAttributedString: projection.attributed,
             oldRange: oldSpan,
             newReplacement: mutableBlock,
             newProjection: newProjection
@@ -410,7 +459,7 @@ public enum EditingOps {
         )
 
         return narrowSplice(
-            oldString: projection.attributed.string,
+            oldAttributedString: projection.attributed,
             oldRange: oldSpan,
             newReplacement: replacement,
             newProjection: newProjection
@@ -444,13 +493,27 @@ public enum EditingOps {
     /// the old and new rendered strings. Prevents NSLayoutManager from
     /// scrolling when it sees a large replaced region.
     private static func narrowSplice(
-        oldString: String,
+        oldAttributedString: NSAttributedString,
         oldRange: NSRange,
         newReplacement: NSAttributedString,
         newProjection: DocumentProjection
     ) -> EditResult {
-        let oldStr = (oldString as NSString).substring(with: oldRange)
+        let oldStr = (oldAttributedString.string as NSString).substring(with: oldRange)
         let newStr = newReplacement.string
+        
+        // If the strings are exactly identical but the attributed strings differ,
+        // we must not narrow to 0 length, otherwise the attribute changes (e.g. bold, heading level) are lost.
+        if oldStr == newStr {
+            let oldAttrStr = oldAttributedString.attributedSubstring(from: oldRange)
+            if !oldAttrStr.isEqual(to: newReplacement) {
+                return EditResult(
+                    newProjection: newProjection,
+                    spliceRange: oldRange,
+                    spliceReplacement: newReplacement
+                )
+            }
+        }
+        
         let oldChars = Array(oldStr.unicodeScalars)
         let newChars = Array(newStr.unicodeScalars)
         let minLen = min(oldChars.count, newChars.count)
@@ -627,7 +690,7 @@ public enum EditingOps {
         // Narrow the splice to only the changed characters to avoid
         // NSLayoutManager scroll-on-large-replace.
         return narrowSplice(
-            oldString: projection.attributed.string,
+            oldAttributedString: projection.attributed,
             oldRange: spliceRange,
             newReplacement: replacement,
             newProjection: newProjection
@@ -652,10 +715,10 @@ public enum EditingOps {
             // treat as having no inline remainder.
             return nil
         case .heading(let _, let suffix):
-            // Use the displayed text portion.
+            // Use the displayed text portion. HeadingRenderer strips
+            // only leading whitespace, so trailing is not trimmed here.
             let leading = leadingWhitespaceCount(in: suffix)
-            let trailing = trailingWhitespaceCount(in: suffix)
-            let displayed = String(suffix.dropFirst(leading).dropLast(trailing))
+            let displayed = String(suffix.dropFirst(leading))
             let (before, _) = splitInlines([.text(displayed)], at: keepCount)
             return before
         case .codeBlock(_, let content, _):
@@ -695,8 +758,7 @@ public enum EditingOps {
             return nil
         case .heading(let _, let suffix):
             let leading = leadingWhitespaceCount(in: suffix)
-            let trailing = trailingWhitespaceCount(in: suffix)
-            let displayed = String(suffix.dropFirst(leading).dropLast(trailing))
+            let displayed = String(suffix.dropFirst(leading))
             let (_, after) = splitInlines([.text(displayed)], at: dropCount)
             return after
         case .codeBlock(_, let content, _):
@@ -723,8 +785,7 @@ public enum EditingOps {
         case .paragraph(let inline): return inline
         case .heading(_, let suffix):
             let l = leadingWhitespaceCount(in: suffix)
-            let t = trailingWhitespaceCount(in: suffix)
-            let displayed = String(suffix.dropFirst(l).dropLast(t))
+            let displayed = String(suffix.dropFirst(l))
             return [.text(displayed)]
         case .codeBlock(_, let content, _): return [.text(content)]
         case .htmlBlock(let raw): return [.text(raw)]
@@ -741,8 +802,7 @@ public enum EditingOps {
         case .paragraph(let inline): return inlinesToText(inline)
         case .heading(_, let suffix):
             let l = leadingWhitespaceCount(in: suffix)
-            let t = trailingWhitespaceCount(in: suffix)
-            return String(suffix.dropFirst(l).dropLast(t))
+            return String(suffix.dropFirst(l))
         case .codeBlock(_, let content, _): return content
         case .htmlBlock(let raw): return raw
         case .list(let items, _): return listItemsToText(items, depth: 0)
@@ -981,14 +1041,26 @@ public enum EditingOps {
             return .paragraph(inline: newInline)
 
         case .heading(let level, let suffix):
-            // Map render-offset → suffix-offset. The renderer trims
-            // whitespace from the suffix. The displayed text is
-            // suffix with leading/trailing whitespace trimmed, so
-            // render offset `o` corresponds to suffix offset
-            // `o + leadingWS.count`.
+            // Map render-offset → suffix-offset. HeadingRenderer strips
+            // ONLY leading whitespace from the suffix; trailing is
+            // rendered verbatim. So render offset `o` corresponds to
+            // suffix offset `o + leading` and the displayed count is
+            // `suffix.count - leading`. Keeping trailing whitespace in
+            // the rendered length is what lets the user type a trailing
+            // space into a heading without stranding the cursor.
             let leading = leadingWhitespaceCount(in: suffix)
-            let trailing = trailingWhitespaceCount(in: suffix)
-            let displayedCount = suffix.count - leading - trailing
+            let displayedCount = suffix.count - leading
+            
+            // Special case: empty heading (just whitespace in suffix).
+            // When displayedCount <= 0, there's no visible text, so any
+            // insertion offset should add text after the leading whitespace.
+            if displayedCount <= 0 {
+                // Insert after the leading whitespace - this becomes the heading text
+                let newSuffix = spliceString(suffix, at: leading, replacing: 0, with: string)
+                return .heading(level: level, suffix: newSuffix)
+            }
+            
+            // Normal case: heading has visible text
             guard offsetInBlock >= 0, offsetInBlock <= displayedCount else {
                 throw EditingError.unsupported(
                     reason: "heading: offset \(offsetInBlock) out of displayed range [0, \(displayedCount)]"
@@ -1064,9 +1136,10 @@ public enum EditingOps {
             return .paragraph(inline: newInline)
 
         case .heading(let level, let suffix):
+            // Trailing whitespace is part of the rendered output —
+            // see insertIntoBlock(.heading) for rationale.
             let leading = leadingWhitespaceCount(in: suffix)
-            let trailing = trailingWhitespaceCount(in: suffix)
-            let displayedCount = suffix.count - leading - trailing
+            let displayedCount = suffix.count - leading
             guard fromOffset >= 0, toOffset <= displayedCount, fromOffset <= toOffset else {
                 throw EditingError.unsupported(
                     reason: "heading: delete range [\(fromOffset), \(toOffset)] out of displayed [0, \(displayedCount)]"
@@ -2298,10 +2371,11 @@ public enum EditingOps {
             newBlock = .paragraph(inline: newInline)
 
         case .heading(let level, let suffix):
-            // Map render offset → suffix offset.
+            // Map render offset → suffix offset. HeadingRenderer strips
+            // only leading whitespace from the suffix.
             let leading = leadingWhitespaceCount(in: suffix)
             let inlines = parseInlinesFromText(
-                String(suffix.dropFirst(leading).prefix(suffix.count - leading - trailingWhitespaceCount(in: suffix)))
+                String(suffix.dropFirst(leading))
             )
             let newInline = toggleTraitOnInlines(inlines, trait: trait, from: offsetStart, to: offsetEnd)
             // Rebuild suffix from new inlines.
@@ -2680,8 +2754,7 @@ public enum EditingOps {
         case .heading(_, let suffix):
             // Convert heading to a todo item, preserving the text.
             let leading = leadingWhitespaceCount(in: suffix)
-            let trailing = trailingWhitespaceCount(in: suffix)
-            let displayed = String(suffix.dropFirst(leading).dropLast(trailing))
+            let displayed = String(suffix.dropFirst(leading))
             let item = ListItem(
                 indent: "", marker: "-",
                 afterMarker: " ",

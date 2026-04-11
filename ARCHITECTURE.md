@@ -1,4 +1,4 @@
-# FSNotes++ Architecture
+ # FSNotes++ Architecture
 
 ## Overview
 
@@ -17,6 +17,164 @@ The block model is the active rendering pipeline for WYSIWYG mode. The source-mo
 **Workspace**: `FSNotes.xcworkspace`
 **Scheme**: `FSNotes`
 
+## System Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph FSNotes_macOS["FSNotes/ (macOS App Layer)"]
+        VC[ViewController]
+        EVC[EditorViewController]
+        MVC[MainWindowController]
+        ETV[EditTextView]
+        LM[LayoutManager]
+        GC[GutterController]
+        IT[InlineTableView]
+        
+        VC --> EVC
+        EVC --> ETV
+        ETV --> LM
+        ETV --> GC
+        ETV --> IT
+    end
+    
+    subgraph FSNotesCore["FSNotesCore/ (Shared Framework)"]
+        subgraph Business["Business Layer"]
+            Note[Note.swift]
+            Project[Project.swift]
+            Storage[Storage.swift]
+            NoteStore[NoteStore.swift]
+            Sidebar[SidebarItem.swift]
+        end
+        
+        subgraph Rendering["Rendering Pipeline"]
+            Parser[MarkdownParser.swift]
+            Doc[Document.swift]
+            DR[DocumentRenderer.swift]
+            HR[HeadingRenderer.swift]
+            PR[ParagraphRenderer.swift]
+            LR[ListRenderer.swift]
+            CBR[CodeBlockRenderer.swift]
+            BQR[BlockquoteRenderer.swift]
+            IR[InlineRenderer.swift]
+            MS[MarkdownSerializer.swift]
+        end
+        
+        subgraph Editing["Editing System"]
+            EO[EditingOperations.swift]
+            FSM[ListEditingFSM.swift]
+            BP[BlockProcessor.swift]
+        end
+    end
+    
+    subgraph Data["Data Flow"]
+        MD[Markdown Files]
+        AttrStr[NSAttributedString]
+    end
+    
+    ETV -.->|reads/writes| Note
+    Note -.->|loads from| MD
+    Note -.->|parsed by| Parser
+    Parser --> Doc
+    Doc --> DR
+    DR --> HR & PR & LR & CBR & BQR
+    HR & PR & LR & CBR & BQR --> IR
+    IR --> AttrStr
+    ETV -.->|displays| AttrStr
+    EO -.->|mutates| Doc
+    FSM -.->|guides| EO
+    Doc -.->|serialized by| MS
+    MS -.->|writes to| MD
+    
+    NoteStore -.->|manages| Note
+    Storage -.->|persists| NoteStore
+    Project -.->|organizes| Note
+```
+
+## Component Architecture
+
+```mermaid
+flowchart LR
+    subgraph ViewLayer["View Layer (FSNotes/)"]
+        direction TB
+        Window[MainWindowController]
+        Editor[EditorViewController]
+        TextView[EditTextView]
+        Gutter[GutterController]
+        Table[TableRenderController]
+        
+        Window --> Editor
+        Editor --> TextView
+        TextView --> Gutter
+        TextView --> Table
+    end
+    
+    subgraph CoreLayer["Core Layer (FSNotesCore/)"]
+        direction TB
+        Business[Business Logic]
+        Render[Rendering Engine]
+        EditOps[Editing Operations]
+        
+        Business --> Render
+        Render --> EditOps
+    end
+    
+    subgraph Platform["Platform"]
+        AppKit[AppKit/UIKit]
+        Foundation[Foundation]
+    end
+    
+    ViewLayer <--> CoreLayer
+    CoreLayer <--> Platform
+```
+
+## Dual Rendering Pipeline
+
+```mermaid
+flowchart TB
+    subgraph Input["Input: Markdown String"]
+        MD[Raw Markdown]
+    end
+    
+    subgraph SourceMode["Source Mode Pipeline"]
+        TSP[TextStorageProcessor]
+        NTP[NotesTextProcessor]
+        SH[Syntax Highlighter]
+        PS[Paragraph Styles]
+        AD[Attribute Drawers]
+        
+        MD --> TSP
+        TSP --> NTP
+        NTP --> SH
+        SH --> PS
+        PS --> AD
+    end
+    
+    subgraph BlockModel["Block Model Pipeline (WYSIWYG)"]
+        MP[MarkdownParser]
+        Doc[Document Tree]
+        DR[DocumentRenderer]
+        BlockR[Block Renderers]
+        IR[InlineRenderer]
+        
+        MD --> MP
+        MP --> Doc
+        Doc --> DR
+        DR --> BlockR
+        BlockR --> IR
+    end
+    
+    subgraph Output["Output: NSAttributedString"]
+        SS[Source Mode:<br/>Markdown + Attributes]
+        BS[Block Model:<br/>Clean Display Text]
+    end
+    
+    AD --> SS
+    IR --> BS
+    
+    SS -.->|fallback| ETV[EditTextView]
+    BS -.->|primary| ETV
+```
+
 ## Targets
 
 | Target | Path | Purpose |
@@ -24,6 +182,65 @@ The block model is the active rendering pipeline for WYSIWYG mode. The source-mo
 | FSNotes | `FSNotes/` | macOS app: views, LayoutManager, drawers, toolbar |
 | FSNotesCore | `FSNotesCore/` | Framework: parsing, highlighting, formatting, serialization |
 | FSNotesTests | `Tests/` | Unit tests, visual snapshots, A/B comparisons |
+
+## Module Structure
+
+### FSNotes/ (macOS Application)
+```
+FSNotes/
+├── ViewControllers/
+│   ├── ViewController.swift           # Main window controller
+│   ├── EditorViewController.swift     # Editor coordination
+│   ├── NoteViewController.swift       # Note-specific logic
+│   ├── MainWindowController.swift     # Window management
+│   └── PrefsViewController.swift      # Preferences
+├── Views/
+│   ├── EditTextView.swift             # Main text editor
+│   ├── EditTextView+BlockModel.swift  # WYSIWYG integration
+│   ├── EditTextView+Formatting.swift  # Toolbar actions
+│   ├── EditTextView+NoteState.swift   # Save/load
+│   ├── NotesTableView.swift           # Note list sidebar
+│   └── SearchTextField.swift          # Search UI
+├── Rendering/
+│   ├── LayoutManager.swift            # Custom glyph drawing
+│   ├── AttributeDrawer.swift          # Drawer protocol
+│   ├── BulletDrawer.swift             # List bullets
+│   ├── BlockquoteBorderDrawer.swift   # Quote borders
+│   └── HorizontalRuleDrawer.swift     # HR lines
+├── Helpers/
+│   ├── InlineTableView.swift          # Table widget
+│   ├── GutterController.swift         # Fold/icons gutter
+│   └── TableRenderController.swift    # Table rendering
+└── Extensions/                        # Platform extensions
+```
+
+### FSNotesCore/ (Shared Framework)
+```
+FSNotesCore/
+├── Business/                          # Data models
+│   ├── Note.swift                     # Note entity
+│   ├── Project.swift                  # Project/folder
+│   ├── Storage.swift                  # File system
+│   ├── NoteStore.swift                # In-memory cache
+│   └── SidebarItem.swift              # Sidebar model
+├── Rendering/                         # Block model (NEW)
+│   ├── Document.swift                 # AST definition
+│   ├── MarkdownParser.swift           # Parse markdown → Document
+│   ├── MarkdownSerializer.swift       # Serialize Document → markdown
+│   ├── DocumentRenderer.swift         # Document → NSAttributedString
+│   ├── DocumentProjection.swift       # View model
+│   ├── EditingOperations.swift        # Edit transforms
+│   ├── ListEditingFSM.swift           # List state machine
+│   ├── HeadingRenderer.swift          # Heading blocks
+│   ├── ParagraphRenderer.swift        # Paragraph blocks
+│   ├── ListRenderer.swift             # List blocks
+│   ├── CodeBlockRenderer.swift        # Code blocks
+│   ├── BlockquoteRenderer.swift       # Blockquote blocks
+│   ├── InlineRenderer.swift           # Inline formatting
+│   └── NoteSerializer.swift           # Legacy save (source mode)
+├── Git/                               # Version control
+└── Extensions/                        # Core extensions
+```
 
 ## Source-Mode Rendering Pipeline (source mode only)
 
@@ -285,6 +502,29 @@ let outputDir = NSHomeDirectory() + "/unit-tests"
 
 ### Key Test Patterns
 
+**HTML Parity** (general-purpose WYSIWYG regression harness — `EditorHTMLParityTests.swift`):
+The editor's `documentProjection.document` is the same block-model `Document` that `CommonMarkHTMLRenderer` (from the CommonMark spec suite) already knows how to render to HTML. That gives a canonical normalized form for comparing editor state against expected markdown, ignoring fonts / paragraph styles / attachment bounds / typing attributes while preserving block structure, heading levels, list nesting, inline tree, and text content.
+
+```
+markdown ──parse──▶ Document ──HTMLRenderer──▶ HTML_ref
+                                                     │
+  editor ──▶ handleEditViaBlockModel / toolbar        │
+     │                                                │
+     ▼                                                │
+  documentProjection.document ──HTMLRenderer──▶ HTML_live
+                                                     │
+                         assertEqual(HTML_ref, HTML_live)
+```
+
+Two test families live in `EditorHTMLParityTests.swift`:
+
+- **Family A — fill parity**: `fill(editor, markdown)` then assert HTML matches a fresh parse of the same markdown. Pins the invariant that fill doesn't corrupt the parse. One test per block type + a mixed-document smoke test.
+- **Family B — edit-script scenarios**: declarative `EditStep` DSL (`.type`, `.pressReturn`, `.backspace`, `.select`, `.toggleBold`, `.setHeading(level:)`, `.toggleList`, `.toggleQuote`, `.insertHR`, `.toggleTodo`) runs sequences of real editor mutations through the same entry points the NSTextView delegate and toolbar use (`handleEditViaBlockModel`, `*ViaBlockModel`), then asserts HTML parity. Each scenario is a one-liner per transition; add new ones freely as bugs are reported.
+
+Every assertion also verifies `HTML(document) == HTML(parse(serialize(document)))` — the live Document must agree with its own round-trip, catching splice paths that produce state that wouldn't survive save/reload.
+
+HTML comparison doesn't see attribute-level bugs (typing attributes, attachment geometry, LayoutManager-drawn bullets/HR/quote gutters). Those need targeted tests; see Visual Snapshot and A/B patterns below.
+
 **Visual Snapshot** (verify rendered output):
 1. Create `EditTextView` with `initTextStorage()` (full pipeline)
 2. Set content via `textStorage?.setAttributedString()`
@@ -313,7 +553,9 @@ let outputDir = NSHomeDirectory() + "/unit-tests"
 | `ListMarkerTests.swift` | 10 | Depth counting, visual bullet glyphs |
 | `NoteSerializerTests.swift` | 9 | Save pipeline round-trip |
 | `RendererComparisonTests.swift` | 2 | NSTextView rendering |
-| **Total** | **507** | 1 pre-existing failure (TableLayoutTests.test_copyButton_existsOnHover) |
+| `RenderingCorrectnessTests.swift` | 12 | Projection consistency, splice validity, block span bounds |
+| `EditorHTMLParityTests.swift` | 14 | Fill parity + edit-script HTML parity via `CommonMarkHTMLRenderer` |
+| `CommonMarkSpecTests.swift` | 27 | CommonMark v0.31.2 compliance (652 spec examples, ~80% passing) |
 
 ## Build & Deploy
 

@@ -89,14 +89,22 @@ extension EditTextView {
             return false
         }
 
+        // Log initial storage state BEFORE we do anything
+        let initialStorageLength = storage.length
+        let initialStorageString = storage.string
+        bmLog("📊 INITIAL STATE: storage.length=\(initialStorageLength), storage.string='\(initialStorageString)'")
+
         // Use cached Document if available, otherwise parse from raw markdown.
         let document: Document
         if let cached = note.cachedDocument {
             document = cached
+            bmLog("📋 Using cached document with \(cached.blocks.count) blocks")
         } else {
             let markdown = note.content.string
+            bmLog("📝 Parsing markdown: '\(markdown)' (length=\(markdown.count))")
             document = MarkdownParser.parse(markdown)
             note.cachedDocument = document
+            bmLog("📋 Parsed document: \(document.blocks.count) blocks, trailingNewline=\(document.trailingNewline)")
         }
 
         // Render via the block-model pipeline.
@@ -108,18 +116,24 @@ extension EditTextView {
             codeFont: codeFont
         )
 
+        bmLog("🎨 Rendered projection: \(projection.attributed.length) chars, string='\(projection.attributed.string)'")
+        bmLog("📐 Block spans: \(projection.blockSpans.map { "[\($0.location),\($0.length)]" }.joined(separator: ", "))")
+
         // Set the rendered attributed string into textStorage.
         // Use isRendering to prevent the source-mode pipeline from
         // processing this setAttributedString.
         textStorageProcessor?.isRendering = true
         storage.setAttributedString(projection.attributed)
         textStorageProcessor?.isRendering = false
+        
+        // Verify storage matches projection after setting
+        bmLog("✅ AFTER setAttributedString: storage.length=\(storage.length), projection.length=\(projection.attributed.length)")
 
         documentProjection = projection
         textStorageProcessor?.blockModelActive = true
         // Populate the source-mode blocks array so fold/unfold works
         textStorageProcessor?.syncBlocksFromProjection(projection)
-        bmLog("✅ fillViaBlockModel: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")
+        bmLog("✅ fillViaBlockModel complete: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")
         return true
     }
 
@@ -137,11 +151,21 @@ extension EditTextView {
         _ result: EditResult,
         actionName: String
     ) {
-        guard let storage = textStorage else { return }
+        guard let storage = textStorage else { 
+            bmLog("⛔ applyEditResultWithUndo: no textStorage")
+            return 
+        }
 
         // Capture state for undo BEFORE mutating.
-        guard let oldProjection = documentProjection else { return }
+        guard let oldProjection = documentProjection else { 
+            bmLog("⛔ applyEditResultWithUndo: no documentProjection")
+            return 
+        }
         let oldCursorRange = selectedRange()
+
+        // Detailed logging for splice application
+        bmLog("🔧 applyEditResultWithUndo BEFORE: storage.length=\(storage.length), storage.string='\(storage.string)'")
+        bmLog("🔧 spliceRange=\(result.spliceRange), spliceReplacement='\(result.spliceReplacement.string)' (length=\(result.spliceReplacement.length))")
 
         // Validate splice range against current storage.
         let spliceEnd = result.spliceRange.location + result.spliceRange.length
@@ -157,6 +181,8 @@ extension EditTextView {
             with: result.spliceReplacement
         )
         storage.endEditing()
+        
+        bmLog("🔧 applyEditResultWithUndo AFTER: storage.length=\(storage.length), storage.string='\(storage.string)'")
 
         // Update projection.
         documentProjection = result.newProjection
@@ -175,6 +201,19 @@ extension EditTextView {
         didChangeText()
         textStorageProcessor?.isRendering = false
 
+        // Force the layout manager to re-evaluate attributes and redraw
+        // This is necessary because the splice replacement may have different
+        // attributes (font traits, colors) that the layout manager needs to pick up
+if let lm = layoutManager {
+    // Invalidate glyphs for the entire document to force re-layout
+    lm.invalidateGlyphs(forCharacterRange: NSRange(location: 0, length: storage.length), changeInLength: 0, actualCharacterRange: nil)
+    lm.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
+    lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: storage.length))
+    let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
+    lm.invalidateDisplay(forGlyphRange: glyphRange)
+}
+
+needsDisplay = true
         // Mark note as modified.
         note?.cacheHash = nil
 
@@ -261,8 +300,14 @@ extension EditTextView {
         guard var projection = documentProjection,
               let storage = textStorage,
               let replacement = replacementString else {
+            bmLog("⛔ handleEditViaBlockModel: guard failed - projection=\(documentProjection != nil), storage=\(textStorage != nil), replacement=\(replacementString != nil)")
             return false
         }
+
+        // Detailed logging for debugging new note typing issues
+        bmLog("🎯 handleEditViaBlockModel: range=\(range), replacement='\(replacement)', storage.length=\(storage.length), projection.length=\(projection.attributed.length)")
+        bmLog("📝 storage.string='\(storage.string)'")
+        bmLog("🎨 projection.string='\(projection.attributed.string)'")
 
         // Safety: detect storage/projection mismatch (e.g. from async
         // post-fill processing that modified storage without updating
@@ -278,6 +323,7 @@ extension EditTextView {
 
             if range.length == 0 && !replacement.isEmpty {
                 // Pure insertion.
+                bmLog("➡️ Calling EditingOps.insert('\(replacement)', at: \(range.location))")
                 result = try EditingOps.insert(replacement, at: range.location, in: projection)
             } else if range.length > 0 && replacement.isEmpty {
                 // Check for delete-at-home in a list item (FSM intercept).

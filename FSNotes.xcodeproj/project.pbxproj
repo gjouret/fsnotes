@@ -926,11 +926,13 @@
 		TEST00000000000000000004 /* RendererComparisonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TEST00000000000000000002 /* RendererComparisonTests.swift */; };
 		EOT0000000000000000000B1 /* EditingOperationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EOT0000000000000000000F1 /* EditingOperationsTests.swift */; };
 		LFT0000000000000000000B1 /* ListEditingFSMTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LFT0000000000000000000F1 /* ListEditingFSMTests.swift */; };
+		RCT0000000000000000000B1 /* RenderingCorrectnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */; };
 		SIT0000000000000000000B1 /* SystemIntegrityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIT0000000000000000000F1 /* SystemIntegrityTests.swift */; };
 		DPT0000000000000000000B1 /* DocumentProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DPT0000000000000000000F1 /* DocumentProjectionTests.swift */; };
 		CRT0000000000000000000B1 /* ComprehensiveRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CRT0000000000000000000F1 /* ComprehensiveRoundTripTests.swift */; };
 		CMARK000000000000000001 /* CommonMarkHTMLRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CMARK000000000000000003 /* CommonMarkHTMLRenderer.swift */; };
 		CMARK000000000000000002 /* CommonMarkSpecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CMARK000000000000000004 /* CommonMarkSpecTests.swift */; };
+		EHP0000000000000000000B1 /* EditorHTMLParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EHP0000000000000000000F1 /* EditorHTMLParityTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1472,10 +1474,12 @@
 		EOT0000000000000000000F1 /* EditingOperationsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingOperationsTests.swift; sourceTree = "<group>"; };
 		LFT0000000000000000000F1 /* ListEditingFSMTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListEditingFSMTests.swift; sourceTree = "<group>"; };
 		SIT0000000000000000000F1 /* SystemIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemIntegrityTests.swift; sourceTree = "<group>"; };
+		RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderingCorrectnessTests.swift; sourceTree = "<group>"; };
 		DPT0000000000000000000F1 /* DocumentProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentProjectionTests.swift; sourceTree = "<group>"; };
 		CRT0000000000000000000F1 /* ComprehensiveRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComprehensiveRoundTripTests.swift; sourceTree = "<group>"; };
 		CMARK000000000000000003 /* CommonMarkHTMLRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonMarkHTMLRenderer.swift; sourceTree = "<group>"; };
 		CMARK000000000000000004 /* CommonMarkSpecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonMarkSpecTests.swift; sourceTree = "<group>"; };
+		EHP0000000000000000000F1 /* EditorHTMLParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorHTMLParityTests.swift; sourceTree = "<group>"; };
 		TEST00000000000000000001 /* FSNotesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FSNotesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -2315,6 +2319,8 @@
 			isa = PBXGroup;
 			children = (
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
+				RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */,
+				EHP0000000000000000000F1 /* EditorHTMLParityTests.swift */,
 				TEST00000000000000000002 /* RendererComparisonTests.swift */,
 				992A7F1EEF372989B048ABA4 /* FacadeTests.swift */,
 				0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */,
@@ -3763,6 +3769,8 @@
 				CRT0000000000000000000B1 /* ComprehensiveRoundTripTests.swift in Sources */,
 				CMARK000000000000000001 /* CommonMarkHTMLRenderer.swift in Sources */,
 				CMARK000000000000000002 /* CommonMarkSpecTests.swift in Sources */,
+				RCT0000000000000000000B1 /* RenderingCorrectnessTests.swift in Sources */,
+				EHP0000000000000000000B1 /* EditorHTMLParityTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
