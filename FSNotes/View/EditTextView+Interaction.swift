@@ -477,14 +477,6 @@ extension EditTextView {
 
     private func openFileViewer(at: Int) {
         guard let attachment = getAttachment(at: at) else { return }
-
-        let url = attachment.url
-
-        if !url.isImage {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-            return
-        }
-
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.open(attachment.url)
     }
 }

@@ -138,10 +138,13 @@ class InlinePDFView: NSView {
         thumbnailContainer.addSubview(thumbnailView)
 
         // --- PDF view ---
+        // Horizontal page layout so multi-page PDFs scroll sideways,
+        // keeping the note's vertical scroll unobstructed (Apple Notes
+        // and Obsidian use the same approach).
         pdfView = PDFView()
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
-        pdfView.displayDirection = .vertical
+        pdfView.displayDirection = .horizontal
         pdfView.backgroundColor = NSColor.textBackgroundColor
         pdfView.interpolationQuality = .high
         addSubview(pdfView)
@@ -258,6 +261,8 @@ class InlinePDFView: NSView {
     // MARK: - Computed Size
 
     /// Compute the ideal size for this PDF viewer.
+    /// With horizontal layout, height is based on a single page
+    /// (pages scroll sideways, not vertically).
     func computeSize(forWidth width: CGFloat) -> NSSize {
         guard let document = pdfView.document,
               let firstPage = document.page(at: 0) else {
@@ -265,22 +270,12 @@ class InlinePDFView: NSView {
         }
 
         let pageRect = firstPage.bounds(for: .mediaBox)
-        let pageCount = document.pageCount
 
-        // Scale to fit width
+        // Scale page to fit width; height is one page tall.
         let scale = width / pageRect.width
         let scaledPageHeight = pageRect.height * scale
 
-        // For single page or small docs, show all pages.
-        // For large docs, cap at maxHeight.
-        let totalHeight: CGFloat
-        if pageCount <= 3 {
-            totalHeight = scaledPageHeight * CGFloat(pageCount)
-        } else {
-            totalHeight = maxHeight
-        }
-
-        return NSSize(width: width, height: min(totalHeight, maxHeight) + toolbarHeight)
+        return NSSize(width: width, height: min(scaledPageHeight, maxHeight) + toolbarHeight)
     }
 
     // MARK: - Actions
@@ -327,7 +322,15 @@ class InlinePDFView: NSView {
     // MARK: - Scroll Behavior
 
     override func scrollWheel(with event: NSEvent) {
-        pdfView.scrollWheel(with: event)
+        // Horizontal scroll (or shift-scroll) navigates PDF pages.
+        // Vertical scroll passes through to the note's scroll view
+        // so the user can scroll past the PDF embed.
+        if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
+            pdfView.scrollWheel(with: event)
+        } else {
+            // Pass vertical scrolling up to the enclosing scroll view (note editor).
+            nextResponder?.scrollWheel(with: event)
+        }
     }
 
     // MARK: - Cleanup

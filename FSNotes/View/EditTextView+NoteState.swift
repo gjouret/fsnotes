@@ -234,6 +234,7 @@ extension EditTextView {
             pendingRenderBlockRange = nil
             removeAllInlineTableViews()
             removeAllInlinePDFViews()
+            removeAllInlineQuickLookViews()
 
             // Block-model renderer: parses markdown → Document → rendered
             // attributed string. Falls back to source-mode pipeline if needed.
@@ -358,9 +359,9 @@ extension EditTextView {
         return search.stringValue
     }
 
-    /// Render PDF attachments then restore scroll position. Called at
-    /// the end of fill()'s async pipeline to ensure scroll restoration
-    /// happens AFTER all layout-affecting work is done.
+    /// Render PDF and file attachments then restore scroll position.
+    /// Called at the end of fill()'s async pipeline to ensure scroll
+    /// restoration happens AFTER all layout-affecting work is done.
     private func renderPDFsAndRestoreScroll(note: Note) {
         if let storage = self.textStorage {
             let containerWidth = self.textContainer?.size.width ?? self.frame.width
@@ -375,6 +376,12 @@ extension EditTextView {
             ImageAttachmentHydrator.hydrate(
                 textStorage: storage,
                 editor: self
+            )
+            // Render QuickLook previews for non-image/non-PDF files
+            // (.numbers, .pages, .docx, etc.)
+            QuickLookAttachmentProcessor.renderQuickLookAttachments(
+                in: storage,
+                containerWidth: containerWidth
             )
         }
         viewDelegate?.restoreScrollPosition()
@@ -429,6 +436,14 @@ extension EditTextView {
         }
     }
 
+    func removeAllInlineQuickLookViews() {
+        for subview in subviews {
+            if subview is InlineQuickLookView {
+                subview.removeFromSuperview()
+            }
+        }
+    }
+
     /// Remove InlinePDFView subviews whose attachment is no longer in
     /// the text storage. Called after edits to clean up orphaned viewers
     /// without removing still-valid ones (which would cause flicker).
@@ -452,6 +467,29 @@ extension EditTextView {
             guard let pdfView = subview as? InlinePDFView else { continue }
             if !liveViews.contains(ObjectIdentifier(pdfView)) {
                 pdfView.removeFromSuperview()
+            }
+        }
+    }
+
+    /// Remove QuickLook subviews whose attachment is no longer in storage.
+    func removeOrphanedInlineQuickLookViews() {
+        guard let storage = textStorage else {
+            removeAllInlineQuickLookViews()
+            return
+        }
+
+        var liveViews = Set<ObjectIdentifier>()
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
+            guard let attachment = value as? NSTextAttachment,
+                  let cell = attachment.attachmentCell as? QuickLookAttachmentCell else { return }
+            liveViews.insert(ObjectIdentifier(cell.inlineView))
+        }
+
+        for subview in subviews {
+            guard let qlView = subview as? InlineQuickLookView else { continue }
+            if !liveViews.contains(ObjectIdentifier(qlView)) {
+                qlView.removeFromSuperview()
             }
         }
     }

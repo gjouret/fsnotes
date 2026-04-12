@@ -184,9 +184,10 @@ public enum InlineRenderer {
 
         let isImage = renderableImageExtensions.contains(ext)
         let isPDF = renderablePDFExtensions.contains(ext)
-        guard isImage || isPDF else { return nil }
+        let isFile = !isImage && !isPDF
 
-        guard let fileURL = note.getAttachmentFileUrl(name: cleanPath) else {
+        guard let fileURL = note.getAttachmentFileUrl(name: cleanPath),
+              FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
         }
 
@@ -198,7 +199,7 @@ public enum InlineRenderer {
 
         let altText = plainText(alt)
         let originalMarkdown = "![\(altText)](\(destination))"
-        let blockType: RenderedBlockType = isPDF ? .pdf : .image
+        let blockType: RenderedBlockType = isPDF ? .pdf : (isFile ? .file : .image)
 
         let result = NSMutableAttributedString(attachment: attachment)
         let range = NSRange(location: 0, length: result.length)

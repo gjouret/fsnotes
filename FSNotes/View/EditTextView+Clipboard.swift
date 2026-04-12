@@ -164,10 +164,6 @@ extension EditTextView {
                     return
                 }
                 breakUndoCoalescing()
-                // Fall through to thumbnail path if block-model insert fails.
-            }
-
-            if saveFileWithThumbnail(data: pdfData, preferredName: name, in: note) {
                 return
             }
         }

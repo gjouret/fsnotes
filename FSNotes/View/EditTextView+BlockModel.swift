@@ -247,6 +247,7 @@ needsDisplay = true
         // Clean up orphaned inline PDF subviews after edits that may
         // have removed attachment characters from the text storage.
         removeOrphanedInlinePDFViews()
+        removeOrphanedInlineQuickLookViews()
 
         // Mark note as modified.
         note?.cacheHash = nil
@@ -306,6 +307,7 @@ needsDisplay = true
         needsDisplay = true
 
         removeOrphanedInlinePDFViews()
+        removeOrphanedInlineQuickLookViews()
 
         note?.cacheHash = nil
 
@@ -805,9 +807,11 @@ needsDisplay = true
             bmLog("🖼️ insertImage: dest='\(destination)' splice \(result.spliceRange) → \(result.spliceReplacement.length) chars")
             applyEditResultWithUndo(result, actionName: "Insert Image")
             // Kick off async hydration of the placeholder attachment.
-            // For PDFs, PDFAttachmentProcessor replaces the placeholder with
-            // an inline PDFKit viewer; for images, ImageAttachmentHydrator
-            // loads the real bytes. Both are no-ops for the other type.
+            // Post-processors replace the placeholder attachment with
+            // the appropriate viewer for the file type:
+            // - PDFAttachmentProcessor → inline PDFKit viewer
+            // - ImageAttachmentHydrator → loads real image bytes
+            // - QuickLookAttachmentProcessor → QLPreviewView for other files
             if let storage = textStorage {
                 let containerWidth = self.textContainer?.size.width ?? self.frame.width
                 if let note = self.note {
@@ -816,6 +820,9 @@ needsDisplay = true
                     )
                 }
                 ImageAttachmentHydrator.hydrate(textStorage: storage, editor: self)
+                QuickLookAttachmentProcessor.renderQuickLookAttachments(
+                    in: storage, containerWidth: containerWidth
+                )
             }
             return true
         } catch {

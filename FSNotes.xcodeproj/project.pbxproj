@@ -640,6 +640,7 @@
 		23EAB390742AF720CE975FB0 /* TableEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */; };
 		BB1234560001000100010001 /* InlineTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010002 /* InlineTableView.swift */; };
 		BB1234560001000100010021 /* InlinePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010020 /* InlinePDFView.swift */; };
+		BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010030 /* InlineQuickLookView.swift */; };
 		23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */; };
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
 		23EAB390742AF720CE975FB6 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8C /* AIService.swift */; };
@@ -1351,6 +1352,7 @@
 		9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableEditorViewController.swift; sourceTree = "<group>"; };
 		BB1234560001000100010002 /* InlineTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTableView.swift; sourceTree = "<group>"; };
 		BB1234560001000100010020 /* InlinePDFView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlinePDFView.swift; sourceTree = "<group>"; };
+		BB1234560001000100010030 /* InlineQuickLookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineQuickLookView.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRenderer.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8C /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
@@ -2203,6 +2205,7 @@
 				9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */,
 				BB1234560001000100010002 /* InlineTableView.swift */,
 				BB1234560001000100010020 /* InlinePDFView.swift */,
+				BB1234560001000100010030 /* InlineQuickLookView.swift */,
 				9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */,
 				9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */,
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
@@ -3422,6 +3425,7 @@
 				23EAB390742AF720CE975FB0 /* TableEditorViewController.swift in Sources */,
 				BB1234560001000100010001 /* InlineTableView.swift in Sources */,
 				BB1234560001000100010021 /* InlinePDFView.swift in Sources */,
+				BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */,
 				23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */,
 				23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */,
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,

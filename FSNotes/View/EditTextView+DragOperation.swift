@@ -218,31 +218,34 @@ extension EditTextView
         let preferredName = url.lastPathComponent
         let ext = url.pathExtension.lowercased()
 
-        if EditTextView.imageExtensions.contains(ext) || InlineRenderer.renderablePDFExtensions.contains(ext) || data.getFileType() != .unknown {
-            // Block-model WYSIWYG path: save the image to disk and
-            // insert a native `.image` inline via the block model.
-            // ImageAttachmentHydrator takes care of the async image load.
-            // SVG is handled later in a dedicated pass — for now, fall
-            // through to the source-mode attachment for that extension.
-            let renderableByBlockModel = InlineRenderer.renderableImageExtensions.contains(ext)
-                || InlineRenderer.renderablePDFExtensions.contains(ext)
-            if documentProjection != nil, renderableByBlockModel {
-                guard let (relPath, _) = note.save(data: data, preferredName: preferredName) else {
-                    return false
-                }
-                let encoded = relPath.addingPercentEncoding(
-                    withAllowedCharacters: .urlPathAllowed
-                ) ?? relPath
-                let alt = (preferredName as NSString).deletingPathExtension
-                breakUndoCoalescing()
-                if insertImageViaBlockModel(alt: alt, destination: encoded) {
-                    breakUndoCoalescing()
-                    return true
-                }
-                breakUndoCoalescing()
-                // Fall through to legacy path if the block-model insert fails.
+        // Block-model WYSIWYG path: save the file to disk and insert
+        // a native `.image` inline via the block model. Post-processors
+        // (ImageAttachmentHydrator, PDFAttachmentProcessor,
+        // QuickLookAttachmentProcessor) handle display for each type.
+        // Any file with an extension is accepted — QuickLook previews
+        // everything macOS can render (.numbers, .pages, .docx, etc.).
+        if documentProjection != nil, !ext.isEmpty {
+            guard let (relPath, _) = note.save(data: data, preferredName: preferredName) else {
+                return false
             }
+            let encoded = relPath.addingPercentEncoding(
+                withAllowedCharacters: .urlPathAllowed
+            ) ?? relPath
+            let alt = (preferredName as NSString).deletingPathExtension
+            breakUndoCoalescing()
+            if insertImageViaBlockModel(alt: alt, destination: encoded) {
+                breakUndoCoalescing()
+                return true
+            }
+            breakUndoCoalescing()
+            // Fall through to legacy path if the block-model insert fails.
+        }
 
+        // Legacy source-mode path for images/PDFs
+        let isImageOrPDF = EditTextView.imageExtensions.contains(ext)
+            || InlineRenderer.renderablePDFExtensions.contains(ext)
+            || data.getFileType() != .unknown
+        if isImageOrPDF {
             guard let attributed = NSMutableAttributedString.build(data: data, preferredName: preferredName) else { return false }
             breakUndoCoalescing()
             insertText(attributed, replacementRange: selectedRange())
@@ -250,148 +253,7 @@ extension EditTextView
             return true
         }
 
-        return saveFileWithThumbnail(data: data, preferredName: preferredName, in: note)
-    }
-
-    func saveFileWithThumbnail(data: Data, preferredName: String, in note: Note) -> Bool {
-        guard let (fileRelPath, fileURL) = note.save(data: data, preferredName: preferredName) else { return false }
-
-        // Mark the file as pending so orphan cleanup won't flag it
-        // before the async thumbnail generation completes.
-        EditTextView.addPendingInsertion(fileURL.lastPathComponent)
-
-        let request = QLThumbnailGenerator.Request(
-            fileAt: fileURL,
-            size: CGSize(width: 480, height: 480),
-            scale: NSScreen.main?.backingScaleFactor ?? 2.0,
-            representationTypes: .all
-        )
-
-        let capturedNote = note
-        let capturedFileName = fileURL.lastPathComponent
-        let capturedInsertionPoint = selectedRange().location
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, _ in
-            DispatchQueue.main.async {
-                guard let self = self, self.note === capturedNote else {
-                    EditTextView.removePendingInsertion(capturedFileName)
-                    return
-                }
-                self.insertThumbnailCard(
-                    thumbnail: thumbnail,
-                    fileRelPath: fileRelPath,
-                    preferredName: preferredName,
-                    note: capturedNote,
-                    insertionPoint: capturedInsertionPoint
-                )
-                EditTextView.removePendingInsertion(capturedFileName)
-            }
-        }
-
-        return true
-    }
-
-    private func insertThumbnailCard(
-        thumbnail: QLThumbnailRepresentation?,
-        fileRelPath: String,
-        preferredName: String,
-        note: Note,
-        insertionPoint: Int
-    ) {
-        let encodedFilePath = fileRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileRelPath
-        let displayName = preferredName
-
-        // Save the thumbnail (or icon) image to disk and get its relative path.
-        var thumbRelPath: String?
-        var thumbFileName: String?
-
-        if let cgImage = thumbnail?.cgImage {
-            let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-            if let pngData = nsImage.PNGRepresentation {
-                let thumbName = (preferredName as NSString).deletingPathExtension + "_thumb.png"
-                if let (relPath, thumbURL) = note.save(data: pngData, preferredName: thumbName) {
-                    thumbRelPath = relPath
-                    thumbFileName = thumbURL.lastPathComponent
-                    EditTextView.addPendingInsertion(thumbURL.lastPathComponent)
-                    if note.imageUrl != nil {
-                        note.imageUrl?.append(thumbURL)
-                    } else {
-                        note.imageUrl = [thumbURL]
-                    }
-                }
-            }
-        } else {
-            let ext = (preferredName as NSString).pathExtension
-            let fileIcon = NSWorkspace.shared.icon(forFileType: ext)
-            fileIcon.size = NSSize(width: 128, height: 128)
-            if let pngData = fileIcon.PNGRepresentation {
-                let iconName = (preferredName as NSString).deletingPathExtension + "_icon.png"
-                if let (relPath, iconURL) = note.save(data: pngData, preferredName: iconName) {
-                    thumbRelPath = relPath
-                    thumbFileName = iconURL.lastPathComponent
-                    EditTextView.addPendingInsertion(iconURL.lastPathComponent)
-                    if note.imageUrl != nil {
-                        note.imageUrl?.append(iconURL)
-                    } else {
-                        note.imageUrl = [iconURL]
-                    }
-                }
-            }
-        }
-
-        // Block-model path: insert the thumbnail as a proper image block
-        // via EditingOps.insertImage. This avoids the raw-markdown
-        // insertText path which fails on multi-line insertion in blank lines.
-        if let thumbPath = thumbRelPath, documentProjection != nil {
-            let encodedThumbPath = thumbPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? thumbPath
-            // Position cursor at the insertion point so insertImageViaBlockModel
-            // uses the right location.
-            let storageLen = textStorage?.length ?? 0
-            let safeLocation = min(insertionPoint, storageLen)
-            setSelectedRange(NSRange(location: safeLocation, length: 0))
-
-            breakUndoCoalescing()
-            let inserted = insertImageViaBlockModel(alt: displayName, destination: encodedThumbPath)
-            breakUndoCoalescing()
-
-            if inserted {
-                if let name = thumbFileName {
-                    EditTextView.removePendingInsertion(name)
-                }
-                return
-            }
-        }
-
-        // Fallback: source-mode or no thumbnail — use raw markdown insertText.
-        let markdown: String
-        if let thumbPath = thumbRelPath {
-            let encodedThumbPath = thumbPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? thumbPath
-            markdown = "\n[![\(displayName)](\(encodedThumbPath))](\(encodedFilePath))\n"
-        } else {
-            markdown = "\n[\(displayName)](\(encodedFilePath))\n"
-        }
-
-        // Clamp the insertion point to the current storage length — the text
-        // may have changed since the async thumbnail generation started.
-        let storageLen = textStorage?.length ?? 0
-        let safeLocation = min(insertionPoint, storageLen)
-        let insertRange = NSRange(location: safeLocation, length: 0)
-
-        breakUndoCoalescing()
-        insertText(NSMutableAttributedString(string: markdown), replacementRange: insertRange)
-        breakUndoCoalescing()
-
-        if let name = thumbFileName {
-            EditTextView.removePendingInsertion(name)
-        }
-
-        // In source-mode the insertText doesn't update any Document;
-        // save and reload so the note persists.
-        if documentProjection == nil {
-            note.content = NSMutableAttributedString(attributedString: attributedStringForSaving())
-            _ = note.save()
-            note.load()
-            viewDelegate?.refillEditArea(force: true)
-        }
+        return false
     }
 
 }
