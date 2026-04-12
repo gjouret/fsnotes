@@ -218,6 +218,11 @@ if let lm = layoutManager {
 }
 
 needsDisplay = true
+
+        // Clean up orphaned inline PDF subviews after edits that may
+        // have removed attachment characters from the text storage.
+        removeOrphanedInlinePDFViews()
+
         // Mark note as modified.
         note?.cacheHash = nil
 
@@ -274,6 +279,8 @@ needsDisplay = true
             lm.invalidateDisplay(forGlyphRange: glyphRange)
         }
         needsDisplay = true
+
+        removeOrphanedInlinePDFViews()
 
         note?.cacheHash = nil
 

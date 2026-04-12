@@ -1133,6 +1133,15 @@ public enum EditingOps {
         switch block {
         case .paragraph(let inline):
             if length == 0 { return block }
+            // Atomic-aware path: paragraphs containing images (length-1
+            // atoms) can't use flatten/runs because flatten skips image
+            // nodes. Use splitInlines to cut around the deleted range.
+            if containsImage(inline) {
+                let (before, _) = splitInlines(inline, at: fromOffset)
+                let (_, after) = splitInlines(inline, at: toOffset)
+                let newInline = before + after
+                return .paragraph(inline: newInline)
+            }
             let runs = flatten(inline)
             guard let (startRun, startOff) = runContainingChar(runs, charIndex: fromOffset) else {
                 throw EditingError.outOfBounds

@@ -39,16 +39,104 @@ extension EditTextView {
             if let doc = documentProjection?.document {
                 note.cachedDocument = doc
             }
+            cleanupOrphanedAttachmentsIfNeeded(note: note, markdown: markdown)
             return
         }
         let saving = attributedStringForSaving()
         bmLog("💾 save (source-mode): \(note.title) — \(saving.string.prefix(60))")
         note.save(attributed: saving)
+        cleanupOrphanedAttachmentsIfNeeded(note: note, markdown: saving.string)
+    }
+
+    // MARK: - Orphaned attachment cleanup on save
+
+    /// Filenames the user has already been prompted about (and chose to
+    /// keep) in this editing session. Reset when switching notes.
+    private static var _dismissedOrphans: Set<String> = []
+
+    /// Find orphaned assets for a single note and prompt for removal.
+    /// Encrypted notes have orphans permanently deleted; unencrypted
+    /// notes have them moved to the Trash.
+    private func cleanupOrphanedAttachmentsIfNeeded(note: Note, markdown: String) {
+        guard note.isTextBundle() else { return }
+        let fm = FileManager.default
+        let assetsURL = note.url.appendingPathComponent("assets")
+        guard fm.fileExists(atPath: assetsURL.path) else { return }
+
+        guard let assetFiles = try? fm.contentsOfDirectory(
+            at: assetsURL,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: .skipsHiddenFiles
+        ) else { return }
+
+        // Find assets not referenced in the markdown content.
+        // Skip any the user already dismissed this session.
+        var orphans: [(url: URL, name: String, size: UInt64)] = []
+        for file in assetFiles {
+            let name = file.lastPathComponent
+            if EditTextView._dismissedOrphans.contains(name) { continue }
+            if !markdown.contains(name) {
+                let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
+                orphans.append((url: file, name: name, size: size))
+            }
+        }
+
+        guard !orphans.isEmpty else { return }
+
+        let totalSize = orphans.reduce(UInt64(0)) { $0 + $1.size }
+        let sizeMB = Double(totalSize) / 1_048_576.0
+        let encrypted = note.isEncrypted()
+
+        let fileList = orphans.prefix(10).map { "  • \($0.name)" }.joined(separator: "\n")
+        let moreText = orphans.count > 10 ? "\n  … and \(orphans.count - 10) more" : ""
+        let actionVerb = encrypted ? "permanently delete" : "move to Trash"
+
+        let alert = NSAlert()
+        alert.messageText = "Orphaned Attachment\(orphans.count == 1 ? "" : "s") Found"
+        alert.informativeText = """
+            \(orphans.count) attachment\(orphans.count == 1 ? " is" : "s are") no longer referenced in "\(note.getTitle() ?? note.fileName)" (\(String(format: "%.1f", sizeMB)) MB):
+
+            \(fileList)\(moreText)
+
+            Would you like to \(actionVerb) \(orphans.count == 1 ? "it" : "them")?
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: encrypted ? "Delete" : "Move to Trash")
+        alert.addButton(withTitle: "Keep")
+
+        let response = alert.runModal()
+
+        if response == .alertFirstButtonReturn {
+            for orphan in orphans {
+                do {
+                    if encrypted {
+                        try fm.removeItem(at: orphan.url)
+                    } else {
+                        try fm.trashItem(at: orphan.url, resultingItemURL: nil)
+                    }
+                } catch {
+                    bmLog("⚠️ Failed to remove orphaned attachment \(orphan.name): \(error)")
+                }
+            }
+        } else {
+            // User chose to keep — remember so we don't re-prompt this session
+            for orphan in orphans {
+                EditTextView._dismissedOrphans.insert(orphan.name)
+            }
+        }
+    }
+
+    /// Reset the dismissed-orphan tracker (call when switching notes).
+    static func resetDismissedOrphans() {
+        _dismissedOrphans.removeAll()
     }
 
     func fill(note: Note, highlight: Bool = false, force: Bool = false) {
         bmLog("📋 fill() called: \(note.title)")
         isScrollPositionSaverLocked = true
+
+        // Reset orphan-tracking when switching notes.
+        EditTextView.resetDismissedOrphans()
 
         // Clear block-model state BEFORE touching textStorage.
         // This prevents any textDidChange triggered by the
@@ -312,6 +400,33 @@ extension EditTextView {
         for subview in subviews {
             if subview is InlinePDFView {
                 subview.removeFromSuperview()
+            }
+        }
+    }
+
+    /// Remove InlinePDFView subviews whose attachment is no longer in
+    /// the text storage. Called after edits to clean up orphaned viewers
+    /// without removing still-valid ones (which would cause flicker).
+    func removeOrphanedInlinePDFViews() {
+        guard let storage = textStorage else {
+            removeAllInlinePDFViews()
+            return
+        }
+
+        // Collect all InlinePDFViews currently hosted by attachment cells
+        // in the text storage.
+        var liveViews = Set<ObjectIdentifier>()
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
+            guard let attachment = value as? NSTextAttachment,
+                  let cell = attachment.attachmentCell as? PDFAttachmentCell else { return }
+            liveViews.insert(ObjectIdentifier(cell.inlinePDFView))
+        }
+
+        for subview in subviews {
+            guard let pdfView = subview as? InlinePDFView else { continue }
+            if !liveViews.contains(ObjectIdentifier(pdfView)) {
+                pdfView.removeFromSuperview()
             }
         }
     }
