@@ -45,7 +45,12 @@ extension EditTextView {
         let saving = attributedStringForSaving()
         bmLog("💾 save (source-mode): \(note.title) — \(saving.string.prefix(60))")
         note.save(attributed: saving)
-        cleanupOrphanedAttachmentsIfNeeded(note: note, markdown: saving.string)
+        // NOTE: Do NOT run orphan cleanup here. The source-mode fallback
+        // fires when documentProjection is temporarily nil (e.g. during
+        // clearBlockModelAndRefill). The plain text contains ￼ attachment
+        // characters, not ![alt](path) markdown, so the orphan checker
+        // would flag every image as orphaned. Orphan cleanup only runs
+        // in the block-model path above, where we have real markdown.
     }
 
     // MARK: - Orphaned attachment cleanup on save

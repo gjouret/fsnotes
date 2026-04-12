@@ -300,21 +300,24 @@ extension EditTextView
         let encodedFilePath = fileRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileRelPath
         let displayName = preferredName
 
-        let markdown: String
+        // Save the thumbnail (or icon) image to disk and get its relative path.
+        var thumbRelPath: String?
+        var thumbFileName: String?
 
         if let cgImage = thumbnail?.cgImage {
             let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
             if let pngData = nsImage.PNGRepresentation {
                 let thumbName = (preferredName as NSString).deletingPathExtension + "_thumb.png"
-                markdown = buildLinkedImageMarkdown(
-                    note: note,
-                    imageData: pngData,
-                    preferredName: thumbName,
-                    displayName: displayName,
-                    encodedFilePath: encodedFilePath
-                ) ?? "\n[\(displayName)](\(encodedFilePath))\n"
-            } else {
-                markdown = "\n[\(displayName)](\(encodedFilePath))\n"
+                if let (relPath, thumbURL) = note.save(data: pngData, preferredName: thumbName) {
+                    thumbRelPath = relPath
+                    thumbFileName = thumbURL.lastPathComponent
+                    EditTextView.addPendingInsertion(thumbURL.lastPathComponent)
+                    if note.imageUrl != nil {
+                        note.imageUrl?.append(thumbURL)
+                    } else {
+                        note.imageUrl = [thumbURL]
+                    }
+                }
             }
         } else {
             let ext = (preferredName as NSString).pathExtension
@@ -322,16 +325,49 @@ extension EditTextView
             fileIcon.size = NSSize(width: 128, height: 128)
             if let pngData = fileIcon.PNGRepresentation {
                 let iconName = (preferredName as NSString).deletingPathExtension + "_icon.png"
-                markdown = buildLinkedImageMarkdown(
-                    note: note,
-                    imageData: pngData,
-                    preferredName: iconName,
-                    displayName: displayName,
-                    encodedFilePath: encodedFilePath
-                ) ?? "\n[\(displayName)](\(encodedFilePath))\n"
-            } else {
-                markdown = "\n[\(displayName)](\(encodedFilePath))\n"
+                if let (relPath, iconURL) = note.save(data: pngData, preferredName: iconName) {
+                    thumbRelPath = relPath
+                    thumbFileName = iconURL.lastPathComponent
+                    EditTextView.addPendingInsertion(iconURL.lastPathComponent)
+                    if note.imageUrl != nil {
+                        note.imageUrl?.append(iconURL)
+                    } else {
+                        note.imageUrl = [iconURL]
+                    }
+                }
             }
+        }
+
+        // Block-model path: insert the thumbnail as a proper image block
+        // via EditingOps.insertImage. This avoids the raw-markdown
+        // insertText path which fails on multi-line insertion in blank lines.
+        if let thumbPath = thumbRelPath, documentProjection != nil {
+            let encodedThumbPath = thumbPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? thumbPath
+            // Position cursor at the insertion point so insertImageViaBlockModel
+            // uses the right location.
+            let storageLen = textStorage?.length ?? 0
+            let safeLocation = min(insertionPoint, storageLen)
+            setSelectedRange(NSRange(location: safeLocation, length: 0))
+
+            breakUndoCoalescing()
+            let inserted = insertImageViaBlockModel(alt: displayName, destination: encodedThumbPath)
+            breakUndoCoalescing()
+
+            if inserted {
+                if let name = thumbFileName {
+                    EditTextView.removePendingInsertion(name)
+                }
+                return
+            }
+        }
+
+        // Fallback: source-mode or no thumbnail — use raw markdown insertText.
+        let markdown: String
+        if let thumbPath = thumbRelPath {
+            let encodedThumbPath = thumbPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? thumbPath
+            markdown = "\n[![\(displayName)](\(encodedThumbPath))](\(encodedFilePath))\n"
+        } else {
+            markdown = "\n[\(displayName)](\(encodedFilePath))\n"
         }
 
         // Clamp the insertion point to the current storage length — the text
@@ -344,8 +380,12 @@ extension EditTextView
         insertText(NSMutableAttributedString(string: markdown), replacementRange: insertRange)
         breakUndoCoalescing()
 
-        // In block-model mode the insertText already updated the Document;
-        // just let the normal save flow handle persistence.
+        if let name = thumbFileName {
+            EditTextView.removePendingInsertion(name)
+        }
+
+        // In source-mode the insertText doesn't update any Document;
+        // save and reload so the note persists.
         if documentProjection == nil {
             note.content = NSMutableAttributedString(attributedString: attributedStringForSaving())
             _ = note.save()
@@ -354,26 +394,4 @@ extension EditTextView
         }
     }
 
-    /// Build a linked-image markdown string: [![name](thumb)](file)
-    /// The thumbnail is clickable and opens the original file.
-    private func buildLinkedImageMarkdown(
-        note: Note,
-        imageData: Data,
-        preferredName: String,
-        displayName: String,
-        encodedFilePath: String
-    ) -> String? {
-        guard let (imageRelPath, imageURL) = note.save(data: imageData, preferredName: preferredName) else {
-            return nil
-        }
-
-        let encodedImagePath = imageRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? imageRelPath
-        if note.imageUrl != nil {
-            note.imageUrl?.append(imageURL)
-        } else {
-            note.imageUrl = [imageURL]
-        }
-
-        return "\n[![\(displayName)](\(encodedImagePath))](\(encodedFilePath))\n"
-    }
 }
