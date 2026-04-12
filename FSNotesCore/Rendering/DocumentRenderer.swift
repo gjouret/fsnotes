@@ -48,10 +48,15 @@ public struct RenderedDocument {
 public enum DocumentRenderer {
 
     /// Render a document to an attributed string + per-block span map.
+    ///
+    /// - Parameter note: optional note context threaded through to
+    ///   InlineRenderer for resolving relative image/PDF paths. Defaults
+    ///   to nil so tests without a note stay source-compatible.
     public static func render(
         _ document: Document,
         bodyFont: PlatformFont,
-        codeFont: PlatformFont
+        codeFont: PlatformFont,
+        note: Note? = nil
     ) -> RenderedDocument {
         let out = NSMutableAttributedString()
         var spans: [NSRange] = []
@@ -81,7 +86,7 @@ public enum DocumentRenderer {
 
         for (i, block) in document.blocks.enumerated() {
             let start = out.length
-            let blockRendered = renderBlock(block, bodyFont: bodyFont, codeFont: codeFont)
+            let blockRendered = renderBlock(block, bodyFont: bodyFont, codeFont: codeFont, note: note)
             out.append(blockRendered)
             let end = out.length
             let blockRange = NSRange(location: start, length: end - start)
@@ -327,19 +332,20 @@ public enum DocumentRenderer {
     public static func renderBlock(
         _ block: Block,
         bodyFont: PlatformFont,
-        codeFont: PlatformFont
+        codeFont: PlatformFont,
+        note: Note? = nil
     ) -> NSAttributedString {
         switch block {
         case .paragraph(let inline):
-            return ParagraphRenderer.render(inline: inline, bodyFont: bodyFont)
+            return ParagraphRenderer.render(inline: inline, bodyFont: bodyFont, note: note)
         case .heading(let level, let suffix):
             return HeadingRenderer.render(level: level, suffix: suffix, bodyFont: bodyFont)
         case .codeBlock(let language, let content, _):
             return CodeBlockRenderer.render(language: language, content: content, codeFont: codeFont)
         case .list(let items, _):
-            return ListRenderer.render(items: items, bodyFont: bodyFont)
+            return ListRenderer.render(items: items, bodyFont: bodyFont, note: note)
         case .blockquote(let lines):
-            return BlockquoteRenderer.render(lines: lines, bodyFont: bodyFont)
+            return BlockquoteRenderer.render(lines: lines, bodyFont: bodyFont, note: note)
         case .horizontalRule:
             return HorizontalRuleRenderer.render(bodyFont: bodyFont)
         case .htmlBlock(let raw):

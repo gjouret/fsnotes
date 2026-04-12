@@ -108,6 +108,8 @@
 		11F5A1D22F1A600100AAA001 /* EditTextView+Interaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */; };
 		11F5A1E12F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1E02F1A600100AAA001 /* EditTextView+Clipboard.swift */; };
 		11F5A1E22F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1E02F1A600100AAA001 /* EditTextView+Clipboard.swift */; };
+		11AAAA00000000000000002A /* ImageAttachmentHydrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11AAAA00000000000000002B /* ImageAttachmentHydrator.swift */; };
+		11AAAA00000000000000002C /* ImageAttachmentHydrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11AAAA00000000000000002B /* ImageAttachmentHydrator.swift */; };
 		11F5A1F12F1A600100AAA001 /* EditTextView+Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1F02F1A600100AAA001 /* EditTextView+Input.swift */; };
 		11F5A1F22F1A600100AAA001 /* EditTextView+Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1F02F1A600100AAA001 /* EditTextView+Input.swift */; };
 		11F5A2112F1A600100AAA001 /* EditTextView+EditorDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A2102F1A600100AAA001 /* EditTextView+EditorDelegate.swift */; };
@@ -1097,6 +1099,7 @@
 		11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Appearance.swift"; sourceTree = "<group>"; };
 		11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Interaction.swift"; sourceTree = "<group>"; };
 		11F5A1E02F1A600100AAA001 /* EditTextView+Clipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Clipboard.swift"; sourceTree = "<group>"; };
+		11AAAA00000000000000002B /* ImageAttachmentHydrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAttachmentHydrator.swift; sourceTree = "<group>"; };
 		11F5A1F02F1A600100AAA001 /* EditTextView+Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Input.swift"; sourceTree = "<group>"; };
 		11F5A2102F1A600100AAA001 /* EditTextView+EditorDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+EditorDelegate.swift"; sourceTree = "<group>"; };
 		111013142EC8F1B600B6CF1B /* ImagePreviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreviewViewController.swift; sourceTree = "<group>"; };
@@ -2157,6 +2160,7 @@
 				117C0E4C2EEDB9B70086419C /* EditTextView+Clicked.swift */,
 				1102DDB02EE4C277005029A6 /* EditTextView+Complete.swift */,
 				110E40A32EA039AA00C62F49 /* EditTextView+DragOperation.swift */,
+				11AAAA00000000000000002B /* ImageAttachmentHydrator.swift */,
 				11A6A8F92EF06B90005D000A /* EditTextView+MoveLines.swift */,
 				D735E5BC1F2EF66000173215 /* NoteCellView.swift */,
 				D735E5BE1F2F001500173215 /* NoteRowView.swift */,
@@ -3375,6 +3379,7 @@
 				11F5A1C22F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
 				11F5A1D22F1A600100AAA001 /* EditTextView+Interaction.swift in Sources */,
 				11F5A1E22F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */,
+				11AAAA00000000000000002A /* ImageAttachmentHydrator.swift in Sources */,
 				11F5A1F22F1A600100AAA001 /* EditTextView+Input.swift in Sources */,
 				11F5A2122F1A600100AAA001 /* EditTextView+EditorDelegate.swift in Sources */,
 				11F5A1912F1A500100AAA001 /* ViewController+Events.swift in Sources */,
@@ -3633,6 +3638,7 @@
 				11F5A1C12F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
 				11F5A1D12F1A600100AAA001 /* EditTextView+Interaction.swift in Sources */,
 				11F5A1E12F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */,
+				11AAAA00000000000000002C /* ImageAttachmentHydrator.swift in Sources */,
 				11F5A1F12F1A600100AAA001 /* EditTextView+Input.swift in Sources */,
 				11F5A2112F1A600100AAA001 /* EditTextView+EditorDelegate.swift in Sources */,
 				11F5A1922F1A500100AAA001 /* ViewController+Events.swift in Sources */,

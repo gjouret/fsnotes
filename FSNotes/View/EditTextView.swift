@@ -385,7 +385,14 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
                 outline.addTags(added)
             }
 
+            // Re-derive the title from the current content. loadPreviewInfo
+            // is guarded by `isParsed`; callers that edit content (block-model
+            // path) set `isParsed = false` to opt in. No-op otherwise.
+            note.loadPreviewInfo()
+            bmLog("🏷️ scanTagsAndAutoRename: note.fileName='\(note.fileName)' note.title='\(note.title)' isParsed=\(note.isParsed)")
+
             if let title = note.getAutoRenameTitle() {
+                bmLog("🏷️ rename → '\(title)'")
                 note.rename(to: title)
 
                 if let editorViewController = getEVC() {

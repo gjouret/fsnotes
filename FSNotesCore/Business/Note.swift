@@ -1210,15 +1210,18 @@ public class Note: NSObject  {
         if project.settings.isFirstLineAsTitle() {
             let lines = getNonEmptyLines()
             if !lines.isEmpty {
-                title = lines.first!.trim()
-                
-                let result = lines.dropFirst()
-                preview =
-                    result.joined(separator: " ")
-                        .trimMDSyntax()
-                        .condenseWhitespace()
-                
-                return
+                let firstTrimmed = lines.first!.trim()
+                if !firstTrimmed.isEmpty {
+                    title = firstTrimmed
+
+                    let result = lines.dropFirst()
+                    preview =
+                        result.joined(separator: " ")
+                            .trimMDSyntax()
+                            .condenseWhitespace()
+
+                    return
+                }
             }
         }
         

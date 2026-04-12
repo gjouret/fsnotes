@@ -154,6 +154,29 @@ extension EditTextView {
 
         for type in [NSPasteboard.PasteboardType.png, .tiff] {
             if let data = NSPasteboard.general.data(forType: type) {
+                // Block-model WYSIWYG path: save the image to disk, then
+                // insert a native `.image` inline via EditingOps.insertImage.
+                // The renderer emits a placeholder attachment and
+                // ImageAttachmentHydrator loads the real bytes async.
+                if documentProjection != nil {
+                    let ext = (type == .png) ? "png" : "tiff"
+                    let preferredName = "\(UUID().uuidString.lowercased()).\(ext)"
+                    guard let (relPath, _) = note.save(data: data, preferredName: preferredName) else {
+                        continue
+                    }
+                    let encoded = relPath.addingPercentEncoding(
+                        withAllowedCharacters: .urlPathAllowed
+                    ) ?? relPath
+                    breakUndoCoalescing()
+                    if insertImageViaBlockModel(alt: "", destination: encoded) {
+                        breakUndoCoalescing()
+                        return
+                    }
+                    breakUndoCoalescing()
+                    // Fall through to source-mode fallback on failure.
+                }
+
+                // Source-mode fallback: attachment with deferred save.
                 guard let attributed = NSMutableAttributedString.build(data: data) else { continue }
 
                 breakUndoCoalescing()

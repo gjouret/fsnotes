@@ -119,6 +119,21 @@ class EditingOperationsTests: XCTestCase {
         assertSpliceInvariant(old: p, result: r)
     }
 
+    /// REGRESSION: new-note seed "# " followed by typing the first
+    /// character of the heading. The heading suffix must preserve its
+    /// leading space so the serialized markdown reads "# H" and not "#H".
+    /// Otherwise auto-rename-from-title reads the saved markdown back,
+    /// the leading "# " strip in trimMDSyntax() does not match "#H", and
+    /// the note gets renamed to "#".
+    func test_insert_heading_emptyHeadingSeed_preservesSpace() throws {
+        let p = project("# ")
+        // Parse: `.heading(level:1, suffix:" ")`, displayed length 0.
+        XCTAssertEqual(p.attributed.string, "")
+        let r = try EditingOps.insert("H", at: 0, in: p)
+        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "# H")
+        XCTAssertEqual(r.newProjection.attributed.string, "H")
+    }
+
     // MARK: - Insert into code block
 
     func test_insert_codeBlock_middle() throws {

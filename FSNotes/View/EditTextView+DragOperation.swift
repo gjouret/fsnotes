@@ -219,6 +219,30 @@ extension EditTextView
         let ext = url.pathExtension.lowercased()
 
         if EditTextView.imageExtensions.contains(ext) || data.getFileType() != .unknown {
+            // Block-model WYSIWYG path: save the image to disk and
+            // insert a native `.image` inline via the block model.
+            // ImageAttachmentHydrator takes care of the async image load.
+            // SVG is handled later in a dedicated pass — for now, fall
+            // through to the source-mode attachment for that extension.
+            let renderableByBlockModel = InlineRenderer.renderableImageExtensions.contains(ext)
+                || InlineRenderer.renderablePDFExtensions.contains(ext)
+            if documentProjection != nil, renderableByBlockModel {
+                guard let (relPath, _) = note.save(data: data, preferredName: preferredName) else {
+                    return false
+                }
+                let encoded = relPath.addingPercentEncoding(
+                    withAllowedCharacters: .urlPathAllowed
+                ) ?? relPath
+                let alt = (preferredName as NSString).deletingPathExtension
+                breakUndoCoalescing()
+                if insertImageViaBlockModel(alt: alt, destination: encoded) {
+                    breakUndoCoalescing()
+                    return true
+                }
+                breakUndoCoalescing()
+                // Fall through to legacy path if the block-model insert fails.
+            }
+
             guard let attributed = NSMutableAttributedString.build(data: data, preferredName: preferredName) else { return false }
             breakUndoCoalescing()
             insertText(attributed, replacementRange: selectedRange())

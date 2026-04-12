@@ -23,14 +23,18 @@ import UIKit
 public enum ParagraphRenderer {
 
     /// Render a paragraph's inline tree with the given body font.
+    ///
+    /// - Parameter note: optional note context used by InlineRenderer to
+    ///   resolve relative image/PDF paths. Defaults to nil for tests.
     public static func render(
         inline: [Inline],
-        bodyFont: PlatformFont
+        bodyFont: PlatformFont,
+        note: Note? = nil
     ) -> NSAttributedString {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: bodyFont,
             .foregroundColor: PlatformColor.label
         ]
-        return InlineRenderer.render(inline, baseAttributes: attrs)
+        return InlineRenderer.render(inline, baseAttributes: attrs, note: note)
     }
 }

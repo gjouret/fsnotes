@@ -39,17 +39,25 @@ public struct DocumentProjection {
     public let bodyFont: PlatformFont
     public let codeFont: PlatformFont
 
+    /// Optional note context threaded through to InlineRenderer so that
+    /// inline images / PDFs can resolve their relative paths. Carried
+    /// on the projection so EditingOperations can preserve it across
+    /// re-renders.
+    public let note: Note?
+
     /// Build a projection by rendering the supplied document.
     public init(
         document: Document,
         bodyFont: PlatformFont,
-        codeFont: PlatformFont
+        codeFont: PlatformFont,
+        note: Note? = nil
     ) {
         self.rendered = DocumentRenderer.render(
-            document, bodyFont: bodyFont, codeFont: codeFont
+            document, bodyFont: bodyFont, codeFont: codeFont, note: note
         )
         self.bodyFont = bodyFont
         self.codeFont = codeFont
+        self.note = note
     }
 
     /// Build a projection from a pre-computed RenderedDocument. Used
@@ -58,11 +66,13 @@ public struct DocumentProjection {
     public init(
         rendered: RenderedDocument,
         bodyFont: PlatformFont,
-        codeFont: PlatformFont
+        codeFont: PlatformFont,
+        note: Note? = nil
     ) {
         self.rendered = rendered
         self.bodyFont = bodyFont
         self.codeFont = codeFont
+        self.note = note
     }
 
     /// The document underlying this projection.

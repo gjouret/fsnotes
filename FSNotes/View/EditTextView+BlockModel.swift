@@ -113,7 +113,8 @@ extension EditTextView {
         let projection = DocumentProjection(
             document: document,
             bodyFont: bodyFont,
-            codeFont: codeFont
+            codeFont: codeFont,
+            note: note
         )
 
         bmLog("🎨 Rendered projection: \(projection.attributed.length) chars, string='\(projection.attributed.string)'")
@@ -194,12 +195,15 @@ extension EditTextView {
         let cursorPos = min(result.newCursorPosition, storage.length)
         setSelectedRange(NSRange(location: cursorPos, length: 0), affinity: .downstream, stillSelecting: false)
 
-        // Notify NSTextView that text changed so the layout manager
-        // updates and the display refreshes. Keep isRendering = true
-        // through this call to suppress scrollRangeToVisible — the
-        // layout manager triggers implicit scrolls during didChangeText.
-        didChangeText()
+        // Clear isRendering BEFORE didChangeText() so that the
+        // textDidChange delegate fires correctly (it checks isRendering
+        // and bails if true). isRendering was only needed during the
+        // storage mutation above to prevent process() from running.
         textStorageProcessor?.isRendering = false
+
+        // Notify NSTextView that text changed so the layout manager
+        // updates, the display refreshes, and the delegate saves.
+        didChangeText()
 
         // Force the layout manager to re-evaluate attributes and redraw
         // This is necessary because the splice replacement may have different
@@ -371,6 +375,16 @@ needsDisplay = true
             }
 
             applyEditResultWithUndo(result, actionName: actionName)
+
+            // Schedule auto-rename + tag scan. The block-model edit path
+            // bypasses shouldChangeText's source-mode branch, so we must
+            // trigger the 2.5s debounced scan ourselves — otherwise the
+            // note's filename never tracks its H1 title.
+            if let note = self.note {
+                note.isParsed = false
+                scheduleTagScan(for: note)
+            }
+
             return true
 
         } catch {
@@ -504,6 +518,43 @@ needsDisplay = true
     func applyBlockModelResult(_ result: EditResult, actionName: String = "Format") {
         guard textStorage != nil, documentProjection != nil else { return }
         applyEditResultWithUndo(result, actionName: actionName)
+    }
+
+    /// Insert an image (or PDF) attachment block at the current cursor
+    /// position via the block model. Returns true if the block-model
+    /// path handled it, false if the caller should fall back.
+    ///
+    /// The image is added as a new paragraph block immediately AFTER
+    /// the block containing the cursor. The new cursor position lands
+    /// at the end of the image block. After the splice is applied,
+    /// `ImageAttachmentHydrator` is invoked so the placeholder
+    /// attachment picks up its real image bytes asynchronously.
+    ///
+    /// - Parameters:
+    ///   - alt: alt text for the image.
+    ///   - destination: relative path stored in the markdown destination.
+    @discardableResult
+    func insertImageViaBlockModel(alt: String, destination: String) -> Bool {
+        guard let projection = documentProjection else { return false }
+        let cursor = selectedRange().location
+        do {
+            let result = try EditingOps.insertImage(
+                alt: alt,
+                destination: destination,
+                at: cursor,
+                in: projection
+            )
+            bmLog("🖼️ insertImage: dest='\(destination)' splice \(result.spliceRange) → \(result.spliceReplacement.length) chars")
+            applyEditResultWithUndo(result, actionName: "Insert Image")
+            // Kick off async hydration of the placeholder attachment.
+            if let storage = textStorage {
+                ImageAttachmentHydrator.hydrate(textStorage: storage, editor: self)
+            }
+            return true
+        } catch {
+            bmLog("⚠️ insertImage failed: \(error)")
+            return false
+        }
     }
 
     /// Toggle bold on the current selection via the block model.

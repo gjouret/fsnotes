@@ -417,7 +417,8 @@ public enum EditingOps {
         let newProjection = DocumentProjection(
             rendered: renderedDoc,
             bodyFont: projection.bodyFont,
-            codeFont: projection.codeFont
+            codeFont: projection.codeFont,
+            note: projection.note
         )
 
         // 8. Narrow to minimal splice via character diff.
@@ -444,7 +445,8 @@ public enum EditingOps {
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
-            codeFont: projection.codeFont
+            codeFont: projection.codeFont,
+            note: projection.note
         )
 
         let oldSpan = projection.blockSpans[blockIndex]
@@ -670,7 +672,8 @@ public enum EditingOps {
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
-            codeFont: projection.codeFont
+            codeFont: projection.codeFont,
+            note: projection.note
         )
 
         // Extract the replacement content from the new projection.
@@ -1028,6 +1031,17 @@ public enum EditingOps {
                     )
                 }
                 return .paragraph(inline: [.text(string)])
+            }
+            // Atomic-aware path: any paragraph that contains an image
+            // (length-1 atom) can't be edited with the flatten/runs
+            // machinery because flatten only emits leaves for text-like
+            // nodes. Use splitInlines instead — it cuts the tree at any
+            // render offset, including the boundary on either side of an
+            // image — and splice the new text between the halves.
+            if containsImage(inline) {
+                let (before, after) = splitInlines(inline, at: offsetInBlock)
+                let newInline = before + [.text(string)] + after
+                return .paragraph(inline: newInline)
             }
             let runs = flatten(inline)
             guard let (runIdx, off) = runAtInsertionPoint(runs, offset: offsetInBlock) else {
@@ -1568,13 +1582,47 @@ public enum EditingOps {
         case .italic(let c, _): return c.reduce(0) { $0 + inlineLength($1) }
         case .strikethrough(let c): return c.reduce(0) { $0 + inlineLength($1) }
         case .link(let text, _): return text.reduce(0) { $0 + inlineLength($1) }
-        case .image(let alt, _): return alt.reduce(0) { $0 + inlineLength($1) }
+        // Images render as EXACTLY one character (the NSTextAttachment
+        // placeholder emitted by InlineRenderer, both for the native
+        // attachment path and for the fallback). The alt text is NOT
+        // rendered inline — it only survives in the round-trip markdown
+        // and the attachment title. Returning the alt length here would
+        // make an image-only paragraph look empty to splitInlines /
+        // isInlineEmpty, which would in turn cause Return after an image
+        // to replace the whole paragraph with blank lines and destroy
+        // the image. Keep this in lock-step with InlineRenderer.
+        case .image: return 1
         case .autolink(let text, _): return text.count
         case .escapedChar: return 1
         case .lineBreak: return 1
         case .rawHTML(let html): return html.count
         case .entity(let raw): return raw.count
         }
+    }
+
+    /// Whether an inline tree contains any `.image` atom at any depth.
+    /// Paragraphs containing images must be edited via splitInlines-based
+    /// splicing (not the flatten/runs path) because flatten() emits no
+    /// leaf run for atomic image nodes, so `runAtInsertionPoint` cannot
+    /// find an insertion slot at the image boundary.
+    private static func containsImage(_ inlines: [Inline]) -> Bool {
+        for node in inlines {
+            switch node {
+            case .image:
+                return true
+            case .bold(let c, _):
+                if containsImage(c) { return true }
+            case .italic(let c, _):
+                if containsImage(c) { return true }
+            case .strikethrough(let c):
+                if containsImage(c) { return true }
+            case .link(let c, _):
+                if containsImage(c) { return true }
+            default:
+                break
+            }
+        }
+        return false
     }
 
     /// Split a list of inline nodes at render offset `offset`, returning
@@ -1623,10 +1671,14 @@ public enum EditingOps {
                     let (b, a) = splitInlines(text, at: localOffset)
                     before.append(.link(text: b, rawDestination: dest))
                     after.append(.link(text: a, rawDestination: dest))
-                case .image(let alt, let dest):
-                    let (b, a) = splitInlines(alt, at: localOffset)
-                    before.append(.image(alt: b, rawDestination: dest))
-                    after.append(.image(alt: a, rawDestination: dest))
+                case .image:
+                    // Images are length-1 atoms — splitInlines can never
+                    // enter this branch (it's only reached when the split
+                    // point is STRICTLY inside a node, and a length-1
+                    // node is either entirely before or entirely after).
+                    // Keep the case for exhaustiveness; treat as "before"
+                    // defensively so we never drop the image.
+                    before.append(node)
                 case .autolink(let text, _):
                     let idx = text.index(text.startIndex, offsetBy: localOffset)
                     before.append(.text(String(text[..<idx])))
@@ -2534,7 +2586,8 @@ public enum EditingOps {
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
-            codeFont: projection.codeFont
+            codeFont: projection.codeFont,
+            note: projection.note
         )
 
         // Splice covers from current block's end to the new HR's end.
@@ -2552,6 +2605,71 @@ public enum EditingOps {
             spliceReplacement: replacement
         )
         result.newCursorPosition = NSMaxRange(newHRSpan)
+        return result
+    }
+
+    /// Insert an image (or PDF) attachment as a new paragraph block
+    /// immediately after the block containing `storageIndex`. Returns
+    /// an EditResult whose splice inserts just the new block (plus its
+    /// leading separator newline) and positions the cursor at the end
+    /// of the newly inserted image block.
+    ///
+    /// This is the clean block-model path for pasted / dragged images:
+    /// - A single `.image` inline is wrapped in a fresh `.paragraph`
+    ///   block and inserted into the Document.
+    /// - The downstream renderer emits a placeholder attachment char
+    ///   (InlineRenderer.makeImageAttachment).
+    /// - The editor's `ImageAttachmentHydrator` hydrates the cell on
+    ///   the main queue after the splice is applied.
+    ///
+    /// - Parameters:
+    ///   - alt: alt text for the image (ends up as `![alt](...)` on save).
+    ///   - destination: the path (relative or absolute) to the image file.
+    ///   - storageIndex: current cursor position; used only to locate
+    ///     the containing block. The image is inserted AFTER that block
+    ///     regardless of intra-block offset.
+    public static func insertImage(
+        alt: String,
+        destination: String,
+        at storageIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard let (blockIndex, _) = projection.blockContaining(storageIndex: storageIndex) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+
+        // Build the new image block.
+        let altInline: [Inline] = alt.isEmpty ? [] : [.text(alt)]
+        let imageInline: Inline = .image(alt: altInline, rawDestination: destination)
+        let imageBlock = Block.paragraph(inline: [imageInline])
+
+        var newDoc = projection.document
+        newDoc.blocks.insert(imageBlock, at: blockIndex + 1)
+
+        let newProjection = DocumentProjection(
+            document: newDoc,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note
+        )
+
+        // Splice covers from the end of the current block's span to the
+        // end of the new image block's span (includes the inter-block
+        // "\n" separator).
+        let oldSpan = projection.blockSpans[blockIndex]
+        let newImageSpan = newProjection.blockSpans[blockIndex + 1]
+        let spliceStart = oldSpan.location + oldSpan.length
+        let spliceEnd = NSMaxRange(newImageSpan)
+        let replacement = newProjection.attributed.attributedSubstring(
+            from: NSRange(location: spliceStart, length: spliceEnd - spliceStart)
+        )
+
+        var result = EditResult(
+            newProjection: newProjection,
+            spliceRange: NSRange(location: spliceStart, length: 0),
+            spliceReplacement: replacement
+        )
+        result.newCursorPosition = NSMaxRange(newImageSpan)
         return result
     }
 
@@ -2602,7 +2720,8 @@ public enum EditingOps {
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
-            codeFont: projection.codeFont
+            codeFont: projection.codeFont,
+            note: projection.note
         )
 
         // Extract the rendered content for the swapped region.

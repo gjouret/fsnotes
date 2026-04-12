@@ -68,7 +68,10 @@ extension Note {
                 
                 location = range.location + range.length
             } else {
-                let line = nsText.substring(from: location)
+                var line = nsText.substring(from: location)
+                if location == 0 {
+                    line = line.trimMDSyntax()
+                }
                 if !line.isEmpty {
                     lines.append(line)
                 }

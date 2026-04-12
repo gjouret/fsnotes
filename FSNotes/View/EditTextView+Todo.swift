@@ -70,7 +70,8 @@ extension EditTextView {
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
-            codeFont: projection.codeFont
+            codeFont: projection.codeFont,
+            note: projection.note
         )
 
         guard let storage = textStorage else { return }

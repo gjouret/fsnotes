@@ -68,10 +68,11 @@ public enum ListRenderer {
     /// the usual block-joining newline.
     public static func render(
         items: [ListItem],
-        bodyFont: PlatformFont
+        bodyFont: PlatformFont,
+        note: Note? = nil
     ) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        renderItems(items, depth: 0, bodyFont: bodyFont, into: out)
+        renderItems(items, depth: 0, bodyFont: bodyFont, note: note, into: out)
         // Remove the trailing "\n" that the last item appended — the
         // block-join layer owns inter-block separators.
         if out.length > 0, out.string.hasSuffix("\n") {
@@ -84,6 +85,7 @@ public enum ListRenderer {
         _ items: [ListItem],
         depth: Int,
         bodyFont: PlatformFont,
+        note: Note? = nil,
         into out: NSMutableAttributedString
     ) {
         let attrs: [NSAttributedString.Key: Any] = [
@@ -126,9 +128,9 @@ public enum ListRenderer {
                     checkedAttrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
                     checkedAttrs[.foregroundColor] = UIColor.secondaryLabel
                     #endif
-                    out.append(InlineRenderer.render(item.inline, baseAttributes: checkedAttrs))
+                    out.append(InlineRenderer.render(item.inline, baseAttributes: checkedAttrs, note: note))
                 } else {
-                    out.append(InlineRenderer.render(item.inline, baseAttributes: attrs))
+                    out.append(InlineRenderer.render(item.inline, baseAttributes: attrs, note: note))
                 }
             } else {
                 // Regular list item: render bullet via attachment.
@@ -145,7 +147,7 @@ public enum ListRenderer {
                     font: bodyFont
                 )
                 out.append(bulletAttachment)
-                out.append(InlineRenderer.render(item.inline, baseAttributes: attrs))
+                out.append(InlineRenderer.render(item.inline, baseAttributes: attrs, note: note))
             }
             // Apply paragraph style to this item's line.
             let lineRange = NSRange(location: lineStart, length: out.length - lineStart)
@@ -154,7 +156,7 @@ public enum ListRenderer {
             out.append(NSAttributedString(string: "\n", attributes: attrs))
             if !item.children.isEmpty {
                 renderItems(item.children, depth: depth + 1,
-                            bodyFont: bodyFont, into: out)
+                            bodyFont: bodyFont, note: note, into: out)
             }
         }
     }

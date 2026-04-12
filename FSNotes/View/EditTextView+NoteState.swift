@@ -256,6 +256,13 @@ extension EditTextView {
                 note: note,
                 containerWidth: containerWidth
             )
+            // Hydrate block-model image attachments (async). Harmless in
+            // source mode — there are no block-model image placeholders
+            // to find, so the walk is a no-op.
+            ImageAttachmentHydrator.hydrate(
+                textStorage: storage,
+                editor: self
+            )
         }
         viewDelegate?.restoreScrollPosition()
     }
