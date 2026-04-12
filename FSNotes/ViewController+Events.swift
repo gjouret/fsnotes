@@ -297,6 +297,15 @@ extension ViewController {
             }
         }
 
+        // Clear pending inline traits when user moves cursor (not via formatting).
+        // This prevents stale traits from affecting text typed after navigating.
+        // The suppress flag is set during our own cursor updates (e.g., after insertion).
+        if editor.suppressPendingTraitClear {
+            editor.suppressPendingTraitClear = false
+        } else if !editor.pendingInlineTraits.isEmpty {
+            editor.pendingInlineTraits = []
+        }
+
         formattingToolbar?.updateButtonStates(for: editor)
 
         #if os(OSX)

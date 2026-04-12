@@ -444,7 +444,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             v.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.06).cgColor
             v.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
             v.layer?.borderWidth = 1.0
-            addSubview(v, positioned: .below, relativeTo: activeColumnHandle)
+            // Add above scrollView so the highlight isn't obscured by the clip view
+            addSubview(v, positioned: .above, relativeTo: scrollView)
             columnHighlightView = v
         } else {
             columnHighlightView?.frame = highlightFrame
@@ -458,10 +459,14 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         for i in 0..<row { rowY -= L.rHeights[i] }
         let rowH = L.rHeights[row]
 
+        // Cap width to scrollView's visible width so the highlight doesn't
+        // extend past the table when the grid is wider than the container.
+        let highlightWidth = min(L.leftMargin + L.gridWidth, scrollView.frame.width)
+
         let highlightFrame = NSRect(
             x: 0,
             y: rowY - rowH,
-            width: L.leftMargin + L.gridWidth,
+            width: highlightWidth,
             height: rowH
         )
 
@@ -471,7 +476,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             v.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.06).cgColor
             v.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
             v.layer?.borderWidth = 1.0
-            addSubview(v, positioned: .below, relativeTo: activeRowHandle)
+            // Add above scrollView so the highlight isn't obscured by the clip view
+            addSubview(v, positioned: .above, relativeTo: scrollView)
             rowHighlightView = v
         } else {
             rowHighlightView?.frame = highlightFrame
@@ -1227,6 +1233,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        // Clear column/row selection when user starts typing in a cell
+        clearHoverHandles()
         // Live-resize columns and table as user types
         collectCellData()
         recalculateAndResize()

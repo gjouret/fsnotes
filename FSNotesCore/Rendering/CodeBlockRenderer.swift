@@ -53,18 +53,28 @@ public enum CodeBlockRenderer {
         return NSAttributedString(string: content, attributes: attrs)
     }
 
-    /// Invoke the existing SwiftHighlighter with a code-font style.
-    /// SwiftHighlighter operates on raw code strings and returns an
-    /// attributed string — no textStorage coupling, no fence handling.
+    /// Invoke the existing SwiftHighlighter with a themed style.
+    /// Uses GitHub Dark/Light theme based on current appearance so
+    /// code blocks get proper syntax colors in block-model WYSIWYG mode.
     private static func runSyntaxHighlighter(
         code: String,
         language: String,
         codeFont: PlatformFont
     ) -> NSAttributedString {
-        var style = HighlightStyle()
+        var style = themedStyle()
         style.font = codeFont
-        style.foregroundColor = PlatformColor.label
         let highlighter = SwiftHighlighter(options: SwiftHighlighter.Options(style: style))
         return highlighter.highlight(code, language: language)
+    }
+
+    /// Returns a HighlightStyle with the appropriate theme for the
+    /// current system appearance (dark vs light).
+    private static func themedStyle() -> HighlightStyle {
+        #if os(OSX)
+        let isDark = NSAppearance.current.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark ? GitHubDarkTheme.make() : GitHubLightTheme.make()
+        #else
+        return GitHubLightTheme.make()
+        #endif
     }
 }

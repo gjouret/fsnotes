@@ -67,6 +67,30 @@ extension EditTextView {
 
     private enum AssociatedKeys {
         static var projection = 0
+        static var pendingTraits = 1
+        static var suppressTraitClear = 2
+    }
+
+    /// Pending inline traits toggled while the selection is empty.
+    /// Characters typed next will be wrapped in these traits.
+    var pendingInlineTraits: Set<EditingOps.InlineTrait> {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.pendingTraits) as? Set<EditingOps.InlineTrait> ?? []
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.pendingTraits, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+
+    /// Flag to prevent `textViewDidChangeSelection` from clearing
+    /// pending traits during our own cursor updates (e.g., after insertion).
+    var suppressPendingTraitClear: Bool {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.suppressTraitClear) as? Bool ?? false
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.suppressTraitClear, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
     }
 
     // MARK: - Fill (note load)
@@ -193,7 +217,8 @@ extension EditTextView {
         // The 1-arg setSelectedRange(_:) calls scrollRangeToVisible;
         // the 3-arg variant does not.
         let cursorPos = min(result.newCursorPosition, storage.length)
-        setSelectedRange(NSRange(location: cursorPos, length: 0), affinity: .downstream, stillSelecting: false)
+        let selLen = min(result.newSelectionLength, storage.length - cursorPos)
+        setSelectedRange(NSRange(location: cursorPos, length: selLen), affinity: .downstream, stillSelecting: false)
 
         // Clear isRendering BEFORE didChangeText() so that the
         // textDidChange delegate fires correctly (it checks isRendering
@@ -334,8 +359,21 @@ needsDisplay = true
 
             if range.length == 0 && !replacement.isEmpty {
                 // Pure insertion.
-                bmLog("➡️ Calling EditingOps.insert('\(replacement)', at: \(range.location))")
-                result = try EditingOps.insert(replacement, at: range.location, in: projection)
+                let traits = pendingInlineTraits
+                if !traits.isEmpty && replacement != "\n" {
+                    // Apply pending inline traits to the inserted text.
+                    // Suppress trait clearing during our cursor update.
+                    suppressPendingTraitClear = true
+                    bmLog("➡️ Calling EditingOps.insertWithTraits('\(replacement)', traits: \(traits), at: \(range.location))")
+                    result = try EditingOps.insertWithTraits(replacement, traits: traits, at: range.location, in: projection)
+                } else {
+                    bmLog("➡️ Calling EditingOps.insert('\(replacement)', at: \(range.location))")
+                    result = try EditingOps.insert(replacement, at: range.location, in: projection)
+                    // Clear pending traits on newline.
+                    if replacement == "\n" {
+                        pendingInlineTraits = []
+                    }
+                }
             } else if range.length > 0 && replacement.isEmpty {
                 // Check for delete-at-home in a list item (FSM intercept).
                 if handleDeleteAtHomeInList(range: range, in: projection) {
@@ -348,10 +386,36 @@ needsDisplay = true
                 // Pure deletion.
                 result = try EditingOps.delete(range: range, in: projection)
             } else if range.length > 0 && !replacement.isEmpty {
-                // Replacement: delete then insert.
-                let afterDelete = try EditingOps.delete(range: range, in: projection)
-                projection = afterDelete.newProjection
-                result = try EditingOps.insert(replacement, at: range.location, in: projection)
+                // Guard: if the range contains only attachment characters
+                // and the replacement is the markdown source for that
+                // attachment, this is a spurious NSTextView callback —
+                // treat as no-op to prevent data loss.
+                if isSpuriousAttachmentReplacement(range: range, replacement: replacement) {
+                    bmLog("⛔ Ignoring spurious attachment→markdown replacement at \(range)")
+                    return true
+                }
+                // Replacement: single-operation replace preserves inline
+                // formatting context (e.g. typing "x" while bold "hello"
+                // is selected produces bold "x").
+                do {
+                    result = try EditingOps.replace(range: range, with: replacement, in: projection)
+                } catch {
+                    // Fallback for cross-block or newline replacements:
+                    // apply delete first, then insert on the resulting state.
+                    let deleteResult = try EditingOps.delete(range: range, in: projection)
+                    applyEditResultWithUndo(deleteResult, actionName: "Delete")
+                    projection = deleteResult.newProjection
+                    do {
+                        result = try EditingOps.insert(replacement, at: range.location, in: projection)
+                    } catch {
+                        // Insert failed after delete — UNDO the delete to
+                        // prevent data loss. The undo manager recorded the
+                        // delete above, so calling undo restores the block.
+                        bmLog("⚠️ replace fallback: insert failed after delete — undoing delete to prevent data loss: \(error)")
+                        undoManager?.undo()
+                        throw error  // propagate to outer catch → clearBlockModelAndRefill
+                    }
+                }
             } else {
                 // Empty replacement of empty range: no-op.
                 return true
@@ -383,6 +447,13 @@ needsDisplay = true
 
             applyEditResultWithUndo(result, actionName: actionName)
 
+            // Auto-convert markdown shortcuts at line start.
+            // After typing a space, check if the paragraph matches a
+            // shortcut pattern (e.g., "- ", "> ", "1. ", "- [ ] ").
+            if range.length == 0 && replacement == " " {
+                autoConvertMarkdownShortcut()
+            }
+
             // Schedule auto-rename + tag scan. The block-model edit path
             // bypasses shouldChangeText's source-mode branch, so we must
             // trigger the 2.5s debounced scan ourselves — otherwise the
@@ -403,6 +474,23 @@ needsDisplay = true
             clearBlockModelAndRefill()
             return false
         }
+    }
+
+    /// Detect when NSTextView (or an internal callback) tries to replace
+    /// an attachment character with the markdown source for that same
+    /// attachment. This is a spurious operation that would corrupt the
+    /// block model — the attachment is already correctly represented in
+    /// the Document as an .image inline.
+    private func isSpuriousAttachmentReplacement(range: NSRange, replacement: String) -> Bool {
+        guard let storage = textStorage,
+              range.length == 1,
+              range.location < storage.length else { return false }
+        // Only applies to single attachment characters (￼).
+        let ch = (storage.string as NSString).character(at: range.location)
+        guard ch == 0xFFFC else { return false }
+        // Check if the replacement is markdown image syntax.
+        let trimmed = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("![") && trimmed.contains("](")
     }
 
     // MARK: - Save
@@ -517,6 +605,169 @@ needsDisplay = true
         }
     }
 
+    /// Detect and auto-convert markdown shortcut patterns typed at the
+    /// start of a paragraph. Called after each space insertion.
+    ///
+    /// Supported patterns:
+    /// - `- ` → bullet list
+    /// - `* ` → bullet list
+    /// - `+ ` → bullet list
+    /// - `> ` → blockquote
+    /// - `1. ` (or any number) → numbered list (not yet — maps to bullet for now)
+    /// - `- [ ] ` or `- [x] ` → todo list
+    private func autoConvertMarkdownShortcut() {
+        guard let projection = documentProjection else { return }
+        let cursor = selectedRange().location
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: cursor) else { return }
+        let block = projection.document.blocks[blockIndex]
+
+        // Only convert paragraphs — don't re-convert existing lists/quotes.
+        guard case .paragraph(let inline) = block else { return }
+
+        // Get the rendered text of the paragraph.
+        let span = projection.blockSpans[blockIndex]
+        let rendered = (projection.attributed.string as NSString).substring(
+            with: NSRange(location: span.location, length: span.length)
+        )
+
+        // Check patterns at the start of the rendered text.
+        // The cursor is at `offsetInBlock` (which is right after the space).
+        // We need the text from the START of the block to the cursor.
+        let prefixEnd = offsetInBlock
+        guard prefixEnd <= rendered.count else { return }
+        let prefix = String(rendered.prefix(prefixEnd))
+
+        do {
+            if prefix == "- " || prefix == "* " || prefix == "+ " {
+                // Bullet list: remove the prefix text, then convert to list.
+                let contentInline = trimLeadingText(inline, count: prefixEnd)
+                let item = ListItem(
+                    indent: "", marker: String(prefix.first!),
+                    afterMarker: " ", inline: contentInline, children: []
+                )
+                let newBlock = Block.list(items: [item])
+                var result = try EditingOps.replaceBlock(
+                    atIndex: blockIndex, with: newBlock, in: projection
+                )
+                let newSpan = result.newProjection.blockSpans[blockIndex]
+                result.newCursorPosition = newSpan.location + 1 // after bullet glyph
+                applyEditResultWithUndo(result, actionName: "List")
+                bmLog("🔄 Auto-converted '\\(prefix)' to bullet list")
+            } else if prefix == "> " {
+                // Blockquote: remove prefix, convert.
+                let contentInline = trimLeadingText(inline, count: prefixEnd)
+                let line = BlockquoteLine(prefix: "> ", inline: contentInline)
+                let newBlock = Block.blockquote(lines: [line])
+                var result = try EditingOps.replaceBlock(
+                    atIndex: blockIndex, with: newBlock, in: projection
+                )
+                let newSpan = result.newProjection.blockSpans[blockIndex]
+                result.newCursorPosition = newSpan.location + newSpan.length
+                applyEditResultWithUndo(result, actionName: "Blockquote")
+                bmLog("🔄 Auto-converted '> ' to blockquote")
+            } else if prefix == "- [ ] " || prefix == "- [x] " {
+                // Todo list: remove prefix, convert.
+                let checked = prefix == "- [x] "
+                let contentInline = trimLeadingText(inline, count: prefixEnd)
+                let checkbox = Checkbox(
+                    text: checked ? "[x]" : "[ ]", afterText: " "
+                )
+                let item = ListItem(
+                    indent: "", marker: "-", afterMarker: " ",
+                    checkbox: checkbox, inline: contentInline, children: []
+                )
+                let newBlock = Block.list(items: [item])
+                var result = try EditingOps.replaceBlock(
+                    atIndex: blockIndex, with: newBlock, in: projection
+                )
+                let newSpan = result.newProjection.blockSpans[blockIndex]
+                // Cursor after the checkbox glyph.
+                if case .list(let items, _) = result.newProjection.document.blocks[blockIndex] {
+                    let entries = EditingOps.flattenList(items)
+                    if let first = entries.first {
+                        result.newCursorPosition = newSpan.location + first.startOffset + first.prefixLength
+                    }
+                }
+                applyEditResultWithUndo(result, actionName: "Todo")
+                bmLog("🔄 Auto-converted todo shortcut")
+            } else if let match = prefix.range(of: #"^(\d+)\. $"#, options: .regularExpression) {
+                // Numbered list: e.g. "1. "
+                let numberStr = String(prefix[match].dropLast(2))
+                let contentInline = trimLeadingText(inline, count: prefixEnd)
+                let item = ListItem(
+                    indent: "", marker: "\(numberStr).",
+                    afterMarker: " ", inline: contentInline, children: []
+                )
+                let newBlock = Block.list(items: [item])
+                var result = try EditingOps.replaceBlock(
+                    atIndex: blockIndex, with: newBlock, in: projection
+                )
+                let newSpan = result.newProjection.blockSpans[blockIndex]
+                result.newCursorPosition = newSpan.location + 1
+                applyEditResultWithUndo(result, actionName: "Numbered List")
+                bmLog("🔄 Auto-converted '\\(prefix)' to numbered list")
+            }
+        } catch {
+            bmLog("⚠️ autoConvertMarkdownShortcut failed: \(error)")
+        }
+    }
+
+    /// Remove the first `count` characters from an inline array.
+    /// Returns the remaining inlines with text trimmed.
+    private func trimLeadingText(_ inlines: [Inline], count: Int) -> [Inline] {
+        guard count > 0 else { return inlines }
+        let (_, after) = EditingOps.splitInlines(inlines, at: count)
+        return after
+    }
+
+    /// Update `typingAttributes` to reflect the pending inline traits.
+    /// This ensures the toolbar shows the correct formatting state and
+    /// the user gets visual feedback that bold/italic/etc is active.
+    private func updateTypingAttributesForPendingTraits() {
+        var attrs = typingAttributes
+        let traits = pendingInlineTraits
+        let baseFont = (attrs[.font] as? NSFont) ?? UserDefaultsManagement.noteFont
+
+        // Reset font traits first, then apply pending ones.
+        var descriptor = baseFont.fontDescriptor
+        var symbolicTraits = descriptor.symbolicTraits
+
+        if traits.contains(.bold) {
+            symbolicTraits.insert(.bold)
+        }
+        if traits.contains(.italic) {
+            symbolicTraits.insert(.italic)
+        }
+
+        descriptor = descriptor.withSymbolicTraits(symbolicTraits)
+        attrs[.font] = NSFont(descriptor: descriptor, size: baseFont.pointSize) ?? baseFont
+
+        if traits.contains(.strikethrough) {
+            attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        } else {
+            attrs.removeValue(forKey: .strikethroughStyle)
+        }
+
+        if traits.contains(.underline) {
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        } else {
+            attrs.removeValue(forKey: .underlineStyle)
+        }
+
+        if traits.contains(.highlight) {
+            attrs[.backgroundColor] = NSColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)
+        } else {
+            attrs.removeValue(forKey: .backgroundColor)
+        }
+
+        if traits.contains(.code) {
+            let size = baseFont.pointSize
+            attrs[.font] = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        }
+
+        typingAttributes = attrs
+    }
+
     // MARK: - Block-model formatting operations
 
     /// Apply an EditResult splice to textStorage and update the
@@ -594,11 +845,36 @@ needsDisplay = true
         return toggleInlineTraitViaBlockModel(.strikethrough)
     }
 
-    private func toggleInlineTraitViaBlockModel(_ trait: EditingOps.InlineTrait) -> Bool {
-        guard let projection = documentProjection else { return false }
-        let sel = selectedRange()
-        guard sel.length > 0 else { return false }
+    /// Toggle underline on the current selection via the block model.
+    func toggleUnderlineViaBlockModel() -> Bool {
+        return toggleInlineTraitViaBlockModel(.underline)
+    }
 
+    /// Toggle highlight on the current selection via the block model.
+    func toggleHighlightViaBlockModel() -> Bool {
+        return toggleInlineTraitViaBlockModel(.highlight)
+    }
+
+    private func toggleInlineTraitViaBlockModel(_ trait: EditingOps.InlineTrait) -> Bool {
+        guard let _ = documentProjection else { return false }
+        let sel = selectedRange()
+
+        if sel.length == 0 {
+            // Empty selection: toggle pending trait for next typed characters.
+            var traits = pendingInlineTraits
+            if traits.contains(trait) {
+                traits.remove(trait)
+            } else {
+                traits.insert(trait)
+            }
+            pendingInlineTraits = traits
+            bmLog("🎨 pendingInlineTraits toggled \(trait): now \(traits)")
+            // Update typing attributes to reflect the pending trait visually.
+            updateTypingAttributesForPendingTraits()
+            return true
+        }
+
+        guard let projection = documentProjection else { return false }
         do {
             let result = try EditingOps.toggleInlineTrait(
                 trait, range: sel, in: projection
@@ -610,6 +886,8 @@ needsDisplay = true
             case .italic: name = "Italic"
             case .code: name = "Code"
             case .strikethrough: name = "Strikethrough"
+            case .underline: name = "Underline"
+            case .highlight: name = "Highlight"
             }
             applyBlockModelResult(result, actionName: name)
             return true
@@ -752,5 +1030,81 @@ needsDisplay = true
 
         // Re-fill via block model
         fill(note: note)
+    }
+
+    // MARK: - Mermaid / MathJax rendering for block model
+
+    /// Set of block indices already rendered or pending render (prevents double-rendering).
+    private static var _renderedBlockIndices: Set<Int> = []
+
+    /// Render mermaid/math code blocks to inline images using the Document model.
+    /// Called during fill when the block-model pipeline is active.
+    func renderSpecialBlocksViaBlockModel() {
+        guard let projection = documentProjection,
+              let storage = textStorage else { return }
+
+        let doc = projection.document
+        let spans = projection.blockSpans
+
+        for (i, block) in doc.blocks.enumerated() {
+            guard case .codeBlock(let language, let content, _) = block,
+                  let lang = language?.lowercased(),
+                  i < spans.count else { continue }
+
+            let blockType: BlockRenderer.BlockType
+            if lang == "mermaid" {
+                blockType = .mermaid
+            } else if lang == "math" || lang == "latex" {
+                blockType = .math
+            } else {
+                continue
+            }
+
+            let source = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !source.isEmpty else { continue }
+
+            // Skip already-rendered blocks
+            if EditTextView._renderedBlockIndices.contains(i) { continue }
+            EditTextView._renderedBlockIndices.insert(i)
+
+            let codeRange = spans[i]
+            let maxWidth = textContainer?.containerSize.width ?? 480
+
+            BlockRenderer.render(source: source, type: blockType, maxWidth: maxWidth) { [weak self] image in
+                guard let self = self, let image = image, let storage = self.textStorage else {
+                    EditTextView._renderedBlockIndices.remove(i)
+                    return
+                }
+
+                DispatchQueue.main.async {
+                    defer { EditTextView._renderedBlockIndices.remove(i) }
+
+                    // Re-verify the range is still valid
+                    guard codeRange.location < storage.length,
+                          NSMaxRange(codeRange) <= storage.length else { return }
+
+                    let scale = min(maxWidth / image.size.width, 1.0)
+                    let scaledSize = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+
+                    let attachment = NSTextAttachment()
+                    let cell = CenteredImageCell(image: image, imageSize: scaledSize, containerWidth: maxWidth)
+                    attachment.attachmentCell = cell
+
+                    let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+                    let attRange = NSRange(location: 0, length: attachmentString.length)
+                    attachmentString.addAttributes([
+                        .renderedBlockSource: source,
+                        .renderedBlockType: (blockType == .mermaid ? RenderedBlockType.mermaid : RenderedBlockType.math).rawValue,
+                    ], range: attRange)
+
+                    // Replace the code block text with the rendered image
+                    storage.beginEditing()
+                    storage.replaceCharacters(in: codeRange, with: attachmentString)
+                    storage.endEditing()
+
+                    self.needsDisplay = true
+                }
+            }
+        }
     }
 }

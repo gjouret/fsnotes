@@ -569,4 +569,288 @@ class BlockModelFormattingTests: XCTestCase {
         }
         XCTAssertNotNil(todoBlock, "Should find a todo block")
     }
+
+    // MARK: - Rendered attributes for all formatting types
+
+    /// Helper: extract NSFont traits from rendered attributed string at a given offset.
+    private func fontTraits(in proj: DocumentProjection, at offset: Int) -> NSFontDescriptor.SymbolicTraits {
+        let attrs = proj.attributed.attributes(at: offset, effectiveRange: nil)
+        guard let font = attrs[.font] as? NSFont else { return [] }
+        return font.fontDescriptor.symbolicTraits
+    }
+
+    /// Helper: check if rendered text has underline at a given offset.
+    private func hasUnderline(in proj: DocumentProjection, at offset: Int) -> Bool {
+        let attrs = proj.attributed.attributes(at: offset, effectiveRange: nil)
+        if let style = attrs[.underlineStyle] as? Int {
+            return style == NSUnderlineStyle.single.rawValue
+        }
+        return false
+    }
+
+    /// Helper: check if rendered text has strikethrough at a given offset.
+    private func hasStrikethrough(in proj: DocumentProjection, at offset: Int) -> Bool {
+        let attrs = proj.attributed.attributes(at: offset, effectiveRange: nil)
+        if let style = attrs[.strikethroughStyle] as? Int {
+            return style == NSUnderlineStyle.single.rawValue
+        }
+        return false
+    }
+
+    /// Helper: check if rendered text has highlight (yellow background) at a given offset.
+    private func hasHighlight(in proj: DocumentProjection, at offset: Int) -> Bool {
+        let attrs = proj.attributed.attributes(at: offset, effectiveRange: nil)
+        guard let color = attrs[.backgroundColor] as? NSColor else { return false }
+        // InlineTagRegistry uses yellow with alpha 0.5 for <mark>.
+        let r = CGFloat(1.0), g = CGFloat(0.9), b = CGFloat(0.0)
+        let converted = color.usingColorSpace(.genericRGB)
+        guard let c = converted else { return false }
+        return abs(c.redComponent - r) < 0.05 &&
+               abs(c.greenComponent - g) < 0.05 &&
+               abs(c.blueComponent - b) < 0.05
+    }
+
+    // MARK: Bold rendering
+
+    func test_bold_renderedAttributes() throws {
+        let proj = project("Hello **world**\n")
+        // "Hello world" — "Hello " is plain (0-5), "world" is bold (6-10)
+        let plainTraits = fontTraits(in: proj, at: 0)
+        let boldTraits = fontTraits(in: proj, at: 6)
+        XCTAssertFalse(plainTraits.contains(.bold), "Plain text should not be bold")
+        XCTAssertTrue(boldTraits.contains(.bold), "Bold text should have bold trait")
+    }
+
+    func test_bold_toggleWrapPreservesRendering() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
+        let newProj = result.newProjection
+        // "world" at offset 6 should now be bold.
+        let traits = fontTraits(in: newProj, at: 6)
+        XCTAssertTrue(traits.contains(.bold), "Wrapped text should render bold")
+        // "Hello " should remain plain.
+        let plainTraits = fontTraits(in: newProj, at: 0)
+        XCTAssertFalse(plainTraits.contains(.bold), "Surrounding text stays plain")
+    }
+
+    func test_bold_toggleUnwrapPreservesRendering() throws {
+        let proj = project("Hello **world**\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
+        let newProj = result.newProjection
+        // After unwrap, "world" should not be bold.
+        let traits = fontTraits(in: newProj, at: 6)
+        XCTAssertFalse(traits.contains(.bold), "Unwrapped text should not be bold")
+    }
+
+    // MARK: Italic rendering
+
+    func test_italic_renderedAttributes() throws {
+        let proj = project("Hello *world*\n")
+        let plainTraits = fontTraits(in: proj, at: 0)
+        let italicTraits = fontTraits(in: proj, at: 6)
+        XCTAssertFalse(plainTraits.contains(.italic), "Plain text should not be italic")
+        XCTAssertTrue(italicTraits.contains(.italic), "Italic text should have italic trait")
+    }
+
+    func test_italic_toggleWrapPreservesRendering() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.italic, range: sel, in: proj)
+        let traits = fontTraits(in: result.newProjection, at: 6)
+        XCTAssertTrue(traits.contains(.italic), "Wrapped text should render italic")
+    }
+
+    // MARK: Strikethrough rendering
+
+    func test_strikethrough_renderedAttributes() throws {
+        let proj = project("Hello ~~world~~\n")
+        XCTAssertFalse(hasStrikethrough(in: proj, at: 0), "Plain text should not have strikethrough")
+        XCTAssertTrue(hasStrikethrough(in: proj, at: 6), "Strikethrough text should render with strikethrough")
+    }
+
+    func test_strikethrough_toggleWrapPreservesRendering() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.strikethrough, range: sel, in: proj)
+        XCTAssertTrue(hasStrikethrough(in: result.newProjection, at: 6), "Wrapped text should render strikethrough")
+        XCTAssertFalse(hasStrikethrough(in: result.newProjection, at: 0), "Surrounding text stays plain")
+    }
+
+    // MARK: Underline rendering (HTML tag)
+
+    func test_underline_renderedAttributes() throws {
+        let proj = project("Hello <u>world</u>\n")
+        XCTAssertFalse(hasUnderline(in: proj, at: 0), "Plain text should not have underline")
+        XCTAssertTrue(hasUnderline(in: proj, at: 6), "Underlined text should render with underline")
+    }
+
+    func test_underline_toggleWrapPreservesRendering() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.underline, range: sel, in: proj)
+        assertRoundTrip(result, expected: "Hello <u>world</u>\n")
+        assertSpliceInvariant(old: proj, result: result)
+        XCTAssertTrue(hasUnderline(in: result.newProjection, at: 6), "Wrapped text should render underlined")
+    }
+
+    func test_underline_toggleUnwrapPreservesRendering() throws {
+        let proj = project("Hello <u>world</u>\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.underline, range: sel, in: proj)
+        assertRoundTrip(result, expected: "Hello world\n")
+        assertSpliceInvariant(old: proj, result: result)
+        XCTAssertFalse(hasUnderline(in: result.newProjection, at: 6), "Unwrapped text should not be underlined")
+    }
+
+    // MARK: Highlight rendering (HTML tag)
+
+    func test_highlight_renderedAttributes() throws {
+        let proj = project("Hello <mark>world</mark>\n")
+        XCTAssertFalse(hasHighlight(in: proj, at: 0), "Plain text should not have highlight")
+        XCTAssertTrue(hasHighlight(in: proj, at: 6), "Highlighted text should have yellow background")
+    }
+
+    func test_highlight_toggleWrapPreservesRendering() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.highlight, range: sel, in: proj)
+        assertRoundTrip(result, expected: "Hello <mark>world</mark>\n")
+        assertSpliceInvariant(old: proj, result: result)
+        XCTAssertTrue(hasHighlight(in: result.newProjection, at: 6), "Wrapped text should render highlighted")
+    }
+
+    func test_highlight_toggleUnwrapPreservesRendering() throws {
+        let proj = project("Hello <mark>world</mark>\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.highlight, range: sel, in: proj)
+        assertRoundTrip(result, expected: "Hello world\n")
+        assertSpliceInvariant(old: proj, result: result)
+        XCTAssertFalse(hasHighlight(in: result.newProjection, at: 6), "Unwrapped text should not be highlighted")
+    }
+
+    // MARK: Stacked formatting (bold + italic, bold + underline, etc.)
+
+    func test_boldItalic_stackedRendering() throws {
+        let proj = project("Hello ***world***\n")
+        let traits = fontTraits(in: proj, at: 6)
+        XCTAssertTrue(traits.contains(.bold), "Should be bold")
+        XCTAssertTrue(traits.contains(.italic), "Should be italic")
+    }
+
+    func test_boldThenItalic_stackedToggle() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        // Apply bold first.
+        let afterBold = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
+        // Apply italic on top. Cursor/selection position preserved.
+        let selAfterBold = NSRange(location: afterBold.newCursorPosition, length: afterBold.newSelectionLength)
+        let afterBothResult = try EditingOps.toggleInlineTrait(.italic, range: selAfterBold, in: afterBold.newProjection)
+        let traits = fontTraits(in: afterBothResult.newProjection, at: afterBothResult.newCursorPosition)
+        XCTAssertTrue(traits.contains(.bold), "Should still be bold after adding italic")
+        XCTAssertTrue(traits.contains(.italic), "Should also be italic")
+    }
+
+    func test_boldPlusUnderline_stackedToggle() throws {
+        let proj = project("Hello **world**\n")
+        let sel = NSRange(location: 6, length: 5)
+        // Apply underline on top of bold.
+        let result = try EditingOps.toggleInlineTrait(.underline, range: sel, in: proj)
+        let newProj = result.newProjection
+        let traits = fontTraits(in: newProj, at: result.newCursorPosition)
+        XCTAssertTrue(traits.contains(.bold), "Should still be bold after adding underline")
+        XCTAssertTrue(hasUnderline(in: newProj, at: result.newCursorPosition), "Should also be underlined")
+    }
+
+    func test_boldPlusHighlight_stackedToggle() throws {
+        let proj = project("Hello **world**\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.highlight, range: sel, in: proj)
+        let newProj = result.newProjection
+        let traits = fontTraits(in: newProj, at: result.newCursorPosition)
+        XCTAssertTrue(traits.contains(.bold), "Should still be bold after adding highlight")
+        XCTAssertTrue(hasHighlight(in: newProj, at: result.newCursorPosition), "Should also be highlighted")
+    }
+
+    // MARK: Replace preserves formatting
+
+    func test_replace_inBoldPreservesBold() throws {
+        let proj = project("Hello **world**\n")
+        // "world" is at rendered offset 6, length 5.
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.replace(range: sel, with: "x", in: proj)
+        assertRoundTrip(result, expected: "Hello **x**\n")
+        assertSpliceInvariant(old: proj, result: result)
+        // Verify "x" is bold.
+        let traits = fontTraits(in: result.newProjection, at: 6)
+        XCTAssertTrue(traits.contains(.bold), "Replacement text should preserve bold")
+    }
+
+    func test_replace_inItalicPreservesItalic() throws {
+        let proj = project("Hello *world*\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.replace(range: sel, with: "x", in: proj)
+        assertRoundTrip(result, expected: "Hello *x*\n")
+        assertSpliceInvariant(old: proj, result: result)
+        let traits = fontTraits(in: result.newProjection, at: 6)
+        XCTAssertTrue(traits.contains(.italic), "Replacement text should preserve italic")
+    }
+
+    func test_replace_inStrikethroughPreservesStrikethrough() throws {
+        let proj = project("Hello ~~world~~\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.replace(range: sel, with: "x", in: proj)
+        assertRoundTrip(result, expected: "Hello ~~x~~\n")
+        assertSpliceInvariant(old: proj, result: result)
+        XCTAssertTrue(hasStrikethrough(in: result.newProjection, at: 6),
+                       "Replacement text should preserve strikethrough")
+    }
+
+    func test_replace_inPlainStaysPlain() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.replace(range: sel, with: "x", in: proj)
+        assertRoundTrip(result, expected: "Hello x\n")
+        assertSpliceInvariant(old: proj, result: result)
+        let traits = fontTraits(in: result.newProjection, at: 6)
+        XCTAssertFalse(traits.contains(.bold), "Plain replacement stays plain")
+    }
+
+    // MARK: Selection preservation
+
+    func test_bold_selectionPreserved() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.bold, range: sel, in: proj)
+        XCTAssertEqual(result.newSelectionLength, 5, "Selection length should be preserved after bold")
+    }
+
+    func test_italic_selectionPreserved() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.italic, range: sel, in: proj)
+        XCTAssertEqual(result.newSelectionLength, 5, "Selection length should be preserved after italic")
+    }
+
+    func test_underline_selectionPreserved() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.underline, range: sel, in: proj)
+        XCTAssertEqual(result.newSelectionLength, 5, "Selection length should be preserved after underline")
+    }
+
+    func test_highlight_selectionPreserved() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.highlight, range: sel, in: proj)
+        XCTAssertEqual(result.newSelectionLength, 5, "Selection length should be preserved after highlight")
+    }
+
+    func test_strikethrough_selectionPreserved() throws {
+        let proj = project("Hello world\n")
+        let sel = NSRange(location: 6, length: 5)
+        let result = try EditingOps.toggleInlineTrait(.strikethrough, range: sel, in: proj)
+        XCTAssertEqual(result.newSelectionLength, 5, "Selection length should be preserved after strikethrough")
+    }
 }

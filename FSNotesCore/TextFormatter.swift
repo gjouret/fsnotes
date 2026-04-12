@@ -147,7 +147,7 @@ public class TextFormatter {
                 let fullRange = NSRange(location: expandedStart, length: expandedEnd - expandedStart)
                 let content = nsStr.substring(with: range)
                 insertText(content, replacementRange: fullRange,
-                           selectRange: NSRange(location: expandedStart + content.count, length: 0))
+                           selectRange: NSRange(location: expandedStart, length: content.count))
                 return
             }
         }
@@ -180,7 +180,7 @@ public class TextFormatter {
                         let fullRange = NSRange(location: openMatch.location,
                                                 length: NSMaxRange(closeMatch) - openMatch.location)
                         insertText(content, replacementRange: fullRange,
-                                   selectRange: NSRange(location: openMatch.location + content.count, length: 0))
+                                   selectRange: NSRange(location: openMatch.location, length: content.count))
                         return
                     }
                 }
@@ -195,9 +195,10 @@ public class TextFormatter {
             // No selection — place cursor between markers
             insertText(open + close, selectRange: NSMakeRange(range.location + openLen, 0))
         } else {
-            // Place cursor at end of wrapped text
+            // Keep the formatted text selected so the user can
+            // stack additional formatting (e.g. bold → italic).
             insertText(open + string + close,
-                       selectRange: NSMakeRange(range.location + openLen + length + closeLen, 0))
+                       selectRange: NSMakeRange(range.location + openLen, length))
         }
     }
 

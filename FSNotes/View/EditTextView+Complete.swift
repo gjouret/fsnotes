@@ -330,7 +330,7 @@ extension EditTextView {
     }
     
     func handleInsertCompletion(word: String, movement: Int, isFinal flag: Bool) {
-        guard flag && movement == NSReturnTextMovement else {
+        guard flag && (movement == NSReturnTextMovement || movement == NSTabTextMovement) else {
             return
         }
         

@@ -173,8 +173,47 @@ extension ViewController {
         do {
             try FileManager.default.moveItem(at: url, to: newUrl)
             print("File moved from \"\(url.deletingPathExtension().lastPathComponent)\" to \"\(newUrl.deletingPathExtension().lastPathComponent)\"")
+
+            // When "First line as title" is enabled, update the note's
+            // first line (H1 heading or first paragraph) to match the new name.
+            if note.project.settings.isFirstLineAsTitle(), note.isMarkdown() {
+                updateFirstLineTitle(note: note, newTitle: value)
+            }
         } catch {
             note.overwrite(url: url)
+        }
+    }
+
+    /// Update the first line of a note's content to match a new title.
+    /// Used when "First line as title" is enabled and the note is renamed.
+    private func updateFirstLineTitle(note: Note, newTitle: String) {
+        let content = note.content.mutableCopy() as! NSMutableAttributedString
+        let string = content.string as NSString
+        guard string.length > 0 else { return }
+
+        let firstLineRange = string.paragraphRange(for: NSRange(location: 0, length: 0))
+        let firstLine = string.substring(with: firstLineRange).trimmingCharacters(in: .newlines)
+
+        // Detect heading prefix (# , ## , etc.) and preserve it.
+        var headingPrefix = ""
+        if let hashRange = firstLine.range(of: #"^#{1,6}\s+"#, options: .regularExpression) {
+            headingPrefix = String(firstLine[hashRange])
+        }
+
+        let newFirstLine = headingPrefix + newTitle
+        let replaceRange = NSRange(location: firstLineRange.location,
+                                   length: firstLineRange.length - (firstLine.hasSuffix("\n") ? 0 : 0))
+        // Keep the trailing newline if present.
+        let hasTrailingNewline = string.substring(with: firstLineRange).hasSuffix("\n")
+        let replacement = newFirstLine + (hasTrailingNewline ? "\n" : "")
+        content.replaceCharacters(in: firstLineRange, with: replacement)
+
+        note.content = content
+        note.save(content: content)
+
+        // Refresh the editor if this note is currently open.
+        if editor.note == note {
+            editor.fill(note: note)
         }
     }
 
@@ -280,6 +319,7 @@ extension ViewController {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")
+        alert.buttons[1].keyEquivalent = "\u{1b}"
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 

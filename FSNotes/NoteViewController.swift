@@ -47,6 +47,34 @@ class NoteViewController: EditorViewController, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) {
         editor.updateTextContainerInset()
     }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        guard let textView = notification.object as? EditTextView else { return }
+
+        if let note = textView.note {
+            note.setSelectedRange(range: textView.selectedRange())
+        }
+
+        // Update gutter cursor tracking
+        if let layoutManager = textView.layoutManager as? LayoutManager {
+            let oldCursor = layoutManager.cursorCharIndex
+            let newCursor = textView.selectedRange().location
+            layoutManager.cursorCharIndex = newCursor
+            if oldCursor != newCursor {
+                textView.needsDisplay = true
+            }
+        }
+
+        // Clear pending inline traits on cursor move
+        if textView.suppressPendingTraitClear {
+            textView.suppressPendingTraitClear = false
+        } else if !textView.pendingInlineTraits.isEmpty {
+            textView.pendingInlineTraits = []
+        }
+
+        // Auto-scroll to keep cursor visible
+        textView.scrollRangeToVisible(textView.selectedRange())
+    }
     
     func windowWillClose(_ notification: Notification) {
         AppDelegate.noteWindows.removeAll(where: { ($0.contentViewController as? NoteViewController)?.editor.note === editor.note  })

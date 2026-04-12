@@ -21,7 +21,6 @@ extension EditTextView {
         clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.bold()
-        deselectAfterFormatting()
         updateToolbarAfterFormatting()
     }
 
@@ -37,7 +36,6 @@ extension EditTextView {
         clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.italic()
-        deselectAfterFormatting()
         updateToolbarAfterFormatting()
     }
 
@@ -115,9 +113,14 @@ extension EditTextView {
     @IBAction func underlineMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
+        if toggleUnderlineViaBlockModel() {
+            updateToolbarAfterFormatting()
+            return
+        }
+
+        clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.underline()
-        deselectAfterFormatting()
         updateToolbarAfterFormatting()
     }
 
@@ -132,26 +135,21 @@ extension EditTextView {
         clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.strike()
-        deselectAfterFormatting()
         updateToolbarAfterFormatting()
     }
 
     @IBAction func highlightMenu(_ sender: Any) {
         guard let note = self.note, isEditable, note.isMarkdown() else { return }
 
+        if toggleHighlightViaBlockModel() {
+            updateToolbarAfterFormatting()
+            return
+        }
+
         clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.highlight()
-        deselectAfterFormatting()
         updateToolbarAfterFormatting()
-    }
-
-    private func deselectAfterFormatting() {
-        let sel = selectedRange()
-        if sel.length > 0 {
-            let mid = sel.location + sel.length / 2
-            setSelectedRange(NSRange(location: mid, length: 0))
-        }
     }
 
     private func updateToolbarAfterFormatting() {
@@ -208,8 +206,51 @@ extension EditTextView {
     @IBAction func wikiLinks(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
+        if insertWikiLinkViaBlockModel() {
+            updateToolbarAfterFormatting()
+            return
+        }
+
         let formatter = TextFormatter(textView: self, note: note)
         formatter.wikiLink()
+    }
+
+    /// Insert `[[]]` via the block model and place cursor between brackets.
+    private func insertWikiLinkViaBlockModel() -> Bool {
+        guard let projection = documentProjection else { return false }
+        let sel = selectedRange()
+
+        do {
+            let selectedText: String
+            if sel.length > 0, let storage = textStorage {
+                selectedText = (storage.string as NSString).substring(with: sel)
+            } else {
+                selectedText = ""
+            }
+
+            let wikiText = "[[" + selectedText + "]]"
+            let result: EditResult
+            if sel.length > 0 {
+                result = try EditingOps.replace(range: sel, with: wikiText, in: projection)
+            } else {
+                result = try EditingOps.insert(wikiText, at: sel.location, in: projection)
+            }
+
+            applyBlockModelResult(result, actionName: "Wiki Link")
+
+            // Place cursor between brackets (after "[[" + selectedText),
+            // or select the text if there was a selection.
+            if selectedText.isEmpty {
+                setSelectedRange(NSRange(location: sel.location + 2, length: 0))
+                complete(nil)
+            } else {
+                setSelectedRange(NSRange(location: sel.location + 2, length: selectedText.count))
+            }
+            return true
+        } catch {
+            bmLog("⚠️ insertWikiLink failed: \(error)")
+            return false
+        }
     }
 
     @IBAction func pressBold(_ sender: Any) {

@@ -132,6 +132,10 @@ public enum MarkdownSerializer {
                 out += html
             case .entity(let raw):
                 out += raw
+            case .underline(let children):
+                out += "<u>" + serializeInlines(children) + "</u>"
+            case .highlight(let children):
+                out += "<mark>" + serializeInlines(children) + "</mark>"
             }
         }
         return out

@@ -50,6 +50,12 @@ public struct EditResult {
     /// `setSelectedRange`. Set by the top-level `insert` / `delete`
     /// functions; internal primitives initialize to 0.
     public var newCursorPosition: Int = 0
+    /// Length of the selection to maintain after the edit. When > 0,
+    /// the selection range is `(newCursorPosition, newSelectionLength)`
+    /// instead of a zero-length insertion point. Used by formatting
+    /// operations (bold, italic, etc.) to keep text selected so the
+    /// user can stack additional formatting.
+    public var newSelectionLength: Int = 0
 }
 
 /// Errors raised by editing operations.
@@ -253,6 +259,202 @@ public enum EditingOps {
         return result
     }
 
+    // MARK: - Replace (selection → typed character)
+
+    /// Replace `storageRange` with `string` in a single block mutation.
+    /// This preserves the inline formatting context of the selection —
+    /// e.g. typing "x" while "hello" is selected inside bold produces
+    /// bold "x", not plain "x".
+    ///
+    /// For cross-block replacements or newline-containing replacements,
+    /// falls back to delete + insert (via the caller).
+    public static func replace(
+        range storageRange: NSRange,
+        with string: String,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard storageRange.length > 0, !string.isEmpty else {
+            throw EditingError.unsupported(reason: "replace requires non-empty range and string")
+        }
+
+        // Only handle single-block, single-line replacements.
+        guard !string.contains("\n") else {
+            throw EditingError.unsupported(reason: "replace: newline in replacement")
+        }
+
+        guard let (startBlock, startOffset) = projection.blockContaining(
+            storageIndex: storageRange.location
+        ) else {
+            throw EditingError.notInsideBlock(storageIndex: storageRange.location)
+        }
+        let endIndex = storageRange.location + storageRange.length
+        guard let (endBlock, _) = projection.blockContaining(storageIndex: endIndex) else {
+            throw EditingError.notInsideBlock(storageIndex: endIndex)
+        }
+        guard startBlock == endBlock else {
+            throw EditingError.crossBlockRange
+        }
+
+        let block = projection.document.blocks[startBlock]
+        let endOffset = startOffset + storageRange.length
+        let newBlock = try replaceInBlock(block, from: startOffset, to: endOffset, with: string)
+        var result = try replaceBlock(atIndex: startBlock, with: newBlock, in: projection)
+        result.newCursorPosition = storageRange.location + string.count
+        return result
+    }
+
+    /// Replace the text in [fromOffset, toOffset) within a block with
+    /// `replacement`. Preserves the inline formatting context.
+    private static func replaceInBlock(
+        _ block: Block,
+        from fromOffset: Int,
+        to toOffset: Int,
+        with replacement: String
+    ) throws -> Block {
+        let length = toOffset - fromOffset
+        switch block {
+        case .paragraph(let inline):
+            if inline.isEmpty {
+                return .paragraph(inline: [.text(replacement)])
+            }
+            if containsImage(inline) {
+                let (before, _) = splitInlines(inline, at: fromOffset)
+                let (_, after) = splitInlines(inline, at: toOffset)
+                return .paragraph(inline: before + [.text(replacement)] + after)
+            }
+            let runs = flatten(inline)
+            guard let (startRun, startOff) = runContainingChar(runs, charIndex: fromOffset) else {
+                throw EditingError.outOfBounds
+            }
+            guard let (endRun, endOffInclusive) = runContainingChar(runs, charIndex: toOffset - 1) else {
+                throw EditingError.outOfBounds
+            }
+            if startRun == endRun {
+                // Selection is within a single leaf — splice directly,
+                // preserving the leaf's formatting context.
+                let leaf = runs[startRun]
+                let endExclusive = endOffInclusive + 1
+                let newText = spliceString(leaf.text, at: startOff, replacing: endExclusive - startOff, with: replacement)
+                let newInline = updateLeafText(inline, at: leaf.path, newText: newText)
+                return .paragraph(inline: newInline)
+            }
+            // Cross-inline selection: use splitInlines to cut at both
+            // boundaries, then splice the replacement into the first
+            // half's formatting context.
+            let (before, _) = splitInlines(inline, at: fromOffset)
+            let (_, after) = splitInlines(inline, at: toOffset)
+            // Insert replacement text. If `before` has formatting context
+            // (e.g. ends inside a bold), the text is placed adjacent to it.
+            return .paragraph(inline: cleanInlines(before + [.text(replacement)] + after))
+
+        case .heading(let level, let suffix):
+            let leading = leadingWhitespaceCount(in: suffix)
+            let suffixFrom = fromOffset + leading
+            let newSuffix = spliceString(suffix, at: suffixFrom, replacing: length, with: replacement)
+            return .heading(level: level, suffix: newSuffix)
+
+        case .codeBlock(let language, let content, let fence):
+            let newContent = spliceString(content, at: fromOffset, replacing: length, with: replacement)
+            return .codeBlock(language: language, content: newContent, fence: fence)
+
+        case .list(let items, _):
+            return try replaceInList(items: items, from: fromOffset, to: toOffset, with: replacement)
+
+        case .blockquote(let lines):
+            return try replaceInBlockquote(lines: lines, from: fromOffset, to: toOffset, with: replacement)
+
+        default:
+            throw EditingError.unsupported(
+                reason: "replaceInBlock: not supported for \(describe(block))"
+            )
+        }
+    }
+
+    /// Replace within a list item's inline content.
+    private static func replaceInList(
+        items: [ListItem],
+        from fromOffset: Int,
+        to toOffset: Int,
+        with replacement: String
+    ) throws -> Block {
+        let entries = flattenList(items)
+        guard let (entryIdx, inlineOffset) = listEntryContaining(
+            entries: entries, offset: fromOffset, forInsertion: false
+        ) else {
+            throw EditingError.unsupported(reason: "replaceInList: offset not in list item")
+        }
+        let entry = entries[entryIdx]
+        let item = entry.item
+        let localEnd = inlineOffset + (toOffset - fromOffset)
+
+        // Use the same approach as paragraph: find the run and splice.
+        let runs = flatten(item.inline)
+        if let (startRun, startOff) = runContainingChar(runs, charIndex: inlineOffset),
+           let (endRun, endOffInclusive) = runContainingChar(runs, charIndex: localEnd - 1),
+           startRun == endRun {
+            let leaf = runs[startRun]
+            let endExclusive = endOffInclusive + 1
+            let newText = spliceString(leaf.text, at: startOff, replacing: endExclusive - startOff, with: replacement)
+            let newInline = updateLeafText(item.inline, at: leaf.path, newText: newText)
+            let newItem = ListItem(
+                indent: item.indent, marker: item.marker,
+                afterMarker: item.afterMarker, checkbox: item.checkbox,
+                inline: newInline, children: item.children
+            )
+            let newItems = replaceItemAtPath(items, path: entry.path, with: newItem)
+            return .list(items: newItems)
+        }
+
+        // Cross-inline: split and splice
+        let (before, _) = splitInlines(item.inline, at: inlineOffset)
+        let (_, after) = splitInlines(item.inline, at: localEnd)
+        let newInline = cleanInlines(before + [.text(replacement)] + after)
+        let newItem = ListItem(
+            indent: item.indent, marker: item.marker,
+            afterMarker: item.afterMarker, checkbox: item.checkbox,
+            inline: newInline, children: item.children
+        )
+        let newItems = replaceItemAtPath(items, path: entry.path, with: newItem)
+        return .list(items: newItems)
+    }
+
+    /// Replace within a blockquote line's inline content.
+    private static func replaceInBlockquote(
+        lines: [BlockquoteLine],
+        from fromOffset: Int,
+        to toOffset: Int,
+        with replacement: String
+    ) throws -> Block {
+        let flattened = flattenBlockquote(lines)
+        guard let (lineIdx, inlineOffset) = quoteEntryContaining(
+            entries: flattened, offset: fromOffset, forInsertion: false
+        ) else {
+            throw EditingError.unsupported(reason: "replaceInBlockquote: offset not in line")
+        }
+        let line = lines[lineIdx]
+        let localEnd = inlineOffset + (toOffset - fromOffset)
+
+        let runs = flatten(line.inline)
+        if let (startRun, startOff) = runContainingChar(runs, charIndex: inlineOffset),
+           let (endRun, endOffInclusive) = runContainingChar(runs, charIndex: localEnd - 1),
+           startRun == endRun {
+            let leaf = runs[startRun]
+            let endExclusive = endOffInclusive + 1
+            let newText = spliceString(leaf.text, at: startOff, replacing: endExclusive - startOff, with: replacement)
+            let newInline = updateLeafText(line.inline, at: leaf.path, newText: newText)
+            var newLines = lines
+            newLines[lineIdx] = BlockquoteLine(prefix: line.prefix, inline: newInline)
+            return .blockquote(lines: newLines)
+        }
+
+        let (before, _) = splitInlines(line.inline, at: inlineOffset)
+        let (_, after) = splitInlines(line.inline, at: localEnd)
+        let newInline = cleanInlines(before + [.text(replacement)] + after)
+        var newLines = lines
+        newLines[lineIdx] = BlockquoteLine(prefix: line.prefix, inline: newInline)
+        return .blockquote(lines: newLines)
+    }
+
     // MARK: - Delete
 
     /// Delete the characters in `storageRange`. The range must lie
@@ -313,7 +515,7 @@ public enum EditingOps {
 
     /// Replace `document.blocks[blockIndex]` with `newBlock`, producing
     /// a new projection and a block-granular splice.
-    private static func replaceBlock(
+    static func replaceBlock(
         atIndex blockIndex: Int,
         with newBlock: Block,
         in projection: DocumentProjection
@@ -828,6 +1030,8 @@ public enum EditingOps {
         case .bold(let c, _): return inlinesToText(c)
         case .italic(let c, _): return inlinesToText(c)
         case .strikethrough(let c): return inlinesToText(c)
+        case .underline(let c): return inlinesToText(c)
+        case .highlight(let c): return inlinesToText(c)
         case .link(let text, _): return inlinesToText(text)
         case .image(let alt, _): return inlinesToText(alt)
         case .autolink(let text, _): return text
@@ -1211,7 +1415,7 @@ public enum EditingOps {
     ///   item0.prefix + item0.inlineContent + "\n" +
     ///   item1.prefix + item1.inlineContent + "\n" + ...
     /// (no trailing "\n" — stripped by ListRenderer).
-    private struct FlatListEntry {
+    struct FlatListEntry {
         let item: ListItem
         let depth: Int
         let prefixLength: Int   // visual indent + bullet + " "
@@ -1222,7 +1426,7 @@ public enum EditingOps {
 
     /// Flatten a list's item tree into an ordered array of entries with
     /// their rendered offsets. Mirrors ListRenderer's walk order.
-    private static func flattenList(
+    static func flattenList(
         _ items: [ListItem],
         depth: Int = 0,
         startOffset: Int = 0,
@@ -1590,6 +1794,8 @@ public enum EditingOps {
         case .bold(let c, _): return c.reduce(0) { $0 + inlineLength($1) }
         case .italic(let c, _): return c.reduce(0) { $0 + inlineLength($1) }
         case .strikethrough(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .underline(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .highlight(let c): return c.reduce(0) { $0 + inlineLength($1) }
         case .link(let text, _): return text.reduce(0) { $0 + inlineLength($1) }
         // Images render as EXACTLY one character (the NSTextAttachment
         // placeholder emitted by InlineRenderer, both for the native
@@ -1637,7 +1843,8 @@ public enum EditingOps {
     /// Split a list of inline nodes at render offset `offset`, returning
     /// (before, after). Containers straddling the split point are
     /// recursively split and REPRODUCED on both sides.
-    private static func splitInlines(
+    // Made internal for use by autoConvertParagraph and trimLeadingText.
+    static func splitInlines(
         _ inlines: [Inline],
         at offset: Int
     ) -> ([Inline], [Inline]) {
@@ -1676,6 +1883,14 @@ public enum EditingOps {
                     let (b, a) = splitInlines(children, at: localOffset)
                     before.append(.strikethrough(b))
                     after.append(.strikethrough(a))
+                case .underline(let children):
+                    let (b, a) = splitInlines(children, at: localOffset)
+                    before.append(.underline(b))
+                    after.append(.underline(a))
+                case .highlight(let children):
+                    let (b, a) = splitInlines(children, at: localOffset)
+                    before.append(.highlight(b))
+                    after.append(.highlight(a))
                 case .link(let text, let dest):
                     let (b, a) = splitInlines(text, at: localOffset)
                     before.append(.link(text: b, rawDestination: dest))
@@ -1754,6 +1969,10 @@ public enum EditingOps {
             case .italic(let children, _):
                 walkFlatten(children, path: &path, into: &runs)
             case .strikethrough(let children):
+                walkFlatten(children, path: &path, into: &runs)
+            case .underline(let children):
+                walkFlatten(children, path: &path, into: &runs)
+            case .highlight(let children):
                 walkFlatten(children, path: &path, into: &runs)
             case .link(let text, _):
                 walkFlatten(text, path: &path, into: &runs)
@@ -1844,7 +2063,7 @@ public enum EditingOps {
             case .lineBreak: return .text(newText)
             case .rawHTML: return .rawHTML(newText)
             case .entity: return .entity(newText)
-            case .bold, .italic, .strikethrough, .link, .image:
+            case .bold, .italic, .strikethrough, .underline, .highlight, .link, .image:
                 // Path exhausted on a container: should not happen
                 // when paths come from `flatten`. Leave unchanged.
                 return inline
@@ -1868,6 +2087,14 @@ public enum EditingOps {
             var c = children
             c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
             return .strikethrough(c)
+        case .underline(let children):
+            var c = children
+            c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
+            return .underline(c)
+        case .highlight(let children):
+            var c = children
+            c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
+            return .highlight(c)
         case .link(let text, let dest):
             var c = text
             c[idx] = replaceLeafText(in: text[idx], path: rest, newText: newText)
@@ -2325,6 +2552,8 @@ public enum EditingOps {
         case italic
         case strikethrough
         case code
+        case underline
+        case highlight
     }
 
     /// Change a heading's level, or convert paragraph↔heading.
@@ -2396,6 +2625,94 @@ public enum EditingOps {
     ///
     /// The selection range is in textStorage coordinates. Both endpoints
     /// must lie within the same block.
+    /// Insert `string` at `storageIndex` wrapped in the given inline traits.
+    /// Used when the user toggles formatting with an empty selection, then types.
+    public static func insertWithTraits(
+        _ string: String,
+        traits: Set<InlineTrait>,
+        at storageIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+        let block = projection.document.blocks[blockIndex]
+
+        // Build the wrapped inline node: text wrapped in each trait.
+        var node: Inline = .text(string)
+        for trait in traits {
+            node = wrapInlineInTrait(node, trait: trait)
+        }
+
+        // Replace the block by splitting at the offset and inserting the wrapped node.
+        let newBlock: Block
+        switch block {
+        case .paragraph(let inline):
+            let (before, after) = splitInlines(inline, at: offsetInBlock)
+            newBlock = .paragraph(inline: cleanInlines(before + [node] + after))
+        case .heading(let level, let suffix):
+            let leading = leadingWhitespaceCount(in: suffix)
+            let inlines = parseInlinesFromText(String(suffix.dropFirst(leading)))
+            let (before, after) = splitInlines(inlines, at: offsetInBlock)
+            let newText = inlinesToText(cleanInlines(before + [node] + after))
+            let leadingWS = String(suffix.prefix(leading))
+            newBlock = .heading(level: level, suffix: leadingWS + newText)
+        case .list(let items, _):
+            let entries = flattenList(items)
+            guard let (entryIdx, inlineOffset) = listEntryContaining(
+                entries: entries, offset: offsetInBlock, forInsertion: true
+            ) else {
+                throw EditingError.unsupported(reason: "insertWithTraits: offset not in list item")
+            }
+            let entry = entries[entryIdx]
+            let item = entry.item
+            let (before, after) = splitInlines(item.inline, at: inlineOffset)
+            let newInline = cleanInlines(before + [node] + after)
+            let newItem = ListItem(
+                indent: item.indent, marker: item.marker,
+                afterMarker: item.afterMarker, checkbox: item.checkbox,
+                inline: newInline, children: item.children
+            )
+            let newItems = replaceItemAtPath(items, path: entry.path, with: newItem)
+            newBlock = .list(items: newItems)
+        case .blockquote(let lines):
+            let flattened = flattenBlockquote(lines)
+            guard let (lineIdx, inlineOffset) = quoteEntryContaining(
+                entries: flattened, offset: offsetInBlock, forInsertion: true
+            ) else {
+                throw EditingError.unsupported(reason: "insertWithTraits: offset not in blockquote")
+            }
+            let line = lines[lineIdx]
+            let (before, after) = splitInlines(line.inline, at: inlineOffset)
+            let newInline = cleanInlines(before + [node] + after)
+            var newLines = lines
+            newLines[lineIdx] = BlockquoteLine(prefix: line.prefix, inline: newInline)
+            newBlock = .blockquote(lines: newLines)
+        case .blankLine:
+            newBlock = .paragraph(inline: [node])
+        default:
+            throw EditingError.unsupported(reason: "insertWithTraits: unsupported block type")
+        }
+
+        var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+        result.newCursorPosition = storageIndex + string.count
+        return result
+    }
+
+    /// Wrap an inline node in a trait wrapper.
+    private static func wrapInlineInTrait(_ node: Inline, trait: InlineTrait) -> Inline {
+        switch trait {
+        case .bold: return .bold([node])
+        case .italic: return .italic([node])
+        case .strikethrough: return .strikethrough([node])
+        case .code:
+            if case .text(let s) = node { return .code(s) }
+            return node
+        case .underline: return .underline([node])
+        case .highlight: return .highlight([node])
+        }
+    }
+
     public static func toggleInlineTrait(
         _ trait: InlineTrait,
         range selectionRange: NSRange,
@@ -2488,13 +2805,170 @@ public enum EditingOps {
             with: newBlock,
             in: projection
         )
-        // Cursor stays at the end of the selection.
+        // Keep the formatted text selected so the user can stack
+        // additional formatting (bold → italic, etc.).
         let newSpan = result.newProjection.blockSpans[blockIndex]
         result.newCursorPosition = min(
-            newSpan.location + offsetEnd,
+            newSpan.location + offsetStart,
             newSpan.location + newSpan.length
         )
+        result.newSelectionLength = selectionRange.length
         return result
+    }
+
+    /// Toggle an HTML tag (e.g. `<u>`, `<mark>`) on the selected range.
+    /// Wraps the selected text with rawHTML open/close tags in the inline
+    /// tree, or removes them if already present. The tags are serialized
+    /// as-is and rendered by InlineTagRegistry.
+    public static func toggleHTMLTag(
+        open openTag: String,
+        close closeTag: String,
+        range selectionRange: NSRange,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard selectionRange.length > 0 else {
+            return EditResult(
+                newProjection: projection,
+                spliceRange: NSRange(location: selectionRange.location, length: 0),
+                spliceReplacement: NSAttributedString(string: ""),
+                newCursorPosition: selectionRange.location
+            )
+        }
+
+        let startIdx = selectionRange.location
+        let endIdx = selectionRange.location + selectionRange.length - 1
+
+        guard let (blockStart, offsetStart) = projection.blockContaining(storageIndex: startIdx),
+              let (blockEnd, _) = projection.blockContaining(storageIndex: endIdx),
+              blockStart == blockEnd else {
+            throw EditingError.crossBlockRange
+        }
+
+        let blockIndex = blockStart
+        let block = projection.document.blocks[blockIndex]
+        let offsetEnd = offsetStart + selectionRange.length
+
+        let newBlock: Block
+        switch block {
+        case .paragraph(let inline):
+            let newInline = toggleHTMLTagOnInlines(
+                inline, open: openTag, close: closeTag,
+                from: offsetStart, to: offsetEnd
+            )
+            newBlock = .paragraph(inline: newInline)
+
+        case .heading(let level, let suffix):
+            let leading = leadingWhitespaceCount(in: suffix)
+            let inlines = parseInlinesFromText(String(suffix.dropFirst(leading)))
+            let newInline = toggleHTMLTagOnInlines(
+                inlines, open: openTag, close: closeTag,
+                from: offsetStart, to: offsetEnd
+            )
+            let newText = inlinesToText(newInline)
+            let leadingWS = String(suffix.prefix(leading))
+            newBlock = .heading(level: level, suffix: leadingWS + newText)
+
+        case .list(let items, _):
+            let entries = flattenList(items)
+            guard let (entryIdx, inlineOffset) = listEntryContaining(
+                entries: entries, offset: offsetStart, forInsertion: false
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "toggleHTMLTag: offset not in list item inline"
+                )
+            }
+            let entry = entries[entryIdx]
+            let item = entry.item
+            let localEnd = inlineOffset + selectionRange.length
+            let newInline = toggleHTMLTagOnInlines(
+                item.inline, open: openTag, close: closeTag,
+                from: inlineOffset, to: localEnd
+            )
+            let newItem = ListItem(
+                indent: item.indent, marker: item.marker,
+                afterMarker: item.afterMarker, checkbox: item.checkbox,
+                inline: newInline, children: item.children
+            )
+            let newItems = replaceItemAtPath(items, path: entry.path, with: newItem)
+            newBlock = .list(items: newItems)
+
+        case .blockquote(let lines):
+            let flattened = flattenBlockquote(lines)
+            guard let (lineIdx, inlineOffset) = quoteEntryContaining(
+                entries: flattened, offset: offsetStart, forInsertion: false
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "toggleHTMLTag: offset not in blockquote line"
+                )
+            }
+            let line = lines[lineIdx]
+            let localEnd = inlineOffset + selectionRange.length
+            let newInline = toggleHTMLTagOnInlines(
+                line.inline, open: openTag, close: closeTag,
+                from: inlineOffset, to: localEnd
+            )
+            var newLines = lines
+            newLines[lineIdx] = BlockquoteLine(prefix: line.prefix, inline: newInline)
+            newBlock = .blockquote(lines: newLines)
+
+        default:
+            throw EditingError.unsupported(
+                reason: "toggleHTMLTag: not supported for \(describe(block))"
+            )
+        }
+
+        var result = try replaceBlock(
+            atIndex: blockIndex,
+            with: newBlock,
+            in: projection
+        )
+        let newSpan = result.newProjection.blockSpans[blockIndex]
+        result.newCursorPosition = min(
+            newSpan.location + offsetStart,
+            newSpan.location + newSpan.length
+        )
+        result.newSelectionLength = selectionRange.length
+        return result
+    }
+
+    /// Toggle HTML tag wrapping on an inline array. Checks if the
+    /// range [from, to) is already wrapped with the open/close tag
+    /// pair as rawHTML nodes; if so, removes them; otherwise inserts
+    /// them at the boundaries.
+    private static func toggleHTMLTagOnInlines(
+        _ inlines: [Inline],
+        open openTag: String,
+        close closeTag: String,
+        from: Int,
+        to: Int
+    ) -> [Inline] {
+        // Check if the selection is already bracketed by the tags.
+        // Look for rawHTML(openTag) immediately before `from` and
+        // rawHTML(closeTag) immediately after `to`.
+        let serialized = inlines.map { inlineToText($0) }.joined()
+        let beforeFrom = String(serialized.prefix(from))
+        let afterTo = String(serialized.suffix(from: serialized.index(serialized.startIndex, offsetBy: min(to, serialized.count))))
+
+        if beforeFrom.hasSuffix(openTag) && afterTo.hasPrefix(closeTag) {
+            // Already wrapped — remove the tags by splitting and
+            // excluding the rawHTML nodes.
+            let tagOpenLen = openTag.count
+            let tagCloseLen = closeTag.count
+            let (beforeOpen, rest1) = splitInlines(inlines, at: from - tagOpenLen)
+            let (_, rest2) = splitInlines(rest1, at: tagOpenLen) // skip open tag
+            let (middle, rest3) = splitInlines(rest2, at: to - from)
+            let (_, afterClose) = splitInlines(rest3, at: tagCloseLen) // skip close tag
+            return cleanInlines(beforeOpen + middle + afterClose)
+        }
+
+        // Not wrapped — insert tag nodes.
+        let (before, rest) = splitInlines(inlines, at: from)
+        let middleLength = to - from
+        let (middle, after) = splitInlines(rest, at: middleLength)
+
+        return cleanInlines(
+            before + [.rawHTML(openTag)] + middle + [.rawHTML(closeTag)] + after
+        )
     }
 
     /// Convert a paragraph to an unordered list, or a list to paragraphs.
@@ -2983,6 +3457,8 @@ public enum EditingOps {
                 case (.bold, .bold): return true
                 case (.italic, .italic): return true
                 case (.strikethrough, .strikethrough): return true
+                case (.underline, .underline): return true
+                case (.highlight, .highlight): return true
                 default: break
                 }
                 // Descend.
@@ -2990,6 +3466,8 @@ public enum EditingOps {
                 case .bold(let c, _): current = c
                 case .italic(let c, _): current = c
                 case .strikethrough(let c): current = c
+                case .underline(let c): current = c
+                case .highlight(let c): current = c
                 case .link(let text, _): current = text
                 case .image(let alt, _): current = alt
                 default: return false
@@ -3015,6 +3493,8 @@ public enum EditingOps {
         case .bold:          wrapped = .bold(middle, marker: .asterisk)
         case .italic:        wrapped = .italic(middle, marker: .asterisk)
         case .strikethrough: wrapped = .strikethrough(middle)
+        case .underline:     wrapped = .underline(middle)
+        case .highlight:     wrapped = .highlight(middle)
         case .code:
             // Code wrapping: flatten the middle to plain text.
             let text = middle.map { inlineToText($0) }.joined()
@@ -3049,6 +3529,10 @@ public enum EditingOps {
                 case (.italic(let children, _), .italic):
                     result.append(contentsOf: children)
                 case (.strikethrough(let children), .strikethrough):
+                    result.append(contentsOf: children)
+                case (.underline(let children), .underline):
+                    result.append(contentsOf: children)
+                case (.highlight(let children), .highlight):
                     result.append(contentsOf: children)
                 case (.code(let s), .code):
                     result.append(.text(s))
@@ -3109,6 +3593,20 @@ public enum EditingOps {
                 return splitAndUnwrap(children, wrapWith: { .strikethrough($0) }, from: clampedFrom, to: clampedTo)
             }
             return [.strikethrough(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
+        case .underline(let children):
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
+            if trait == .underline {
+                return splitAndUnwrap(children, wrapWith: { .underline($0) }, from: clampedFrom, to: clampedTo)
+            }
+            return [.underline(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
+        case .highlight(let children):
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
+            if trait == .highlight {
+                return splitAndUnwrap(children, wrapWith: { .highlight($0) }, from: clampedFrom, to: clampedTo)
+            }
+            return [.highlight(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
         case .link(let text, let dest):
             let len = inlinesLength(text)
             let clampedTo = min(to, len)
@@ -3191,6 +3689,14 @@ public enum EditingOps {
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
                 result.append(.strikethrough(cleaned))
+            case .underline(let children):
+                let cleaned = cleanInlines(children)
+                if cleaned.isEmpty { continue }
+                result.append(.underline(cleaned))
+            case .highlight(let children):
+                let cleaned = cleanInlines(children)
+                if cleaned.isEmpty { continue }
+                result.append(.highlight(cleaned))
             case .link(let text, let dest):
                 let cleaned = cleanInlines(text)
                 if cleaned.isEmpty { continue }

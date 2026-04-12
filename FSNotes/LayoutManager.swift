@@ -275,6 +275,16 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                                     layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
             }
 
+            // Horizontal rule drawing: needed in BOTH source-mode and block-model
+            // mode. The block-model HR renderer sets .horizontalRule on a single
+            // space character; the LayoutManager draws the full-width line.
+            if let ctx = NSGraphicsContext.current?.cgContext,
+               let tc = textContainers.first {
+                let hrDrawer = HorizontalRuleDrawer()
+                drawAttributeRanges(drawer: hrDrawer, forGlyphRange: range, at: origin,
+                                    layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
+            }
+
             // Source-mode attribute-based drawing: bullets, checkboxes, ordered
             // markers, and other custom attribute drawers. Only needed in source
             // mode — the block-model pipeline renders these inline as text
@@ -284,8 +294,9 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                let ctx = NSGraphicsContext.current?.cgContext,
                let tc = textContainers.first {
                 for drawer in Self.attributeDrawers {
-                    // Skip blockquote — already drawn above for both modes.
+                    // Skip blockquote and HR — already drawn above for both modes.
                     if drawer.attributeKey == .blockquote { continue }
+                    if drawer.attributeKey == .horizontalRule { continue }
                     drawAttributeRanges(drawer: drawer, forGlyphRange: range, at: origin,
                                         layoutManager: self, textStorage: ts, textContainer: tc, context: ctx)
                 }
@@ -351,8 +362,10 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             // Use the TEXT BASELINE of the marker char, not the line's vertical
             // center — marker glyph fonts can be 2x the text font and must sit on
             // the same baseline as "Level 3a" to look visually aligned.
+            // Round to pixel to prevent sub-pixel jitter when paragraph spacing
+            // from preceding headers causes fractional baseline shifts.
             let glyphLoc = self.location(forGlyphAt: glyphIdx)
-            let baselineY = origin.y + lineRect.minY + glyphLoc.y
+            let baselineY = round(origin.y + lineRect.minY + glyphLoc.y)
             render(value, lineRect, markerRightX, baselineY)
         }
     }

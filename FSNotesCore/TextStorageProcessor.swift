@@ -316,11 +316,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             textStorage.addAttribute(.foldedContent, value: true, range: foldRange)
             textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
             isRendering = false
-            // Hide live subviews (InlineTableView) — they draw independently of LayoutManager
+            // Hide live subviews — they draw independently of LayoutManager.
+            // Both InlineTableView and InlinePDFView render outside of
+            // LayoutManager's fold gate, so they must be hidden explicitly.
             if let textView = editor {
                 for subview in textView.subviews {
-                    guard let tv = subview as? InlineTableView, !tv.isHidden else { continue }
-                    tv.isHidden = true
+                    if let tv = subview as? InlineTableView, !tv.isHidden {
+                        tv.isHidden = true
+                    } else if !subview.isHidden,
+                              String(describing: type(of: subview)) == "InlinePDFView" {
+                        subview.isHidden = true
+                    }
                 }
             }
         }

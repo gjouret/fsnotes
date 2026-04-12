@@ -249,4 +249,6 @@ public indirect enum Inline: Equatable {
     case lineBreak(raw: String)        // "  \n" or "\\\n" — hard line break
     case rawHTML(String)               // <tag>, </tag>, <!-- -->, etc.
     case entity(String)                // &amp; &#123; &#x1F; — raw entity text
+    case underline([Inline])           // <u>…</u>
+    case highlight([Inline])           // <mark>…</mark>
 }

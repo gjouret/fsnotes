@@ -112,6 +112,14 @@ public enum InlineRenderer {
             return NSAttributedString(string: html, attributes: baseAttributes)
         case .entity(let raw):
             return NSAttributedString(string: raw, attributes: baseAttributes)
+        case .underline(let children):
+            var attrs = baseAttributes
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            return render(children, baseAttributes: attrs, note: note)
+        case .highlight(let children):
+            var attrs = baseAttributes
+            attrs[.backgroundColor] = PlatformColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)
+            return render(children, baseAttributes: attrs, note: note)
         }
     }
 
@@ -231,6 +239,8 @@ public enum InlineRenderer {
         case .lineBreak:                 out += " "
         case .rawHTML(let s):            out += s
         case .entity(let s):             out += s
+        case .underline(let c):          c.forEach { plainTextAppend($0, into: &out) }
+        case .highlight(let c):          c.forEach { plainTextAppend($0, into: &out) }
         }
     }
 

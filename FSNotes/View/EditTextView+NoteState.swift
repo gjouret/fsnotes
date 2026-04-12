@@ -54,6 +54,12 @@ extension EditTextView {
     /// keep) in this editing session. Reset when switching notes.
     private static var _dismissedOrphans: Set<String> = []
 
+    /// Filenames currently being inserted via an async workflow (e.g.
+    /// thumbnail generation). Suppresses orphan detection until the
+    /// markdown reference has been inserted. Cleared per-file when the
+    /// async insertion completes.
+    private static var _pendingInsertions: Set<String> = []
+
     /// Find orphaned assets for a single note and prompt for removal.
     /// Encrypted notes have orphans permanently deleted; unencrypted
     /// notes have them moved to the Trash.
@@ -70,12 +76,17 @@ extension EditTextView {
         ) else { return }
 
         // Find assets not referenced in the markdown content.
-        // Skip any the user already dismissed this session.
+        // Skip any the user already dismissed this session or that are
+        // still being inserted via an async workflow.
+        // Check both the raw filename and its percent-encoded form, since
+        // markdown image/link references use percent-encoded paths.
         var orphans: [(url: URL, name: String, size: UInt64)] = []
         for file in assetFiles {
             let name = file.lastPathComponent
             if EditTextView._dismissedOrphans.contains(name) { continue }
-            if !markdown.contains(name) {
+            if EditTextView._pendingInsertions.contains(name) { continue }
+            let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+            if !markdown.contains(name) && (encodedName == name || !markdown.contains(encodedName)) {
                 let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
                 orphans.append((url: file, name: name, size: size))
             }
@@ -103,6 +114,8 @@ extension EditTextView {
         alert.alertStyle = .warning
         alert.addButton(withTitle: encrypted ? "Delete" : "Move to Trash")
         alert.addButton(withTitle: "Keep")
+        // Map Esc key to the "Keep" button so users can dismiss with Esc.
+        alert.buttons[1].keyEquivalent = "\u{1b}"
 
         let response = alert.runModal()
 
@@ -129,6 +142,18 @@ extension EditTextView {
     /// Reset the dismissed-orphan tracker (call when switching notes).
     static func resetDismissedOrphans() {
         _dismissedOrphans.removeAll()
+        _pendingInsertions.removeAll()
+    }
+
+    /// Mark a filename as pending insertion (suppresses orphan detection).
+    static func addPendingInsertion(_ name: String) {
+        _pendingInsertions.insert(name)
+    }
+
+    /// Remove a filename from the pending-insertion set after its
+    /// markdown reference has been inserted.
+    static func removePendingInsertion(_ name: String) {
+        _pendingInsertions.remove(name)
     }
 
     func fill(note: Note, highlight: Bool = false, force: Bool = false) {
@@ -248,16 +273,11 @@ extension EditTextView {
             // Block-model path.
             if NotesTextProcessor.hideSyntax {
                 DispatchQueue.main.async { [weak self] in
-                    guard let self = self,
-                          let storage = self.textStorage,
-                          let processor = self.textStorageProcessor else { return }
-                    // Render mermaid/math code blocks to images.
-                    // syncBlocksFromProjection already populated the
-                    // source-mode blocks array, so codeBlockRanges works.
-                    let codeRanges = processor.codeBlockRanges
-                    if !codeRanges.isEmpty {
-                        processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
-                    }
+                    guard let self = self else { return }
+                    // Render mermaid/math code blocks via Document model
+                    // (source-mode renderSpecialCodeBlocks can't detect
+                    // language from text storage because fences are absent).
+                    self.renderSpecialBlocksViaBlockModel()
                     // Render tables via the source-mode mechanism.
                     self.renderTables()
                     self.renderPDFsAndRestoreScroll(note: note)

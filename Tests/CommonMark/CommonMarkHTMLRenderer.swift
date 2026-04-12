@@ -373,6 +373,10 @@ struct CommonMarkHTMLRenderer {
                 } else {
                     output += escapeHTML(raw)
                 }
+            case .underline(let children):
+                output += "<u>\(renderInlines(children))</u>"
+            case .highlight(let children):
+                output += "<mark>\(renderInlines(children))</mark>"
             }
         }
         return output
@@ -525,7 +529,8 @@ struct CommonMarkHTMLRenderer {
             case .text(let t):
                 result += t
             case .bold(let children, _), .italic(let children, _),
-                 .strikethrough(let children):
+                 .strikethrough(let children),
+                 .underline(let children), .highlight(let children):
                 result += plainText(from: children)
             case .code(let t):
                 result += t

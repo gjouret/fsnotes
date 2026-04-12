@@ -802,7 +802,94 @@ public enum MarkdownParser {
         let tokens = tokenizeNonEmphasis(text, refDefs: refDefs)
 
         // Phase B: resolve emphasis using the delimiter stack algorithm
-        return resolveEmphasis(tokens, refDefs: refDefs)
+        let inlines = resolveEmphasis(tokens, refDefs: refDefs)
+
+        // Phase C: resolve known HTML tag pairs (<u>...</u>, <mark>...</mark>)
+        // into container inlines, the same way emphasis resolves ** into .bold.
+        return resolveHTMLTagPairs(inlines)
+    }
+
+    /// Post-parse pass: match rawHTML opening/closing tag pairs and convert
+    /// them into structured container inlines (.underline, .highlight).
+    /// Unmatched tags remain as .rawHTML.
+    private static let knownTagPairs: [(open: String, close: String, wrap: ([Inline]) -> Inline)] = [
+        ("<u>", "</u>", { .underline($0) }),
+        ("<mark>", "</mark>", { .highlight($0) }),
+    ]
+
+    private static func resolveHTMLTagPairs(_ inlines: [Inline]) -> [Inline] {
+        var result = inlines
+        for pair in knownTagPairs {
+            result = resolveTagPair(result, open: pair.open, close: pair.close, wrap: pair.wrap)
+        }
+        return result
+    }
+
+    private static func resolveTagPair(
+        _ inlines: [Inline],
+        open: String,
+        close: String,
+        wrap: ([Inline]) -> Inline
+    ) -> [Inline] {
+        var result: [Inline] = []
+        var i = 0
+        while i < inlines.count {
+            if case .rawHTML(let html) = inlines[i], html == open {
+                // Scan for matching close tag.
+                var j = i + 1
+                var depth = 1
+                while j < inlines.count {
+                    if case .rawHTML(let inner) = inlines[j] {
+                        if inner == open { depth += 1 }
+                        if inner == close { depth -= 1 }
+                        if depth == 0 { break }
+                    }
+                    j += 1
+                }
+                if j < inlines.count {
+                    // Found match. Recursively resolve tag pairs in children.
+                    let content = Array(inlines[(i + 1)..<j])
+                    let resolvedContent = resolveTagPair(content, open: open, close: close, wrap: wrap)
+                    result.append(wrap(resolvedContent))
+                    i = j + 1
+                } else {
+                    // No match — keep as raw HTML.
+                    result.append(inlines[i])
+                    i += 1
+                }
+            } else {
+                // Recurse into existing containers.
+                result.append(resolveTagPairInChildren(inlines[i], open: open, close: close, wrap: wrap))
+                i += 1
+            }
+        }
+        return result
+    }
+
+    private static func resolveTagPairInChildren(
+        _ inline: Inline,
+        open: String,
+        close: String,
+        wrap: ([Inline]) -> Inline
+    ) -> Inline {
+        switch inline {
+        case .bold(let children, let marker):
+            return .bold(resolveTagPair(children, open: open, close: close, wrap: wrap), marker: marker)
+        case .italic(let children, let marker):
+            return .italic(resolveTagPair(children, open: open, close: close, wrap: wrap), marker: marker)
+        case .strikethrough(let children):
+            return .strikethrough(resolveTagPair(children, open: open, close: close, wrap: wrap))
+        case .link(let text, let dest):
+            return .link(text: resolveTagPair(text, open: open, close: close, wrap: wrap), rawDestination: dest)
+        case .image(let alt, let dest):
+            return .image(alt: resolveTagPair(alt, open: open, close: close, wrap: wrap), rawDestination: dest)
+        case .underline(let children):
+            return .underline(resolveTagPair(children, open: open, close: close, wrap: wrap))
+        case .highlight(let children):
+            return .highlight(resolveTagPair(children, open: open, close: close, wrap: wrap))
+        default:
+            return inline
+        }
     }
 
     /// Phase A: Parse everything EXCEPT emphasis (* and _). Emit delimiter

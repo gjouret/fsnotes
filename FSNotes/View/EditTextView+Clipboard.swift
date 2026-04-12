@@ -259,7 +259,28 @@ extension EditTextView {
             pasteboard.declareTypes([.string], owner: nil)
             pasteboard.setString(paragraph.string.trim().removeLastNewLine(), forType: .string)
 
-            insertText(String(), replacementRange: paragraphRange)
+            // Route through block model if active to keep Document in sync.
+            if documentProjection != nil {
+                _ = handleEditViaBlockModel(in: paragraphRange, replacementString: "")
+            } else {
+                insertText(String(), replacementRange: paragraphRange)
+            }
+            return
+        }
+
+        // For selections, copy to clipboard then delete via block model.
+        if documentProjection != nil, selectedRange().length > 0 {
+            let range = selectedRange()
+            if let text = attributedSubstring(forProposedRange: range, actualRange: nil) {
+                let pasteboard = NSPasteboard.general
+                pasteboard.declareTypes([NSPasteboard.attributed, .string], owner: nil)
+                if let rtfd = try? text.data(from: NSRange(location: 0, length: text.length),
+                                             documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]) {
+                    pasteboard.setData(rtfd, forType: NSPasteboard.attributed)
+                }
+                pasteboard.setString(text.string, forType: .string)
+            }
+            _ = handleEditViaBlockModel(in: range, replacementString: "")
             return
         }
 

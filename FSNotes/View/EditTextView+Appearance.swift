@@ -118,6 +118,13 @@ extension EditTextView {
 
         imagesLoaderQueue.maxConcurrentOperationCount = 3
         imagesLoaderQueue.qualityOfService = .userInteractive
+
+        // Use a semi-transparent selection color so that highlight
+        // (yellow background) shows through the selection overlay.
+        // The default opaque selection completely obscures highlights.
+        selectedTextAttributes = [
+            .backgroundColor: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.6)
+        ]
     }
 
     override func viewDidChangeEffectiveAppearance() {

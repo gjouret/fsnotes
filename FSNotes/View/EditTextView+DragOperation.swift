@@ -256,6 +256,10 @@ extension EditTextView
     func saveFileWithThumbnail(data: Data, preferredName: String, in note: Note) -> Bool {
         guard let (fileRelPath, fileURL) = note.save(data: data, preferredName: preferredName) else { return false }
 
+        // Mark the file as pending so orphan cleanup won't flag it
+        // before the async thumbnail generation completes.
+        EditTextView.addPendingInsertion(fileURL.lastPathComponent)
+
         let request = QLThumbnailGenerator.Request(
             fileAt: fileURL,
             size: CGSize(width: 480, height: 480),
@@ -264,15 +268,22 @@ extension EditTextView
         )
 
         let capturedNote = note
+        let capturedFileName = fileURL.lastPathComponent
+        let capturedInsertionPoint = selectedRange().location
         QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, _ in
             DispatchQueue.main.async {
-                guard let self = self, self.note === capturedNote else { return }
+                guard let self = self, self.note === capturedNote else {
+                    EditTextView.removePendingInsertion(capturedFileName)
+                    return
+                }
                 self.insertThumbnailCard(
                     thumbnail: thumbnail,
                     fileRelPath: fileRelPath,
                     preferredName: preferredName,
-                    note: capturedNote
+                    note: capturedNote,
+                    insertionPoint: capturedInsertionPoint
                 )
+                EditTextView.removePendingInsertion(capturedFileName)
             }
         }
 
@@ -283,7 +294,8 @@ extension EditTextView
         thumbnail: QLThumbnailRepresentation?,
         fileRelPath: String,
         preferredName: String,
-        note: Note
+        note: Note,
+        insertionPoint: Int
     ) {
         let encodedFilePath = fileRelPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileRelPath
         let displayName = preferredName
@@ -294,12 +306,10 @@ extension EditTextView
             let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
             if let pngData = nsImage.PNGRepresentation {
                 let thumbName = (preferredName as NSString).deletingPathExtension + "_thumb.png"
-                markdown = buildThumbnailCardMarkdown(
+                markdown = buildLinkedImageMarkdown(
                     note: note,
                     imageData: pngData,
                     preferredName: thumbName,
-                    imageLabel: thumbName,
-                    cardTitle: "Thumbnail",
                     displayName: displayName,
                     encodedFilePath: encodedFilePath
                 ) ?? "\n[\(displayName)](\(encodedFilePath))\n"
@@ -312,12 +322,10 @@ extension EditTextView
             fileIcon.size = NSSize(width: 128, height: 128)
             if let pngData = fileIcon.PNGRepresentation {
                 let iconName = (preferredName as NSString).deletingPathExtension + "_icon.png"
-                markdown = buildThumbnailCardMarkdown(
+                markdown = buildLinkedImageMarkdown(
                     note: note,
                     imageData: pngData,
                     preferredName: iconName,
-                    imageLabel: iconName,
-                    cardTitle: "Attachment",
                     displayName: displayName,
                     encodedFilePath: encodedFilePath
                 ) ?? "\n[\(displayName)](\(encodedFilePath))\n"
@@ -326,22 +334,32 @@ extension EditTextView
             }
         }
 
+        // Clamp the insertion point to the current storage length — the text
+        // may have changed since the async thumbnail generation started.
+        let storageLen = textStorage?.length ?? 0
+        let safeLocation = min(insertionPoint, storageLen)
+        let insertRange = NSRange(location: safeLocation, length: 0)
+
         breakUndoCoalescing()
-        insertText(NSMutableAttributedString(string: markdown), replacementRange: selectedRange())
+        insertText(NSMutableAttributedString(string: markdown), replacementRange: insertRange)
         breakUndoCoalescing()
 
-        note.content = NSMutableAttributedString(attributedString: attributedStringForSaving())
-        _ = note.save()
-        note.load()
-        viewDelegate?.refillEditArea(force: true)
+        // In block-model mode the insertText already updated the Document;
+        // just let the normal save flow handle persistence.
+        if documentProjection == nil {
+            note.content = NSMutableAttributedString(attributedString: attributedStringForSaving())
+            _ = note.save()
+            note.load()
+            viewDelegate?.refillEditArea(force: true)
+        }
     }
 
-    private func buildThumbnailCardMarkdown(
+    /// Build a linked-image markdown string: [![name](thumb)](file)
+    /// The thumbnail is clickable and opens the original file.
+    private func buildLinkedImageMarkdown(
         note: Note,
         imageData: Data,
         preferredName: String,
-        imageLabel: String,
-        cardTitle: String,
         displayName: String,
         encodedFilePath: String
     ) -> String? {
@@ -356,6 +374,6 @@ extension EditTextView
             note.imageUrl = [imageURL]
         }
 
-        return "\n| \(cardTitle) |\n|:---:|\n| ![\(imageLabel)](\(encodedImagePath)) |\n| [\(displayName)](\(encodedFilePath)) |\n"
+        return "\n[![\(displayName)](\(encodedImagePath))](\(encodedFilePath))\n"
     }
 }

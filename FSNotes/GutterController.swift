@@ -168,7 +168,12 @@ class GutterController {
             let lineFragRect = lm.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
             if lineFragRect.isEmpty { continue }
 
-            let midY = lineFragRect.midY + origin.y
+            // Use lineFragmentUsedRect for the visual center of the text.
+            // lineFragRect includes paragraph spacing which pushes glyphs
+            // down relative to the rect's geometric center. usedRect is
+            // tighter to the actual glyphs.
+            let usedRect = lm.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            let midY = usedRect.midY + origin.y
 
             // Fold caret — only on hover or when collapsed
             let isCollapsed = block.collapsed
