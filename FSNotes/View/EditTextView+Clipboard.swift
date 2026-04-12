@@ -147,6 +147,26 @@ extension EditTextView {
             let preferredName = NSPasteboard.general.string(forType: .string)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "document.pdf"
             let name = preferredName.hasSuffix(".pdf") ? preferredName : "document.pdf"
+
+            // Block-model path: save PDF to disk, insert via block model so
+            // PDFAttachmentProcessor renders it as an inline PDFKit viewer.
+            if documentProjection != nil {
+                guard let (relPath, _) = note.save(data: pdfData, preferredName: name) else {
+                    return
+                }
+                let encoded = relPath.addingPercentEncoding(
+                    withAllowedCharacters: .urlPathAllowed
+                ) ?? relPath
+                let alt = (name as NSString).deletingPathExtension
+                breakUndoCoalescing()
+                if insertImageViaBlockModel(alt: alt, destination: encoded) {
+                    breakUndoCoalescing()
+                    return
+                }
+                breakUndoCoalescing()
+                // Fall through to thumbnail path if block-model insert fails.
+            }
+
             if saveFileWithThumbnail(data: pdfData, preferredName: name, in: note) {
                 return
             }

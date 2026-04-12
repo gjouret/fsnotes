@@ -7,7 +7,7 @@
 //  display PDF attachments inline.
 //
 //  Architecture:
-//  - InlinePDFView wraps a PDFView with controls (page label, open button)
+//  - InlinePDFView wraps a PDFView with controls (toolbar, thumbnail sidebar)
 //  - PDFAttachmentCell hosts the InlinePDFView as a live subview of
 //    the EditTextView, positioned by the layout manager
 //  - PDFAttachmentProcessor scans textStorage for ![](*.pdf) patterns
@@ -21,8 +21,8 @@ import Quartz
 // MARK: - InlinePDFView
 
 /// A container view that wraps PDFKit's PDFView for inline display in
-/// the note editor. Shows the PDF with a toolbar for page info and
-/// an "Open in Preview" button.
+/// the note editor. Shows the PDF with a navigation toolbar and an
+/// optional thumbnail sidebar, similar to Obsidian's PDF viewer.
 class InlinePDFView: NSView {
 
     // MARK: - Properties
@@ -30,9 +30,15 @@ class InlinePDFView: NSView {
     let pdfURL: URL
     private(set) var pdfView: PDFView!
     private var toolbarView: NSView!
+    private var thumbnailView: PDFThumbnailView!
+    private var thumbnailContainer: NSView!
     private var pageLabel: NSTextField!
     private var openButton: NSButton!
+    private var zoomInButton: NSButton!
+    private var zoomOutButton: NSButton!
+    private var thumbnailToggleButton: NSButton!
     private var containerWidth: CGFloat
+    private var showingThumbnails = false
 
     /// Maximum height for the PDF viewer (scales with note font).
     private var maxHeight: CGFloat {
@@ -41,8 +47,11 @@ class InlinePDFView: NSView {
 
     /// Toolbar height derived from note font.
     private var toolbarHeight: CGFloat {
-        return ceil(UserDefaultsManagement.noteFont.pointSize * 2.0)
+        return ceil(UserDefaultsManagement.noteFont.pointSize * 2.8)
     }
+
+    /// Thumbnail sidebar width.
+    private var thumbnailWidth: CGFloat { return 120 }
 
     // MARK: - Init
 
@@ -66,27 +75,69 @@ class InlinePDFView: NSView {
         layer?.borderColor = NSColor.separatorColor.cgColor
         layer?.borderWidth = 0.5
 
-        // Toolbar at top
+        let fontSize = UserDefaultsManagement.noteFont.pointSize * 1.0
+        let smallFont = NSFont.systemFont(ofSize: fontSize)
+
+        // --- Toolbar at top ---
         toolbarView = NSView()
         toolbarView.wantsLayer = true
         toolbarView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         addSubview(toolbarView)
 
-        // Page label
+        // Thumbnail sidebar toggle (leftmost)
+        thumbnailToggleButton = makeToolbarButton(
+            symbolName: "sidebar.left",
+            fallbackTitle: "☰",
+            font: smallFont,
+            action: #selector(toggleThumbnails)
+        )
+        addSubview(thumbnailToggleButton)
+
+        // Zoom out
+        zoomOutButton = makeToolbarButton(
+            symbolName: "minus.magnifyingglass",
+            fallbackTitle: "−",
+            font: smallFont,
+            action: #selector(zoomOut)
+        )
+        addSubview(zoomOutButton)
+
+        // Zoom in
+        zoomInButton = makeToolbarButton(
+            symbolName: "plus.magnifyingglass",
+            fallbackTitle: "+",
+            font: smallFont,
+            action: #selector(zoomIn)
+        )
+        addSubview(zoomInButton)
+
+        // Page label (center)
         pageLabel = NSTextField(labelWithString: "")
-        pageLabel.font = NSFont.systemFont(ofSize: UserDefaultsManagement.noteFont.pointSize * 0.8)
+        pageLabel.font = smallFont
         pageLabel.textColor = NSColor.secondaryLabelColor
-        pageLabel.alignment = .left
+        pageLabel.alignment = .center
         addSubview(pageLabel)
 
-        // Open in Preview button
+        // Open in Preview button (right)
         openButton = NSButton(title: "Open in Preview", target: self, action: #selector(openInPreview))
         openButton.bezelStyle = .accessoryBarAction
-        openButton.font = NSFont.systemFont(ofSize: UserDefaultsManagement.noteFont.pointSize * 0.8)
+        openButton.font = smallFont
         openButton.controlSize = .small
         addSubview(openButton)
 
-        // PDF view
+        // --- Thumbnail sidebar (hidden by default) ---
+        thumbnailContainer = NSView()
+        thumbnailContainer.wantsLayer = true
+        thumbnailContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+        thumbnailContainer.isHidden = true
+        addSubview(thumbnailContainer)
+
+        thumbnailView = PDFThumbnailView()
+        thumbnailView.thumbnailSize = NSSize(width: 80, height: 100)
+        thumbnailView.backgroundColor = .clear
+        thumbnailContainer.addSubview(thumbnailView)
+
+        // --- PDF view ---
         pdfView = PDFView()
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
@@ -98,18 +149,39 @@ class InlinePDFView: NSView {
         // Load the PDF document
         if let document = PDFDocument(url: pdfURL) {
             pdfView.document = document
+            thumbnailView.pdfView = pdfView
             updatePageLabel()
 
-            // Listen for page changes
             NotificationCenter.default.addObserver(
                 self, selector: #selector(pageChanged),
                 name: .PDFViewPageChanged, object: pdfView
+            )
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(scaleChanged),
+                name: .PDFViewScaleChanged, object: pdfView
             )
         } else {
             pageLabel.stringValue = "Failed to load PDF"
         }
 
         layoutSubviews()
+    }
+
+    private func makeToolbarButton(symbolName: String, fallbackTitle: String,
+                                   font: NSFont, action: Selector) -> NSButton {
+        let button: NSButton
+        if #available(macOS 11.0, *),
+           let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: font.pointSize, weight: .regular)) {
+            button = NSButton(image: image, target: self, action: action)
+        } else {
+            button = NSButton(title: fallbackTitle, target: self, action: action)
+        }
+        button.bezelStyle = .accessoryBarAction
+        button.font = font
+        button.controlSize = .small
+        button.isBordered = false
+        return button
     }
 
     // MARK: - Layout
@@ -120,20 +192,57 @@ class InlinePDFView: NSView {
 
         toolbarView.frame = NSRect(x: 0, y: frame.height - tbH, width: w, height: tbH)
 
-        // Page label on the left
-        pageLabel.sizeToFit()
-        pageLabel.frame.origin = NSPoint(x: 8, y: frame.height - tbH + (tbH - pageLabel.frame.height) / 2)
+        // Toolbar items layout
+        let btnY = frame.height - tbH
+        let btnPadding: CGFloat = 4
+        var x: CGFloat = 8
+
+        // Thumbnail toggle
+        thumbnailToggleButton.sizeToFit()
+        thumbnailToggleButton.frame.origin = NSPoint(x: x, y: btnY + (tbH - thumbnailToggleButton.frame.height) / 2)
+        x += thumbnailToggleButton.frame.width + btnPadding
+
+        // Separator space
+        x += 8
+
+        // Zoom out
+        zoomOutButton.sizeToFit()
+        zoomOutButton.frame.origin = NSPoint(x: x, y: btnY + (tbH - zoomOutButton.frame.height) / 2)
+        x += zoomOutButton.frame.width + btnPadding
+
+        // Zoom in
+        zoomInButton.sizeToFit()
+        zoomInButton.frame.origin = NSPoint(x: x, y: btnY + (tbH - zoomInButton.frame.height) / 2)
+        x += zoomInButton.frame.width + btnPadding
 
         // Open button on the right
         openButton.sizeToFit()
         openButton.frame.origin = NSPoint(
             x: w - openButton.frame.width - 8,
-            y: frame.height - tbH + (tbH - openButton.frame.height) / 2
+            y: btnY + (tbH - openButton.frame.height) / 2
         )
 
+        // Page label centered between zoom buttons and open button
+        let labelLeft = x + 8
+        let labelRight = openButton.frame.origin.x - 8
+        let labelWidth = max(0, labelRight - labelLeft)
+        pageLabel.frame = NSRect(
+            x: labelLeft,
+            y: btnY + (tbH - 16) / 2,
+            width: labelWidth,
+            height: 16
+        )
+
+        // Content area below toolbar
+        let contentTop = frame.height - tbH
+        let sidebarWidth = showingThumbnails ? thumbnailWidth : 0
+
+        // Thumbnail sidebar
+        thumbnailContainer.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: contentTop)
+        thumbnailView.frame = thumbnailContainer.bounds
+
         // PDF view fills remaining space
-        let pdfHeight = frame.height - tbH
-        pdfView.frame = NSRect(x: 0, y: 0, width: w, height: pdfHeight)
+        pdfView.frame = NSRect(x: sidebarWidth, y: 0, width: w - sidebarWidth, height: contentTop)
     }
 
     override func layout() {
@@ -180,29 +289,44 @@ class InlinePDFView: NSView {
         NSWorkspace.shared.open(pdfURL)
     }
 
+    @objc private func zoomIn() {
+        pdfView.scaleFactor *= 1.25
+    }
+
+    @objc private func zoomOut() {
+        pdfView.scaleFactor /= 1.25
+    }
+
+    @objc private func toggleThumbnails() {
+        showingThumbnails.toggle()
+        thumbnailContainer.isHidden = !showingThumbnails
+        layoutSubviews()
+    }
+
     @objc private func pageChanged() {
+        updatePageLabel()
+    }
+
+    @objc private func scaleChanged() {
         updatePageLabel()
     }
 
     private func updatePageLabel() {
         guard let document = pdfView.document else { return }
         let pageCount = document.pageCount
+        let zoomPercent = Int(round(pdfView.scaleFactor * 100))
 
         if let currentPage = pdfView.currentPage,
            let pageIndex = document.index(for: currentPage) as Int? {
-            pageLabel.stringValue = "Page \(pageIndex + 1) of \(pageCount)  —  \(pdfURL.lastPathComponent)"
+            pageLabel.stringValue = "Page \(pageIndex + 1) of \(pageCount)  ·  \(zoomPercent)%  ·  \(pdfURL.lastPathComponent)"
         } else {
-            pageLabel.stringValue = "\(pageCount) page\(pageCount == 1 ? "" : "s")  —  \(pdfURL.lastPathComponent)"
+            pageLabel.stringValue = "\(pageCount) page\(pageCount == 1 ? "" : "s")  ·  \(zoomPercent)%  ·  \(pdfURL.lastPathComponent)"
         }
     }
 
     // MARK: - Scroll Behavior
 
-    /// Vertical scrolling within the PDF view is handled by PDFView itself
-    /// (scrolling between pages). Only pass through if fully scrolled to
-    /// top or bottom edge.
     override func scrollWheel(with event: NSEvent) {
-        // Let PDFView handle its own scrolling (it has its own scroll view)
         pdfView.scrollWheel(with: event)
     }
 

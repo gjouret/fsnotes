@@ -218,7 +218,7 @@ extension EditTextView
         let preferredName = url.lastPathComponent
         let ext = url.pathExtension.lowercased()
 
-        if EditTextView.imageExtensions.contains(ext) || data.getFileType() != .unknown {
+        if EditTextView.imageExtensions.contains(ext) || InlineRenderer.renderablePDFExtensions.contains(ext) || data.getFileType() != .unknown {
             // Block-model WYSIWYG path: save the image to disk and
             // insert a native `.image` inline via the block model.
             // ImageAttachmentHydrator takes care of the async image load.

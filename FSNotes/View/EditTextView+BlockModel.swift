@@ -547,7 +547,16 @@ needsDisplay = true
             bmLog("🖼️ insertImage: dest='\(destination)' splice \(result.spliceRange) → \(result.spliceReplacement.length) chars")
             applyEditResultWithUndo(result, actionName: "Insert Image")
             // Kick off async hydration of the placeholder attachment.
+            // For PDFs, PDFAttachmentProcessor replaces the placeholder with
+            // an inline PDFKit viewer; for images, ImageAttachmentHydrator
+            // loads the real bytes. Both are no-ops for the other type.
             if let storage = textStorage {
+                let containerWidth = self.textContainer?.size.width ?? self.frame.width
+                if let note = self.note {
+                    PDFAttachmentProcessor.renderPDFAttachments(
+                        in: storage, note: note, containerWidth: containerWidth
+                    )
+                }
                 ImageAttachmentHydrator.hydrate(textStorage: storage, editor: self)
             }
             return true
