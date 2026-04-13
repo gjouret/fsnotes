@@ -38,6 +38,7 @@ class InlinePDFView: NSView {
     private var zoomOutButton: NSButton!
     private var thumbnailToggleButton: NSButton!
     private var containerWidth: CGFloat
+    private var separatorView: NSView!
     private var showingThumbnails = false
 
     /// Maximum height for the PDF viewer (scales with note font).
@@ -83,6 +84,12 @@ class InlinePDFView: NSView {
         toolbarView.wantsLayer = true
         toolbarView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         addSubview(toolbarView)
+
+        // Separator line at bottom edge of toolbar
+        separatorView = NSView()
+        separatorView.wantsLayer = true
+        separatorView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        addSubview(separatorView)
 
         // Thumbnail sidebar toggle (leftmost)
         thumbnailToggleButton = makeToolbarButton(
@@ -194,6 +201,9 @@ class InlinePDFView: NSView {
         let tbH = toolbarHeight
 
         toolbarView.frame = NSRect(x: 0, y: frame.height - tbH, width: w, height: tbH)
+
+        // Separator line at bottom edge of toolbar
+        separatorView.frame = NSRect(x: 0, y: frame.height - tbH, width: w, height: 1)
 
         // Toolbar items layout
         let btnY = frame.height - tbH
@@ -439,16 +449,27 @@ enum PDFAttachmentProcessor {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         var replacements: [(NSRange, NSTextAttachment)] = []
 
+        bmLog("📄 PDFAttachmentProcessor: scanning storage length=\(textStorage.length)")
+        var attachmentCount = 0
+
         textStorage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, _ in
             guard let attachment = value as? NSTextAttachment else { return }
+            attachmentCount += 1
 
             // Skip if already rendered as PDFAttachmentCell
-            if attachment.attachmentCell is PDFAttachmentCell { return }
+            if attachment.attachmentCell is PDFAttachmentCell {
+                bmLog("📄   skip @\(range.location): already PDFAttachmentCell")
+                return
+            }
 
             // Check if this attachment points to a PDF
             guard let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL,
                   url.pathExtension.lowercased() == "pdf",
-                  FileManager.default.fileExists(atPath: url.path) else { return }
+                  FileManager.default.fileExists(atPath: url.path) else {
+                let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL
+                bmLog("📄   skip @\(range.location): url=\(url?.lastPathComponent ?? "nil"), ext=\(url?.pathExtension ?? "nil")")
+                return
+            }
 
             let path = textStorage.attribute(.attachmentPath, at: range.location, effectiveRange: nil) as? String ?? url.lastPathComponent
 
@@ -461,8 +482,11 @@ enum PDFAttachmentProcessor {
             newAttachment.attachmentCell = cell
             newAttachment.bounds = NSRect(origin: .zero, size: size)
 
+            bmLog("📄   PENDING @\(range.location): \(url.lastPathComponent)")
             replacements.append((range, newAttachment))
         }
+
+        bmLog("📄 PDFAttachmentProcessor: \(attachmentCount) attachments found, \(replacements.count) to replace")
 
         // Apply replacements in reverse order
         for (range, attachment) in replacements.reversed() {

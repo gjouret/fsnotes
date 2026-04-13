@@ -431,6 +431,7 @@ class NotesTableView: NSTableView,
         cell.configure(note: note)
         cell.loadImagesPreview()
         cell.attachHeaders(note: note)
+        cell.renderPin()
 
         return cell
     }

@@ -56,6 +56,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var note: Note?
     public var viewDelegate: ViewController?
 
+    /// True when the user has made an edit since the last fill/save.
+    /// Prevents display-only operations (fill, hydration, async rendering)
+    /// from triggering saves that could corrupt note content on disk.
+    public var hasUserEdits: Bool = false
+
     /// Range of a code block that was restored from a rendered image and needs re-rendering
     /// when the cursor moves outside it
     public var pendingRenderBlockRange: NSRange?

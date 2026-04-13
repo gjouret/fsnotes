@@ -119,12 +119,22 @@ extension EditTextView {
         bmLog("📊 INITIAL STATE: storage.length=\(initialStorageLength), storage.string='\(initialStorageString)'")
 
         // Use cached Document if available, otherwise parse from raw markdown.
+        // IMPORTANT: note.content.string is UNRELIABLE for the block model
+        // because the legacy source-mode pipeline's loadAttachments() replaces
+        // ![alt](path) with U+FFFC attachment characters. We must read the
+        // raw markdown directly from disk to get the original text.
         let document: Document
         if let cached = note.cachedDocument {
             document = cached
             bmLog("📋 Using cached document with \(cached.blocks.count) blocks")
         } else {
-            let markdown = note.content.string
+            let markdown: String
+            if let fileURL = note.getContentFileURL(),
+               let rawMarkdown = try? String(contentsOf: fileURL, encoding: .utf8) {
+                markdown = rawMarkdown
+            } else {
+                markdown = note.content.string
+            }
             bmLog("📝 Parsing markdown: '\(markdown)' (length=\(markdown.count))")
             document = MarkdownParser.parse(markdown)
             note.cachedDocument = document

@@ -100,7 +100,7 @@ public enum ListRenderer {
         // glyph drawing and the text comes from the cell being larger
         // than the drawn glyph (the glyph is centered in its cell).
         let glyphSize = bodyFont.pointSize * cellScale
-        let depthIndent = CGFloat(depth) * bodyFont.pointSize * indentScale
+        let depthIndent = CGFloat(depth + 1) * bodyFont.pointSize * indentScale
         let textIndent = depthIndent + glyphSize
         let paraStyle = NSMutableParagraphStyle()
         paraStyle.firstLineHeadIndent = depthIndent

@@ -148,6 +148,7 @@ extension EditTextView {
         }
 
         // Source/markdown mode: source-mode processing path.
+        hasUserEdits = true
         note.resetAttributesCache()
         scheduleTagScan(for: note)
         deleteUnusedImages(checkRange: range)

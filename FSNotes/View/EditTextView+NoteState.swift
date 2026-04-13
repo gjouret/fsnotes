@@ -28,6 +28,14 @@ extension EditTextView {
 
     public func save() {
         guard let note = self.note else { return }
+        // Safety: only save when the user has actually edited the note.
+        // Display-only operations (fill, hydration, async rendering) must
+        // never write to disk — that would corrupt notes with stale or
+        // partial rendered state.
+        guard hasUserEdits else {
+            bmLog("⏭️ save skipped (no user edits): \(note.title)")
+            return
+        }
         // Block-model pipeline: serialize Document to markdown
         // directly, bypassing the attribute-stripping save path.
         if let markdown = serializeViaBlockModel() {
@@ -40,11 +48,13 @@ extension EditTextView {
                 note.cachedDocument = doc
             }
             cleanupOrphanedAttachmentsIfNeeded(note: note, markdown: markdown)
+            hasUserEdits = false
             return
         }
         let saving = attributedStringForSaving()
         bmLog("💾 save (source-mode): \(note.title) — \(saving.string.prefix(60))")
         note.save(attributed: saving)
+        hasUserEdits = false
         // NOTE: Do NOT run orphan cleanup here. The source-mode fallback
         // fires when documentProjection is temporarily nil (e.g. during
         // clearBlockModelAndRefill). The plain text contains ￼ attachment
@@ -229,6 +239,9 @@ extension EditTextView {
         updateTextContainerInset()
 
         guard let storage = textStorage else { return }
+
+        // Reset edit tracking — display-only fill must not trigger saves.
+        hasUserEdits = false
 
         if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {
             pendingRenderBlockRange = nil

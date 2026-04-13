@@ -48,29 +48,56 @@ enum ImageAttachmentHydrator {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let maxWidth = containerMaxWidth(for: editor)
 
+        bmLog("🖼️ ImageAttachmentHydrator: scanning storage length=\(textStorage.length)")
+
         // Collect first, mutate after. enumerateAttribute can't safely
         // coexist with attachment.cell mutation during the walk.
         var pending: [(NSTextAttachment, URL, NSRange)] = []
+        var attachmentCount = 0
 
         textStorage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, _ in
             guard let attachment = value as? NSTextAttachment else { return }
+            attachmentCount += 1
 
             // Skip if already hydrated (any non-default cell means some
             // other pipeline already took responsibility for drawing).
-            if attachment.attachmentCell is FSNTextAttachmentCell { return }
-            if attachment.image != nil { return }
+            if attachment.attachmentCell is FSNTextAttachmentCell {
+                bmLog("🖼️   skip @\(range.location): already FSNTextAttachmentCell")
+                return
+            }
+            if attachment.image != nil {
+                bmLog("🖼️   skip @\(range.location): already has image")
+                return
+            }
 
             // Only hydrate attachments marked as image by InlineRenderer.
             // PDFs are handled by PDFAttachmentProcessor.
             guard let rawType = textStorage.attribute(.renderedBlockType, at: range.location, effectiveRange: nil) as? String,
-                  rawType == RenderedBlockType.image.rawValue else { return }
+                  rawType == RenderedBlockType.image.rawValue else {
+                let rawType = textStorage.attribute(.renderedBlockType, at: range.location, effectiveRange: nil)
+                bmLog("🖼️   skip @\(range.location): blockType=\(rawType ?? "nil") (not image)")
+                return
+            }
 
-            guard let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL else { return }
-            guard FileManager.default.fileExists(atPath: url.path) else { return }
+            guard let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL else {
+                bmLog("🖼️   skip @\(range.location): no attachmentUrl")
+                return
+            }
 
+            // Accept both local files and remote URLs (http/https).
+            let isRemote = url.scheme == "http" || url.scheme == "https"
+            if !isRemote {
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    bmLog("🖼️   skip @\(range.location): file not found: \(url.path)")
+                    return
+                }
+            }
+
+            bmLog("🖼️   PENDING @\(range.location): \(url.lastPathComponent)")
             pending.append((attachment, url, range))
         }
 
+        bmLog("🖼️ ImageAttachmentHydrator: \(attachmentCount) attachments found, \(pending.count) pending")
         guard !pending.isEmpty else { return }
 
         for (attachment, url, range) in pending {
@@ -107,6 +134,39 @@ enum ImageAttachmentHydrator {
         textStorage: NSTextStorage,
         editor: EditTextView
     ) {
+        let isRemote = url.scheme == "http" || url.scheme == "https"
+
+        if isRemote {
+            // Fetch remote image via URLSession.
+            let task = URLSession.shared.dataTask(with: url) { data, _, _ in
+                guard let data = data, let image = NSImage(data: data) else { return }
+                let naturalSize = image.size
+                let scale = naturalSize.width > maxWidth ? maxWidth / naturalSize.width : 1.0
+                let loadedSize = CGSize(width: naturalSize.width * scale, height: naturalSize.height * scale)
+
+                DispatchQueue.main.async {
+                    guard let manager = editor.layoutManager,
+                          let container = editor.textContainer else { return }
+                    guard range.location + range.length <= textStorage.length else { return }
+                    guard let storedAttachment = textStorage.attribute(
+                        .attachment, at: range.location, effectiveRange: nil
+                    ) as? NSTextAttachment,
+                          storedAttachment === attachment else { return }
+
+                    let cell = FSNTextAttachmentCell(textContainer: container, image: image)
+                    cell.image?.size = loadedSize
+                    attachment.image = nil
+                    attachment.attachmentCell = cell
+                    attachment.bounds = NSRect(x: 0, y: 0, width: loadedSize.width, height: loadedSize.height)
+
+                    textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
+                    manager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+                }
+            }
+            task.resume()
+            return
+        }
+
         editor.imagesLoaderQueue.addOperation { [weak editor] in
             var image: PlatformImage?
             var size: CGSize?
@@ -130,9 +190,6 @@ enum ImageAttachmentHydrator {
                       let loadedImage = image,
                       let loadedSize = size else { return }
 
-                // Verify the attachment is still at `range` — a concurrent
-                // edit may have shifted it. enumerate instead of trusting
-                // the saved range.
                 guard range.location + range.length <= textStorage.length else { return }
                 guard let storedAttachment = textStorage.attribute(
                     .attachment, at: range.location, effectiveRange: nil

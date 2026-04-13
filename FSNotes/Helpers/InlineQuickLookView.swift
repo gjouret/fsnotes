@@ -30,6 +30,7 @@ class InlineQuickLookView: NSView {
     private var toolbarView: NSView!
     private var filenameLabel: NSTextField!
     private var openButton: NSButton!
+    private var separatorView: NSView!
     private var containerWidth: CGFloat
 
     /// Maximum height for the preview (scales with note font).
@@ -73,6 +74,12 @@ class InlineQuickLookView: NSView {
         toolbarView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         addSubview(toolbarView)
 
+        // Separator line at bottom edge of toolbar
+        separatorView = NSView()
+        separatorView.wantsLayer = true
+        separatorView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        addSubview(separatorView)
+
         // File icon + name label (left side)
         let icon = NSWorkspace.shared.icon(forFile: fileURL.path)
         icon.size = NSSize(width: fontSize + 2, height: fontSize + 2)
@@ -110,6 +117,8 @@ class InlineQuickLookView: NSView {
         let tbH = toolbarHeight
 
         toolbarView.frame = NSRect(x: 0, y: frame.height - tbH, width: w, height: tbH)
+
+        separatorView.frame = NSRect(x: 0, y: frame.height - tbH, width: w, height: 1)
 
         let btnY = frame.height - tbH
         let fontSize = UserDefaultsManagement.noteFont.pointSize
@@ -264,8 +273,12 @@ enum QuickLookAttachmentProcessor {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         var replacements: [(NSRange, NSTextAttachment)] = []
 
+        bmLog("📎 QuickLookProcessor: scanning storage length=\(textStorage.length)")
+        var attachmentCount = 0
+
         textStorage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, _ in
             guard let attachment = value as? NSTextAttachment else { return }
+            attachmentCount += 1
 
             // Skip if already rendered as a QuickLook or PDF cell
             if attachment.attachmentCell is QuickLookAttachmentCell { return }
@@ -273,7 +286,11 @@ enum QuickLookAttachmentProcessor {
 
             // Must have a URL pointing to an existing file
             guard let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL,
-                  FileManager.default.fileExists(atPath: url.path) else { return }
+                  FileManager.default.fileExists(atPath: url.path) else {
+                let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL
+                bmLog("📎   skip @\(range.location): url=\(url?.lastPathComponent ?? "nil"), exists=\(url != nil ? FileManager.default.fileExists(atPath: url!.path) : false)")
+                return
+            }
 
             // Skip images and PDFs (handled by their own processors)
             let ext = url.pathExtension.lowercased()
@@ -289,8 +306,11 @@ enum QuickLookAttachmentProcessor {
             newAttachment.attachmentCell = cell
             newAttachment.bounds = NSRect(origin: .zero, size: size)
 
+            bmLog("📎   PENDING @\(range.location): \(url.lastPathComponent)")
             replacements.append((range, newAttachment))
         }
+
+        bmLog("📎 QuickLookProcessor: \(attachmentCount) attachments found, \(replacements.count) to replace")
 
         // Apply replacements in reverse order
         for (range, attachment) in replacements.reversed() {

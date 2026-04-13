@@ -315,25 +315,25 @@ extension EditTextView {
 
         let tableMarkdown = "|  |  |\n|--|--|\n|  |  |"
 
-        if documentProjection != nil {
-            // Block-model mode: inserting multi-line table text via
-            // EditingOps.insert would split it into separate paragraph
-            // blocks (one per line). Instead, insert directly into the
-            // note's raw markdown and re-fill so the parser groups all
-            // table lines into a single paragraph block.
+        if let projection = documentProjection {
+            // Block-model mode: insert a table block after the current block.
             let cursorPos = selectedRange().location
-            if let projection = documentProjection {
-                var markdown = MarkdownSerializer.serialize(projection.document)
-                // Map rendered cursor position → approximate markdown position.
-                // For simplicity, clamp to content length.
-                let insertPos = min(cursorPos, markdown.count)
-                let idx = markdown.index(markdown.startIndex, offsetBy: insertPos)
-                let prefix = insertPos > 0 && !markdown[markdown.index(before: idx)...].hasPrefix("\n") ? "\n" : ""
-                markdown.insert(contentsOf: prefix + tableMarkdown + "\n", at: idx)
-                note.content = NSMutableAttributedString(string: markdown)
-                note.cachedDocument = nil
-                fill(note: note)
-            }
+            guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursorPos) else { return }
+
+            let tableBlock = Block.table(
+                header: ["", ""],
+                alignments: [.none, .none],
+                rows: [["", ""]],
+                raw: tableMarkdown
+            )
+            var newDoc = projection.document
+            newDoc.blocks.insert(tableBlock, at: blockIndex + 1)
+
+            note.content = NSMutableAttributedString(
+                string: MarkdownSerializer.serialize(newDoc)
+            )
+            note.cachedDocument = nil
+            fill(note: note)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                 self?.focusFirstInlineTableCell()
             }

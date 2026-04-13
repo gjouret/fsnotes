@@ -134,10 +134,31 @@ extension EditTextView {
         if let htmlData = NSPasteboard.general.data(forType: .html),
            let html = String(data: htmlData, encoding: .utf8),
            let markdown = Self.htmlTableToMarkdown(html) {
-            breakUndoCoalescing()
-            insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
-            breakUndoCoalescing()
-            if NotesTextProcessor.hideSyntax { renderTables() }
+            if let projection = documentProjection, let note = self.note {
+                // Block-model mode: insert table block via document model
+                // so the parser groups it as a single table block and the
+                // table widget renderer activates.
+                let cursorPos = selectedRange().location
+                guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursorPos) else { return }
+
+                // Parse the pasted markdown to extract a proper table block.
+                let parsed = MarkdownParser.parse(markdown)
+                var newDoc = projection.document
+                for (offset, block) in parsed.blocks.enumerated() {
+                    newDoc.blocks.insert(block, at: blockIndex + 1 + offset)
+                }
+
+                note.content = NSMutableAttributedString(
+                    string: MarkdownSerializer.serialize(newDoc)
+                )
+                note.cachedDocument = nil
+                fill(note: note)
+            } else {
+                breakUndoCoalescing()
+                insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
+                breakUndoCoalescing()
+                if NotesTextProcessor.hideSyntax { renderTables() }
+            }
             return
         }
 
