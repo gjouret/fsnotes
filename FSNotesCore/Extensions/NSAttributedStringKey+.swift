@@ -33,4 +33,6 @@ public extension NSAttributedString.Key {
     static let codeFence = NSAttributedString.Key(rawValue: "es.fsnot.code.fence")
     static let kbdTag = NSAttributedString.Key(rawValue: "es.fsnot.kbd")
     static let foldedContent = NSAttributedString.Key(rawValue: "es.fsnot.folded.content")
+    static let inlineMathSource = NSAttributedString.Key(rawValue: "es.fsnot.inline.math")
+    static let displayMathSource = NSAttributedString.Key(rawValue: "es.fsnot.display.math")
 }

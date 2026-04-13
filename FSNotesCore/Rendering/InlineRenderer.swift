@@ -68,6 +68,35 @@ public enum InlineRenderer {
             let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14
             attrs[.font] = PlatformFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
             return NSAttributedString(string: s, attributes: attrs)
+        case .math(let content):
+            // Inline math: placeholder text with .inlineMathSource marker.
+            // The view layer renders via BlockRenderer + MathJax inline mode.
+            var attrs = baseAttributes
+            let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14
+            let mono = PlatformFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
+            attrs[.font] = PlatformFont.withTraits(font: mono, traits: .italic)
+            #if os(OSX)
+            attrs[.foregroundColor] = NSColor.systemPurple
+            #else
+            attrs[.foregroundColor] = UIColor.systemPurple
+            #endif
+            attrs[.inlineMathSource] = content
+            return NSAttributedString(string: content, attributes: attrs)
+        case .displayMath(let content):
+            // Display math: placeholder text with .displayMathSource marker.
+            // The view layer renders via BlockRenderer + MathJax display mode,
+            // producing a centered block image (like mermaid but no frame).
+            var attrs = baseAttributes
+            let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14
+            let mono = PlatformFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
+            attrs[.font] = PlatformFont.withTraits(font: mono, traits: .italic)
+            #if os(OSX)
+            attrs[.foregroundColor] = NSColor.systemPurple
+            #else
+            attrs[.foregroundColor] = UIColor.systemPurple
+            #endif
+            attrs[.displayMathSource] = content
+            return NSAttributedString(string: content, attributes: attrs)
         case .link(let text, let rawDest):
             var attrs = baseAttributes
             if let url = URL(string: rawDest) {
@@ -170,12 +199,26 @@ public enum InlineRenderer {
         let destination = stripDestinationTitle(rawDestination)
         guard !destination.isEmpty else { return nil }
 
-        // Remote URLs (http/https) are not hydrated locally — let the
-        // alt-text fallback render them as plain text for now. Remote
-        // images can be added in a later pass with an async URLSession
-        // fetch in the hydrator.
+        // Remote URLs (http/https) — create a placeholder attachment
+        // and let the hydrator fetch the image asynchronously.
         if destination.hasPrefix("http://") || destination.hasPrefix("https://") {
-            return nil
+            guard let url = URL(string: destination) else { return nil }
+
+            let attachment = NSTextAttachment()
+            attachment.bounds = NSRect(origin: .zero, size: imageAttachmentPlaceholderSize)
+
+            let altText = plainText(alt)
+            let originalMarkdown = "![\(altText)](\(destination))"
+
+            let result = NSMutableAttributedString(attachment: attachment)
+            let range = NSRange(location: 0, length: result.length)
+            result.addAttributes(baseAttributes, range: range)
+            result.addAttribute(.attachmentUrl, value: url, range: range)
+            result.addAttribute(.attachmentPath, value: destination, range: range)
+            result.addAttribute(.attachmentTitle, value: altText, range: range)
+            result.addAttribute(.renderedBlockOriginalMarkdown, value: originalMarkdown, range: range)
+            result.addAttribute(.renderedBlockType, value: RenderedBlockType.image.rawValue, range: range)
+            return result
         }
 
         let cleanPath = destination.removingPercentEncoding ?? destination
@@ -242,6 +285,8 @@ public enum InlineRenderer {
         case .entity(let s):             out += s
         case .underline(let c):          c.forEach { plainTextAppend($0, into: &out) }
         case .highlight(let c):          c.forEach { plainTextAppend($0, into: &out) }
+        case .math(let s):               out += s
+        case .displayMath(let s):        out += s
         }
     }
 

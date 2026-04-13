@@ -242,7 +242,19 @@ public enum EditingOps {
                     reason: "multi-line paste in heading not supported"
                 )
                 
-            case .horizontalRule, .blankLine, .table:
+            case .blankLine:
+                if string == "\n" {
+                    // Return on a blank line creates another blank line.
+                    let newBlocks: [Block] = [.blankLine, .blankLine]
+                    var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+                    let lastNewBlockIdx = blockIndex + newBlocks.count - 1
+                    result.newCursorPosition = result.newProjection.blockSpans[lastNewBlockIdx].location
+                    return result
+                }
+                throw EditingError.unsupported(
+                    reason: "newline insertion in blankLine not supported"
+                )
+            case .horizontalRule, .table:
                 throw EditingError.unsupported(
                     reason: "newline insertion in \(describe(oldBlock)) not supported"
                 )
@@ -722,6 +734,13 @@ public enum EditingOps {
         let newChars = Array(newStr.unicodeScalars)
         let minLen = min(oldChars.count, newChars.count)
 
+        // Character-only comparison for prefix/suffix narrowing.
+        // Do NOT compare attributes here: attribute objects from the old
+        // projection vs a freshly-rendered projection are semantically
+        // equal but not object-equal (NSTextAttachment, NSParagraphStyle
+        // instances differ). Comparing them would break the prefix at
+        // position 0, replacing the entire block and discarding loaded
+        // image/PDF attachments that the hydrator already populated.
         var commonPrefix = 0
         while commonPrefix < minLen && oldChars[commonPrefix] == newChars[commonPrefix] {
             commonPrefix += 1
@@ -1032,6 +1051,8 @@ public enum EditingOps {
         case .strikethrough(let c): return inlinesToText(c)
         case .underline(let c): return inlinesToText(c)
         case .highlight(let c): return inlinesToText(c)
+        case .math(let s): return s
+        case .displayMath(let s): return s
         case .link(let text, _): return inlinesToText(text)
         case .image(let alt, _): return inlinesToText(alt)
         case .autolink(let text, _): return text
@@ -1149,7 +1170,10 @@ public enum EditingOps {
         )
         let newItem = ListItem(
             indent: entry.item.indent, marker: entry.item.marker,
-            afterMarker: entry.item.afterMarker, checkbox: entry.item.checkbox,
+            afterMarker: entry.item.afterMarker,
+            checkbox: entry.item.checkbox.map { cb in
+                cb.isChecked ? Checkbox(text: "[ ]", afterText: cb.afterText) : cb
+            },
             inline: after, children: []
         )
 
@@ -1796,6 +1820,8 @@ public enum EditingOps {
         case .strikethrough(let c): return c.reduce(0) { $0 + inlineLength($1) }
         case .underline(let c): return c.reduce(0) { $0 + inlineLength($1) }
         case .highlight(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .math(let s): return s.count
+        case .displayMath(let s): return s.count
         case .link(let text, _): return text.reduce(0) { $0 + inlineLength($1) }
         // Images render as EXACTLY one character (the NSTextAttachment
         // placeholder emitted by InlineRenderer, both for the native
@@ -1891,6 +1917,14 @@ public enum EditingOps {
                     let (b, a) = splitInlines(children, at: localOffset)
                     before.append(.highlight(b))
                     after.append(.highlight(a))
+                case .math(let s):
+                    let idx = s.index(s.startIndex, offsetBy: localOffset)
+                    before.append(.math(String(s[..<idx])))
+                    after.append(.math(String(s[idx...])))
+                case .displayMath(let s):
+                    let idx = s.index(s.startIndex, offsetBy: localOffset)
+                    before.append(.displayMath(String(s[..<idx])))
+                    after.append(.displayMath(String(s[idx...])))
                 case .link(let text, let dest):
                     let (b, a) = splitInlines(text, at: localOffset)
                     before.append(.link(text: b, rawDestination: dest))
@@ -1974,6 +2008,10 @@ public enum EditingOps {
                 walkFlatten(children, path: &path, into: &runs)
             case .highlight(let children):
                 walkFlatten(children, path: &path, into: &runs)
+            case .math(let s):
+                runs.append(LeafRun(path: path, text: s, isCode: true))
+            case .displayMath(let s):
+                runs.append(LeafRun(path: path, text: s, isCode: true))
             case .link(let text, _):
                 walkFlatten(text, path: &path, into: &runs)
             case .image(let alt, _):
@@ -2058,12 +2096,14 @@ public enum EditingOps {
             switch inline {
             case .text: return .text(newText)
             case .code: return .code(newText)
+            case .math: return .math(newText)
+            case .displayMath: return .displayMath(newText)
             case .autolink: return .text(newText)
             case .escapedChar: return .text(newText)
             case .lineBreak: return .text(newText)
             case .rawHTML: return .rawHTML(newText)
             case .entity: return .entity(newText)
-            case .bold, .italic, .strikethrough, .underline, .highlight, .link, .image:
+            case .bold, .italic, .strikethrough, .underline, .highlight, .link, .image, .math, .displayMath:
                 // Path exhausted on a container: should not happen
                 // when paths come from `flatten`. Leave unchanged.
                 return inline
@@ -2072,7 +2112,7 @@ public enum EditingOps {
         let idx = path.first!
         let rest = Array(path.dropFirst())
         switch inline {
-        case .text, .code, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
+        case .text, .code, .math, .displayMath, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
             // Cannot descend into a leaf.
             return inline
         case .bold(let children, let marker):
@@ -3087,7 +3127,8 @@ public enum EditingOps {
             spliceRange: NSRange(location: spliceStart, length: 0),
             spliceReplacement: replacement
         )
-        result.newCursorPosition = NSMaxRange(newHRSpan)
+        // +1 to skip the inter-block separator "\n" that follows the HR.
+        result.newCursorPosition = NSMaxRange(newHRSpan) + 1
         return result
     }
 
@@ -3441,7 +3482,7 @@ public enum EditingOps {
         return true
     }
 
-    /// Check if any ancestor along the path is the given trait.
+    /// Check if any node along the path (including the leaf) is the given trait.
     private static func pathContainsTrait(
         _ path: InlinePath,
         trait: InlineTrait,
@@ -3451,17 +3492,17 @@ public enum EditingOps {
         for (depth, idx) in path.enumerated() {
             guard idx < current.count else { return false }
             let node = current[idx]
+            // Check if this node IS the trait (at any depth, including leaf).
+            switch (node, trait) {
+            case (.bold, .bold): return true
+            case (.italic, .italic): return true
+            case (.strikethrough, .strikethrough): return true
+            case (.underline, .underline): return true
+            case (.highlight, .highlight): return true
+            default: break
+            }
+            // Descend into interior nodes.
             if depth < path.count - 1 {
-                // Interior node — check if it's the trait.
-                switch (node, trait) {
-                case (.bold, .bold): return true
-                case (.italic, .italic): return true
-                case (.strikethrough, .strikethrough): return true
-                case (.underline, .underline): return true
-                case (.highlight, .highlight): return true
-                default: break
-                }
-                // Descend.
                 switch node {
                 case .bold(let c, _): current = c
                 case .italic(let c, _): current = c
@@ -3615,7 +3656,7 @@ public enum EditingOps {
             let len = inlinesLength(alt)
             let clampedTo = min(to, len)
             return [.image(alt: unwrapTrait(alt, trait: trait, from: clampedFrom, to: clampedTo), rawDestination: dest)]
-        case .text, .code, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
+        case .text, .code, .math, .displayMath, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
             return [node]
         }
     }
@@ -3675,6 +3716,12 @@ public enum EditingOps {
                     result.append(node)
                 }
             case .code(let s):
+                if s.isEmpty { continue }
+                result.append(node)
+            case .math(let s):
+                if s.isEmpty { continue }
+                result.append(node)
+            case .displayMath(let s):
                 if s.isEmpty { continue }
                 result.append(node)
             case .bold(let children, let marker):

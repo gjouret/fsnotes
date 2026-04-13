@@ -377,6 +377,10 @@ struct CommonMarkHTMLRenderer {
                 output += "<u>\(renderInlines(children))</u>"
             case .highlight(let children):
                 output += "<mark>\(renderInlines(children))</mark>"
+            case .math(let s):
+                output += "<code>\(escapeHTML(s))</code>"
+            case .displayMath(let s):
+                output += "<code>\(escapeHTML(s))</code>"
             }
         }
         return output
@@ -533,6 +537,10 @@ struct CommonMarkHTMLRenderer {
                  .underline(let children), .highlight(let children):
                 result += plainText(from: children)
             case .code(let t):
+                result += t
+            case .math(let t):
+                result += t
+            case .displayMath(let t):
                 result += t
             case .link(let text, _):
                 result += plainText(from: text)

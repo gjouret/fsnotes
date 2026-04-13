@@ -67,14 +67,10 @@ public enum CodeBlockRenderer {
         return highlighter.highlight(code, language: language)
     }
 
-    /// Returns a HighlightStyle with the appropriate theme for the
-    /// current system appearance (dark vs light).
+    /// Returns a HighlightStyle matching the user's configured code theme,
+    /// so WYSIWYG code blocks use the same colors as source mode.
     private static func themedStyle() -> HighlightStyle {
-        #if os(OSX)
-        let isDark = NSAppearance.current.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return isDark ? GitHubDarkTheme.make() : GitHubLightTheme.make()
-        #else
-        return GitHubLightTheme.make()
-        #endif
+        let isDark = UserDataService.instance.isDark
+        return UserDefaultsManagement.codeTheme.makeStyle(isDark: isDark)
     }
 }

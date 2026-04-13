@@ -172,6 +172,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         for (i, block) in doc.blocks.enumerated() {
             let span = spans[i]
             let blockType: MarkdownBlockType
+            var isRenderedCodeBlock = false
             switch block {
             case .heading(let level, _):
                 blockType = .heading(level: level)
@@ -188,6 +189,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 }
             case .codeBlock(let lang, _, _):
                 blockType = .codeBlock(language: lang)
+                // Mark rendered code blocks (mermaid/math/latex) so
+                // codeBlockRanges excludes them from gray background drawing.
+                if let l = lang?.lowercased(), l == "mermaid" || l == "math" || l == "latex" {
+                    isRenderedCodeBlock = true
+                }
             case .list(let items, _):
                 // Determine list type from first item
                 if items.first?.checkbox != nil {
@@ -215,6 +221,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 range: span,
                 contentRange: span
             )
+            if isRenderedCodeBlock {
+                mb.renderMode = .rendered
+            }
             // Preserve collapsed state from previous blocks at the same index
             if previousCollapsed[i] == true {
                 mb.collapsed = true

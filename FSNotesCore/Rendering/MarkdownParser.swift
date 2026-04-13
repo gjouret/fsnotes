@@ -966,6 +966,20 @@ public enum MarkdownParser {
                 i = match.endIndex
                 continue
             }
+            // 6b. Display math ($$...$$) — must check before single-$ inline math
+            if let match = tryMatchDisplayMath(chars, from: i) {
+                flushPlain()
+                tokens.append(.inline(.displayMath(match.content)))
+                i = match.endIndex
+                continue
+            }
+            // 6c. Inline math ($...$)
+            if let match = tryMatchInlineMath(chars, from: i) {
+                flushPlain()
+                tokens.append(.inline(.math(match.content)))
+                i = match.endIndex
+                continue
+            }
             // 7. Code spans
             if let match = tryMatchCodeSpan(chars, from: i) {
                 flushPlain()
@@ -1339,6 +1353,51 @@ public enum MarkdownParser {
             } else {
                 k += 1
             }
+        }
+        return nil
+    }
+
+    /// Try to match inline math `$...$` starting at `start`. Requires
+    /// non-empty content and the closing `$` must not be preceded by a
+    /// space (to avoid matching currency amounts like `$5`).
+    /// Try to match display math `$$...$$` starting at `start`.
+    /// Display math can span multiple lines (soft line breaks within a paragraph).
+    private static func tryMatchDisplayMath(
+        _ chars: [Character], from start: Int
+    ) -> (content: String, endIndex: Int)? {
+        guard start + 1 < chars.count,
+              chars[start] == "$", chars[start + 1] == "$" else { return nil }
+        var j = start + 2
+        while j + 1 < chars.count {
+            if chars[j] == "$" && chars[j + 1] == "$" {
+                let content = String(chars[(start + 2)..<j])
+                    .trimmingCharacters(in: .whitespaces)
+                if content.isEmpty { return nil }
+                return (content, j + 2)
+            }
+            j += 1
+        }
+        return nil
+    }
+
+    private static func tryMatchInlineMath(
+        _ chars: [Character], from start: Int
+    ) -> (content: String, endIndex: Int)? {
+        guard start < chars.count, chars[start] == "$" else { return nil }
+        // $$ is display math, not inline — skip
+        if start + 1 < chars.count && chars[start + 1] == "$" { return nil }
+        // Don't match $ preceded by alphanumeric (likely currency)
+        if start > 0 && chars[start - 1].isLetter { return nil }
+        var j = start + 1
+        while j < chars.count {
+            if chars[j] == "$" {
+                let content = String(chars[(start + 1)..<j])
+                // Reject empty content and content ending in space
+                if content.isEmpty || content.last == " " { return nil }
+                return (content, j + 1)
+            }
+            if chars[j] == "\n" { return nil } // No newlines in inline math
+            j += 1
         }
         return nil
     }

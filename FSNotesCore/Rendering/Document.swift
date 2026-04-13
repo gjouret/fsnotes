@@ -251,4 +251,6 @@ public indirect enum Inline: Equatable {
     case entity(String)                // &amp; &#123; &#x1F; — raw entity text
     case underline([Inline])           // <u>…</u>
     case highlight([Inline])           // <mark>…</mark>
+    case math(String)                  // $…$ — inline LaTeX math
+    case displayMath(String)           // $$…$$ — display LaTeX math
 }

@@ -12,6 +12,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     enum BlockType {
         case mermaid
         case math
+        case inlineMath
     }
 
     private var webView: WKWebView?
@@ -22,6 +23,11 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 
     // Cache rendered images by source hash
     private static var cache = NSCache<NSString, NSImage>()
+
+    /// Clear all cached rendered images (e.g., when rendering templates change).
+    static func clearCache() {
+        cache.removeAllObjects()
+    }
 
     // Keep strong references to active renderers so they aren't deallocated
     // while the WKWebView is still loading (navigationDelegate is weak)
@@ -58,8 +64,9 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: maxWidth, height: 100), configuration: config)
         webView?.navigationDelegate = self
-        // Make WKWebView background transparent so snapshot has no opaque fill
-        webView?.setValue(false, forKey: "drawsBackground")
+        // Use opaque background matching the editor theme (dark/light).
+        // Transparent backgrounds caused invisible text in snapshots on
+        // some macOS versions and when fonts load asynchronously.
 
         // WKWebView requires being in a window hierarchy to render content on recent macOS.
         // Add it to a hidden offscreen window.
@@ -101,6 +108,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 
         let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let textColor = isDark ? "#d4d4d4" : "#333333"
+        let bgColor = isDark ? "#1e1e1e" : "#ffffff"
         let mermaidTheme = isDark ? "dark" : "default"
 
         switch type {
@@ -112,7 +120,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
                 <meta charset="utf-8">
                 <style>
                     * { margin: 0; padding: 0; }
-                    body { background: transparent; color: \(textColor); }
+                    body { background: \(bgColor); color: \(textColor); }
                     .mermaid { max-width: \(Int(maxWidth))px; }
                     svg { max-width: 100%; }
                 </style>
@@ -161,23 +169,103 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             <head>
                 <meta charset="utf-8">
                 <style>
-                    body { margin: 0; padding: 0; background: transparent; color: \(textColor); }
+                    body { margin: 0; padding: 4px 8px; background: \(bgColor); color: \(textColor); }
+                    #math { display: inline-block; }
+                    /* Force MathJax text color to match the theme */
+                    mjx-container, mjx-math, mjx-mi, mjx-mo, mjx-mn, mjx-mrow {
+                        color: \(textColor) !important;
+                    }
                 </style>
+                <!-- MathJax v3 config MUST be set before the script loads.
+                     Without this, $$ delimiters are not recognized and the
+                     formula renders as plain text (18px tall). -->
+                <script>
+                    MathJax = {
+                        tex: {
+                            displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                            inlineMath: [['$', '$'], ['\\\\(', '\\\\)']]
+                        },
+                        startup: {
+                            typeset: false
+                        }
+                    };
+                </script>
                 <script src="js/tex-mml-chtml.js"></script>
             </head>
             <body>
-                <div id="math">$$\(escapedSource)$$</div>
+                <div id="math">\\[\(escapedSource)\\]</div>
                 <script>
                     MathJax.startup.promise.then(function() {
-                        MathJax.typeset();
+                        return MathJax.typesetPromise();
+                    }).then(function() {
+                        return document.fonts.ready;
+                    }).then(function() {
+                        setTimeout(function() {
+                            var el = document.getElementById('math');
+                            var rect = el.getBoundingClientRect();
+                            // Use rect.right/bottom (not width/height) to include
+                            // body padding in the snapshot dimensions.
+                            window.webkit.messageHandlers.renderComplete.postMessage({
+                                width: Math.ceil(rect.right) + 2,
+                                height: Math.ceil(rect.bottom) + 2
+                            });
+                        }, 200);
+                    }).catch(function(e) {
+                        window.webkit.messageHandlers.renderComplete.postMessage({
+                            error: (e && e.message) ? e.message : 'MathJax error'
+                        });
+                    });
+                </script>
+            </body>
+            </html>
+            """
+
+        case .inlineMath:
+            // Inline math: rendered at text size, no display-mode centering.
+            // Uses \(...\) delimiters for inline rendering.
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    body { margin: 0; padding: 0 2px; background: \(bgColor); color: \(textColor);
+                           font-size: 14px; line-height: 1.2; }
+                    mjx-container, mjx-math, mjx-mi, mjx-mo, mjx-mn, mjx-mrow {
+                        color: \(textColor) !important;
+                    }
+                </style>
+                <script>
+                    MathJax = {
+                        tex: {
+                            displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                            inlineMath: [['\\\\(', '\\\\)']]
+                        },
+                        startup: { typeset: false }
+                    };
+                </script>
+                <script src="js/tex-mml-chtml.js"></script>
+            </head>
+            <body>
+                <span id="math">\\(\(escapedSource)\\)</span>
+                <script>
+                    MathJax.startup.promise.then(function() {
+                        return MathJax.typesetPromise();
+                    }).then(function() {
+                        return document.fonts.ready;
+                    }).then(function() {
                         setTimeout(function() {
                             var el = document.getElementById('math');
                             var rect = el.getBoundingClientRect();
                             window.webkit.messageHandlers.renderComplete.postMessage({
-                                width: Math.ceil(rect.width),
-                                height: Math.ceil(rect.height)
+                                width: Math.ceil(rect.right) + 2,
+                                height: Math.ceil(rect.bottom)
                             });
                         }, 200);
+                    }).catch(function(e) {
+                        window.webkit.messageHandlers.renderComplete.postMessage({
+                            error: (e && e.message) ? e.message : 'MathJax inline error'
+                        });
                     });
                 </script>
             </body>
@@ -189,14 +277,17 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     // MARK: - WKScriptMessageHandler
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        bmLog("🎭 BlockRenderer didReceive: name=\(message.name) body=\(message.body)")
         guard message.name == "renderComplete",
               let body = message.body as? [String: Any] else {
+            bmLog("🎭 BlockRenderer guard failed: name=\(message.name) bodyType=\(type(of: message.body))")
             completion?(nil)
             cleanup()
             return
         }
 
-        if body["error"] != nil {
+        if let error = body["error"] {
+            bmLog("🎭 BlockRenderer JS error: \(error)")
             completion?(nil)
             cleanup()
             return
@@ -205,16 +296,20 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         guard let width = body["width"] as? CGFloat,
               let height = body["height"] as? CGFloat,
               width > 0, height > 0 else {
+            bmLog("🎭 BlockRenderer bad dimensions: \(body)")
             completion?(nil)
             cleanup()
             return
         }
+
+        bmLog("🎭 BlockRenderer got dimensions: \(width)x\(height), taking snapshot after 300ms delay")
 
         // Resize webview to exact content size and take snapshot
         webView?.frame = NSRect(x: 0, y: 0, width: width, height: height)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let webView = self?.webView else {
+                bmLog("🎭 BlockRenderer asyncAfter: webView is nil! self=\(self != nil)")
                 self?.completion?(nil)
                 return
             }
@@ -223,7 +318,9 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             snapshotConfig.rect = NSRect(x: 0, y: 0, width: width, height: height)
             snapshotConfig.afterScreenUpdates = true
 
+            bmLog("🎭 BlockRenderer taking snapshot...")
             webView.takeSnapshot(with: snapshotConfig) { [weak self] image, error in
+                bmLog("🎭 BlockRenderer snapshot result: image=\(image != nil ? "\(image!.size)" : "nil"), error=\(error?.localizedDescription ?? "none")")
                 if let image = image,
                    let tiff = image.tiffRepresentation,
                    let rep = NSBitmapImageRep(data: tiff),
@@ -245,11 +342,13 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        bmLog("🎭 BlockRenderer navigation failed: \(error)")
         completion?(nil)
         cleanup()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        bmLog("🎭 BlockRenderer provisional navigation failed: \(error)")
         completion?(nil)
         cleanup()
     }

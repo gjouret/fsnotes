@@ -38,6 +38,7 @@
 		PIT0000000000000000000B1 /* ParagraphInlineRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PIT0000000000000000000F1 /* ParagraphInlineRoundTripTests.swift */; };
 		BMF0000000000000000000B1 /* BlockModelFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMF0000000000000000000F1 /* BlockModelFormattingTests.swift */; };
 		BF30000000000000000000B1 /* BugFixes3Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF30000000000000000000F1 /* BugFixes3Tests.swift */; };
+		RVT0000000000000000000B1 /* RenderingValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RVT0000000000000000000F1 /* RenderingValidationTests.swift */; };
 		CST0000000000000000000B1 /* CodeSpanRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CST0000000000000000000F1 /* CodeSpanRoundTripTests.swift */; };
 		LSR0000000000000000000B1 /* ListRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = LSR0000000000000000000F1 /* ListRenderer.swift */; };
 		LST0000000000000000000B1 /* ListRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LST0000000000000000000F1 /* ListRoundTripTests.swift */; };
@@ -1059,6 +1060,7 @@
 		PIT0000000000000000000F1 /* ParagraphInlineRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParagraphInlineRoundTripTests.swift; sourceTree = "<group>"; };
 		BMF0000000000000000000F1 /* BlockModelFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockModelFormattingTests.swift; sourceTree = "<group>"; };
 		BF30000000000000000000F1 /* BugFixes3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFixes3Tests.swift; sourceTree = "<group>"; };
+		RVT0000000000000000000F1 /* RenderingValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderingValidationTests.swift; sourceTree = "<group>"; };
 		CST0000000000000000000F1 /* CodeSpanRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeSpanRoundTripTests.swift; sourceTree = "<group>"; };
 		LSR0000000000000000000F1 /* ListRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListRenderer.swift; sourceTree = "<group>"; };
 		LST0000000000000000000F1 /* ListRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListRoundTripTests.swift; sourceTree = "<group>"; };
@@ -2342,6 +2344,7 @@
 				PIT0000000000000000000F1 /* ParagraphInlineRoundTripTests.swift */,
 				BMF0000000000000000000F1 /* BlockModelFormattingTests.swift */,
 				BF30000000000000000000F1 /* BugFixes3Tests.swift */,
+				RVT0000000000000000000F1 /* RenderingValidationTests.swift */,
 				CST0000000000000000000F1 /* CodeSpanRoundTripTests.swift */,
 				LST0000000000000000000F1 /* ListRoundTripTests.swift */,
 				HRX0000000000000000000F1 /* HorizontalRuleRoundTripTests.swift */,
@@ -3764,6 +3767,7 @@
 				PIT0000000000000000000B1 /* ParagraphInlineRoundTripTests.swift in Sources */,
 				BMF0000000000000000000B1 /* BlockModelFormattingTests.swift in Sources */,
 				BF30000000000000000000B1 /* BugFixes3Tests.swift in Sources */,
+				RVT0000000000000000000B1 /* RenderingValidationTests.swift in Sources */,
 				CST0000000000000000000B1 /* CodeSpanRoundTripTests.swift in Sources */,
 				LST0000000000000000000B1 /* ListRoundTripTests.swift in Sources */,
 				HRX0000000000000000000B1 /* HorizontalRuleRoundTripTests.swift in Sources */,

@@ -199,6 +199,9 @@ extension EditTextView {
             return
         }
 
+        // Mark that the user has made an edit — enables save().
+        hasUserEdits = true
+
         textStorageProcessor?.isRendering = true
         storage.beginEditing()
         storage.replaceCharacters(
@@ -230,19 +233,21 @@ extension EditTextView {
         // updates, the display refreshes, and the delegate saves.
         didChangeText()
 
-        // Force the layout manager to re-evaluate attributes and redraw
-        // This is necessary because the splice replacement may have different
-        // attributes (font traits, colors) that the layout manager needs to pick up
-if let lm = layoutManager {
-    // Invalidate glyphs for the entire document to force re-layout
-    lm.invalidateGlyphs(forCharacterRange: NSRange(location: 0, length: storage.length), changeInLength: 0, actualCharacterRange: nil)
-    lm.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
-    lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: storage.length))
-    let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
-    lm.invalidateDisplay(forGlyphRange: glyphRange)
-}
+        // Force the layout manager to re-evaluate attributes and redraw.
+        // Use changeInLength: 0 because the storage has already been
+        // modified — the layout manager processed the length change
+        // during replaceCharacters. Passing it again double-counts it,
+        // corrupting glyph positions after the edit.
+        if let lm = layoutManager {
+            let fullRange = NSRange(location: 0, length: storage.length)
+            lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
+            lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+            lm.ensureLayout(forCharacterRange: fullRange)
+            let glyphRange = lm.glyphRange(forCharacterRange: fullRange, actualCharacterRange: nil)
+            lm.invalidateDisplay(forGlyphRange: glyphRange)
+        }
 
-needsDisplay = true
+        needsDisplay = true
 
         // Clean up orphaned inline PDF subviews after edits that may
         // have removed attachment characters from the text storage.
@@ -1047,16 +1052,26 @@ needsDisplay = true
     /// Render mermaid/math code blocks to inline images using the Document model.
     /// Called during fill when the block-model pipeline is active.
     func renderSpecialBlocksViaBlockModel() {
+        // Clear stale indices from previous notes — prevents blocks at
+        // the same index from being skipped when switching notes.
+        EditTextView._renderedBlockIndices.removeAll()
+
         guard let projection = documentProjection,
               let storage = textStorage else { return }
 
         let doc = projection.document
         let spans = projection.blockSpans
 
+        bmLog("🎭 renderSpecialBlocksViaBlockModel: \(doc.blocks.count) blocks")
         for (i, block) in doc.blocks.enumerated() {
-            guard case .codeBlock(let language, let content, _) = block,
-                  let lang = language?.lowercased(),
-                  i < spans.count else { continue }
+            guard case .codeBlock(let language, let content, _) = block else {
+                continue
+            }
+            guard let lang = language?.lowercased(),
+                  i < spans.count else {
+                bmLog("🎭 block[\(i)] codeBlock lang=\(language ?? "nil") — skipped (no lang or out of span range)")
+                continue
+            }
 
             let blockType: BlockRenderer.BlockType
             if lang == "mermaid" {
@@ -1064,21 +1079,31 @@ needsDisplay = true
             } else if lang == "math" || lang == "latex" {
                 blockType = .math
             } else {
+                bmLog("🎭 block[\(i)] codeBlock lang='\(lang)' — skipped (not mermaid/math)")
                 continue
             }
 
             let source = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !source.isEmpty else { continue }
+            guard !source.isEmpty else {
+                bmLog("🎭 block[\(i)] \(lang) — skipped (empty source)")
+                continue
+            }
 
             // Skip already-rendered blocks
-            if EditTextView._renderedBlockIndices.contains(i) { continue }
+            if EditTextView._renderedBlockIndices.contains(i) {
+                bmLog("🎭 block[\(i)] \(lang) — skipped (already rendered)")
+                continue
+            }
             EditTextView._renderedBlockIndices.insert(i)
+            bmLog("🎭 block[\(i)] \(lang) — starting render, source='\(source.prefix(50))...'")
 
             let codeRange = spans[i]
             let maxWidth = textContainer?.containerSize.width ?? 480
 
             BlockRenderer.render(source: source, type: blockType, maxWidth: maxWidth) { [weak self] image in
+                bmLog("🎭 block[\(i)] render callback: image=\(image != nil ? "\(image!.size)" : "nil")")
                 guard let self = self, let image = image, let storage = self.textStorage else {
+                    bmLog("🎭 block[\(i)] render failed: self=\(self != nil), image=\(image != nil)")
                     EditTextView._renderedBlockIndices.remove(i)
                     return
                 }
@@ -1086,10 +1111,20 @@ needsDisplay = true
                 DispatchQueue.main.async {
                     defer { EditTextView._renderedBlockIndices.remove(i) }
 
-                    // Re-verify the range is still valid
-                    guard codeRange.location < storage.length,
-                          NSMaxRange(codeRange) <= storage.length else { return }
+                    // Re-verify projection hasn't changed and range is valid.
+                    guard let currentProjection = self.documentProjection,
+                          i < currentProjection.blockSpans.count else {
+                        bmLog("🎭 block[\(i)] replacement SKIPPED: projection gone or index out of range")
+                        return
+                    }
+                    let currentSpan = currentProjection.blockSpans[i]
+                    guard currentSpan.location < storage.length,
+                          NSMaxRange(currentSpan) <= storage.length else {
+                        bmLog("🎭 block[\(i)] replacement SKIPPED: span \(currentSpan) out of storage range \(storage.length)")
+                        return
+                    }
 
+                    bmLog("🎭 block[\(i)] replacing span \(currentSpan) with \(image.size) attachment")
                     let scale = min(maxWidth / image.size.width, 1.0)
                     let scaledSize = NSSize(width: image.size.width * scale, height: image.size.height * scale)
 
@@ -1104,10 +1139,337 @@ needsDisplay = true
                         .renderedBlockType: (blockType == .mermaid ? RenderedBlockType.mermaid : RenderedBlockType.math).rawValue,
                     ], range: attRange)
 
-                    // Replace the code block text with the rendered image
+                    // Replace the code block text with the rendered image.
+                    self.textStorageProcessor?.isRendering = true
                     storage.beginEditing()
-                    storage.replaceCharacters(in: codeRange, with: attachmentString)
+                    storage.replaceCharacters(in: currentSpan, with: attachmentString)
                     storage.endEditing()
+                    self.textStorageProcessor?.isRendering = false
+
+                    // Force full-document layout invalidation. The replacement
+                    // changes storage length dramatically (e.g., 472 chars → 1),
+                    // and without explicit invalidation the layout manager may
+                    // position subsequent glyphs at stale offsets, causing the
+                    // attachment's background to visually overlap adjacent blocks.
+                    if let lm = self.layoutManager {
+                        let fullRange = NSRange(location: 0, length: storage.length)
+                        lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
+                        lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+                        lm.ensureLayout(forCharacterRange: fullRange)
+                    }
+
+                    // Rebuild projection so subsequent edits see correct spans.
+                    // The document model is unchanged (still .codeBlock) — only the
+                    // rendered attributed string in the projection needs updating.
+                    let lengthDelta = attachmentString.length - currentSpan.length
+                    let patchedAttr = NSMutableAttributedString(attributedString: currentProjection.attributed)
+                    patchedAttr.replaceCharacters(in: currentSpan, with: attachmentString)
+                    var patchedSpans = currentProjection.blockSpans
+                    patchedSpans[i] = NSRange(location: currentSpan.location, length: attachmentString.length)
+                    for j in (i + 1)..<patchedSpans.count {
+                        patchedSpans[j] = NSRange(
+                            location: patchedSpans[j].location + lengthDelta,
+                            length: patchedSpans[j].length
+                        )
+                    }
+                    let renderedDoc = RenderedDocument(
+                        document: currentProjection.document,
+                        attributed: patchedAttr,
+                        blockSpans: patchedSpans
+                    )
+                    let newProjection = DocumentProjection(
+                        rendered: renderedDoc,
+                        bodyFont: currentProjection.bodyFont,
+                        codeFont: currentProjection.codeFont,
+                        note: currentProjection.note
+                    )
+                    self.documentProjection = newProjection
+
+                    // Re-sync blocks so LayoutManager draws gray backgrounds
+                    // for regular code blocks at their updated (post-replacement) ranges.
+                    self.textStorageProcessor?.syncBlocksFromProjection(newProjection)
+
+                    self.needsDisplay = true
+                }
+            }
+        }
+
+        // --- Inline math ($...$): render inline with text ---
+        renderInlineMathViaBlockModel()
+
+        // --- Display math ($$...$$): render as centered block image ---
+        renderDisplayMathViaBlockModel()
+    }
+
+    /// Tracks inline math ranges currently being rendered to avoid duplicates.
+    private static var _renderedInlineMathRanges: Set<NSRange> = []
+
+    private func renderInlineMathViaBlockModel() {
+        guard let storage = textStorage else {
+            bmLog("🎭 renderInlineMath: no textStorage")
+            return
+        }
+
+        bmLog("🎭 renderInlineMath: scanning storage length=\(storage.length)")
+
+        // Collect all inline math ranges and their source content.
+        var mathEntries: [(range: NSRange, source: String)] = []
+        storage.enumerateAttribute(.inlineMathSource, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
+            if let source = value as? String, !source.isEmpty {
+                mathEntries.append((range: range, source: source))
+            }
+        }
+
+        guard !mathEntries.isEmpty else {
+            bmLog("🎭 renderInlineMath: no .inlineMathSource attributes found in storage")
+            return
+        }
+        bmLog("🎭 renderInlineMath: found \(mathEntries.count) inline math spans")
+
+        // Clear stale tracking from previous fill.
+        EditTextView._renderedInlineMathRanges.removeAll()
+
+        let maxWidth = textContainer?.containerSize.width ?? 480
+
+        for entry in mathEntries {
+            // Skip if already being rendered.
+            guard !EditTextView._renderedInlineMathRanges.contains(entry.range) else { continue }
+            EditTextView._renderedInlineMathRanges.insert(entry.range)
+
+            let source = entry.source
+            let originalRange = entry.range
+
+            bmLog("🎭 inlineMath: rendering '\(source.prefix(30))' at \(originalRange)")
+
+            BlockRenderer.render(source: source, type: .inlineMath, maxWidth: maxWidth) { [weak self] image in
+                bmLog("🎭 inlineMath callback: image=\(image != nil ? "\(image!.size)" : "nil") for '\(source.prefix(30))'")
+                guard let self = self, let image = image, let storage = self.textStorage else {
+                    EditTextView._renderedInlineMathRanges.remove(originalRange)
+                    return
+                }
+
+                DispatchQueue.main.async {
+                    defer { EditTextView._renderedInlineMathRanges.remove(originalRange) }
+
+                    // Find the current range of this math text in storage.
+                    // It may have shifted due to earlier replacements.
+                    var currentRange: NSRange?
+                    storage.enumerateAttribute(.inlineMathSource, in: NSRange(location: 0, length: storage.length), options: []) { value, range, stop in
+                        if let val = value as? String, val == source {
+                            currentRange = range
+                            stop.pointee = true
+                        }
+                    }
+
+                    guard let range = currentRange,
+                          range.location < storage.length,
+                          NSMaxRange(range) <= storage.length else {
+                        bmLog("🎭 inlineMath: range not found for '\(source.prefix(30))'")
+                        return
+                    }
+
+                    // Scale image to match line height. Inline math should
+                    // blend with surrounding text, not tower over it.
+                    let lineHeight = (storage.attribute(.font, at: max(0, range.location - 1), effectiveRange: nil) as? NSFont)?.pointSize ?? 14
+                    let targetHeight = lineHeight * 1.4  // slightly taller than text
+                    let scale = min(targetHeight / image.size.height, 1.0)
+                    let scaledSize = NSSize(
+                        width: image.size.width * scale,
+                        height: image.size.height * scale
+                    )
+
+                    bmLog("🎭 inlineMath: replacing \(range) with \(scaledSize) attachment")
+
+                    let attachment = NSTextAttachment()
+                    attachment.image = image
+                    // Use bounds-based sizing for inline attachments (no cell needed).
+                    // y offset centers vertically relative to baseline.
+                    attachment.bounds = NSRect(
+                        x: 0,
+                        y: -(scaledSize.height - lineHeight) / 2,
+                        width: scaledSize.width,
+                        height: scaledSize.height
+                    )
+
+                    let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+                    attachmentString.addAttributes([
+                        .renderedBlockSource: source,
+                        .renderedBlockType: RenderedBlockType.math.rawValue,
+                    ], range: NSRange(location: 0, length: attachmentString.length))
+
+                    self.textStorageProcessor?.isRendering = true
+                    storage.beginEditing()
+                    storage.replaceCharacters(in: range, with: attachmentString)
+                    storage.endEditing()
+                    self.textStorageProcessor?.isRendering = false
+
+                    // Layout invalidation (same pattern as code block replacement).
+                    if let lm = self.layoutManager {
+                        let fullRange = NSRange(location: 0, length: storage.length)
+                        lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
+                        lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+                        lm.ensureLayout(forCharacterRange: fullRange)
+                    }
+
+                    // Update projection spans for the replacement.
+                    if let proj = self.documentProjection {
+                        let lengthDelta = attachmentString.length - range.length
+                        let patchedAttr = NSMutableAttributedString(attributedString: proj.attributed)
+                        patchedAttr.replaceCharacters(in: range, with: attachmentString)
+                        var patchedSpans = proj.blockSpans
+                        // Find which block span contains this range and adjust.
+                        for idx in 0..<patchedSpans.count {
+                            let span = patchedSpans[idx]
+                            if range.location >= span.location && NSMaxRange(range) <= NSMaxRange(span) {
+                                // This span contains the math — shrink it.
+                                patchedSpans[idx] = NSRange(location: span.location, length: span.length + lengthDelta)
+                                // Shift all subsequent spans.
+                                for j in (idx + 1)..<patchedSpans.count {
+                                    patchedSpans[j] = NSRange(location: patchedSpans[j].location + lengthDelta, length: patchedSpans[j].length)
+                                }
+                                break
+                            }
+                        }
+                        let renderedDoc = RenderedDocument(
+                            document: proj.document,
+                            attributed: patchedAttr,
+                            blockSpans: patchedSpans
+                        )
+                        let newProjection = DocumentProjection(
+                            rendered: renderedDoc,
+                            bodyFont: proj.bodyFont,
+                            codeFont: proj.codeFont,
+                            note: proj.note
+                        )
+                        self.documentProjection = newProjection
+                        self.textStorageProcessor?.syncBlocksFromProjection(newProjection)
+                    }
+
+                    self.needsDisplay = true
+                }
+            }
+        }
+    }
+
+    /// Tracks display math ranges currently being rendered to avoid duplicates.
+    private static var _renderedDisplayMathRanges: Set<NSRange> = []
+
+    /// Render display math ($$...$$) as centered block images — like mermaid
+    /// but without the gray frame. Uses BlockRenderer with display mode (\[...\]).
+    private func renderDisplayMathViaBlockModel() {
+        guard let storage = textStorage else { return }
+
+        var mathEntries: [(range: NSRange, source: String)] = []
+        storage.enumerateAttribute(.displayMathSource, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
+            if let source = value as? String, !source.isEmpty {
+                mathEntries.append((range: range, source: source))
+            }
+        }
+
+        guard !mathEntries.isEmpty else { return }
+        bmLog("🎭 renderDisplayMath: found \(mathEntries.count) display math spans")
+
+        EditTextView._renderedDisplayMathRanges.removeAll()
+
+        let maxWidth = textContainer?.containerSize.width ?? 480
+
+        for entry in mathEntries {
+            guard !EditTextView._renderedDisplayMathRanges.contains(entry.range) else { continue }
+            EditTextView._renderedDisplayMathRanges.insert(entry.range)
+
+            let source = entry.source
+            let originalRange = entry.range
+
+            bmLog("🎭 displayMath: rendering '\(source.prefix(30))' at \(originalRange)")
+
+            // Use .math type (display mode with \[...\] delimiters in template)
+            BlockRenderer.render(source: source, type: .math, maxWidth: maxWidth) { [weak self] image in
+                bmLog("🎭 displayMath callback: image=\(image != nil ? "\(image!.size)" : "nil") for '\(source.prefix(30))'")
+                guard let self = self, let image = image, let storage = self.textStorage else {
+                    EditTextView._renderedDisplayMathRanges.remove(originalRange)
+                    return
+                }
+
+                DispatchQueue.main.async {
+                    defer { EditTextView._renderedDisplayMathRanges.remove(originalRange) }
+
+                    // Find the current range of this display math in storage.
+                    var currentRange: NSRange?
+                    storage.enumerateAttribute(.displayMathSource, in: NSRange(location: 0, length: storage.length), options: []) { value, range, stop in
+                        if let val = value as? String, val == source {
+                            currentRange = range
+                            stop.pointee = true
+                        }
+                    }
+
+                    guard let range = currentRange,
+                          range.location < storage.length,
+                          NSMaxRange(range) <= storage.length else {
+                        bmLog("🎭 displayMath: range not found for '\(source.prefix(30))'")
+                        return
+                    }
+
+                    // Scale to fit container width, keeping natural aspect ratio.
+                    let scale = min(maxWidth / image.size.width, 1.0)
+                    let scaledSize = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+
+                    bmLog("🎭 displayMath: replacing \(range) with \(scaledSize) attachment")
+
+                    // Use CenteredImageCell for centered display, like mermaid.
+                    let attachment = NSTextAttachment()
+                    let cell = CenteredImageCell(image: image, imageSize: scaledSize, containerWidth: maxWidth)
+                    attachment.attachmentCell = cell
+
+                    let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+                    attachmentString.addAttributes([
+                        .renderedBlockSource: source,
+                        .renderedBlockType: RenderedBlockType.math.rawValue,
+                    ], range: NSRange(location: 0, length: attachmentString.length))
+
+                    self.textStorageProcessor?.isRendering = true
+                    storage.beginEditing()
+                    storage.replaceCharacters(in: range, with: attachmentString)
+                    storage.endEditing()
+                    self.textStorageProcessor?.isRendering = false
+
+                    // Layout invalidation
+                    if let lm = self.layoutManager {
+                        let fullRange = NSRange(location: 0, length: storage.length)
+                        lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
+                        lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+                        lm.ensureLayout(forCharacterRange: fullRange)
+                    }
+
+                    // Update projection spans.
+                    if let proj = self.documentProjection {
+                        let lengthDelta = attachmentString.length - range.length
+                        let patchedAttr = NSMutableAttributedString(attributedString: proj.attributed)
+                        patchedAttr.replaceCharacters(in: range, with: attachmentString)
+                        var patchedSpans = proj.blockSpans
+                        for idx in 0..<patchedSpans.count {
+                            let span = patchedSpans[idx]
+                            if range.location >= span.location && NSMaxRange(range) <= NSMaxRange(span) {
+                                patchedSpans[idx] = NSRange(location: span.location, length: span.length + lengthDelta)
+                                for j in (idx + 1)..<patchedSpans.count {
+                                    patchedSpans[j] = NSRange(location: patchedSpans[j].location + lengthDelta, length: patchedSpans[j].length)
+                                }
+                                break
+                            }
+                        }
+                        let renderedDoc = RenderedDocument(
+                            document: proj.document,
+                            attributed: patchedAttr,
+                            blockSpans: patchedSpans
+                        )
+                        let newProjection = DocumentProjection(
+                            rendered: renderedDoc,
+                            bodyFont: proj.bodyFont,
+                            codeFont: proj.codeFont,
+                            note: proj.note
+                        )
+                        self.documentProjection = newProjection
+                        self.textStorageProcessor?.syncBlocksFromProjection(newProjection)
+                    }
 
                     self.needsDisplay = true
                 }
