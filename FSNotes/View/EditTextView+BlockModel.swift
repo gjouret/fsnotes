@@ -32,10 +32,14 @@ let blockModelLogURL: URL = {
     return home.appendingPathComponent("block-model.log")
 }()
 
-func bmLog(_ message: String) {
+private let bmLogDateFormatter: DateFormatter = {
     let df = DateFormatter()
     df.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-    let line = "[\(df.string(from: Date()))] \(message)\n"
+    return df
+}()
+
+func bmLog(_ message: String) {
+    let line = "[\(bmLogDateFormatter.string(from: Date()))] \(message)\n"
     guard let data = line.data(using: .utf8) else { return }
 
     if FileManager.default.fileExists(atPath: blockModelLogURL.path) {
@@ -69,6 +73,32 @@ extension EditTextView {
         static var projection = 0
         static var pendingTraits = 1
         static var suppressTraitClear = 2
+        static var coalescedLayoutPending = 3
+    }
+
+    /// Whether a coalesced layout pass is already scheduled.
+    private var coalescedLayoutPending: Bool {
+        get { objc_getAssociatedObject(self, &AssociatedKeys.coalescedLayoutPending) as? Bool ?? false }
+        set { objc_setAssociatedObject(self, &AssociatedKeys.coalescedLayoutPending, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
+    /// Schedule a single ensureLayout call that coalesces multiple
+    /// attachment replacements (mermaid, math). Instead of calling
+    /// ensureLayout after each replacement, we schedule one call on
+    /// the next run loop iteration. Multiple calls to this method
+    /// within the same event cycle result in a single layout pass.
+    func scheduleCoalescedLayout() {
+        guard !coalescedLayoutPending else { return }
+        coalescedLayoutPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.coalescedLayoutPending = false
+            if let lm = self.layoutManager, let storage = self.textStorage {
+                let fullRange = NSRange(location: 0, length: storage.length)
+                lm.ensureLayout(forCharacterRange: fullRange)
+            }
+            self.needsDisplay = true
+        }
     }
 
     /// Pending inline traits toggled while the selection is empty.
@@ -133,6 +163,7 @@ extension EditTextView {
                let rawMarkdown = try? String(contentsOf: fileURL, encoding: .utf8) {
                 markdown = rawMarkdown
             } else {
+                bmLog("⚠️ Could not read raw markdown from disk, falling back to note.content (may contain U+FFFC)")
                 markdown = note.content.string
             }
             bmLog("📝 Parsing markdown: '\(markdown)' (length=\(markdown.count))")
@@ -154,6 +185,14 @@ extension EditTextView {
         bmLog("🎨 Rendered projection: \(projection.attributed.length) chars, string='\(projection.attributed.string)'")
         bmLog("📐 Block spans: \(projection.blockSpans.map { "[\($0.location),\($0.length)]" }.joined(separator: ", "))")
 
+        // Save fold state from the previous note (if any) before replacing storage.
+        if let prevNote = self.note, let processor = textStorageProcessor {
+            let collapsed = processor.collapsedBlockIndices
+            if !collapsed.isEmpty {
+                prevNote.cachedFoldState = collapsed
+            }
+        }
+
         // Set the rendered attributed string into textStorage.
         // Use isRendering to prevent the source-mode pipeline from
         // processing this setAttributedString.
@@ -168,6 +207,13 @@ extension EditTextView {
         textStorageProcessor?.blockModelActive = true
         // Populate the source-mode blocks array so fold/unfold works
         textStorageProcessor?.syncBlocksFromProjection(projection)
+
+        // Restore fold state from the note's cache (RC5).
+        if let savedFolds = note.cachedFoldState, !savedFolds.isEmpty,
+           let processor = textStorageProcessor {
+            processor.restoreCollapsedState(savedFolds, textStorage: storage)
+        }
+
         bmLog("✅ fillViaBlockModel complete: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")
         return true
     }
@@ -212,6 +258,10 @@ extension EditTextView {
         // Mark that the user has made an edit — enables save().
         hasUserEdits = true
 
+        // Lock scroll position observer during mutation to prevent
+        // transient layout changes from saving wrong scroll positions.
+        isScrollPositionSaverLocked = true
+
         textStorageProcessor?.isRendering = true
         storage.beginEditing()
         storage.replaceCharacters(
@@ -219,7 +269,36 @@ extension EditTextView {
             with: result.spliceReplacement
         )
         storage.endEditing()
-        
+
+        // Re-apply paragraphStyle attribute from the new projection onto
+        // storage. narrowSplice() does CHARACTER-only diffing (intentional
+        // — preserves attachment identity across renders). When a structural
+        // change happens (e.g. heading Return → [heading, paragraph]),
+        // characters that already existed in OLD storage stay put with
+        // their OLD attributes — even though the NEW projection assigns
+        // them a different paragraphStyle. The classic case: the trailing
+        // \n that "moves" by one position and keeps its old heading
+        // paragraphStyle, leaving the cursor on the new empty paragraph
+        // rendered with heading-line metrics.
+        //
+        // This is an attribute-only sync — no character mutation, no
+        // beginEditing/endEditing required. Iterate the new projection's
+        // paragraphStyle runs and apply them to the same storage range.
+        let newAttr = result.newProjection.attributed
+        if newAttr.length == storage.length {
+            storage.beginEditing()
+            newAttr.enumerateAttribute(
+                .paragraphStyle,
+                in: NSRange(location: 0, length: newAttr.length),
+                options: []
+            ) { value, range, _ in
+                if let style = value {
+                    storage.addAttribute(.paragraphStyle, value: style, range: range)
+                }
+            }
+            storage.endEditing()
+        }
+
         bmLog("🔧 applyEditResultWithUndo AFTER: storage.length=\(storage.length), storage.string='\(storage.string)'")
 
         // Update projection.
@@ -239,24 +318,35 @@ extension EditTextView {
         // storage mutation above to prevent process() from running.
         textStorageProcessor?.isRendering = false
 
+        // Sync typingAttributes to the block at the new cursor position
+        // BEFORE layout computation. The extra line fragment rectangle
+        // (cursor metrics at end of storage) is computed during
+        // ensureLayout using the typingAttributes present at that moment.
+        // If we update typingAttributes AFTER ensureLayout, the cursor
+        // inherits stale metrics from the previous block (e.g. heading
+        // height after Return on an H2). syncing here fixes the empty-
+        // block inheritance bugs for both "Return on heading" and
+        // "list item → Delete → empty paragraph" scenarios.
+        syncTypingAttributesToCursorBlock()
+
         // Notify NSTextView that text changed so the layout manager
         // updates, the display refreshes, and the delegate saves.
         didChangeText()
 
-        // Force the layout manager to re-evaluate attributes and redraw.
-        // Use changeInLength: 0 because the storage has already been
-        // modified — the layout manager processed the length change
-        // during replaceCharacters. Passing it again double-counts it,
-        // corrupting glyph positions after the edit.
+        // Invalidate from the splice point to the end of storage.
+        // Narrower ranges (just the affected block + 1) can cause judder
+        // because the splice may shift all subsequent block positions.
         if let lm = layoutManager {
-            let fullRange = NSRange(location: 0, length: storage.length)
-            lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
-            lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
-            lm.ensureLayout(forCharacterRange: fullRange)
-            let glyphRange = lm.glyphRange(forCharacterRange: fullRange, actualCharacterRange: nil)
+            let start = result.spliceRange.location
+            let affectedRange = NSRange(location: start, length: max(0, storage.length - start))
+            lm.invalidateGlyphs(forCharacterRange: affectedRange, changeInLength: 0, actualCharacterRange: nil)
+            lm.invalidateLayout(forCharacterRange: affectedRange, actualCharacterRange: nil)
+            lm.ensureLayout(forCharacterRange: affectedRange)
+            let glyphRange = lm.glyphRange(forCharacterRange: affectedRange, actualCharacterRange: nil)
             lm.invalidateDisplay(forGlyphRange: glyphRange)
         }
 
+        isScrollPositionSaverLocked = false
         needsDisplay = true
 
         // Clean up orphaned inline PDF subviews after edits that may
@@ -464,6 +554,21 @@ extension EditTextView {
 
             applyEditResultWithUndo(result, actionName: actionName)
 
+            // RC4: After insertion, check if the current block's inlines
+            // should be re-parsed (e.g. user just completed "[text](url)").
+            // Trigger on characters that can close inline patterns. Also
+            // trigger for multi-character insertions (toolbar linkMenu /
+            // wikiLinks / paste) that may contain a complete pattern,
+            // regardless of whether the prior selection was empty.
+            if !replacement.isEmpty {
+                let last = replacement.last ?? Character(" ")
+                let isCloser = ")]}>`*_~".contains(last)
+                let isMultiChar = replacement.count > 1
+                if isCloser || isMultiChar {
+                    reparseCurrentBlockInlines()
+                }
+            }
+
             // Auto-convert markdown shortcuts at line start.
             // After typing a space, check if the paragraph matches a
             // shortcut pattern (e.g., "- ", "> ", "1. ", "- [ ] ").
@@ -519,7 +624,48 @@ extension EditTextView {
         guard let projection = documentProjection else {
             return nil
         }
-        return MarkdownSerializer.serialize(projection.document)
+
+        var doc = projection.document
+
+        // Live InlineTableView cells hold the user's in-flight edits that
+        // have NOT been pushed back into the projection document (the
+        // projection is immutable and we don't round-trip table edits
+        // through EditingOps on every keystroke — that would rebuild the
+        // attachment and lose the live cell state).
+        //
+        // At save time, collect the current markdown from every live table
+        // in storage order and patch the matching Block.table's `raw`
+        // field. MarkdownSerializer emits tables from `raw` verbatim, so
+        // updating `raw` is sufficient for the on-disk file.
+        if let storage = textStorage {
+            var liveTableMarkdowns: [String] = []
+            let fullRange = NSRange(location: 0, length: storage.length)
+            storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
+                guard let att = value as? NSTextAttachment,
+                      let cell = att.attachmentCell as? InlineTableAttachmentCell else { return }
+                cell.inlineTableView.collectCellData()
+                liveTableMarkdowns.append(cell.inlineTableView.generateMarkdown())
+            }
+
+            if !liveTableMarkdowns.isEmpty {
+                var tableIdx = 0
+                for i in 0..<doc.blocks.count {
+                    guard tableIdx < liveTableMarkdowns.count else { break }
+                    if case .table(let header, let alignments, let rows, _) = doc.blocks[i] {
+                        let newRaw = liveTableMarkdowns[tableIdx]
+                        doc.blocks[i] = .table(
+                            header: header,
+                            alignments: alignments,
+                            rows: rows,
+                            raw: newRaw
+                        )
+                        tableIdx += 1
+                    }
+                }
+            }
+        }
+
+        return MarkdownSerializer.serialize(doc)
     }
 
     // MARK: - List FSM transition handling
@@ -619,6 +765,31 @@ extension EditTextView {
         } catch {
             bmLog("⚠️ deleteAtHome in heading failed: \(error)")
             return false
+        }
+    }
+
+    /// RC4: Re-parse the current block's inlines if the serialized
+    /// markdown would parse into a different inline tree. This detects
+    /// completed inline patterns (links, images, bold, etc.) and
+    /// re-renders the block with proper inline structure.
+    private func reparseCurrentBlockInlines() {
+        guard let projection = documentProjection else { return }
+        let cursor = selectedRange().location
+        guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursor) else { return }
+
+        do {
+            guard let result = try EditingOps.reparseInlinesIfNeeded(
+                blockIndex: blockIndex,
+                in: projection
+            ) else { return }
+
+            bmLog("🔄 inline reparse triggered at block \(blockIndex)")
+            applyBlockModelResult(result, actionName: "Reparse")
+            // Restore cursor to its previous position.
+            let newLen = textStorage?.length ?? 0
+            setSelectedRange(NSRange(location: min(cursor, newLen), length: 0))
+        } catch {
+            bmLog("⚠️ reparseCurrentBlockInlines failed: \(error)")
         }
     }
 
@@ -735,6 +906,107 @@ extension EditTextView {
         guard count > 0 else { return inlines }
         let (_, after) = EditingOps.splitInlines(inlines, at: count)
         return after
+    }
+
+    /// Sync `typingAttributes` to the rendered attributes of the block
+    /// at the current cursor position. Called after every block-model
+    /// edit to ensure NSTextView doesn't inherit stale attributes from
+    /// the character before the cursor (which may belong to a different
+    /// block type after a split, merge, or conversion).
+    private func syncTypingAttributesToCursorBlock() {
+        guard let storage = textStorage,
+              let projection = documentProjection else { return }
+
+        let cursor = selectedRange().location
+
+        // If there are pending inline traits (user toggled bold/italic
+        // before typing), those take precedence over block attributes.
+        if !pendingInlineTraits.isEmpty { return }
+
+        // Empty-block special case: when the cursor sits in a block
+        // that rendered to a zero-length span (e.g. the empty paragraph
+        // produced by exitListItem on an empty list item), there are NO
+        // characters in storage carrying that block's paragraph style.
+        // Reading from `cursor - 1` would pick up the preceding
+        // separator's attributes, which still carry the OLD block's
+        // paragraph style (in the list-exit case, the list's hanging
+        // indent). That's why the cursor visually stays indented until
+        // the user types a character.
+        //
+        // Synthesize the typing attributes from the block type directly
+        // using DocumentRenderer.paragraphStyle, matching what the
+        // renderer would apply if the block had content.
+        // `blockContaining` returns the earlier block at boundary positions,
+        // so a zero-length block that SITS at the cursor is only found when
+        // the cursor location equals that block's location AND no preceding
+        // block's upper bound equals the same position. We therefore also
+        // look forward: if cursor sits at the end of block[i], check whether
+        // block[i+1] is zero-length (a freshly-created empty paragraph).
+        var emptyBlockIdx: Int? = nil
+        if let (idx, offset) = projection.blockContaining(storageIndex: cursor) {
+            let span = projection.blockSpans[idx]
+            if span.length == 0 {
+                emptyBlockIdx = idx
+            } else if offset == span.length,
+                      idx + 1 < projection.blockSpans.count,
+                      projection.blockSpans[idx + 1].length == 0 {
+                emptyBlockIdx = idx + 1
+            }
+        }
+        if let blockIndex = emptyBlockIdx {
+            let block = projection.document.blocks[blockIndex]
+            let bodyFont = projection.bodyFont
+            let paraStyle = DocumentRenderer.paragraphStyle(
+                for: block,
+                isFirst: blockIndex == 0,
+                baseSize: bodyFont.pointSize,
+                lineSpacing: CGFloat(UserDefaultsManagement.editorLineSpacing)
+            )
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: bodyFont,
+                .paragraphStyle: paraStyle
+            ]
+            // Preserve the current foreground color if the view has one
+            // (respects dark-mode / user customization) — read from
+            // existing typingAttributes rather than surrounding storage
+            // to avoid picking up the preceding block's attributes.
+            if let fg = typingAttributes[.foregroundColor] {
+                attrs[.foregroundColor] = fg
+            }
+            typingAttributes = attrs
+            bmLog("🎯 syncTypingAttributes: empty block \(blockIndex) (\(block)) — synthesized paragraphStyle")
+            return
+        }
+
+        // Read attributes from the rendered output at the cursor position.
+        // For cursor mid-block, read at cursor-1 to get the attributes of
+        // the preceding character (which is what the user sees at the cursor).
+        let readIndex: Int
+        if cursor > 0 && cursor <= storage.length {
+            // Check if cursor is at the start of a block — if so, read
+            // from the block's rendered attributes, not the separator before.
+            if let (_, offset) = projection.blockContaining(storageIndex: cursor), offset == 0 {
+                // Cursor is at block start. Read from this position if possible.
+                readIndex = min(cursor, storage.length - 1)
+            } else {
+                readIndex = cursor - 1
+            }
+        } else if storage.length > 0 {
+            readIndex = 0
+        } else {
+            return
+        }
+
+        guard readIndex >= 0 && readIndex < storage.length else { return }
+
+        var attrs = storage.attributes(at: readIndex, effectiveRange: nil)
+
+        // Never inherit attachment attributes into typing.
+        attrs.removeValue(forKey: .attachment)
+
+        // Preserve the paragraph style from the rendered block.
+        // This ensures cursor height, indent, and spacing match.
+        typingAttributes = attrs
     }
 
     /// Update `typingAttributes` to reflect the pending inline traits.
@@ -920,17 +1192,26 @@ extension EditTextView {
     }
 
     /// Change heading level via the block model.
+    /// When multiple blocks are selected, applies to each block.
     /// Returns true if handled.
     func changeHeadingLevelViaBlockModel(_ level: Int) -> Bool {
-        guard let projection = documentProjection else { return false }
-        let cursorPos = selectedRange().location
+        guard var projection = documentProjection else { return false }
+        let sel = selectedRange()
 
         do {
-            let result = try EditingOps.changeHeadingLevel(
-                level, at: cursorPos, in: projection
-            )
-            bmLog("📝 changeHeadingLevel(\(level)): splice \(result.spliceRange)")
-            applyBlockModelResult(result, actionName: "Heading")
+            let blockIndices = projection.blockIndices(overlapping: sel)
+            guard !blockIndices.isEmpty else { return false }
+
+            // Apply to each block in reverse order so indices stay valid.
+            for blockIdx in blockIndices.reversed() {
+                let span = projection.blockSpans[blockIdx]
+                let result = try EditingOps.changeHeadingLevel(
+                    level, at: span.location, in: projection
+                )
+                applyEditResultWithUndo(result, actionName: "Heading")
+                projection = result.newProjection
+                documentProjection = projection
+            }
             return true
         } catch {
             bmLog("⚠️ changeHeadingLevel failed: \(error)")
@@ -939,16 +1220,24 @@ extension EditTextView {
     }
 
     /// Toggle list via the block model.
+    /// When multiple blocks are selected, converts each to a list item.
     func toggleListViaBlockModel(marker: String = "-") -> Bool {
-        guard let projection = documentProjection else { return false }
-        let cursorPos = selectedRange().location
+        guard var projection = documentProjection else { return false }
+        let sel = selectedRange()
 
         do {
-            let result = try EditingOps.toggleList(
-                marker: marker, at: cursorPos, in: projection
-            )
-            bmLog("📋 toggleList(\(marker)): splice \(result.spliceRange)")
-            applyBlockModelResult(result, actionName: "List")
+            let blockIndices = projection.blockIndices(overlapping: sel)
+            guard !blockIndices.isEmpty else { return false }
+
+            for blockIdx in blockIndices.reversed() {
+                let span = projection.blockSpans[blockIdx]
+                let result = try EditingOps.toggleList(
+                    marker: marker, at: span.location, in: projection
+                )
+                applyEditResultWithUndo(result, actionName: "List")
+                projection = result.newProjection
+                documentProjection = projection
+            }
             return true
         } catch {
             bmLog("⚠️ toggleList failed: \(error)")
@@ -957,16 +1246,24 @@ extension EditTextView {
     }
 
     /// Toggle blockquote via the block model.
+    /// When multiple blocks are selected, converts each.
     func toggleBlockquoteViaBlockModel() -> Bool {
-        guard let projection = documentProjection else { return false }
-        let cursorPos = selectedRange().location
+        guard var projection = documentProjection else { return false }
+        let sel = selectedRange()
 
         do {
-            let result = try EditingOps.toggleBlockquote(
-                at: cursorPos, in: projection
-            )
-            bmLog("💬 toggleBlockquote: splice \(result.spliceRange)")
-            applyBlockModelResult(result, actionName: "Blockquote")
+            let blockIndices = projection.blockIndices(overlapping: sel)
+            guard !blockIndices.isEmpty else { return false }
+
+            for blockIdx in blockIndices.reversed() {
+                let span = projection.blockSpans[blockIdx]
+                let result = try EditingOps.toggleBlockquote(
+                    at: span.location, in: projection
+                )
+                applyEditResultWithUndo(result, actionName: "Blockquote")
+                projection = result.newProjection
+                documentProjection = projection
+            }
             return true
         } catch {
             bmLog("⚠️ toggleBlockquote failed: \(error)")
@@ -993,17 +1290,24 @@ extension EditTextView {
     }
 
     /// Toggle todo list via the block model.
-    /// Converts paragraph → todo list, regular list ↔ todo list.
+    /// When multiple blocks are selected, converts each.
     func toggleTodoViaBlockModel() -> Bool {
-        guard let projection = documentProjection else { return false }
-        let cursorPos = selectedRange().location
+        guard var projection = documentProjection else { return false }
+        let sel = selectedRange()
 
         do {
-            let result = try EditingOps.toggleTodoList(
-                at: cursorPos, in: projection
-            )
-            bmLog("☐ toggleTodoList: splice \(result.spliceRange)")
-            applyBlockModelResult(result, actionName: "Todo List")
+            let blockIndices = projection.blockIndices(overlapping: sel)
+            guard !blockIndices.isEmpty else { return false }
+
+            for blockIdx in blockIndices.reversed() {
+                let span = projection.blockSpans[blockIdx]
+                let result = try EditingOps.toggleTodoList(
+                    at: span.location, in: projection
+                )
+                applyEditResultWithUndo(result, actionName: "Todo List")
+                projection = result.newProjection
+                documentProjection = projection
+            }
             return true
         } catch {
             bmLog("⚠️ toggleTodoList failed: \(error)")
@@ -1156,17 +1460,14 @@ extension EditTextView {
                     storage.endEditing()
                     self.textStorageProcessor?.isRendering = false
 
-                    // Force full-document layout invalidation. The replacement
-                    // changes storage length dramatically (e.g., 472 chars → 1),
-                    // and without explicit invalidation the layout manager may
-                    // position subsequent glyphs at stale offsets, causing the
-                    // attachment's background to visually overlap adjacent blocks.
+                    // Invalidate layout. The actual ensureLayout is deferred
+                    // to a single coalesced call after all replacements complete.
                     if let lm = self.layoutManager {
                         let fullRange = NSRange(location: 0, length: storage.length)
                         lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
                         lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
-                        lm.ensureLayout(forCharacterRange: fullRange)
                     }
+                    self.scheduleCoalescedLayout()
 
                     // Rebuild projection so subsequent edits see correct spans.
                     // The document model is unchanged (still .codeBlock) — only the
@@ -1313,13 +1614,13 @@ extension EditTextView {
                     storage.endEditing()
                     self.textStorageProcessor?.isRendering = false
 
-                    // Layout invalidation (same pattern as code block replacement).
+                    // Invalidate layout; ensureLayout deferred to coalesced call.
                     if let lm = self.layoutManager {
                         let fullRange = NSRange(location: 0, length: storage.length)
                         lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
                         lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
-                        lm.ensureLayout(forCharacterRange: fullRange)
                     }
+                    self.scheduleCoalescedLayout()
 
                     // Update projection spans for the replacement.
                     if let proj = self.documentProjection {

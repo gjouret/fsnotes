@@ -85,7 +85,6 @@ class InlinePDFView: NSView {
         toolbarView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         addSubview(toolbarView)
 
-        // Separator line at bottom edge of toolbar
         separatorView = NSView()
         separatorView.wantsLayer = true
         separatorView.layer?.backgroundColor = NSColor.separatorColor.cgColor
@@ -202,7 +201,6 @@ class InlinePDFView: NSView {
 
         toolbarView.frame = NSRect(x: 0, y: frame.height - tbH, width: w, height: tbH)
 
-        // Separator line at bottom edge of toolbar
         separatorView.frame = NSRect(x: 0, y: frame.height - tbH, width: w, height: 1)
 
         // Toolbar items layout
@@ -462,12 +460,11 @@ enum PDFAttachmentProcessor {
                 return
             }
 
-            // Check if this attachment points to a PDF
-            guard let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL,
+            let maybeURL = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL
+            guard let url = maybeURL,
                   url.pathExtension.lowercased() == "pdf",
                   FileManager.default.fileExists(atPath: url.path) else {
-                let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL
-                bmLog("📄   skip @\(range.location): url=\(url?.lastPathComponent ?? "nil"), ext=\(url?.pathExtension ?? "nil")")
+                bmLog("📄   skip @\(range.location): url=\(maybeURL?.lastPathComponent ?? "nil"), ext=\(maybeURL?.pathExtension ?? "nil")")
                 return
             }
 

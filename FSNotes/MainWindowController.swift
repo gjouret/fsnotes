@@ -30,26 +30,44 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// When the window expands after being shrunk (e.g. half-screen → full),
-    /// NSSplitView autosave may leave panes collapsed at 0. Detect this and
-    /// restore them to their saved widths.
+    /// NSSplitView auto-resize may leave panes collapsed at 0 with no way to
+    /// restore them — the autosave remembers the collapsed frames, and
+    /// widening the window doesn't magically re-expand anything. We track the
+    /// last-known-good widths in UserDefaults during normal resize and use
+    /// them to restore here.
+    ///
+    /// We only restore when the window is wide enough to actually hold the
+    /// pane at its saved width plus the remaining content. Restoring into a
+    /// narrow window would immediately collapse the pane again.
     private func restoreCollapsedPanesIfNeeded() {
-        guard let vc = ViewController.shared() else { return }
+        guard let vc = ViewController.shared(),
+              let window = self.window else { return }
 
-        // Restore sidebar if it was collapsed by resize (not intentionally hidden)
+        let windowWidth = window.frame.width
+        let editorMinWidth: CGFloat = 300
+
+        // Restore sidebar (outer split) if it was collapsed by auto-resize
+        // and the user hasn't explicitly hidden it.
         if !UserDefaultsManagement.hideSidebarTable {
             let sidebarWidth = vc.sidebarSplitView.subviews.first?.frame.width ?? 0
-            if sidebarWidth < 1 {
-                let savedWidth = UserDefaultsManagement.sidebarTableWidth
-                if savedWidth > 50 {
-                    vc.sidebarSplitView.setPosition(savedWidth, ofDividerAt: 0)
-                }
+            let savedSidebar = UserDefaultsManagement.sidebarTableWidth
+            let notesListCurrent = vc.splitView.subviews.first?.frame.width ?? 0
+            let savedNotesList = UserDefaultsManagement.notesListWidth
+            let effectiveNotesList = max(notesListCurrent, savedNotesList > 50 ? savedNotesList : 0)
+            if sidebarWidth < 10,
+               savedSidebar > 50,
+               windowWidth >= savedSidebar + effectiveNotesList + editorMinWidth {
+                vc.sidebarSplitView.setPosition(savedSidebar, ofDividerAt: 0)
             }
         }
 
-        // Restore notes list if it was collapsed by resize
+        // Restore notes list (inner split) if it was collapsed by auto-resize.
         let notesListWidth = vc.splitView.subviews.first?.frame.width ?? 0
-        if notesListWidth < 10 {
-            vc.splitView.setPosition(300, ofDividerAt: 0)
+        let savedNotesList = UserDefaultsManagement.notesListWidth
+        if notesListWidth < 10,
+           savedNotesList > 50,
+           windowWidth >= savedNotesList + editorMinWidth {
+            vc.splitView.setPosition(savedNotesList, ofDividerAt: 0)
         }
     }
         

@@ -154,6 +154,20 @@ extension EditTextView {
         textContainerInset.width = getInsetWidth()
     }
 
+    /// Called when the editor's available width changes (window resize,
+    /// split-view divider drag). Reflows width-sensitive attachments:
+    ///  - InlineTableView cells get their containerWidth updated and rebuild.
+    ///  - CenteredImageCell (mermaid/math) has dynamic `cellFrame(for:...)`
+    ///    scaling, but it's only consulted during layout — invalidating the
+    ///    layout here re-triggers it so wide diagrams scale to fit.
+    public func reflowAttachmentsForWidthChange() {
+        tableController.reflowTablesForWidthChange()
+        if let storage = textStorage, let lm = layoutManager {
+            let fullRange = NSRange(location: 0, length: storage.length)
+            lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        }
+    }
+
     public func getInsetWidth() -> CGFloat {
         let lineWidth = UserDefaultsManagement.lineWidth
         let margin = UserDefaultsManagement.marginSize

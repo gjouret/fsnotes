@@ -113,6 +113,38 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     public var blocks: [MarkdownBlock] = []
     private var pendingRenderedBlockIDs = Set<UUID>()
 
+    /// Return the set of block indices that are currently collapsed.
+    public var collapsedBlockIndices: Set<Int> {
+        Set(blocks.enumerated().compactMap { $0.element.collapsed ? $0.offset : nil })
+    }
+
+    /// Restore fold state from a saved set of collapsed block indices.
+    public func restoreCollapsedState(_ indices: Set<Int>, textStorage: NSTextStorage) {
+        for idx in indices {
+            guard idx < blocks.count else { continue }
+            let block = blocks[idx]
+            guard !block.collapsed else { continue }
+            // Only fold headings.
+            let headerLevel: Int
+            switch block.type {
+            case .heading(let l): headerLevel = l
+            case .headingSetext(let l): headerLevel = l
+            default: continue
+            }
+            let foldRange = foldRangeForHeader(at: idx, level: headerLevel, in: textStorage)
+            guard foldRange.length > 0 else { continue }
+            blocks[idx].collapsed = true
+            isRendering = true
+            textStorage.addAttribute(.foldedContent, value: true, range: foldRange)
+            textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
+            isRendering = false
+        }
+        textStorage.layoutManagers.first?.invalidateLayout(
+            forCharacterRange: NSRange(location: 0, length: textStorage.length),
+            actualCharacterRange: nil
+        )
+    }
+
     /// Code block ranges in source mode (excludes rendered mermaid/math images).
     /// Used by LayoutManager for gray background and by triggerCodeBlockRenderingIfNeeded.
     public var codeBlockRanges: [NSRange] {
@@ -348,6 +380,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // Invalidate layout so zero-height lines take effect
         textStorage.layoutManagers.first?.invalidateLayout(
             forCharacterRange: foldRange, actualCharacterRange: nil)
+
+        // RC5: Persist fold state to the note so it survives note switches.
+        if let note = editor?.note {
+            note.cachedFoldState = collapsedBlockIndices
+        }
     }
 
     /// Find the range to fold: from end of the header line to the next header

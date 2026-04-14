@@ -274,8 +274,9 @@ class BlockModelFormattingTests: XCTestCase {
         let serialized = MarkdownSerializer.serialize(result.newProjection.document)
         // Should have the HR after the paragraph.
         XCTAssertTrue(serialized.contains("---"), "Expected HR in serialized output: \(serialized)")
-        // The document should have 2 blocks: paragraph + HR.
-        XCTAssertEqual(result.newProjection.document.blocks.count, 2)
+        // The document should have 3 blocks: paragraph + blankLine + HR.
+        // The blankLine prevents "---" from being parsed as a setext heading underline.
+        XCTAssertEqual(result.newProjection.document.blocks.count, 3)
     }
 
     // MARK: - Unsupported block types
@@ -463,10 +464,11 @@ class BlockModelFormattingTests: XCTestCase {
         assertSpliceInvariant(old: proj, result: result)
     }
 
-    func test_toggleTodoList_todoToRegularList() throws {
+    func test_toggleTodoList_todoParagraph() throws {
+        // Toggling todo off unwraps to paragraphs (same as other editors).
         let proj = project("- [ ] Task\n")
         let result = try EditingOps.toggleTodoList(at: 0, in: proj)
-        assertRoundTrip(result, expected: "- Task\n")
+        assertRoundTrip(result, expected: "Task\n")
         assertSpliceInvariant(old: proj, result: result)
     }
 

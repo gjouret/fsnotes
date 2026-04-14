@@ -109,12 +109,12 @@ CA
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="gcI-QI-pM4"/>
-                                        <menuItem title="New" image="note.text" catalog="system" keyEquivalent="n" localization="NO" mirroring="NO" identifier="fileMenu.new" id="2Ci-Yj-aWK">
+                                        <menuItem title="New Note" image="note.text" catalog="system" keyEquivalent="n" localization="NO" mirroring="NO" identifier="fileMenu.new" id="2Ci-Yj-aWK">
                                             <connections>
                                                 <action selector="fileMenuNewNote:" target="L4m-js-agn" id="N33-Jf-oOg"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="New Note in New Window  " image="macwindow.badge.plus" catalog="system" keyEquivalent="N" localization="NO" mirroring="NO" identifier="fileMenu.newInNewWindow" id="2Vh-rt-1kc">
+                                        <menuItem title="New Note in New Window" image="macwindow.badge.plus" catalog="system" keyEquivalent="N" localization="NO" mirroring="NO" identifier="fileMenu.newInNewWindow" id="2Vh-rt-1kc">
                                             <connections>
                                                 <action selector="createInNewWindow:" target="Ady-hI-5gd" id="fVv-cz-Kms"/>
                                             </connections>
@@ -137,7 +137,7 @@ CA
                                                 <action selector="openWindow:" target="Ady-hI-5gd" id="HOV-Ja-fKS"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Duplicate" image="document.on.document" catalog="system" keyEquivalent="d" localization="NO" mirroring="NO" identifier="fileMenu.duplicate" id="pnm-dP-GKO">
+                                        <menuItem title="Duplicate Note" image="document.on.document" catalog="system" keyEquivalent="d" localization="NO" mirroring="NO" identifier="fileMenu.duplicate" id="pnm-dP-GKO">
                                             <connections>
                                                 <action selector="duplicate:" target="Ady-hI-5gd" id="9eI-Pe-IRx"/>
                                             </connections>
@@ -217,7 +217,7 @@ CA
                                             </menu>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="wQ9-qT-qnU"/>
-                                        <menuItem title="Move" image="move.3d" catalog="system" keyEquivalent="T" localization="NO" mirroring="NO" identifier="fileMenu.move" id="CvG-Kp-kdK">
+                                        <menuItem title="Move Note…" image="move.3d" catalog="system" keyEquivalent="T" localization="NO" mirroring="NO" identifier="fileMenu.move" id="CvG-Kp-kdK">
                                             <connections>
                                                 <action selector="moveMenu:" target="Ady-hI-5gd" id="gIh-8j-qKG"/>
                                             </connections>
@@ -623,12 +623,6 @@ CA
                                         <menuItem title="Toggle Preview" image="eye" catalog="system" keyEquivalent="/" id="PdU-Em-Ugm">
                                             <connections>
                                                 <action selector="togglePreview:" target="Ady-hI-5gd" id="62m-Nl-zcS"/>
-                                            </connections>
-                                        </menuItem>
-                                        <menuItem title="Preview MathJax" image="x.squareroot" catalog="system" keyEquivalent="/" identifier="previewMathJax" id="KIz-OO-IQT">
-                                            <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
-                                            <connections>
-                                                <action selector="toggleMathJax:" target="Ady-hI-5gd" id="KrN-I7-17C"/>
                                             </connections>
                                         </menuItem>
                                         <menuItem title="BackLinks" image="link.circle" catalog="system" keyEquivalent="b" id="1cO-zi-naR">
@@ -2164,13 +2158,13 @@ CA
                 <customObject id="rPt-NT-nkU" userLabel="First Responder" customClass="NSResponder" sceneMemberID="firstResponder"/>
                 <menu id="AaK-Xd-i52">
                     <items>
-                        <menuItem title="Open" image="macwindow.on.rectangle" catalog="system" localization="NO" mirroring="NO" identifier="popup.open" id="u88-5C-vTe">
+                        <menuItem title="Open Note in New Window" image="macwindow.on.rectangle" catalog="system" localization="NO" mirroring="NO" identifier="popup.open" id="u88-5C-vTe">
                             <modifierMask key="keyEquivalentModifierMask"/>
                             <connections>
                                 <action selector="openWindow:" target="rPt-NT-nkU" id="OwA-Zj-vgW"/>
                             </connections>
                         </menuItem>
-                        <menuItem title="Duplicate" image="document.on.document" catalog="system" localization="NO" mirroring="NO" identifier="popup.duplicate" id="E6I-n5-dsi">
+                        <menuItem title="Duplicate Note" image="document.on.document" catalog="system" localization="NO" mirroring="NO" identifier="popup.duplicate" id="E6I-n5-dsi">
                             <modifierMask key="keyEquivalentModifierMask"/>
                             <connections>
                                 <action selector="duplicate:" target="rPt-NT-nkU" id="hUh-qX-nAT"/>

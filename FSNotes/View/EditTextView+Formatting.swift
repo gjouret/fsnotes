@@ -43,8 +43,17 @@ extension EditTextView {
         return tableController.applyInlineTableCellFormatting(marker)
     }
 
+    func applyInlineTableCellFormat(_ format: TableRenderController.InlineCellFormat) -> Bool {
+        return tableController.applyInlineTableCellFormat(format)
+    }
+
     @IBAction func linkMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
+
+        // In-cell path: if a table cell is being edited, honor the same
+        // clipboard-URL shortcut but wrap the cell's field-editor
+        // selection instead of the outer text view's selection.
+        if tryLinkInTableCell() { return }
 
         if let clipboardString = NSPasteboard.general.string(forType: .string) {
             let normalized = clipboardString.normalizedAsURL()
@@ -60,6 +69,37 @@ extension EditTextView {
         }
 
         showLinkDialog()
+    }
+
+    /// If the field editor currently belongs to a table cell, wrap the
+    /// cell's selection as a markdown link. Pulls a URL from the
+    /// clipboard when possible (matching the outer editor's shortcut);
+    /// falls back to a placeholder URL otherwise.
+    private func tryLinkInTableCell() -> Bool {
+        guard let fieldEditor = window?.fieldEditor(false, for: nil),
+              let cell = fieldEditor.delegate as? NSTextField,
+              cell.window != nil else { return false }
+        // Confirm the cell lives inside an InlineTableView; if not,
+        // this is some other field editor (e.g. sidebar) and we should
+        // fall through to the outer-editor path.
+        var v: NSView? = cell.superview
+        var inTable = false
+        while let current = v {
+            if current is InlineTableView { inTable = true; break }
+            v = current.superview
+        }
+        guard inTable else { return false }
+
+        var url = "https://"
+        if let clipboardString = NSPasteboard.general.string(forType: .string) {
+            let normalized = clipboardString.normalizedAsURL()
+            if let parsed = URL(string: normalized),
+               let scheme = parsed.scheme,
+               ["http", "https", "ftp", "ftps", "mailto"].contains(scheme.lowercased()) {
+                url = normalized
+            }
+        }
+        return applyInlineTableCellFormat(.link(url: url))
     }
 
     private func showLinkDialog() {
@@ -113,6 +153,7 @@ extension EditTextView {
     @IBAction func underlineMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
+        if applyInlineTableCellFormat(.underline) { return }
         if toggleUnderlineViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -127,6 +168,7 @@ extension EditTextView {
     @IBAction func strikeMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
+        if applyInlineTableCellFormatting("~~") { return }
         if toggleStrikethroughViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -141,6 +183,7 @@ extension EditTextView {
     @IBAction func highlightMenu(_ sender: Any) {
         guard let note = self.note, isEditable, note.isMarkdown() else { return }
 
+        if applyInlineTableCellFormat(.highlight) { return }
         if toggleHighlightViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -333,6 +376,7 @@ extension EditTextView {
                 string: MarkdownSerializer.serialize(newDoc)
             )
             note.cachedDocument = nil
+            hasUserEdits = true
             fill(note: note)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                 self?.focusFirstInlineTableCell()
@@ -390,6 +434,48 @@ extension EditTextView {
 
         let currentRange = selectedRange()
 
+        // Block-model path: wrap selected text in a code block or insert
+        // an empty one. Operates on the Document directly instead of
+        // routing raw markdown fences through insertText (which would
+        // treat them as plain text and delete the selection).
+        if let projection = documentProjection {
+            do {
+                let selectedText: String
+                if currentRange.length > 0,
+                   let sub = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
+                    selectedText = sub.string
+                } else {
+                    selectedText = ""
+                }
+
+                // Find the block(s) containing the selection.
+                let blockIndices = projection.blockIndices(overlapping: currentRange)
+                guard let firstIdx = blockIndices.first else { return }
+
+                // Create a code block with the selected text as content.
+                let codeBlock = Block.codeBlock(
+                    language: nil,
+                    content: selectedText,
+                    fence: FenceStyle(character: .backtick, length: 3, infoRaw: "")
+                )
+
+                let result = try EditingOps.replaceBlock(
+                    atIndex: firstIdx,
+                    with: codeBlock,
+                    in: projection
+                )
+                applyBlockModelResult(result, actionName: "Code Block")
+                // Position cursor at the info string position (after ```)
+                let newSpan = result.newProjection.blockSpans[firstIdx]
+                setSelectedRange(NSRange(location: newSpan.location, length: 0))
+                return
+            } catch {
+                bmLog("⚠️ insertCodeBlock via block model failed: \(error)")
+                // Fall through to source-mode path.
+            }
+        }
+
+        // Source-mode fallback.
         if currentRange.length > 0 {
             let mutable = NSMutableAttributedString(string: "```\n")
             if let substring = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
@@ -413,6 +499,8 @@ extension EditTextView {
 
     @IBAction func insertCodeSpan(_ sender: NSMenuItem) {
         guard isEditable else { return }
+
+        if applyInlineTableCellFormat(.code) { return }
 
         let currentRange = selectedRange()
 

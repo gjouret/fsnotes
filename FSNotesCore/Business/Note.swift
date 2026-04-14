@@ -29,6 +29,10 @@ public class Note: NSObject  {
     /// by `fillViaBlockModel()` on first access after invalidation.
     public var cachedDocument: Document?
 
+    /// Cached fold state: set of block indices that were collapsed when
+    /// the user last viewed this note. Preserved across note switches.
+    public var cachedFoldState: Set<Int>?
+
     var creationDate: Date? = Date()
 
     let dateFormatter = DateFormatter()

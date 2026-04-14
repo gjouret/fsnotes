@@ -42,7 +42,19 @@ class EditorSplitView: NSSplitView, NSSplitViewDelegate {
     }
 
     func splitViewDidResizeSubviews(_ notification: Notification) {
+        // Persist the notes-list (left subview) width whenever it's at a
+        // sensible size so we can restore it if window auto-resize later
+        // collapses it to 0. We only save "good" widths — 0 or near-zero
+        // means the pane is collapsed (by toggle or auto-collapse) and we
+        // want to preserve the last-known-good value instead.
+        if let first = subviews.first {
+            let w = first.frame.width
+            if w > 50 {
+                UserDefaultsManagement.notesListWidth = w
+            }
+        }
         ViewController.shared()?.viewDidResize()
+        ViewController.shared()?.editor?.reflowAttachmentsForWidthChange()
     }
     
     func splitViewWillResizeSubviews(_ notification: Notification) {

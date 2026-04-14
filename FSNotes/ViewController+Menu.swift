@@ -158,17 +158,14 @@ extension ViewController {
         
         switch id {
         case "\(menuId).close":
-            menuItem.title = NSLocalizedString("Close", comment: "File Menu")
             return true
-            
+
         case "\(menuId).import":
-            menuItem.title = NSLocalizedString("Import...", comment: "File Menu")
             return true
-            
+
         case "\(menuId).attach":
-            menuItem.title = NSLocalizedString("Add External Folder...", comment: "Menu Library")
             return true
-            
+
         case "\(menuId).backup":
             var title = NSLocalizedString("Inbox", comment: "")
             
@@ -186,29 +183,23 @@ extension ViewController {
             return false
 
         case "\(menuId).new":
-            menuItem.title = NSLocalizedString("New Note", comment: "File Menu")
             return true
-            
+
         case "\(menuId).newInNewWindow":
-            menuItem.title = NSLocalizedString("New Note in New Window", comment: "File Menu")
             return true
-            
+
         case "\(menuId).createFolder":
-            menuItem.title = NSLocalizedString("New Folder", comment: "Menu Library")
             return !isTrash
-            
+
         case "\(menuId).searchAndCreate":
-            menuItem.title = NSLocalizedString("Search and Create", comment: "File Menu")
             return true
-            
+
         case "\(menuId).open":
-            menuItem.title = NSLocalizedString("Open Note in New Window", comment: "File Menu")
             return greaterThanZero
-            
+
         case "\(menuId).duplicate":
-            menuItem.title = NSLocalizedString("Duplicate", comment: "File Menu")
             return greaterThanZero && (isFirstResponder || isFirstEditor)
-            
+
         case "\(menuId).rename":
             
             // sidebar
@@ -226,13 +217,11 @@ extension ViewController {
             return isOne && isFirstResponder || (isFirstEditor && !isOpenedWindow)
             
         case "\(menuId).delete":
-            menuItem.title = NSLocalizedString("Delete", comment: "File Menu")
             return greaterThanZero && isFirstResponder
-            
+
         case "\(menuId).forceDelete":
-            menuItem.title = NSLocalizedString("Force Delete", comment: "File Menu")
             return greaterThanZero && isFirstResponder
-            
+
         case "\(menuId).togglePin":
             if let note = notes?.first, note.isPinned {
                 menuItem.title = NSLocalizedString("Unpin", comment: "File Menu")
@@ -278,22 +267,17 @@ extension ViewController {
             return greaterThanZero && (isFirstResponder || isOpenedWindow || isFirstEditor)
             
         case "\(menuId).external":
-            menuItem.title = NSLocalizedString("Open External", comment: "File Menu")
             return greaterThanZero
-            
+
         case "\(menuId).reveal":
             if isFirstSidebar {
-                menuItem.title = NSLocalizedString("Reveal in Finder", comment: "Menu Library")
                 return projectSelected || isInbox
             }
-            
-            menuItem.title = NSLocalizedString("Reveal in Finder", comment: "File Menu")
             return greaterThanZero && (isFirstResponder || isOpenedWindow || isFirstEditor)
-            
+
         case "\(menuId).date":
-            menuItem.title = NSLocalizedString("Change Creation Date", comment: "File Menu")
             return greaterThanZero && (isFirstResponder || isOpenedWindow || isFirstEditor)
-            
+
         case "\(menuId).toggleContainer":
             if let note = notes?.first, note.container == .none {
                 menuItem.title = NSLocalizedString("Convert to TextBundle", comment: "")
@@ -303,17 +287,14 @@ extension ViewController {
             return greaterThanZero && !hasEncrypted(notes: notes) && (isFirstResponder || isOpenedWindow)
 
         case "\(menuId).move":
-            menuItem.title = NSLocalizedString("Move", comment: "File Menu")
             return greaterThanZero && (isFirstResponder || isOpenedWindow || isFirstEditor)
-            
+
         case "\(menuId).history":
-            menuItem.title = NSLocalizedString("History", comment: "File Menu")
             if let note = notes?.first {
                 return isOne && (isFirstResponder || isOpenedWindow || isFirstEditor) && note.project.hasCommitsDiffsCache()
             }
-            
+
         case "\(menuId).print":
-            menuItem.title = NSLocalizedString("Print", comment: "File Menu")
             return isOne && (isFirstResponder || isOpenedWindow || isFirstEditor)
         default:
             break
@@ -336,13 +317,11 @@ extension ViewController {
         
         switch id {
         case "\(menuId).copyURL":
-            menuItem.title = NSLocalizedString("Copy URL", comment: "File Menu")
             return isOne && (isFirstResponder || isOpenedWindow || isFirstEditor)
-            
+
         case "\(menuId).copyTitle":
-            menuItem.title = NSLocalizedString("Copy Title", comment: "File Menu")
             return isOne && (isFirstResponder || isOpenedWindow || isFirstEditor)
-            
+
         case "\(menuId).uploadOverSSH":
             if let note = notes?.first, note.uploadPath != nil || note.apiId != nil {
                 menuItem.title = NSLocalizedString("Update Web Page", comment: "File Menu")
@@ -350,9 +329,8 @@ extension ViewController {
                 menuItem.title = NSLocalizedString("Create Web Page", comment: "File Menu")
             }
             return isOne && (isFirstResponder || isOpenedWindow || isFirstEditor)
-            
+
         case "\(menuId).removeOverSSH":
-            menuItem.title = NSLocalizedString("Delete Web Page", comment: "File Menu")
             if let note = notes?.first {
                 return (isFirstResponder || isOpenedWindow || isFirstEditor) && isOne && !note.isEncrypted() && (note.uploadPath != nil || note.apiId != nil)
             }
@@ -380,9 +358,8 @@ extension ViewController {
         
         switch id {
         case "\(menuId).create":
-            menuItem.title = NSLocalizedString("Create Folder", comment: "Menu Library")
             return !isTrash
-            
+
         case "\(menuId).rename":
             if tagSelected {
                 menuItem.title = NSLocalizedString("Rename Tag", comment: "Menu Library")
@@ -402,11 +379,10 @@ extension ViewController {
             return isFirstResponder && (projectSelected || tagSelected)
             
         case "\(menuId).decrypt":
-            menuItem.title = NSLocalizedString("Decrypt Folder", comment: "Menu Library")
             if let project = projects?.first, !project.isTrash, !project.isDefault, !project.isVirtual, project.isEncrypted {
                 return isFirstResponder
             }
-            
+
         case "\(menuId).toggleLock":
             if let project = projects?.first, !project.isTrash, project.isLocked() {
                 menuItem.title = NSLocalizedString("Unlock Folder", comment: "")
@@ -416,11 +392,9 @@ extension ViewController {
             return isFirstResponder && projectSelected
             
         case "\(menuId).reveal":
-            menuItem.title = NSLocalizedString("Reveal in Finder", comment: "Menu Library")
             return isFirstResponder && (projectSelected || isInbox)
-            
+
         case "\(menuId).options":
-            menuItem.title = NSLocalizedString("Show Options", comment: "Menu Library")
             return isFirstResponder && (projectSelected || isSystem)
         default:
             break
@@ -432,13 +406,17 @@ extension ViewController {
     func loadMoveMenu() {
         guard let vc = ViewController.shared(), let note = vc.notesTableView.getSelectedNote() else { return }
         
-        let moveTitle = NSLocalizedString("Move", comment: "Menu")
+        let moveTitle = NSLocalizedString("Move Note…", comment: "Menu")
         if let prevMenu = noteMenu.item(withTitle: moveTitle) {
             noteMenu.removeItem(prevMenu)
         }
-        
+        // Also remove any leftover legacy "Move" item from previous builds
+        if let legacyMove = noteMenu.item(withTitle: NSLocalizedString("Move", comment: "Menu")) {
+            noteMenu.removeItem(legacyMove)
+        }
+
         let moveMenuItem = NSMenuItem()
-        moveMenuItem.title = NSLocalizedString("Move", comment: "Menu")
+        moveMenuItem.title = NSLocalizedString("Move Note…", comment: "Menu")
         moveMenuItem.image = NSImage(systemSymbolName: "move.3d", accessibilityDescription: nil)
         
         noteMenu.addItem(moveMenuItem)

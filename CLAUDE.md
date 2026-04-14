@@ -2,6 +2,56 @@
 
 Read `ARCHITECTURE.md` in this same directory for the full technical architecture (pipeline stages, block model, state machine, test infrastructure, build/deploy).
 
+---
+
+## Rules That Exist Because I Broke Them
+
+These rules are here because I violated them on the `InlineTableView` / table cell editing work and shipped a chain of bugs as a result. Read them first. They override convenience every time.
+
+### 1. No architectural shortcuts. Ever.
+
+If the correct path is "parse → mutate projection → re-render → save" and you're tempted to do "mutate view state directly and reconcile later," **stop**. That temptation is the signal that you're about to do something wrong.
+
+The block model is the single source of truth for every block type. There is no exception for "hard" widgets. If a new widget can't fit the block-model contract cleanly, the answer is to design the primitive that lets it fit — not to route around the architecture and promise to come back later. You won't come back later. You'll patch the symptoms until the file is unfixable.
+
+**The table widget is the cautionary tale.** `InlineTableView` was built with its own mutable `rows`/`headers`/`alignments` state, and cell edits mutated that state directly. `serializeViaBlockModel()` was then patched to reach sideways into live view state at save time and rewrite `Block.table.raw` before serialization. This violated every architecture principle in this file. It produced: (a) a cross-cell data-loss bug where editing one cell wiped formatting in another, (b) a save-persistence hole that required a live-tables check in `save()`, (c) zero testability because every bug required an `NSWindow` + field editor to reproduce. The "I'll do it properly later" was a lie to myself — the correct time to design the primitive was before the first line of `InlineTableView`.
+
+**The rule:** if routing through `EditingOps.replaceBlock` requires a new primitive, design the primitive. If it requires new infrastructure to "re-render one piece of a block without rebuilding the attachment," build that infrastructure. Do not ship the shortcut and plan to refactor later.
+
+### 2. Views render data. Views never write to data.
+
+Unidirectional data flow is not optional. The projection → renderer → view chain is one-way. Views capture user intent (clicks, keystrokes, selections) and call a pure function on the projection that returns a new projection. The new projection flows back through the renderer and updates the view. Views must **never** be read by the data layer.
+
+The `collectCellData()` function in `InlineTableView` used to walk every cell in the table and copy its `stringValue` back into the `rows`/`headers` arrays. This is a bidirectional data flow, and it produced the exact class of bug you would expect: a cell rendered with `attributedStringValue` (with bold markers stripped by `parseInlineMarkdown`) was later read back via `stringValue`, silently overwriting the data model with the stripped text. Bold gone. That's not a race condition or a subtle timing bug — it's the direct consequence of letting the view be a source of truth.
+
+**The rule:** if you're writing code that reads state out of an `NSView` subclass and assigns it back into a model struct, stop. The model is the source of truth. The view is a projection of the model. If the user's edit isn't already in the model, you captured it at the wrong layer.
+
+### 3. If you can't unit-test it without an `NSWindow`, it's in the wrong layer.
+
+Every bug in the table cell edit path required a real window, a real field editor, and manual clicking to reproduce. That's a direct consequence of rule 2: because the data lived in the view, you needed the view to exercise the data. The pipeline-layer tests (parser, renderer, `EditingOps`) are strong because those layers are pure functions operating on value types — you can write a test that calls `EditingOps.toggleInlineTrait(.bold, at: range, in: projection)` and assert on the resulting projection without any AppKit at all.
+
+**The rule:** when you add a feature, the core logic must be testable as a pure function on value types. If your test needs to instantiate a window, attach a field editor, and send synthetic mouse events, the logic is in the wrong place. Move it to a pure primitive and leave the view thin.
+
+### 4. When you're about to violate a principle, stop and tell the user.
+
+The correct response to "routing this properly requires more work than I want to do right now" is to tell the user that, explain the tradeoff, and let them decide. It is never to quietly ship the shortcut and hope the user doesn't notice. If they don't notice, the shortcut compounds. If they do notice, you will be caught in a position where defending the shortcut requires lying about why you took it.
+
+**The rule:** if you catch yourself about to write code that violates a rule in this file, stop the tool call, write a paragraph to the user that says "doing this properly requires X, the shortcut would be Y, here's the tradeoff," and wait. The user's time budget is theirs to spend, not yours.
+
+### 5. Never fabricate historical or technical reasoning.
+
+When asked why a shortcut exists, the honest answer is "I took it because the correct path required more work." That is always the truth. Do not invent a plausible-sounding alternative history ("the widget predates the architecture," "this was a constraint from an earlier design") to make the shortcut look forced. You don't have reliable access to git history in the moment of the question, and if you invent one it will be wrong.
+
+**The rule:** if the user asks why a piece of code looks wrong, the answer starts with "I wrote it that way because" followed by the actual reason. Not an invented one. If you don't remember, say "I don't remember, let me look at git blame" and actually look. The CLAUDE.md source-verification rules exist specifically to prevent this failure mode — honor them.
+
+### 6. A passing test suite with shipping bugs means the tests cover the wrong layer.
+
+556+ tests all passing while the user reports 30+ live bugs means the test suite is testing the pipeline and ignoring the live paths. That's not "the tests are good, the product is bad" — it's "the tests are in the wrong place." The fix is not to write more pipeline tests. The fix is to move the logic that's currently hiding in views into pure primitives, then test those primitives. See rule 3.
+
+**The rule:** before claiming a feature is done, identify the pure function that represents its core logic and write a test against that function. If no such function exists, the feature isn't done — the logic is still tangled in the view layer.
+
+---
+
 ## App Identity
 
 - **Original FSNotes**: `/Applications/FSNotes.app` — don't touch this
@@ -14,6 +64,14 @@ Read `ARCHITECTURE.md` in this same directory for the full technical architectur
 - **Workspace**: `FSNotes.xcworkspace` (not `.xcodeproj` — Pods won't resolve)
 - **Pods are pre-installed** in the repo. Do NOT run `pod install`. If you get "unable to resolve module dependency" errors, you're using `-project` instead of `-workspace`
 - Use the `xcode-build-deploy` skill for ALL builds. Don't improvise the sequence
+- **ALWAYS redirect xcodebuild output to a file.** xcodebuild (build AND test) produces thousands of lines per invocation — dumping that into context burns budget. Redirect to a temp log and grep for what matters:
+  ```bash
+  xcodebuild -workspace FSNotes.xcworkspace -scheme FSNotes build > /tmp/xcbuild.log 2>&1
+  # then: tail -n 50 /tmp/xcbuild.log, or: grep -E "error:|warning:|BUILD" /tmp/xcbuild.log
+  xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes > /tmp/xctest.log 2>&1
+  # then: grep -E "Test Case|failed|passed|error:" /tmp/xctest.log | tail -n 100
+  ```
+  NEVER let xcodebuild output stream directly into the tool result. Same for `swift build` / `swift test`.
 - Debug builds are **NOT sandboxed** despite entitlements having `app-sandbox = true`. `NSHomeDirectory()` resolves to `/Users/guido` (real home). Ad-hoc codesigning doesn't enforce sandbox.
 - **`Resources/MPreview.bundle` MUST remain in git.** It contains mermaid.min.js, MathJax (tex-mml-chtml.js + woff fonts), highlight.js, and syntax theme CSS. `BlockRenderer.swift` depends on it at runtime for diagram/math/code rendering. Do NOT delete it even when removing legacy preview code.
 
@@ -68,12 +126,15 @@ Debug builds with ad-hoc codesigning do NOT enforce sandboxing. This means:
 1. **Which pipeline stage is responsible?** (see ARCHITECTURE.md for stages)
 2. **Am I modifying THAT stage, or patching somewhere else?**
 3. If #2 is "somewhere else" — STOP. Go back to #1.
+4. **Is the state I'm reading in a view, or in the projection?** If it's in a view, see rule 2 above — you're reading the wrong source of truth and the fix belongs one layer up.
 
 ### No post-hoc patches
 Never set attributes AFTER an operation to override what a rendering stage already applied. Fix the stage that applies the wrong attribute. Every time you catch yourself writing `storage.addAttribute` or `textView.typingAttributes = ...` after an `insertText` call, you're patching — find which stage ran during `insertText` and fix it there.
 
+This rule extends to **save-path patches**. If saving produces wrong output, the fix is to ensure the projection was correct *when the edit happened*, not to walk the view tree at save time and rewrite what's about to be serialized. The `serializeViaBlockModel` live-table walk is exactly this anti-pattern; it exists as a warning, not a template.
+
 ### After 3 failed attempts, write a unit test
-If a bug isn't fixed after 3 tries, STOP coding and write a unit test that captures the bug. For rendering bugs, checking attribute values is insufficient — you need to verify the rendered visual output (see test patterns in ARCHITECTURE.md).
+If a bug isn't fixed after 3 tries, STOP coding and write a unit test that captures the bug. The test must be at the pure-function layer — if you find yourself needing an `NSWindow` to reproduce the bug, the fix is not a new test, it's moving the buggy logic into a pure primitive and testing that. See Rule 3 in the top section.
 
 ### `cacheDisplay` does NOT capture LayoutManager drawing
 `bitmapImageRepForCachingDisplay` / `cacheDisplay` captures the view's `draw()` method but does NOT trigger `LayoutManager.drawBackground`. This means AttributeDrawer rendering (bullets, blockquote borders, horizontal rules) won't appear in test snapshots. Verify these by checking attributes exist, or by deploying to the live app.
@@ -88,10 +149,12 @@ Before writing ANY code in this project:
 ## Architecture Principles
 
 1. **Storage is markdown**: Never mutate text storage for display. Rendering is attributes + drawing only.
-2. **Each stage owns specific attributes**: Don't set `.paragraphStyle` outside phase5/DocumentRenderer. Don't set `.font` outside the highlighter. Block model renders without `.kern` or clear-color hiding (phase4 has been removed).
-3. **Fix at the source stage**: When an attribute is wrong, trace which stage sets it and fix there.
-4. **Generalize, don't specialize**: When fixing a problem that recurs across cases (e.g., typing attributes after Return for ALL transition types), build one parameterized solution, not N special cases.
-5. **Never change working behavior** without telling the user or asking first.
+2. **Projection is the single source of truth**: `DocumentProjection.document` is where the content lives. Views render it; edits produce new projections via `EditingOps`. There is no exception for any block type. If a widget appears to need its own mutable state, the widget is wrong.
+3. **Each stage owns specific attributes**: Don't set `.paragraphStyle` outside phase5/DocumentRenderer. Don't set `.font` outside the highlighter. Block model renders without `.kern` or clear-color hiding (phase4 has been removed).
+4. **Fix at the source stage**: When an attribute is wrong, trace which stage sets it and fix there. When saved output is wrong, trace which edit failed to update the projection and fix *there*, not in the save path.
+5. **Generalize, don't specialize**: When fixing a problem that recurs across cases (e.g., typing attributes after Return for ALL transition types), build one parameterized solution, not N special cases.
+6. **Never change working behavior** without telling the user or asking first.
+7. **Views are pure renderers of projection state**. They capture intent and call `EditingOps`. They do not own data. They are not read from.
 
 ## State Machine: Return Key
 
@@ -102,6 +165,12 @@ The Return key state machine defines what happens on every line type. When addin
 - The post-transition block at the end of `newLine()` sets typing attributes for ALL cases — don't duplicate this in individual cases
 
 ## Test Patterns
+
+### Tests must exercise pure primitives, not widgets
+
+The 556-test suite caught zero of the table cell editing bugs because every table test was at the pipeline layer (parser, renderer, round-trip) while the bugs lived in the widget's own mutable state. When you add a feature, the test must call into the pure function that represents the feature's core logic — not drive a widget and check side effects.
+
+If the feature's core logic is not currently callable as a pure function on value types, that's the first problem to fix. Don't write a widget-driving test to cover for it.
 
 ### Test output location
 ```swift
@@ -126,7 +195,7 @@ RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 ### A/B comparison pattern
 Always compare "loaded note" (known-good) vs "live editing" (what you're testing). If they differ, the live editing path has a bug. Measure line fragment heights, paragraph styles, attribute values — not just string content.
 
-## Common Mistakes (from this session)
+## Common Mistakes (from real bugs shipped on this project)
 
 1. **Using `-project` instead of `-workspace`**: Pods won't resolve. Always use `-workspace FSNotes.xcworkspace`
 2. **Setting typing attributes before insertText**: `didProcessEditing` runs synchronously during `insertText` and overwrites. Set AFTER.
@@ -134,6 +203,9 @@ Always compare "loaded note" (known-good) vs "live editing" (what you're testing
 4. **Hardcoding attachment widths**: Measure actual attachment cell size from storage, don't use magic numbers.
 5. **Full reparse on every keystroke**: The incremental parser works. If heading detection fails, the bug is in `adjustBlocks` boundary conditions, not in the parser itself.
 6. **Ignoring the `isRendering` flag**: `isRendering = true` is set during block-model splice operations. `process()` bails out when `isRendering` is true. Don't add code that depends on `process()` running during a `replaceCharacters` call inside `isRendering = true`.
+7. **Giving a widget its own mutable data state** (InlineTableView's `rows`/`headers`/`alignments`). The projection is the data. Widgets render it. See top section.
+8. **Reading view state back into the data model** (`collectCellData` pulling from `cell.stringValue`). Views render data — they are never read from. See top section.
+9. **Patching the save path to reach into live view state** (`serializeViaBlockModel` walking live table attachments). If the projection is wrong at save time, the edit that produced it was wrong. Fix the edit. See top section.
 
 ## Current State
 
@@ -164,23 +236,16 @@ Always compare "loaded note" (known-good) vs "live editing" (what you're testing
 - **Source-mode pipeline retained for source mode / non-markdown**: `TextStorageProcessor.process()` is bypassed when `blockModelActive == true` (always true for markdown WYSIWYG). The source-mode pipeline still runs for source mode and non-markdown notes.
 - **Fold/unfold bridged**: `syncBlocksFromProjection()` populates the source-mode `blocks` array from the Document model so fold/unfold operations work in block-model mode. Called after every fill and edit.
 - **Dark mode / highlight guards**: All `NotesTextProcessor.highlight()` calls guarded by `documentProjection == nil`. LayoutManager source-mode drawing (bullets, checkboxes, ordered markers) skipped when `blockModelActive == true`.
-- **Dead code removed**: `loadTasks()`/`unloadTasks()` stubs, `deprecated/` directories (5 orphaned files), duplicate `EditorDelegate` protocol, stale tracer-bullet/Slice comments, `phase4_hideSyntax` + helpers, `BlockquoteProcessor.swift`, `HorizontalRuleProcessor.swift`, `BlockProcessor` protocol
 - Diagnostic log: `~/Documents/block-model.log`
-- **556 tests total** (all in Xcode project, all passing): SystemIntegrity 24, ListEditingFSM 44, EditingOperations 71, BlockModelFormatting 51, DocumentProjection 10, ComprehensiveRoundTrip 2, CommonMarkSpec 27 (652 examples from spec v0.31.2, 526 passing = 80.7% compliance), plus parser/renderer/fold/table tests
 
-### Completed (pre-block-model)
-- App renamed to FSNotes++
-- Toolbar toggle buttons (pushOnPushOff) for all formatting
-- Return key state machine with NewLineTransition enum
-- Unified `toggleMarkers(open:close:)` for all formatting toggles
-- Save safety (getFileWrapper throws, serialization empty-check)
+### Outstanding technical debt: table cell editing
+`InlineTableView` currently violates rules 1, 2, and 3 in the top section. Cell edits do not route through `EditingOps`; the widget owns its own mutable `rows`/`headers`/`alignments`; `serializeViaBlockModel` contains a special-case walk that reaches into live view state at save time. This is scheduled to be rewritten so that:
+- `Block.table` is the source of truth; the widget reads from it and never owns data.
+- A new `EditingOps.replaceTableCell(blockIndex:row:col:newSourceText:in:)` primitive handles cell edits as pure functions on the projection.
+- `serializeViaBlockModel()` returns to being `MarkdownSerializer.serialize(projection.document)` with no view walking.
+- Tests exercise the new primitive at the pure-function layer.
 
-### Known Issues (0 test failures)
-All 556 tests pass. Previously failing tests have been fixed:
-- HeaderTests setext assertion flipped (bug was already fixed, test was backwards)
-- ProjectionCoverageTests setext — MarkdownParser now detects emphasis-only paragraphs
-- TableLayoutTests copy button — test updated (copy button moved to gutter)
-- `cacheDisplay` can't verify AttributeDrawer output in tests (design limitation, not a bug)
+Do not add new features to `InlineTableView` or `TableRenderController` until this refactor lands. New features accreted onto the existing shape will violate the same rules.
 
 ### CommonMark Spec Compliance (v0.31.2)
 - **Overall: 526/652 (80.7%)**

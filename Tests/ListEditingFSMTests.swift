@@ -288,7 +288,7 @@ class ListEditingFSMTests: XCTestCase {
         }, "beta should be a paragraph")
     }
 
-    func test_exit_emptyItem_becomesBlankLine() {
+    func test_exit_emptyItem_becomesEmptyParagraph() {
         // Create a projection with an empty list item.
         let doc = Document(blocks: [
             .list(items: [
@@ -299,8 +299,19 @@ class ListEditingFSMTests: XCTestCase {
         // Inline content starts at prefix length = 1 (attachment only)
         let result = try! EditingOps.exitListItem(at: 1, in: proj)
         let newDoc = result.newProjection.document
-        XCTAssertTrue(newDoc.blocks.contains { if case .blankLine = $0 { return true }; return false },
-                      "Empty item exit should produce blankLine")
+        // Exiting an empty list item must produce an empty .paragraph, NOT
+        // a .blankLine. A .blankLine renders as a zero-length span with no
+        // paragraph style applied, so the cursor inherits the surrounding
+        // list's hanging indent from neighboring attributes. An empty
+        // paragraph gets a fresh zero-indent paragraph style from the
+        // renderer so the cursor sits at the left margin.
+        XCTAssertTrue(newDoc.blocks.contains {
+            if case .paragraph(let inline) = $0, inline.isEmpty { return true }
+            return false
+        }, "Empty item exit should produce an empty paragraph, not a blankLine")
+        XCTAssertFalse(newDoc.blocks.contains {
+            if case .blankLine = $0 { return true }; return false
+        }, "Empty item exit must not produce a blankLine")
     }
 
     // MARK: - 6. Return on empty item

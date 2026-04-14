@@ -44,7 +44,26 @@ extension EditTextView {
             // Preserve the cached Document from the current projection —
             // save(markdown:) invalidates it, but the projection's document
             // is still the correct one.
-            if let doc = documentProjection?.document {
+            //
+            // EXCEPTION: if the storage contains live InlineTableView
+            // attachments, the projection's document holds STALE table
+            // `raw` fields (live cell edits are only reconciled into the
+            // markdown inside `serializeViaBlockModel()`, not pushed back
+            // into the projection). Caching the stale doc would cause the
+            // next fill() to re-render with old table content. Leave the
+            // cache invalidated so the next load re-parses from disk.
+            var hasLiveTables = false
+            if let storage = textStorage {
+                let fullRange = NSRange(location: 0, length: storage.length)
+                storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, stop in
+                    if let att = value as? NSTextAttachment,
+                       att.attachmentCell is InlineTableAttachmentCell {
+                        hasLiveTables = true
+                        stop.pointee = true
+                    }
+                }
+            }
+            if !hasLiveTables, let doc = documentProjection?.document {
                 note.cachedDocument = doc
             }
             cleanupOrphanedAttachmentsIfNeeded(note: note, markdown: markdown)
@@ -240,7 +259,6 @@ extension EditTextView {
 
         guard let storage = textStorage else { return }
 
-        // Reset edit tracking — display-only fill must not trigger saves.
         hasUserEdits = false
 
         if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {

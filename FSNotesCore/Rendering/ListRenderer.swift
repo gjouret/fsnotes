@@ -197,7 +197,9 @@ private class BulletAttachmentCell: NSTextAttachmentCell {
         self.glyph = glyph
         self.cellWidth = cellWidth
         self.bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
-        self.cellHeight = bodyFont.ascender + abs(bodyFont.descender)
+        // Include `leading` so cell matches natural body-glyph line height
+        // (prevents 1-2 px shift between empty list item and one with content).
+        self.cellHeight = bodyFont.ascender + abs(bodyFont.descender) + bodyFont.leading
         super.init()
     }
 
@@ -312,13 +314,13 @@ public class BulletTextAttachment: NSTextAttachment {
 public enum BulletAttachment {
     /// Create an attributed string containing a single bullet glyph
     /// attachment character. Cell width = cellScale × font.pointSize.
-    /// Cell height = body font line height (ascender + |descender|).
+    /// Cell height = body font line height (ascender + |descender| + leading).
     public static func make(
         glyph: String,
         font: PlatformFont
     ) -> NSAttributedString {
         let cellWidth = font.pointSize * ListRenderer.cellScale
-        let cellHeight = font.ascender + abs(font.descender)
+        let cellHeight = font.ascender + abs(font.descender) + font.leading
         let attachment = BulletTextAttachment(glyph: glyph, size: cellWidth)
         #if os(OSX)
         let cell = BulletAttachmentCell(
@@ -355,7 +357,11 @@ private class CheckboxAttachmentCell: NSTextAttachmentCell {
         self.isChecked = checked
         self.cellWidth = cellWidth
         self.bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
-        self.cellHeight = bodyFont.ascender + abs(bodyFont.descender)
+        // Include `leading` so the cell matches the natural line height
+        // of regular body glyphs. Without leading, an empty todo line
+        // (only the attachment) is 1-2 px shorter than a line with
+        // content, causing the checkbox to "jump" down on first char.
+        self.cellHeight = bodyFont.ascender + abs(bodyFont.descender) + bodyFont.leading
         // Pre-render the tinted SF Symbol once instead of every draw call.
         let symbolName = checked ? "checkmark.square" : "square"
         let drawSize = bodyPointSize * ListRenderer.checkboxDrawScale
@@ -443,7 +449,7 @@ public enum CheckboxAttachment {
         font: PlatformFont
     ) -> NSAttributedString {
         let cellWidth = font.pointSize * ListRenderer.cellScale
-        let cellHeight = font.ascender + abs(font.descender)
+        let cellHeight = font.ascender + abs(font.descender) + font.leading
         let attachment = CheckboxTextAttachment(checked: checked, size: cellWidth)
         #if os(OSX)
         let cell = CheckboxAttachmentCell(

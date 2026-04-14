@@ -247,6 +247,21 @@ extension ViewController {
         editor.updateTextContainerInset()
     }
 
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        // Persist the sidebar (folder-pane) width whenever it's at a sensible
+        // size. This is the outer splitView's left subview. We need this to
+        // survive window auto-resize that would otherwise collapse the pane
+        // with no way to recover (NSSplitView autosave persists the 0 state).
+        guard let split = notification.object as? NSSplitView,
+              split === sidebarSplitView,
+              let first = split.subviews.first else { return }
+        let w = first.frame.width
+        if w > 50 {
+            UserDefaultsManagement.sidebarTableWidth = w
+        }
+        editor?.reflowAttachmentsForWidthChange()
+    }
+
     @objc func onSleepNote(note: NSNotification) {
         if UserDefaultsManagement.lockOnSleep {
             lockAll(self)

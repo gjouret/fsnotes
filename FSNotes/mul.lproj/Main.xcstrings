@@ -10797,7 +10797,7 @@
       }
     },
     "CvG-Kp-kdK.title" : {
-      "comment" : "Class = \"NSMenuItem\"; title = \"Move\"; ObjectID = \"CvG-Kp-kdK\";",
+      "comment" : "Class = \"NSMenuItem\"; title = \"Move Note…\"; ObjectID = \"CvG-Kp-kdK\";",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "ar-IQ" : {
@@ -10821,7 +10821,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Move"
+            "value" : "Move Note…"
           }
         },
         "es" : {
@@ -13197,7 +13197,7 @@
       }
     },
     "E6I-n5-dsi.title" : {
-      "comment" : "Class = \"NSMenuItem\"; title = \"Duplicate\"; ObjectID = \"E6I-n5-dsi\";",
+      "comment" : "Class = \"NSMenuItem\"; title = \"Duplicate Note\"; ObjectID = \"E6I-n5-dsi\";",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "ar-IQ" : {
@@ -13221,7 +13221,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Duplicate"
+            "value" : "Duplicate Note"
           }
         },
         "es" : {
@@ -29719,7 +29719,7 @@
       }
     },
     "pnm-dP-GKO.title" : {
-      "comment" : "Class = \"NSMenuItem\"; title = \"Duplicate\"; ObjectID = \"pnm-dP-GKO\";",
+      "comment" : "Class = \"NSMenuItem\"; title = \"Duplicate Note\"; ObjectID = \"pnm-dP-GKO\";",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "ar-IQ" : {
@@ -29743,7 +29743,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Duplicate"
+            "value" : "Duplicate Note"
           }
         },
         "es" : {

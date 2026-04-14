@@ -70,11 +70,8 @@ enum ImageAttachmentHydrator {
                 return
             }
 
-            // Only hydrate attachments marked as image by InlineRenderer.
-            // PDFs are handled by PDFAttachmentProcessor.
-            guard let rawType = textStorage.attribute(.renderedBlockType, at: range.location, effectiveRange: nil) as? String,
-                  rawType == RenderedBlockType.image.rawValue else {
-                let rawType = textStorage.attribute(.renderedBlockType, at: range.location, effectiveRange: nil)
+            let rawType = textStorage.attribute(.renderedBlockType, at: range.location, effectiveRange: nil) as? String
+            guard rawType == RenderedBlockType.image.rawValue else {
                 bmLog("🖼️   skip @\(range.location): blockType=\(rawType ?? "nil") (not image)")
                 return
             }

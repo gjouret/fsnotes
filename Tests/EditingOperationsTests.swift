@@ -221,17 +221,17 @@ class EditingOperationsTests: XCTestCase {
     }
 
     func test_delete_crossBlock_headingParagraph_merges() throws {
-        // Adjacent heading + paragraph: merge produces a single paragraph
-        // with the combined text content.
+        // Adjacent heading + paragraph: per ARCHITECTURE.md §192,
+        // "heading | paragraph → Heading with paragraph's inlines
+        // appended to suffix". The heading level is preserved.
         let p = project("# Title\nbody\n")
         // Rendered "Title\nbody\n". Block 0 = [0,5), sep, Block 1 = [6,10)
-        // Delete across separator: delete last char of heading "e", sep, first char of paragraph "b"
-        // Result: "Titl" + "ody" = "Titlody"
+        // Delete across separator: last char of heading "e", sep, first char of paragraph "b"
+        // Result: heading " Titl" + paragraph-text "ody" → "# Titlody"
         let r = try EditingOps.delete(range: NSRange(location: 4, length: 3), in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
-        // The heading is downgraded to a paragraph on merge.
-        XCTAssertTrue(serialized.contains("Titlody"), "Merged text should combine remaining heading and paragraph content")
-        XCTAssertFalse(serialized.contains("#"), "Heading marker should not survive merge into paragraph")
+        XCTAssertTrue(serialized.contains("# Titlody"),
+                      "Heading should survive merge with paragraph's text appended (got: \(serialized))")
     }
 
     func test_insert_unsupportedBlockType_throws() {
@@ -406,15 +406,16 @@ class EditingOperationsTests: XCTestCase {
         // "# Title\n" → rendered "Title\n"
         let p = project("# Title\n")
         XCTAssertEqual(p.attributed.string, "Title\n")
-        // Insert "\n" at offset 3 (after "Tit") — splits heading into heading + blank + paragraph
+        // Insert "\n" at offset 3 (after "Tit") — splits heading into
+        // heading + paragraph (no interstitial blankLine; paragraphSpacing
+        // and the serializer's blank-separator logic handle the gap).
         let r = try EditingOps.insert("\n", at: 3, in: p)
-        // Heading keeps "Tit", blank line, then new paragraph gets "le"
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
         XCTAssertTrue(serialized.contains("# Tit\n"), "Should have heading 'Tit': \(serialized)")
         XCTAssertTrue(serialized.contains("le\n"), "Should have paragraph 'le': \(serialized)")
-        // Cursor should be at start of new paragraph (after blank line)
-        let paraBlockIdx = 2  // heading, blankLine, paragraph
-        let paraBlockStart = r.newProjection.blockSpans[paraBlockIdx].location
+        // Two blocks only: [heading, paragraph]. Cursor at start of paragraph.
+        XCTAssertEqual(r.newProjection.document.blocks.count, 2)
+        let paraBlockStart = r.newProjection.blockSpans[1].location
         XCTAssertEqual(r.newCursorPosition, paraBlockStart)
         assertSpliceInvariant(old: p, result: r)
     }
@@ -423,14 +424,20 @@ class EditingOperationsTests: XCTestCase {
         // "# Title\n" → rendered "Title\n"
         let p = project("# Title\n")
         XCTAssertEqual(p.attributed.string, "Title\n")
-        // Insert "\n" at offset 5 (end of "Title") — creates blank paragraph after
+        // Insert "\n" at offset 5 (end of "Title") — creates empty paragraph after.
+        // Per the corrected Return-in-heading rule, this produces
+        // [heading, paragraph(inline:[])] with NO blankLine between.
         let r = try EditingOps.insert("\n", at: 5, in: p)
-        // Heading stays "# Title", new blank paragraph after
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
         XCTAssertTrue(serialized.contains("# Title\n"), "Should preserve heading: \(serialized)")
-        // Should have a blank line after
-        XCTAssertTrue(serialized.contains("\n\n") || serialized.hasSuffix("\n\n"), "Should have blank line: \(serialized)")
-        // Cursor should be at start of new blank line
+        // Exactly two blocks: heading + empty paragraph.
+        XCTAssertEqual(r.newProjection.document.blocks.count, 2)
+        if case .paragraph(let inline) = r.newProjection.document.blocks[1] {
+            XCTAssertTrue(inline.isEmpty, "Second block should be empty paragraph")
+        } else {
+            XCTFail("Second block should be a paragraph")
+        }
+        // Cursor at start of the new empty paragraph.
         let secondBlockStart = r.newProjection.blockSpans[1].location
         XCTAssertEqual(r.newCursorPosition, secondBlockStart)
         assertSpliceInvariant(old: p, result: r)
@@ -486,14 +493,13 @@ class EditingOperationsTests: XCTestCase {
         let p = project("abc\n\ndef\n")
         XCTAssertEqual(p.attributed.string, "abc\n\ndef\n")
         // Backspace at start of block[2] (para "def"), storageIndex 5.
-        // Deletes separator at position 4 → merges blankLine + para("def").
+        // Deletes separator at position 4 → merges both paragraphs into one.
+        // The blank line is removed and the preceding paragraph absorbs the
+        // following one, producing a single merged paragraph.
         let r = try EditingOps.delete(range: NSRange(location: 4, length: 1), in: p)
-        // blankLine(nil) + paragraph("def") → paragraph("def").
-        // New doc: [para("abc"), para("def")]. But adjacent paragraphs
-        // still have a separator. Rendered: "abc\ndef\n".
-        XCTAssertEqual(r.newProjection.attributed.string, "abc\ndef\n")
-        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "abc\ndef\n")
-        assertSpliceInvariant(old: p, result: r)
+        // Merged: [para("abcdef")]. Rendered: "abcdef\n".
+        XCTAssertEqual(r.newProjection.attributed.string, "abcdef\n")
+        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "abcdef\n")
     }
 
     func test_merge_twoParagraphsDirectly() throws {
@@ -629,15 +635,14 @@ class EditingOperationsTests: XCTestCase {
     }
 
     func test_merge_headingWithParagraph_succeeds() throws {
-        // Heading + paragraph merge: produces a paragraph with combined text.
+        // ARCHITECTURE.md §192: heading + paragraph → Heading with
+        // paragraph's inlines appended to suffix. Heading level preserved.
         let p = project("# Title\nhello\n")
         // Delete separator between heading and paragraph.
-        // Spans: [0,5) heading "Title", [6,11) paragraph "hello".
         let r = try EditingOps.delete(range: NSRange(location: 5, length: 1), in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
-        // Heading is downgraded to paragraph.
-        XCTAssertTrue(serialized.contains("Titlehello"), "Merge should combine heading text with paragraph text")
-        XCTAssertFalse(serialized.contains("#"), "Heading marker should not survive merge into paragraph")
+        XCTAssertTrue(serialized.contains("# Titlehello"),
+                      "Heading should survive merge with paragraph text appended (got: \(serialized))")
     }
 
     func test_merge_blankLineWithHeading_preservesHeading() throws {
@@ -647,22 +652,160 @@ class EditingOperationsTests: XCTestCase {
         // Block 1 = heading "Hello".
         // Delete separator between blankLine and heading.
         let blankSpan = p.blockSpans[0]
-        let headingSpan = p.blockSpans[1]
+        let _ = p.blockSpans[1]
         let sepLoc = blankSpan.location + blankSpan.length
         let r = try EditingOps.delete(range: NSRange(location: sepLoc, length: 1), in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
         XCTAssertTrue(serialized.contains("## Hello"), "Heading should be preserved when merging with blank line")
     }
 
-    func test_merge_paragraphWithHeading_producesParagraph() throws {
-        // Paragraph + heading: result is a paragraph (heading demoted).
+    func test_merge_paragraphWithHeading_appendsText() throws {
+        // ARCHITECTURE.md §192: paragraph + heading → Paragraph with
+        // heading suffix appended (heading marker dropped, text retained).
         let p = project("text\n## Hello\n")
         // Delete the last char of paragraph + separator + first char of heading
         // to force cross-block merge.
         let paraSpan = p.blockSpans[0]
         let r = try EditingOps.delete(range: NSRange(location: paraSpan.length - 1, length: 2), in: p)
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
-        XCTAssertFalse(serialized.contains("#"), "Heading should be demoted to paragraph when merging into paragraph")
+        XCTAssertFalse(serialized.contains("#"),
+                       "Heading marker should be dropped when merging into preceding paragraph")
+        XCTAssertTrue(serialized.contains("texHello"),
+                      "Paragraph should absorb heading suffix text (got: \(serialized))")
+    }
+
+    // MARK: - Cross-Block Merge table rows (ARCHITECTURE.md §192)
+
+    func test_merge_headingWithHeading_keepsFirstLevel() throws {
+        // heading | heading → First heading with second's suffix appended.
+        let p = project("# Alpha\n## Beta\n")
+        // Delete the separator between the two headings (the last char of
+        // "Alpha" doesn't matter — merge with endOffset=0 on second heading).
+        let firstSpan = p.blockSpans[0]
+        let r = try EditingOps.delete(range: NSRange(location: firstSpan.length, length: 1), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.hasPrefix("# AlphaBeta"),
+                      "First heading's level should win with second's text appended (got: \(serialized))")
+    }
+
+    func test_merge_listWithParagraph_appendsToLastLeaf() throws {
+        // list | paragraph → Paragraph inlines appended to last list item.
+        let p = project("- alpha\n- beta\n\ntail\n")
+        // Doc: [list([alpha, beta]), blankLine, para("tail")].
+        // Find the blankLine and delete it to force list + paragraph merge.
+        let blankIdx = p.document.blocks.firstIndex { if case .blankLine = $0 { return true }; return false }!
+        let blankSpan = p.blockSpans[blankIdx]
+        // Delete from end of blankLine back through the separator.
+        let sepLoc = blankSpan.location + blankSpan.length
+        let r = try EditingOps.delete(range: NSRange(location: sepLoc - 1, length: 2), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("- betatail"),
+                      "Paragraph text should be appended to last list item (got: \(serialized))")
+        XCTAssertFalse(serialized.contains("\ntail\n"),
+                       "Standalone paragraph should be gone after merge into list")
+    }
+
+    func test_merge_paragraphWithList_firstItemOnly() throws {
+        // paragraph | list → Paragraph (list's first item inlines appended).
+        // Remaining list items survive as a reduced list.
+        let doc = Document(blocks: [
+            .paragraph(inline: [.text("head")]),
+            .list(items: [
+                ListItem(indent: "", marker: "-", afterMarker: " ", inline: [.text("one")], children: []),
+                ListItem(indent: "", marker: "-", afterMarker: " ", inline: [.text("two")], children: [])
+            ])
+        ], trailingNewline: true)
+        let p = DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
+        // Spans: [0,4) head, [5,...) list (first item glyph + "one", sep, glyph + "two").
+        // Delete the "\n" separator between paragraph and list.
+        let r = try EditingOps.delete(range: NSRange(location: 4, length: 1), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.hasPrefix("headone"),
+                      "Paragraph should absorb list's first item inlines (got: \(serialized))")
+        XCTAssertTrue(serialized.contains("- two"),
+                      "Second list item should survive as a continuing list (got: \(serialized))")
+    }
+
+    func test_merge_anyWithBlockquote_firstLineOnly() throws {
+        // any | blockquote → first line's inlines appended; remaining
+        // lines survive as a trailing blockquote block.
+        let p = project("head\n\n> line one\n> line two\n> line three\n")
+        // Doc: [para("head"), blankLine, blockquote(3 lines)].
+        // Delete forward across blankLine into blockquote start.
+        let blankIdx = p.document.blocks.firstIndex { if case .blankLine = $0 { return true }; return false }!
+        let blankSpan = p.blockSpans[blankIdx]
+        // Swallow the separator after blankLine so paragraph merges with blockquote.
+        let sepLoc = blankSpan.location + blankSpan.length
+        let r = try EditingOps.delete(range: NSRange(location: sepLoc - 1, length: 2), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("headline one"),
+                      "First blockquote line should merge into paragraph (got: \(serialized))")
+        XCTAssertTrue(serialized.contains("> line two"),
+                      "Second blockquote line should survive (got: \(serialized))")
+        XCTAssertTrue(serialized.contains("> line three"),
+                      "Third blockquote line should survive (got: \(serialized))")
+    }
+
+    func test_merge_anyWithHorizontalRule_dropsHR() throws {
+        // any | horizontalRule → HR removed, block A preserved (type kept).
+        let p = project("# Title\n\n---\n")
+        // Doc: [heading, blankLine, HR].
+        // First delete the blankLine separator so heading is adjacent to HR.
+        // Then delete the separator between heading and HR to trigger merge.
+        let blankIdx = p.document.blocks.firstIndex { if case .blankLine = $0 { return true }; return false }!
+        let blankSpan = p.blockSpans[blankIdx]
+        let sepBefore = blankSpan.location - 1   // newline after heading
+        // Delete from end of heading through entire blankLine span + following newline.
+        let r = try EditingOps.delete(
+            range: NSRange(location: sepBefore, length: blankSpan.length + 2),
+            in: p
+        )
+        // Heading survives; HR should be gone from the doc.
+        let hasHR = r.newProjection.document.blocks.contains {
+            if case .horizontalRule = $0 { return true }; return false
+        }
+        XCTAssertFalse(hasHR, "HR should be removed after merge")
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("# Title"),
+                      "Heading should be preserved across merge with HR (got: \(serialized))")
+    }
+
+    func test_multiBlockDelete_acrossBlanksIntoFirstListItem_preservesRemainingItems() throws {
+        // Regression: selecting [blank1, blank2, firstListItem] and
+        // deleting previously nuked the ENTIRE list because
+        // `deleteInBlock(list, from:0, to:endOffset)` threw on any
+        // boundary-spanning offset and `try?` degraded the whole list
+        // to nil ("block B fully consumed"). Verify remaining items
+        // survive as a continuing list.
+        let p = project("before\n\n\n- one\n- two\n- three\n")
+        // Doc: [paragraph("before"), blankLine, blankLine, list(3 items)]
+        let listIdx = p.document.blocks.firstIndex {
+            if case .list = $0 { return true }; return false
+        }!
+        let listSpan = p.blockSpans[listIdx]
+        // Rendered list: "\u{...}one\n\u{...}two\n\u{...}three" — first
+        // item ends at listSpan.location + 1 (bullet) + 3 ("one") = +4.
+        // Select from start of first blankLine to end of first list item.
+        let firstBlankIdx = p.document.blocks.firstIndex {
+            if case .blankLine = $0 { return true }; return false
+        }!
+        let selectionStart = p.blockSpans[firstBlankIdx].location
+        let selectionEnd = listSpan.location + 1 + "one".count
+        let r = try EditingOps.delete(
+            range: NSRange(location: selectionStart, length: selectionEnd - selectionStart),
+            in: p
+        )
+        // The remaining list should still contain "two" and "three".
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("- two"),
+                      "Second list item must survive (got: \(serialized))")
+        XCTAssertTrue(serialized.contains("- three"),
+                      "Third list item must survive (got: \(serialized))")
+        // And the surviving document should still have a list block.
+        let hasList = r.newProjection.document.blocks.contains {
+            if case .list = $0 { return true }; return false
+        }
+        XCTAssertTrue(hasList, "List block must persist after partial deletion")
     }
 
     // MARK: - Block swap (move up/down)

@@ -121,6 +121,23 @@ public enum DocumentRenderer {
                     // round-trip — visually the paragraphSpacing on
                     // surrounding blocks provides all inter-block gaps.
                     out.append(NSAttributedString(string: "\n", attributes: collapsedSepAttrs))
+                } else if blockRange.length == 0 {
+                    // EMPTY block: the separator "\n" we just append IS
+                    // the terminator of this block's visual line (because
+                    // the block itself contributed zero characters). Its
+                    // paragraph style drives the line's height, indent,
+                    // and spacing. Without this, NSLayoutManager reads the
+                    // separator's default style — which results in a
+                    // cursor that inherits metrics from the PRECEDING
+                    // non-empty block (heading, list item, etc.) via
+                    // fixAttributes propagation.
+                    let emptyStyle = paragraphStyle(
+                        for: block, isFirst: (i == 0),
+                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                    )
+                    var emptyAttrs = separatorAttrs
+                    emptyAttrs[.paragraphStyle] = emptyStyle
+                    out.append(NSAttributedString(string: "\n", attributes: emptyAttrs))
                 } else {
                     out.append(NSAttributedString(string: "\n", attributes: separatorAttrs))
                 }
@@ -130,7 +147,25 @@ public enum DocumentRenderer {
         // Optional trailing newline: preserved for byte-equal round-trip
         // with the source markdown file. NOT part of any block's span.
         if document.trailingNewline && !document.blocks.isEmpty {
-            out.append(NSAttributedString(string: "\n", attributes: separatorAttrs))
+            // If the LAST block is empty, tag the trailing "\n" with that
+            // block's paragraph style — same reasoning as the inter-block
+            // separator above. Without this, a doc that ends with an
+            // empty paragraph would render the cursor with default (or
+            // inherited) line metrics.
+            let lastIdx = document.blocks.count - 1
+            let lastBlock = document.blocks[lastIdx]
+            let lastSpan = spans[lastIdx]
+            if lastSpan.length == 0 {
+                let emptyStyle = paragraphStyle(
+                    for: lastBlock, isFirst: (lastIdx == 0),
+                    baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                )
+                var emptyAttrs = separatorAttrs
+                emptyAttrs[.paragraphStyle] = emptyStyle
+                out.append(NSAttributedString(string: "\n", attributes: emptyAttrs))
+            } else {
+                out.append(NSAttributedString(string: "\n", attributes: separatorAttrs))
+            }
         }
 
         // Post-processing: auto-link bare URLs in paragraph/heading text.

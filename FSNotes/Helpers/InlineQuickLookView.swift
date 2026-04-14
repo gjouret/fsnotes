@@ -74,7 +74,6 @@ class InlineQuickLookView: NSView {
         toolbarView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         addSubview(toolbarView)
 
-        // Separator line at bottom edge of toolbar
         separatorView = NSView()
         separatorView.wantsLayer = true
         separatorView.layer?.backgroundColor = NSColor.separatorColor.cgColor
@@ -284,11 +283,10 @@ enum QuickLookAttachmentProcessor {
             if attachment.attachmentCell is QuickLookAttachmentCell { return }
             if attachment.attachmentCell is PDFAttachmentCell { return }
 
-            // Must have a URL pointing to an existing file
-            guard let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL,
+            let maybeURL = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL
+            guard let url = maybeURL,
                   FileManager.default.fileExists(atPath: url.path) else {
-                let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL
-                bmLog("📎   skip @\(range.location): url=\(url?.lastPathComponent ?? "nil"), exists=\(url != nil ? FileManager.default.fileExists(atPath: url!.path) : false)")
+                bmLog("📎   skip @\(range.location): url=\(maybeURL?.lastPathComponent ?? "nil")")
                 return
             }
 

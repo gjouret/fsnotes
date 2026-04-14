@@ -121,4 +121,27 @@ public struct DocumentProjection {
         }
         return nil
     }
+
+    /// Return the indices of all blocks that overlap the given storage
+    /// range. Used by multi-block toolbar operations (e.g. select three
+    /// paragraphs and toggle to list). Returns an empty array if no
+    /// blocks overlap.
+    public func blockIndices(overlapping range: NSRange) -> [Int] {
+        let rangeEnd = range.location + range.length
+        var indices: [Int] = []
+        for (i, span) in rendered.blockSpans.enumerated() {
+            let spanEnd = span.location + span.length
+            // A block overlaps the range if they share any characters.
+            // For zero-length selections (cursor), use blockContaining instead.
+            if span.location < rangeEnd && spanEnd > range.location {
+                indices.append(i)
+            }
+        }
+        // Fallback: if zero-length range (cursor), use blockContaining.
+        if indices.isEmpty, range.length == 0,
+           let (idx, _) = blockContaining(storageIndex: range.location) {
+            indices.append(idx)
+        }
+        return indices
+    }
 }

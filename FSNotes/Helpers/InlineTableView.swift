@@ -459,12 +459,17 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         for i in 0..<row { rowY -= L.rHeights[i] }
         let rowH = L.rHeights[row]
 
-        // Cap width to scrollView's visible width so the highlight doesn't
-        // extend past the table when the grid is wider than the container.
-        let highlightWidth = min(L.leftMargin + L.gridWidth, scrollView.frame.width)
+        // RC6: Highlight should start at the grid edge (after the left
+        // handle margin) and span only the grid width — not the handle
+        // bar. Previously it started at x=0 and included leftMargin,
+        // creating a 1-2px offset and bleeding into the handle area.
+        // Cap width to remaining visible scrollView width so the
+        // highlight doesn't extend past the table.
+        let availableGridWidth = max(0, scrollView.frame.width - L.leftMargin)
+        let highlightWidth = min(L.gridWidth, availableGridWidth)
 
         let highlightFrame = NSRect(
-            x: 0,
+            x: L.leftMargin,
             y: rowY - rowH,
             width: highlightWidth,
             height: rowH
@@ -781,9 +786,13 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
         cell.isHidden = false
         cell.isEditable = isEditing
-        cell.isBordered = isEditing
+        // Never draw an inner border or background — the grid itself provides
+        // the visual frame. Flipping these on for edit mode used to wrap the
+        // field editor in a second, smaller NSTextField rectangle inset from
+        // the grid cell, shifting the text down and right.
+        cell.isBordered = false
         cell.bezelStyle = .squareBezel
-        cell.drawsBackground = isEditing
+        cell.drawsBackground = false
         cell.backgroundColor = isHeader ? NSColor.controlBackgroundColor : NSColor.textBackgroundColor
         cell.tag = row * 1000 + col
         // Support multi-line cells (Return inserts newline, stored as <br> in markdown)
@@ -1195,31 +1204,42 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Data Collection
 
     func collectCellData() {
-        // Only update the data model from cells that show raw markdown text.
-        // When not editing, cells may show formatted attributed text (bold/italic
-        // rendered, markers stripped). Reading stringValue from those cells would
-        // lose the markdown markers (**bold** → bold). The data model already has
-        // the correct values for non-edited cells.
-        let fieldEditor = window?.fieldEditor(false, for: nil)
-        let activeCell = fieldEditor?.delegate as? NSTextField
-        let isEditingMode = (focusState == .editing)
+        // Only read from the cell whose field editor is currently active.
+        // `headers` / `rows` are the source of truth for every other cell —
+        // the data model is only mutated via the field editor, so non-active
+        // cells already have the correct raw-markdown value.
+        //
+        // Previous versions read `stringValue` from ALL cells while in
+        // editing mode on the assumption that editing-mode cells contained
+        // raw markdown. That assumption breaks in two places:
+        //   (a) The hovered→editing transition does NOT rebuild cells, so
+        //       they still hold the parsed `attributedStringValue` from
+        //       .hovered state, where markdown markers are STRIPPED by
+        //       parseInlineMarkdown. Reading `cell.stringValue` in that
+        //       state silently wiped `**bold**` back to `bold` on any cell
+        //       the user hadn't explicitly touched.
+        //   (b) Cells rendered by `configureCell` with
+        //       `attributedStringValue` have no authoritative "raw text" —
+        //       stringValue is whatever the attributed string's plain
+        //       content happens to be, which has already lost its markers.
+        //
+        // The data model is authoritative; trust it.
+        guard let fieldEditor = window?.fieldEditor(false, for: nil),
+              let activeCell = fieldEditor.delegate as? NSTextField else { return }
+
+        let liveText = fieldEditor.string.replacingOccurrences(of: "\n", with: "<br>")
 
         for (i, cell) in headerCells.enumerated() where i < headers.count {
-            if cell === activeCell, let editor = fieldEditor {
-                // Active cell: read live text from field editor
-                headers[i] = editor.string.replacingOccurrences(of: "\n", with: "<br>")
-            } else if isEditingMode {
-                // Editing mode: cells show raw markdown, safe to read
-                headers[i] = cell.stringValue.replacingOccurrences(of: "\n", with: "<br>")
+            if cell === activeCell {
+                headers[i] = liveText
+                return
             }
-            // Non-editing mode: skip — data model already correct
         }
         for (r, rowCells) in dataCells.enumerated() where r < rows.count {
             for (c, cell) in rowCells.enumerated() where c < rows[r].count {
-                if cell === activeCell, let editor = fieldEditor {
-                    rows[r][c] = editor.string.replacingOccurrences(of: "\n", with: "<br>")
-                } else if isEditingMode {
-                    rows[r][c] = cell.stringValue.replacingOccurrences(of: "\n", with: "<br>")
+                if cell === activeCell {
+                    rows[r][c] = liveText
+                    return
                 }
             }
         }
@@ -1438,18 +1458,15 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 clearHoverHandles()
             }
         } else {
-            // Just update cell editability
+            // Just update cell editability — borders and backgrounds stay
+            // off in both states so the field editor overlays cleanly.
             let isEditing = (to == .editing)
             for cell in headerCells {
                 cell.isEditable = isEditing
-                cell.isBordered = isEditing
-                cell.drawsBackground = isEditing
             }
             for rowCells in dataCells {
                 for cell in rowCells {
                     cell.isEditable = isEditing
-                    cell.isBordered = isEditing
-                    cell.drawsBackground = isEditing
                 }
             }
             invalidateIntrinsicContentSize()
@@ -1458,8 +1475,9 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Inline Markdown Formatting
 
-    /// Parse inline markdown (bold, italic, strikethrough) into an NSAttributedString.
-    /// Used to render cell text in WYSIWYG style when not actively editing.
+    /// Parse inline markdown (bold, italic, strike, underline, highlight,
+    /// code, link) into an NSAttributedString. Used to render cell text in
+    /// WYSIWYG style when not actively editing.
     private func parseInlineMarkdown(_ text: String, font: NSFont, alignment: NSTextAlignment) -> NSAttributedString {
         let displayText = text.replacingOccurrences(of: "<br>", with: "\n")
         let result = NSMutableAttributedString(string: displayText, attributes: [
@@ -1467,12 +1485,30 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             .foregroundColor: NSColor.textColor
         ])
 
-        let patterns: [(pattern: String, trait: NSFontDescriptor.SymbolicTraits)] = [
-            ("\\*\\*(.+?)\\*\\*", .bold),       // **bold**
-            ("__(.+?)__", .bold),                // __bold__
-            ("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)", .italic),  // *italic* (not **)
-            ("_(.+?)_", .italic),                // _italic_
-            ("~~(.+?)~~", []),                   // ~~strikethrough~~ (handled separately)
+        // Marker kind drives which visual style is applied to the match's
+        // capture group. Keep this in sync with
+        // `TableRenderController.InlineCellFormat` — the cell formatter
+        // writes these markers, this parser strips them at render time.
+        enum Kind {
+            case bold
+            case italic
+            case strike
+            case underline
+            case highlight
+            case code
+            case link
+        }
+
+        let patterns: [(pattern: String, kind: Kind)] = [
+            ("\\*\\*(.+?)\\*\\*", .bold),                                     // **bold**
+            ("__(.+?)__", .bold),                                              // __bold__
+            ("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)", .italic),           // *italic* (not **)
+            ("_(.+?)_", .italic),                                              // _italic_
+            ("~~(.+?)~~", .strike),                                            // ~~strike~~
+            ("<u>(.+?)</u>", .underline),                                     // <u>underline</u>
+            ("<mark>(.+?)</mark>", .highlight),                               // <mark>highlight</mark>
+            ("`([^`]+?)`", .code),                                             // `code`
+            ("\\[([^\\]]+?)\\]\\(([^)]*?)\\)", .link),                         // [text](url)
         ]
 
         // Collect ALL matches across all patterns first, then apply in one reverse pass.
@@ -1486,7 +1522,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
         let fontManager = NSFontManager.shared
         let nsText = displayText as NSString
-        for (pattern, trait) in patterns {
+        for (pattern, kind) in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             let matches = regex.matches(in: displayText, range: NSRange(location: 0, length: nsText.length))
             for match in matches {
@@ -1494,14 +1530,33 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 let contentRange = match.range(at: 1)
                 let content = nsText.substring(with: contentRange)
 
-                var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.textColor]
-                if pattern.contains("~~") {
-                    attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-                    attrs[.font] = font
-                } else if trait == .bold {
+                var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.textColor, .font: font]
+                switch kind {
+                case .bold:
                     attrs[.font] = fontManager.convert(font, toHaveTrait: .boldFontMask)
-                } else if trait == .italic {
+                case .italic:
                     attrs[.font] = fontManager.convert(font, toHaveTrait: .italicFontMask)
+                case .strike:
+                    attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+                case .underline:
+                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                case .highlight:
+                    attrs[.backgroundColor] = NSColor.systemYellow.withAlphaComponent(0.35)
+                case .code:
+                    let mono = NSFont.userFixedPitchFont(ofSize: font.pointSize)
+                        ?? NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+                    attrs[.font] = mono
+                    attrs[.backgroundColor] = NSColor.secondaryLabelColor.withAlphaComponent(0.15)
+                case .link:
+                    attrs[.foregroundColor] = NSColor.linkColor
+                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                    if match.numberOfRanges > 2 {
+                        let urlRange = match.range(at: 2)
+                        let urlString = nsText.substring(with: urlRange)
+                        if let url = URL(string: urlString) {
+                            attrs[.link] = url
+                        }
+                    }
                 }
 
                 allMatches.append(MatchInfo(fullRange: fullRange, content: content, attrs: attrs))
@@ -1554,7 +1609,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             storage.addAttribute(.renderedBlockSource, value: md, range: range)
             stop.pointee = true
         }
-        // Trigger save — table cell edits don't fire textDidChange on the main editor
+        editTextView.hasUserEdits = true
         editTextView.save()
     }
 

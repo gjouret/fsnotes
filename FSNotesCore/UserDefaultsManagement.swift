@@ -521,6 +521,21 @@ public class UserDefaultsManagement {
             shared?.set(Int(newValue), forKey: "realSidebarSize")
         }
     }
+
+    /// Persisted width of the notes-list pane (inner split view, left subview).
+    /// Saved whenever the user resizes the pane to a sensible width so we can
+    /// restore it after window auto-resize collapses the pane to 0.
+    static var notesListWidth: CGFloat {
+        get {
+            if let size = shared?.object(forKey: "notesListWidth") as? Int {
+                return CGFloat(size)
+            }
+            return 300
+        }
+        set {
+            shared?.set(Int(newValue), forKey: "notesListWidth")
+        }
+    }
     
     static var codeBlockHighlight: Bool {
         get {

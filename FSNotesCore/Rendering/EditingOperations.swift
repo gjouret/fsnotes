@@ -210,31 +210,42 @@ public enum EditingOps {
                     let beforeSuffix = String(suffix.prefix(suffixOffset))
                     let afterSuffix = String(suffix.dropFirst(suffixOffset))
                     
-                    // Build new blocks: heading with before text, then blank/paragraph for after
+                    // Build new blocks: heading with text before cursor, then
+                    // a plain paragraph with text after cursor. No blankLine
+                    // between — the paragraphSpacing on heading and paragraph
+                    // provides the visual gap, and serialization round-trips
+                    // correctly because MarkdownSerializer emits a blank
+                    // separator between non-blank siblings anyway.
+                    //
+                    // Do NOT trim user-typed whitespace — only the single
+                    // leading space that HeadingRenderer strips is re-added.
                     var newBlocks: [Block] = []
-                    
-                    // First block: heading with text before cursor (trimmed)
-                    let headingText = beforeSuffix.trimmingCharacters(in: .whitespaces)
-                    if headingText.isEmpty && level > 0 {
-                        // Empty heading becomes blank line
+
+                    // First block: heading with text before cursor. If the
+                    // heading ended up empty (user split right at the " ##"
+                    // marker boundary), degrade it to a blankLine so we
+                    // don't render an orphan heading glyph.
+                    let headingIsEmpty = String(beforeSuffix.dropFirst(leading)).isEmpty
+                    if headingIsEmpty && level > 0 {
                         newBlocks.append(.blankLine)
                     } else {
-                        newBlocks.append(.heading(level: level, suffix: " " + headingText))
+                        newBlocks.append(.heading(level: level, suffix: beforeSuffix))
                     }
-                    
-                    // Second block: paragraph with text after cursor, or blank line
-                    let paraText = afterSuffix.trimmingCharacters(in: .whitespaces)
-                    if paraText.isEmpty {
-                        newBlocks.append(.blankLine)
-                    } else {
-                        // Add blankLine between heading and paragraph for proper markdown separation
-                        newBlocks.append(.blankLine)
-                        newBlocks.append(.paragraph(inline: [.text(paraText)]))
-                    }
-                    
+
+                    // Second block: paragraph with text after cursor (parsed
+                    // through the inline parser so completed inline markers
+                    // become real inline nodes). Empty when cursor is at
+                    // end — that's the expected "Return at end of heading
+                    // → new empty paragraph below" behavior.
+                    let parsedInlines = afterSuffix.isEmpty
+                        ? []
+                        : MarkdownParser.parseInlines(afterSuffix)
+                    newBlocks.append(.paragraph(inline: parsedInlines))
+
                     var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
-                    // Cursor goes to start of the paragraph (after blankLine if present)
-                    let paraBlockIdx = paraText.isEmpty ? blockIndex + 1 : blockIndex + 2
+                    // Cursor goes to the start of the paragraph (the second
+                    // new block).
+                    let paraBlockIdx = blockIndex + 1
                     result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
                     return result
                 }
@@ -773,20 +784,8 @@ public enum EditingOps {
     /// block and a splice that covers both old blocks plus the
     /// separator between them.
     ///
-    /// Supported merge pairs:
-    ///   paragraph + paragraph → concatenated paragraph
-    ///   paragraph + blankLine → paragraph
-    ///   blankLine  + paragraph → paragraph
-    ///   blankLine  + blankLine → blankLine
-    ///   heading + anything → heading (preserves heading level)
-    ///   anything + heading → first block type wins (heading demoted to paragraph)
-    ///   paragraph + heading → paragraph (heading text appended)
-    ///   blankLine + heading → heading (blank removed, heading preserved)
-    ///   codeBlock, list, blockquote merges → paragraph (flattened)
-    ///
-    /// The first block's type wins when both have inline content.
-    /// If the first block is empty (blankLine/HR), the second block's
-    /// type wins.
+    /// The merge pairs are defined by the Cross-Block Merge table in
+    /// ARCHITECTURE.md §192. Dispatch happens in `mergeTwoBlocks`.
     private static func mergeAdjacentBlocks(
         startBlock: Int,
         startOffset: Int,
@@ -815,7 +814,9 @@ public enum EditingOps {
             // All of block A survives.
             truncatedA = blockA
         } else {
-            truncatedA = try? deleteInBlock(blockA, from: startOffset, to: blockALength)
+            truncatedA = keepFirstRenderedChars(
+                blockA, count: startOffset, totalLength: blockALength
+            )
         }
 
         // Truncate block B: delete [0, endOffset), keep [endOffset, end).
@@ -827,29 +828,52 @@ public enum EditingOps {
             // All of block B survives.
             truncatedB = blockB
         } else {
-            truncatedB = try? deleteInBlock(blockB, from: 0, to: endOffset)
+            truncatedB = dropFirstRenderedChars(
+                blockB, count: endOffset, totalLength: blockBLength
+            )
         }
 
         // Determine the merged result. When both boundaries have
         // surviving content, merge their inline trees into a paragraph.
+        var mergeIncludesPrevious = false
         let replacementBlocks: [Block]
         switch (truncatedA, truncatedB) {
         case (.some(let a), .some(let b)):
-            // Both boundary blocks have surviving content. Extract
-            // inline trees and concatenate, preserving formatting.
-            let inlinesA = extractInlines(from: a)
-            let inlinesB = extractInlines(from: b)
-            if inlinesA.isEmpty && inlinesB.isEmpty {
-                replacementBlocks = [.blankLine]
-            } else {
-                replacementBlocks = [.paragraph(inline: inlinesA + inlinesB)]
-            }
+            // Both boundary blocks have surviving content. Dispatch
+            // through mergeTwoBlocks, which implements the Cross-Block
+            // Merge table in ARCHITECTURE.md §192.
+            replacementBlocks = mergeTwoBlocks(a, b)
         case (.some(let a), .none):
             // Only block A survives — keep its type.
             replacementBlocks = [a]
         case (.none, .some(let b)):
-            // Only block B survives — keep its type.
-            replacementBlocks = [b]
+            // Only block B survives. If the deleted range started at a
+            // blankLine that separated two paragraphs, merging block B
+            // into the preceding paragraph (by extracting its inlines)
+            // is required — otherwise serialize→parse creates a single
+            // paragraph from two adjacent non-blank-separated ones.
+            //
+            // Skip this path when B is a structural block (list,
+            // blockquote, heading, code, HR) — flattening them via
+            // extractInlines would destroy the structure. For those
+            // types, preserve the surviving block as-is.
+            let bIsStructural: Bool
+            switch b {
+            case .paragraph, .blankLine: bIsStructural = false
+            default: bIsStructural = true
+            }
+            if !bIsStructural,
+               startBlock > 0,
+               case .blankLine = blockA,
+               case .paragraph(let prevInline) = projection.document.blocks[startBlock - 1] {
+                let inlinesB = extractInlines(from: b)
+                // Merge preceding paragraph + block B into one paragraph.
+                replacementBlocks = [.paragraph(inline: prevInline + inlinesB)]
+                // Expand the merge range to include the preceding paragraph.
+                mergeIncludesPrevious = true
+            } else {
+                replacementBlocks = [b]
+            }
         case (.none, .none):
             // Both blocks are fully consumed. If there are no blocks
             // at all after removing [startBlock...endBlock], insert a
@@ -864,13 +888,19 @@ public enum EditingOps {
         }
 
         // Build new document: remove blocks[startBlock...endBlock],
-        // insert replacement(s).
+        // insert replacement(s). When mergeIncludesPrevious is set,
+        // also remove the preceding paragraph (it's been merged into
+        // the replacement block).
+        let effectiveStart = mergeIncludesPrevious ? startBlock - 1 : startBlock
         var newDoc = projection.document
-        newDoc.blocks.replaceSubrange(startBlock...endBlock, with: replacementBlocks)
+        newDoc.blocks.replaceSubrange(effectiveStart...endBlock, with: replacementBlocks)
 
-        // Splice range: from start of blockA's span to end of blockB's
-        // span, INCLUDING the separator "\n" between them.
-        let spliceStart = spanA.location
+        // Splice range: from start of the effective first block's span
+        // to end of blockB's span.
+        let effectiveSpanA = mergeIncludesPrevious
+            ? projection.blockSpans[startBlock - 1]
+            : spanA
+        let spliceStart = effectiveSpanA.location
         let spliceEnd = spanB.location + spanB.length
         // Also consume the trailing separator "\n" after the last
         // block if it exists (so we don't leave a stale newline).
@@ -902,8 +932,8 @@ public enum EditingOps {
         if replacementBlocks.isEmpty {
             replacement = NSAttributedString(string: "")
         } else {
-            let firstSpan = newProjection.blockSpans[startBlock]
-            let lastSpan = newProjection.blockSpans[startBlock + replacementBlocks.count - 1]
+            let firstSpan = newProjection.blockSpans[effectiveStart]
+            let lastSpan = newProjection.blockSpans[effectiveStart + replacementBlocks.count - 1]
             let repStart = firstSpan.location
             let repEnd = lastSpan.location + lastSpan.length
             replacement = newProjection.attributed.attributedSubstring(
@@ -998,6 +1028,319 @@ public enum EditingOps {
         case .table:
             return nil
         }
+    }
+
+    /// Structurally drop the first `dropCount` rendered characters from a
+    /// block. Unlike `deleteInBlock`, this can cross list-item separators
+    /// and blockquote-line separators — entire items/lines fully within
+    /// the dropped range are removed, and the boundary item/line is trimmed.
+    ///
+    /// Returns nil if the entire block is consumed (dropCount >= total).
+    /// Used by `mergeAdjacentBlocks` for cross-block delete where the
+    /// selection may span multiple list items or blockquote lines.
+    private static func dropFirstRenderedChars(
+        _ block: Block,
+        count dropCount: Int,
+        totalLength: Int
+    ) -> Block? {
+        if dropCount <= 0 { return block }
+        if dropCount >= totalLength { return nil }
+
+        switch block {
+        case .list(let items, let loose):
+            var surviving: [ListItem] = []
+            var cursor = 0
+            for topItem in items {
+                // Full subtree extent for this top-level item.
+                let subtree = flattenList([topItem], depth: 0, startOffset: cursor, path: [])
+                guard let last = subtree.last else { continue }
+                let topEntry = subtree[0]
+                let subtreeEnd = last.startOffset + last.prefixLength + last.inlineLength
+                let nextCursor = subtreeEnd + 1  // "\n" separator between siblings
+
+                if subtreeEnd <= dropCount {
+                    // Whole subtree dropped.
+                    cursor = nextCursor
+                    continue
+                }
+                if topEntry.startOffset >= dropCount {
+                    // Fully kept.
+                    surviving.append(topItem)
+                    cursor = nextCursor
+                    continue
+                }
+                // Boundary: dropCount falls within this item's inline
+                // range or within its children. Keep the whole item but
+                // trim its inline content if the boundary is inside it.
+                let topInlineStart = topEntry.startOffset + topEntry.prefixLength
+                let topInlineEnd = topInlineStart + topEntry.inlineLength
+                if dropCount <= topInlineEnd {
+                    let localDrop = max(0, dropCount - topInlineStart)
+                    let (_, afterInline) = splitInlines(topItem.inline, at: localDrop)
+                    surviving.append(ListItem(
+                        indent: topItem.indent, marker: topItem.marker,
+                        afterMarker: topItem.afterMarker, checkbox: topItem.checkbox,
+                        inline: afterInline, children: topItem.children
+                    ))
+                } else {
+                    // Boundary lies within children — keep the whole item
+                    // intact (conservative: we don't recursively trim).
+                    surviving.append(topItem)
+                }
+                cursor = nextCursor
+            }
+            if surviving.isEmpty { return nil }
+            return .list(items: surviving, loose: loose)
+
+        case .blockquote(let lines):
+            // Lines are separated by "\n". Each line's rendered length
+            // equals its inline length (no prefix chars — indent is via
+            // paragraph style).
+            var surviving: [BlockquoteLine] = []
+            var cursor = 0
+            for line in lines {
+                let lineLen = inlinesLength(line.inline)
+                let lineEnd = cursor + lineLen
+                if lineEnd <= dropCount {
+                    cursor = lineEnd + 1
+                    continue
+                }
+                if cursor >= dropCount {
+                    surviving.append(line)
+                    cursor = lineEnd + 1
+                    continue
+                }
+                let localDrop = max(0, dropCount - cursor)
+                let (_, after) = splitInlines(line.inline, at: localDrop)
+                surviving.append(BlockquoteLine(prefix: line.prefix, inline: after))
+                cursor = lineEnd + 1
+            }
+            if surviving.isEmpty { return nil }
+            return .blockquote(lines: surviving)
+
+        default:
+            return try? deleteInBlock(block, from: 0, to: dropCount)
+        }
+    }
+
+    /// Structurally keep the first `keepCount` rendered characters of a
+    /// block. Mirror of `dropFirstRenderedChars` for the A-side of a
+    /// cross-block merge.
+    private static func keepFirstRenderedChars(
+        _ block: Block,
+        count keepCount: Int,
+        totalLength: Int
+    ) -> Block? {
+        if keepCount <= 0 { return nil }
+        if keepCount >= totalLength { return block }
+
+        switch block {
+        case .list(let items, let loose):
+            var surviving: [ListItem] = []
+            var cursor = 0
+            for topItem in items {
+                let subtree = flattenList([topItem], depth: 0, startOffset: cursor, path: [])
+                guard let last = subtree.last else { continue }
+                let topEntry = subtree[0]
+                let subtreeEnd = last.startOffset + last.prefixLength + last.inlineLength
+                let nextCursor = subtreeEnd + 1
+
+                if subtreeEnd <= keepCount {
+                    // Wholly kept.
+                    surviving.append(topItem)
+                    cursor = nextCursor
+                    continue
+                }
+                if topEntry.startOffset >= keepCount {
+                    // Fully dropped.
+                    cursor = nextCursor
+                    continue
+                }
+                // Boundary item.
+                let topInlineStart = topEntry.startOffset + topEntry.prefixLength
+                let topInlineEnd = topInlineStart + topEntry.inlineLength
+                if keepCount <= topInlineEnd {
+                    let localKeep = max(0, keepCount - topInlineStart)
+                    let (beforeInline, _) = splitInlines(topItem.inline, at: localKeep)
+                    surviving.append(ListItem(
+                        indent: topItem.indent, marker: topItem.marker,
+                        afterMarker: topItem.afterMarker, checkbox: topItem.checkbox,
+                        inline: beforeInline, children: []
+                    ))
+                } else {
+                    // Boundary within children — keep the top item, drop children.
+                    surviving.append(ListItem(
+                        indent: topItem.indent, marker: topItem.marker,
+                        afterMarker: topItem.afterMarker, checkbox: topItem.checkbox,
+                        inline: topItem.inline, children: []
+                    ))
+                }
+                cursor = nextCursor
+            }
+            if surviving.isEmpty { return nil }
+            return .list(items: surviving, loose: loose)
+
+        case .blockquote(let lines):
+            var surviving: [BlockquoteLine] = []
+            var cursor = 0
+            for line in lines {
+                let lineLen = inlinesLength(line.inline)
+                let lineEnd = cursor + lineLen
+                if lineEnd <= keepCount {
+                    surviving.append(line)
+                    cursor = lineEnd + 1
+                    continue
+                }
+                if cursor >= keepCount {
+                    cursor = lineEnd + 1
+                    continue
+                }
+                let localKeep = max(0, keepCount - cursor)
+                let (before, _) = splitInlines(line.inline, at: localKeep)
+                surviving.append(BlockquoteLine(prefix: line.prefix, inline: before))
+                cursor = lineEnd + 1
+            }
+            if surviving.isEmpty { return nil }
+            return .blockquote(lines: surviving)
+
+        default:
+            return try? deleteInBlock(block, from: keepCount, to: totalLength)
+        }
+    }
+
+    /// Merge two blocks according to the Cross-Block Merge table in
+    /// ARCHITECTURE.md §192. Returns the replacement block(s).
+    ///
+    /// The caller (`mergeAdjacentBlocks`) has already truncated each
+    /// block to the surviving portion on either side of the deleted
+    /// range, so this function only implements the type-aware join
+    /// logic.
+    private static func mergeTwoBlocks(_ a: Block, _ b: Block) -> [Block] {
+        // any + horizontalRule → HR dropped (block A survives).
+        if case .horizontalRule = b { return [a] }
+
+        // any + codeBlock → code block dropped (content lost).
+        if case .codeBlock = b { return [a] }
+
+        // any + blockquote → block A gets the first line's inlines
+        // appended to its tail (respecting A's type). Remaining lines
+        // survive as a trailing blockquote block.
+        if case .blockquote(let lines) = b {
+            let firstLineInlines = lines.first?.inline ?? []
+            let remaining = Array(lines.dropFirst())
+            let mergedA = appendInlinesToTail(a, firstLineInlines)
+            if remaining.isEmpty { return [mergedA] }
+            return [mergedA, .blockquote(lines: remaining)]
+        }
+
+        // blankLine + any → blank removed, second block survives as-is.
+        if case .blankLine = a { return [b] }
+
+        // any + blankLine → blank removed, first block survives as-is.
+        if case .blankLine = b { return [a] }
+
+        // paragraph + list → paragraph receives the first item's inlines;
+        // the first item's children and any remaining items survive as
+        // a continuing list block.
+        if case .paragraph(let aInline) = a, case .list(let items, let loose) = b,
+           let firstItem = items.first {
+            let mergedPara = Block.paragraph(inline: aInline + firstItem.inline)
+            // Promote firstItem's children + remaining siblings.
+            var survivors = firstItem.children
+            survivors.append(contentsOf: items.dropFirst())
+            if survivors.isEmpty { return [mergedPara] }
+            return [mergedPara, .list(items: survivors, loose: loose)]
+        }
+
+        // list + paragraph → paragraph's inlines appended to last leaf item.
+        if case .list(let items, let loose) = a, case .paragraph(let bInline) = b {
+            let newItems = appendInlinesToLastLeafItem(items, inlines: bInline)
+            return [.list(items: newItems, loose: loose)]
+        }
+
+        // heading + heading → first heading with second's text appended.
+        if case .heading(let aLevel, let aSuffix) = a,
+           case .heading(_, let bSuffix) = b {
+            let bLead = leadingWhitespaceCount(in: bSuffix)
+            let bText = String(bSuffix.dropFirst(bLead))
+            return [.heading(level: aLevel, suffix: aSuffix + bText)]
+        }
+
+        // heading + paragraph → heading with paragraph's inline text appended.
+        if case .heading(let aLevel, let aSuffix) = a, case .paragraph(let bInline) = b {
+            return [.heading(level: aLevel, suffix: aSuffix + inlinesToText(bInline))]
+        }
+
+        // paragraph + heading → paragraph with heading's suffix text appended.
+        if case .paragraph(let aInline) = a, case .heading(_, let bSuffix) = b {
+            let bLead = leadingWhitespaceCount(in: bSuffix)
+            let bText = String(bSuffix.dropFirst(bLead))
+            let appended: [Inline] = bText.isEmpty ? aInline : aInline + [.text(bText)]
+            return [.paragraph(inline: appended)]
+        }
+
+        // Fallback (pairs not listed in ARCHITECTURE.md §192, e.g. list+list
+        // or list+heading): extract inlines from both and concatenate as
+        // a paragraph. Preserves the previous flattening behavior for
+        // unspecified cases.
+        let inlinesA = extractInlines(from: a)
+        let inlinesB = extractInlines(from: b)
+        if inlinesA.isEmpty && inlinesB.isEmpty {
+            return [.blankLine]
+        }
+        return [.paragraph(inline: inlinesA + inlinesB)]
+    }
+
+    /// Append inlines to the "tail" of a block, respecting the block's
+    /// type. For paragraphs the inlines are concatenated; for headings
+    /// the inlines are flattened to text and appended to the suffix;
+    /// for lists the inlines are appended to the last leaf item's
+    /// inline content. Fallback: flatten both sides to a paragraph.
+    private static func appendInlinesToTail(_ block: Block, _ inlines: [Inline]) -> Block {
+        if inlines.isEmpty { return block }
+        switch block {
+        case .paragraph(let aInline):
+            return .paragraph(inline: aInline + inlines)
+        case .heading(let level, let suffix):
+            return .heading(level: level, suffix: suffix + inlinesToText(inlines))
+        case .list(let items, let loose):
+            let newItems = appendInlinesToLastLeafItem(items, inlines: inlines)
+            return .list(items: newItems, loose: loose)
+        default:
+            let existing = extractInlines(from: block)
+            return .paragraph(inline: existing + inlines)
+        }
+    }
+
+    /// Append inlines to the last leaf item of a list tree. Walks the
+    /// last-child chain to find the deepest trailing item, then appends
+    /// the new inlines to its inline content.
+    private static func appendInlinesToLastLeafItem(
+        _ items: [ListItem], inlines: [Inline]
+    ) -> [ListItem] {
+        guard !items.isEmpty else { return items }
+        var result = items
+        let lastIdx = result.count - 1
+        let last = result[lastIdx]
+        let newInline: [Inline]
+        let newChildren: [ListItem]
+        if last.children.isEmpty {
+            newInline = last.inline + inlines
+            newChildren = last.children
+        } else {
+            newInline = last.inline
+            newChildren = appendInlinesToLastLeafItem(last.children, inlines: inlines)
+        }
+        result[lastIdx] = ListItem(
+            indent: last.indent,
+            marker: last.marker,
+            afterMarker: last.afterMarker,
+            checkbox: last.checkbox,
+            inline: newInline,
+            children: newChildren,
+            blankLineBefore: last.blankLineBefore
+        )
+        return result
     }
 
     /// Extract the inline tree from a block, preserving formatting.
@@ -1504,6 +1847,12 @@ public enum EditingOps {
     /// Find which flat list entry contains the given rendered offset and
     /// return the offset within the entry's inline content. Returns nil
     /// if the offset lands on a prefix or separator.
+    ///
+    /// Boundary handling: when the offset is exactly at the end of an
+    /// entry's inline content (offset == inlineEnd), it maps to that
+    /// entry regardless of mode. This prevents operations at the end
+    /// of a list item from failing with nil (which previously caused
+    /// cursor jumps and clearBlockModelAndRefill fallbacks).
     private static func listEntryContaining(
         entries: [FlatListEntry],
         offset: Int,
@@ -1512,14 +1861,22 @@ public enum EditingOps {
         for (i, entry) in entries.enumerated() {
             let inlineStart = entry.startOffset + entry.prefixLength
             let inlineEnd = inlineStart + entry.inlineLength
-            if forInsertion {
-                if offset >= inlineStart && offset <= inlineEnd {
-                    return (i, offset - inlineStart)
-                }
-            } else {
-                if offset >= inlineStart && offset < inlineEnd {
-                    return (i, offset - inlineStart)
-                }
+            // Both insertion and non-insertion use inclusive upper bound.
+            // At the boundary (offset == inlineEnd), the cursor belongs
+            // to this entry — it's "at the end of the item's text".
+            if offset >= inlineStart && offset <= inlineEnd {
+                return (i, offset - inlineStart)
+            }
+            // RC2: cursor sitting ON the prefix attachment (offset ==
+            // inlineStart - 1, i.e. offset == entry.startOffset) clamps
+            // to the start of the entry's inline content. Without this,
+            // backspace/delete at the very front of a list item lands
+            // on the bullet/checkbox attachment, returns nil, and falls
+            // back to clearBlockModelAndRefill().
+            if entry.prefixLength > 0,
+               offset >= entry.startOffset,
+               offset < inlineStart {
+                return (i, 0)
             }
         }
         return nil
@@ -2368,12 +2725,12 @@ public enum EditingOps {
         let entry = entries[entryIdx]
 
         // The exiting item's inline content becomes a paragraph.
-        let exitedParagraph: Block
-        if isInlineEmpty(entry.item.inline) {
-            exitedParagraph = .blankLine
-        } else {
-            exitedParagraph = .paragraph(inline: entry.item.inline)
-        }
+        // Always emit a .paragraph (even when the inline is empty) so the
+        // renderer applies a fresh zero-indent paragraph style. Using
+        // .blankLine here would render a zero-length span with no style,
+        // and the cursor would inherit the surrounding list's hanging
+        // indent from neighboring attributes.
+        let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
 
         // Remove the item from the tree. Any children of the exiting
         // item are promoted to the same level.
@@ -3051,6 +3408,19 @@ public enum EditingOps {
             result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
             return result
 
+        case .blankLine:
+            // Convert blank line to an empty list item.
+            let item = ListItem(
+                indent: "", marker: marker,
+                afterMarker: " ", inline: [],
+                children: []
+            )
+            let newBlock = Block.list(items: [item])
+            var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+            let newSpan = result.newProjection.blockSpans[blockIndex]
+            result.newCursorPosition = newSpan.location + 1
+            return result
+
         default:
             throw EditingError.unsupported(
                 reason: "toggleList: not a paragraph or list"
@@ -3101,10 +3471,14 @@ public enum EditingOps {
         guard let (blockIndex, _) = projection.blockContaining(storageIndex: storageIndex) else {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
         }
-        // Insert HR after the current block, followed by a blank line.
+        // Insert HR after the current block. A blankLine separator is
+        // needed before the HR to prevent the parser from interpreting
+        // "---" as a setext heading underline (e.g. "Before\n---" would
+        // become an H2 instead of paragraph + HR).
         var newDoc = projection.document
         let hrBlock = Block.horizontalRule(character: "-", length: 3)
-        newDoc.blocks.insert(hrBlock, at: blockIndex + 1)
+        newDoc.blocks.insert(.blankLine, at: blockIndex + 1)
+        newDoc.blocks.insert(hrBlock, at: blockIndex + 2)
 
         let newProjection = DocumentProjection(
             document: newDoc,
@@ -3115,7 +3489,7 @@ public enum EditingOps {
 
         // Splice covers from current block's end to the new HR's end.
         let oldSpan = projection.blockSpans[blockIndex]
-        let newHRSpan = newProjection.blockSpans[blockIndex + 1]
+        let newHRSpan = newProjection.blockSpans[blockIndex + 2]
         let spliceStart = oldSpan.location + oldSpan.length
         let spliceEnd = NSMaxRange(newHRSpan)
         let replacement = newProjection.attributed.attributedSubstring(
@@ -3351,20 +3725,19 @@ public enum EditingOps {
             return result
 
         case .list(let items, _):
-            // If all top-level items have checkboxes, remove them.
+            // If all top-level items have checkboxes, unwrap to paragraphs.
             // Otherwise, add unchecked checkboxes to items that lack them.
             let allTodo = items.allSatisfy { $0.checkbox != nil }
-            let newItems: [ListItem]
             if allTodo {
-                newItems = items.map { item in
-                    ListItem(
-                        indent: item.indent, marker: item.marker,
-                        afterMarker: item.afterMarker, checkbox: nil,
-                        inline: item.inline, children: item.children
-                    )
+                // Unwrap: each top-level item becomes a paragraph.
+                let newBlocks = items.map { item -> Block in
+                    .paragraph(inline: item.inline)
                 }
+                var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
+                return result
             } else {
-                newItems = items.map { item in
+                let newItems = items.map { item in
                     if item.checkbox != nil { return item }
                     return ListItem(
                         indent: item.indent, marker: item.marker,
@@ -3373,11 +3746,11 @@ public enum EditingOps {
                         inline: item.inline, children: item.children
                     )
                 }
+                let newBlock = Block.list(items: newItems)
+                var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+                result.newCursorPosition = storageIndex
+                return result
             }
-            let newBlock = Block.list(items: newItems)
-            var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
-            result.newCursorPosition = storageIndex
-            return result
 
         case .blankLine:
             // Convert blank line to a todo item with empty text.
@@ -3778,5 +4151,108 @@ public enum EditingOps {
         return [.text(text)]
     }
 
+    // MARK: - Inline re-parsing (RC4)
+
+    /// Check if the block at `blockIndex` has inline content that would
+    /// parse differently if its markdown source were re-parsed. This
+    /// detects cases where character-by-character insertion has built up
+    /// a completed inline pattern (e.g. `[text](url)`) that is still
+    /// stored as plain `.text` nodes.
+    ///
+    /// Returns a new EditResult if re-parsing changed the inlines,
+    /// or nil if no change is needed.
+    public static func reparseInlinesIfNeeded(
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult? {
+        let block = projection.document.blocks[blockIndex]
+
+        // Extract current inlines and re-parse.
+        let currentInlines: [Inline]
+        let reParsedBlock: Block
+
+        switch block {
+        case .paragraph(let inline):
+            currentInlines = inline
+            let markdown = MarkdownSerializer.serializeInlines(inline)
+            let newInlines = MarkdownParser.parseInlines(markdown)
+            if inlinesEqual(currentInlines, newInlines) { return nil }
+            reParsedBlock = .paragraph(inline: newInlines)
+
+        case .heading(let level, let suffix):
+            // Heading suffix contains inline content after the leading space.
+            // Re-parse it to detect completed patterns.
+            let trimmed = String(suffix.drop(while: { $0 == " " }))
+            guard !trimmed.isEmpty else { return nil }
+            let currentHeadingInlines = MarkdownParser.parseInlines(trimmed)
+            let markdown = MarkdownSerializer.serializeInlines(currentHeadingInlines)
+            let newInlines = MarkdownParser.parseInlines(markdown)
+            // For headings, we check if re-parsing the suffix text yields
+            // a different result. Since heading suffix is raw text (not
+            // an inline tree), we can't compare directly — skip for now.
+            // Heading inline content is stored in the suffix string, so
+            // re-parsing only helps if the suffix itself changes meaning.
+            return nil
+
+        case .list(let items, let loose):
+            // Check each list item's inlines.
+            var anyChanged = false
+            let newItems = items.map { item -> ListItem in
+                let markdown = MarkdownSerializer.serializeInlines(item.inline)
+                let newInlines = MarkdownParser.parseInlines(markdown)
+                if !inlinesEqual(item.inline, newInlines) {
+                    anyChanged = true
+                    return ListItem(
+                        indent: item.indent, marker: item.marker,
+                        afterMarker: item.afterMarker, checkbox: item.checkbox,
+                        inline: newInlines, children: reparseListChildren(item.children),
+                        blankLineBefore: item.blankLineBefore
+                    )
+                }
+                return item
+            }
+            if !anyChanged { return nil }
+            reParsedBlock = .list(items: newItems, loose: loose)
+
+        case .blockquote(let lines):
+            var anyChanged = false
+            let newLines = lines.map { line -> BlockquoteLine in
+                let markdown = MarkdownSerializer.serializeInlines(line.inline)
+                let newInlines = MarkdownParser.parseInlines(markdown)
+                if !inlinesEqual(line.inline, newInlines) {
+                    anyChanged = true
+                    return BlockquoteLine(prefix: line.prefix, inline: newInlines)
+                }
+                return line
+            }
+            if !anyChanged { return nil }
+            reParsedBlock = .blockquote(lines: newLines)
+
+        default:
+            return nil
+        }
+
+        return try replaceBlock(atIndex: blockIndex, with: reParsedBlock, in: projection)
+    }
+
+    /// Recursively re-parse inlines in list children.
+    private static func reparseListChildren(_ children: [ListItem]) -> [ListItem] {
+        return children.map { child in
+            let markdown = MarkdownSerializer.serializeInlines(child.inline)
+            let newInlines = MarkdownParser.parseInlines(markdown)
+            return ListItem(
+                indent: child.indent, marker: child.marker,
+                afterMarker: child.afterMarker, checkbox: child.checkbox,
+                inline: newInlines, children: reparseListChildren(child.children),
+                blankLineBefore: child.blankLineBefore
+            )
+        }
+    }
+
+    /// Compare two inline trees for structural equality. Uses the
+    /// Equatable conformance on Inline.
+    private static func inlinesEqual(_ a: [Inline], _ b: [Inline]) -> Bool {
+        return a == b
+    }
 
 }

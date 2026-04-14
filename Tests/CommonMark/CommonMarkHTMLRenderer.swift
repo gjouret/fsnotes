@@ -63,11 +63,20 @@ struct CommonMarkHTMLRenderer {
             return "<h\(level)>\(rendered)</h\(level)>\n"
 
         case .paragraph(let inlines):
+            // An empty paragraph is an editor transient (e.g., the block
+            // produced by exitListItem on an empty item) and is never
+            // emitted by the parser. Render it as nothing — equivalent
+            // to a blankLine — so HTML parity tests match the parsed
+            // form of the same markdown.
+            if inlines.isEmpty {
+                return ""
+            }
             // Strip trailing whitespace from rendered paragraph content
             // (CommonMark: trailing spaces at end of paragraph are removed).
             var rendered = Self.renderInlines(inlines)
             // Only strip trailing spaces (not newlines or other whitespace)
             while rendered.hasSuffix(" ") { rendered = String(rendered.dropLast()) }
+            if rendered.isEmpty { return "" }
             return "<p>\(rendered)</p>\n"
 
         case .codeBlock(_, let content, let fence):

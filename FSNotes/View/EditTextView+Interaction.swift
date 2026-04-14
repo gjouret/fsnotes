@@ -463,7 +463,7 @@ extension EditTextView {
                 var range = NSRange()
                 if self.textStorage?.attribute(.attachment, at: at, effectiveRange: &range) as? NSTextAttachment != nil {
                     self.textStorage?.addAttribute(.attachmentTitle, value: attachment.title, range: range)
-
+                    self.hasUserEdits = true
                     self.save()
                 }
             }

@@ -152,6 +152,8 @@ class EditorHTMLParityTests: XCTestCase {
     enum EditStep {
         /// Place the cursor at `at`, zero-length selection.
         case cursorAt(Int)
+        /// Place the cursor at the end of the current storage.
+        case cursorAtEnd
         /// Select `range` in rendered storage coordinates.
         case select(NSRange)
         /// Type characters (no newlines). Goes through the same
@@ -162,6 +164,10 @@ class EditorHTMLParityTests: XCTestCase {
         /// Backspace the character before the cursor, or delete the
         /// current selection if one exists.
         case backspace
+        /// Tab key: indent list item via FSM, or insert tab in non-list.
+        case tab
+        /// Shift-Tab key: unindent list item via FSM.
+        case shiftTab
         /// Toolbar: toggle bold on the selection.
         case toggleBold
         /// Toolbar: toggle italic on the selection.
@@ -176,6 +182,10 @@ class EditorHTMLParityTests: XCTestCase {
         case insertHR
         /// Toolbar: toggle todo list at the cursor's block.
         case toggleTodo
+        /// Toolbar: toggle strikethrough on the selection.
+        case toggleStrikethrough
+        /// Toolbar: toggle todo checkbox at cursor.
+        case toggleTodoCheckbox
     }
 
     /// Run a sequence of `EditStep`s against `editor` from whatever
@@ -184,7 +194,12 @@ class EditorHTMLParityTests: XCTestCase {
         for step in steps {
             switch step {
             case .cursorAt(let loc):
-                editor.setSelectedRange(NSRange(location: loc, length: 0))
+                let safeLoc = min(loc, editor.textStorage?.length ?? 0)
+                editor.setSelectedRange(NSRange(location: safeLoc, length: 0))
+
+            case .cursorAtEnd:
+                let len = editor.textStorage?.length ?? 0
+                editor.setSelectedRange(NSRange(location: len, length: 0))
 
             case .select(let r):
                 editor.setSelectedRange(r)
@@ -222,10 +237,33 @@ class EditorHTMLParityTests: XCTestCase {
                     replacementString: ""
                 )
 
+            case .tab:
+                // Route through the FSM the same way keyDown does.
+                if let projection = editor.documentProjection {
+                    let cursorPos = editor.selectedRange().location
+                    let state = ListEditingFSM.detectState(storageIndex: cursorPos, in: projection)
+                    if case .listItem = state {
+                        let transition = ListEditingFSM.transition(state: state, action: .tab)
+                        _ = editor.handleListTransition(transition, at: cursorPos)
+                    }
+                }
+
+            case .shiftTab:
+                if let projection = editor.documentProjection {
+                    let cursorPos = editor.selectedRange().location
+                    let state = ListEditingFSM.detectState(storageIndex: cursorPos, in: projection)
+                    if case .listItem = state {
+                        let transition = ListEditingFSM.transition(state: state, action: .shiftTab)
+                        _ = editor.handleListTransition(transition, at: cursorPos)
+                    }
+                }
+
             case .toggleBold:
                 _ = editor.toggleBoldViaBlockModel()
             case .toggleItalic:
                 _ = editor.toggleItalicViaBlockModel()
+            case .toggleStrikethrough:
+                _ = editor.toggleStrikethroughViaBlockModel()
             case .setHeading(let level):
                 _ = editor.changeHeadingLevelViaBlockModel(level)
             case .toggleList(let marker):
@@ -236,6 +274,8 @@ class EditorHTMLParityTests: XCTestCase {
                 _ = editor.insertHorizontalRuleViaBlockModel()
             case .toggleTodo:
                 _ = editor.toggleTodoViaBlockModel()
+            case .toggleTodoCheckbox:
+                _ = editor.toggleTodoCheckboxViaBlockModel()
             }
         }
     }
@@ -440,5 +480,420 @@ class EditorHTMLParityTests: XCTestCase {
         ], on: editor)
         assertEditorMatchesMarkdown(editor, "- shopping")
         assertLiveDocumentRoundTrips(editor)
+    }
+
+    // MARK: - Family C: FSM transition coverage (RC8)
+    //
+    // Each test exercises one FSM transition through the real editor
+    // pipeline and asserts structural correctness via HTML parity.
+
+    // --- Return key transitions ---
+
+    func test_script_returnOnEmptyListItem_exitsToBody() {
+        let editor = makeEditor()
+        fill(editor, "- First\n- ")
+        // Cursor at end of empty second item, press Return → should exit list
+        run([.cursorAtEnd, .pressReturn], on: editor)
+        assertEditorMatchesMarkdown(editor, "- First")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_returnOnEmptyNestedItem_unindents() {
+        let editor = makeEditor()
+        fill(editor, "- Parent\n  - ")
+        // Cursor at end of empty nested item, press Return → unindent to L1
+        run([.cursorAtEnd, .pressReturn], on: editor)
+        assertEditorMatchesMarkdown(editor, "- Parent\n- ")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_returnAfterH1_producesParagraph() {
+        let editor = makeEditor()
+        fill(editor, "# Title")
+        run([.cursorAtEnd, .pressReturn, .type("body")], on: editor)
+        assertEditorMatchesMarkdown(editor, "# Title\n\nbody")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_returnInOrderedList_addsNextNumber() {
+        let editor = makeEditor()
+        fill(editor, "1. First")
+        run([.cursorAtEnd, .pressReturn, .type("Second")], on: editor)
+        assertEditorMatchesMarkdown(editor, "1. First\n2. Second")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_multipleReturns_createBlankLines() {
+        let editor = makeEditor()
+        fill(editor, "# Title")
+        run([
+            .cursorAtEnd,
+            .pressReturn,
+            .pressReturn,
+            .type("after blank")
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "# Title\n\n\n\nafter blank")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_returnOnCheckedTodo_producesUnchecked() {
+        let editor = makeEditor()
+        fill(editor, "- [x] Done task")
+        run([.cursorAtEnd, .pressReturn, .type("New task")], on: editor)
+        assertEditorMatchesMarkdown(editor, "- [x] Done task\n- [ ] New task")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Tab / Shift-Tab transitions ---
+
+    func test_script_tabIndentsListItem() {
+        let editor = makeEditor()
+        fill(editor, "- First\n- Second")
+        // Put cursor in "Second", press Tab → becomes child of First
+        run([.cursorAtEnd, .tab], on: editor)
+        assertEditorMatchesMarkdown(editor, "- First\n  - Second")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_shiftTabUnindentsListItem() {
+        let editor = makeEditor()
+        fill(editor, "- First\n  - Nested")
+        run([.cursorAtEnd, .shiftTab], on: editor)
+        assertEditorMatchesMarkdown(editor, "- First\n- Nested")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_shiftTabOnTopLevelItem_exitsToBody() {
+        let editor = makeEditor()
+        fill(editor, "- Only item")
+        run([.cursorAtEnd, .shiftTab], on: editor)
+        assertEditorMatchesMarkdown(editor, "Only item")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Delete at block boundary (merge operations) ---
+
+    func test_script_merge_paragraphParagraph() {
+        let editor = makeEditor()
+        fill(editor, "Hello\n\nWorld")
+        // Cursor at start of "World", backspace removes blank line + merges
+        let worldStart = (editor.textStorage?.string as NSString?)?.range(of: "World").location ?? 0
+        run([.cursorAt(worldStart), .backspace], on: editor)
+        // After merge: blank line removed, leaving two paragraphs that merge
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_merge_headingParagraph() {
+        let editor = makeEditor()
+        fill(editor, "## Heading\n\nBody text")
+        let bodyStart = (editor.textStorage?.string as NSString?)?.range(of: "Body").location ?? 0
+        run([.cursorAt(bodyStart), .backspace], on: editor)
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_deleteAtHomeInHeading_convertsToParagraph() {
+        let editor = makeEditor()
+        fill(editor, "Some text\n\n## Heading")
+        let headingStart = (editor.textStorage?.string as NSString?)?.range(of: "Heading").location ?? 0
+        run([.cursorAt(headingStart), .backspace], on: editor)
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_deleteAtHomeInList_exitsToBody() {
+        let editor = makeEditor()
+        fill(editor, "- Only item")
+        // Cursor at start of list item text, backspace → exit to body
+        // In rendered output, the bullet is an attachment char, so offset 1 is text start
+        run([.cursorAt(1), .backspace], on: editor)
+        assertEditorMatchesMarkdown(editor, "Only item")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Toolbar: heading level changes ---
+
+    func test_script_headingLevelChange_H2toH3() {
+        let editor = makeEditor()
+        fill(editor, "## Heading")
+        run([.cursorAt(0), .setHeading(level: 3)], on: editor)
+        assertEditorMatchesMarkdown(editor, "### Heading")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_headingToggleOff() {
+        let editor = makeEditor()
+        fill(editor, "## Heading")
+        // Setting level 2 again on an H2 should toggle it OFF to paragraph
+        run([.cursorAt(0), .setHeading(level: 2)], on: editor)
+        assertEditorMatchesMarkdown(editor, "Heading")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Toolbar: list toggle off ---
+
+    func test_script_toggleListOff() {
+        let editor = makeEditor()
+        fill(editor, "- Item")
+        run([.cursorAtEnd, .toggleList(marker: "-")], on: editor)
+        assertEditorMatchesMarkdown(editor, "Item")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_toggleNumberedList() {
+        let editor = makeEditor()
+        fill(editor, "Item")
+        run([.cursorAt(0), .toggleList(marker: "1.")], on: editor)
+        assertEditorMatchesMarkdown(editor, "1. Item")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Toolbar: blockquote ---
+
+    func test_script_toggleBlockquoteOn() {
+        let editor = makeEditor()
+        fill(editor, "A quote")
+        run([.cursorAt(0), .toggleQuote], on: editor)
+        assertEditorMatchesMarkdown(editor, "> A quote")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_toggleBlockquoteOff() {
+        let editor = makeEditor()
+        fill(editor, "> A quote")
+        run([.cursorAtEnd, .toggleQuote], on: editor)
+        assertEditorMatchesMarkdown(editor, "A quote")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Toolbar: horizontal rule ---
+
+    func test_script_insertHR() {
+        let editor = makeEditor()
+        fill(editor, "Before")
+        run([.cursorAtEnd, .insertHR], on: editor)
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Toolbar: todo ---
+
+    func test_script_toggleTodoOnParagraph() {
+        let editor = makeEditor()
+        fill(editor, "Buy milk")
+        run([.cursorAt(0), .toggleTodo], on: editor)
+        assertEditorMatchesMarkdown(editor, "- [ ] Buy milk")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_toggleTodoOff() {
+        let editor = makeEditor()
+        fill(editor, "- [ ] Buy milk")
+        run([.cursorAtEnd, .toggleTodo], on: editor)
+        assertEditorMatchesMarkdown(editor, "Buy milk")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_toggleTodoCheckbox() {
+        let editor = makeEditor()
+        fill(editor, "- [ ] Unchecked")
+        run([.cursorAtEnd, .toggleTodoCheckbox], on: editor)
+        assertEditorMatchesMarkdown(editor, "- [x] Unchecked")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Inline formatting ---
+
+    func test_script_toggleBoldOff() {
+        let editor = makeEditor()
+        fill(editor, "Hello **world**")
+        // Select "world" in rendered text — "Hello " is 6 chars, bold "world" is 5
+        run([
+            .select(NSRange(location: 6, length: 5)),
+            .toggleBold
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "Hello world")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_toggleItalicOverSelection() {
+        let editor = makeEditor()
+        fill(editor, "Hello world")
+        run([
+            .select(NSRange(location: 6, length: 5)),
+            .toggleItalic
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "Hello *world*")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_toggleStrikethroughOverSelection() {
+        let editor = makeEditor()
+        fill(editor, "Hello world")
+        run([
+            .select(NSRange(location: 6, length: 5)),
+            .toggleStrikethrough
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "Hello ~~world~~")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Complex multi-step scenarios ---
+
+    func test_script_createListThenIndentThenReturn() {
+        let editor = makeEditor()
+        fill(editor, "- First\n- Second")
+        // Indent Second, then add a new item after it
+        run([
+            .cursorAtEnd,
+            .tab,
+            .pressReturn,
+            .type("Third")
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "- First\n  - Second\n  - Third")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Mid-sequence Return (user-reported bugs) ---
+
+    func test_script_returnBetweenTodos_doesNotDeleteNeighbor() {
+        // User-reported bug: Return on middle Todo deletes the one below.
+        let editor = makeEditor()
+        fill(editor, "- [ ] One\n- [ ] Two\n- [ ] Three")
+        // Cursor at end of "Two", press Return → new empty todo, "Three" preserved
+        let twoRange = (editor.textStorage?.string as NSString?)?.range(of: "Two") ?? NSRange(location: 0, length: 0)
+        let twoEnd = twoRange.location + twoRange.length
+        run([.cursorAt(twoEnd), .pressReturn], on: editor)
+        assertEditorMatchesMarkdown(editor, "- [ ] One\n- [ ] Two\n- [ ] \n- [ ] Three")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_returnTwiceBetweenTodos_doesNotDeleteNeighbor() {
+        // User-reported bug: press Return after middle Todo (creating a new
+        // empty todo), then Return again — the todo BELOW gets deleted.
+        let editor = makeEditor()
+        fill(editor, "- [ ] One\n- [ ] Two\n- [ ] Three")
+        let twoRange = (editor.textStorage?.string as NSString?)?.range(of: "Two") ?? NSRange(location: 0, length: 0)
+        let twoEnd = twoRange.location + twoRange.length
+        run([.cursorAt(twoEnd), .pressReturn, .pressReturn], on: editor)
+        // After 2x Return on empty new todo: should exit list, leaving "Three" intact
+        assertLiveDocumentRoundTrips(editor)
+        let serialized = MarkdownSerializer.serialize(editor.documentProjection?.document ?? Document(blocks: []))
+        XCTAssertTrue(serialized.contains("Three"), "Third todo must not be deleted; got: \(serialized)")
+    }
+
+    func test_script_returnBetweenListItems_insertsNewItem() {
+        let editor = makeEditor()
+        fill(editor, "- One\n- Two\n- Three")
+        let twoRange = (editor.textStorage?.string as NSString?)?.range(of: "Two") ?? NSRange(location: 0, length: 0)
+        let twoEnd = twoRange.location + twoRange.length
+        run([.cursorAt(twoEnd), .pressReturn, .type("Inserted")], on: editor)
+        assertEditorMatchesMarkdown(editor, "- One\n- Two\n- Inserted\n- Three")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_returnSplitsListItemMidText() {
+        let editor = makeEditor()
+        fill(editor, "- HelloWorld")
+        // Cursor between "Hello" and "World"
+        let splitAt = (editor.textStorage?.string as NSString?)?.range(of: "World").location ?? 0
+        run([.cursorAt(splitAt), .pressReturn], on: editor)
+        assertEditorMatchesMarkdown(editor, "- Hello\n- World")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Cross-block merges (uncovered) ---
+
+    func test_script_merge_listParagraph() {
+        let editor = makeEditor()
+        fill(editor, "- Item\n\nBody")
+        let bodyStart = (editor.textStorage?.string as NSString?)?.range(of: "Body").location ?? 0
+        run([.cursorAt(bodyStart), .backspace], on: editor)
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_merge_blockquoteParagraph() {
+        // KNOWN BUG: backspace at start of a paragraph after a blockquote
+        // joins the paragraph into the blockquote with a soft break, but
+        // serialize→parse round-trip keeps them separate. The live state
+        // can't survive save/load. Tracked under RC8 followup.
+        XCTExpectFailure("Blockquote+paragraph merge produces non-round-trippable state (RC8 followup)")
+        let editor = makeEditor()
+        fill(editor, "> Quote\n\nBody")
+        let bodyStart = (editor.textStorage?.string as NSString?)?.range(of: "Body").location ?? 0
+        run([.cursorAt(bodyStart), .backspace], on: editor)
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_merge_paragraphHeading() {
+        let editor = makeEditor()
+        fill(editor, "Body\n\n## Heading")
+        // Cursor at start of "## Heading" rendered as just "Heading" (markers hidden)
+        let headingStart = (editor.textStorage?.string as NSString?)?.range(of: "Heading").location ?? 0
+        run([.cursorAt(headingStart), .backspace], on: editor)
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Inline toggle ON over plain text ---
+
+    func test_script_toggleBoldOnSelection() {
+        let editor = makeEditor()
+        fill(editor, "Hello world")
+        run([
+            .select(NSRange(location: 6, length: 5)),
+            .toggleBold
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "Hello **world**")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_script_toggleItalicOff() {
+        let editor = makeEditor()
+        fill(editor, "Hello *world*")
+        run([
+            .select(NSRange(location: 6, length: 5)),
+            .toggleItalic
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "Hello world")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // --- Cursor-only (no selection) toolbar ops should affect ONE block ---
+
+    func test_script_setHeadingOnEmptyLine_affectsOnlyThatLine() {
+        // User-reported bug: CMD+3 on blank line between paragraphs converts
+        // 3 paragraphs to H3. Cursor-only setHeading must affect ONE block.
+        let editor = makeEditor()
+        fill(editor, "First para\n\n\nThird para")
+        // Cursor on the blank line between "First para" and "Third para"
+        let firstRange = (editor.textStorage?.string as NSString?)?.range(of: "First para") ?? NSRange(location: 0, length: 0)
+        let firstEnd = firstRange.location + firstRange.length
+        run([.cursorAt(firstEnd + 1), .setHeading(level: 3)], on: editor)
+        // First and Third should remain paragraphs; only the blank line becomes H3.
+        assertLiveDocumentRoundTrips(editor)
+        // Verify via round-trip serialization that "First para" and "Third para"
+        // are still plain paragraphs (not part of a multi-line H3).
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let serialized = MarkdownSerializer.serialize(doc)
+        XCTAssertFalse(serialized.contains("### First"), "First para must not become H3; got: \(serialized)")
+        XCTAssertFalse(serialized.contains("### Third"), "Third para must not become H3; got: \(serialized)")
+    }
+
+    func test_script_headingThenListThenBody() {
+        let editor = makeEditor()
+        fill(editor, "# Title")
+        run([
+            .cursorAtEnd,
+            .pressReturn,
+            .toggleList(marker: "-"),
+            .type("Item one"),
+            .pressReturn,
+            .type("Item two"),
+            .pressReturn,   // empty list item
+            .pressReturn,   // exit list (Return on empty)
+            .type("Body text")
+        ], on: editor)
+        // Note: toggleList on a blankLine absorbs the blank line, so
+        // there is no blank line between heading and list. Exit-list
+        // produces a paragraph without a preceding blankLine. Both are
+        // valid markdown; blank-line insertion is a future enhancement.
+        assertLiveDocumentRoundTrips(editor, "complex scenario")
     }
 }
