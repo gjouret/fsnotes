@@ -103,7 +103,7 @@ public enum InlineRenderer {
                 attrs[.link] = url
             }
             return render(text, baseAttributes: attrs, note: note)
-        case .image(let alt, let rawDest):
+        case .image(let alt, let rawDest, let width):
             // Native block-model image rendering. Emit a single
             // NSTextAttachment character with resolved metadata IFF the
             // destination has a renderable extension AND we have a note
@@ -120,6 +120,7 @@ public enum InlineRenderer {
             if let attachmentString = makeImageAttachment(
                 alt: alt,
                 rawDestination: rawDest,
+                width: width,
                 baseAttributes: baseAttributes,
                 note: note
             ) {
@@ -199,6 +200,7 @@ public enum InlineRenderer {
     private static func makeImageAttachment(
         alt: [Inline],
         rawDestination: String,
+        width: Int?,
         baseAttributes: [NSAttributedString.Key: Any],
         note: Note?
     ) -> NSAttributedString? {
@@ -230,6 +232,9 @@ public enum InlineRenderer {
             result.addAttribute(.attachmentTitle, value: altText, range: range)
             result.addAttribute(.renderedBlockOriginalMarkdown, value: originalMarkdown, range: range)
             result.addAttribute(.renderedBlockType, value: RenderedBlockType.image.rawValue, range: range)
+            if let w = width, w > 0 {
+                result.addAttribute(.renderedImageWidth, value: NSNumber(value: w), range: range)
+            }
             return result
         }
 
@@ -266,6 +271,9 @@ public enum InlineRenderer {
         result.addAttribute(.attachmentTitle, value: altText, range: range)
         result.addAttribute(.renderedBlockOriginalMarkdown, value: originalMarkdown, range: range)
         result.addAttribute(.renderedBlockType, value: blockType.rawValue, range: range)
+        if isImage, let w = width, w > 0 {
+            result.addAttribute(.renderedImageWidth, value: NSNumber(value: w), range: range)
+        }
 
         return result
     }
@@ -289,7 +297,7 @@ public enum InlineRenderer {
         case .strikethrough(let c):      c.forEach { plainTextAppend($0, into: &out) }
         case .code(let s):               out += s
         case .link(let t, _):            t.forEach { plainTextAppend($0, into: &out) }
-        case .image(let a, _):           a.forEach { plainTextAppend($0, into: &out) }
+        case .image(let a, _, _):        a.forEach { plainTextAppend($0, into: &out) }
         case .autolink(let t, _):        out += t
         case .escapedChar(let ch):       out += String(ch)
         case .lineBreak:                 out += " "

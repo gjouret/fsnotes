@@ -120,7 +120,12 @@ public enum MarkdownSerializer {
                 out += "`" + s + "`"
             case .link(let text, let rawDest):
                 out += "[" + serializeInlines(text) + "](" + rawDest + ")"
-            case .image(let alt, let rawDest):
+            case .image(let alt, let rawDest, _):
+                // rawDestination carries url + title verbatim — the
+                // `width` field is only a cached parse of the title.
+                // Serializer emits rawDestination as-is for
+                // byte-identical round-trip. EditingOps.setImageSize
+                // is responsible for keeping the two in sync.
                 out += "![" + serializeInlines(alt) + "](" + rawDest + ")"
             case .autolink(let text, _):
                 out += "<" + text + ">"

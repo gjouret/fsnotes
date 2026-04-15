@@ -1508,7 +1508,7 @@ public enum EditingOps {
         case .math(let s): return s
         case .displayMath(let s): return s
         case .link(let text, _): return inlinesToText(text)
-        case .image(let alt, _): return inlinesToText(alt)
+        case .image(let alt, _, _): return inlinesToText(alt)
         case .autolink(let text, _): return text
         case .escapedChar(let ch): return String(ch)
         case .lineBreak: return "\n"
@@ -2506,7 +2506,7 @@ public enum EditingOps {
                 runs.append(LeafRun(path: path, text: s, isCode: true))
             case .link(let text, _):
                 walkFlatten(text, path: &path, into: &runs)
-            case .image(let alt, _):
+            case .image(let alt, _, _):
                 walkFlatten(alt, path: &path, into: &runs)
             case .autolink(let text, _):
                 runs.append(LeafRun(path: path, text: text, isCode: false))
@@ -2638,10 +2638,10 @@ public enum EditingOps {
             var c = text
             c[idx] = replaceLeafText(in: text[idx], path: rest, newText: newText)
             return .link(text: c, rawDestination: dest)
-        case .image(let alt, let dest):
+        case .image(let alt, let dest, let width):
             var c = alt
             c[idx] = replaceLeafText(in: alt[idx], path: rest, newText: newText)
-            return .image(alt: c, rawDestination: dest)
+            return .image(alt: c, rawDestination: dest, width: width)
         }
     }
 
@@ -3839,7 +3839,7 @@ public enum EditingOps {
 
         // Build the new image block.
         let altInline: [Inline] = alt.isEmpty ? [] : [.text(alt)]
-        let imageInline: Inline = .image(alt: altInline, rawDestination: destination)
+        let imageInline: Inline = .image(alt: altInline, rawDestination: destination, width: nil)
         let imageBlock = Block.paragraph(inline: [imageInline])
 
         var newDoc = projection.document
@@ -3869,6 +3869,107 @@ public enum EditingOps {
             spliceReplacement: replacement
         )
         result.newCursorPosition = NSMaxRange(newImageSpan)
+        return result
+    }
+
+    // MARK: - Image size
+
+    /// Update the width hint of an inline image at `(blockIndex, inlinePath)`
+    /// and route the edit through the standard replaceBlock pipeline.
+    ///
+    /// - `newWidth == nil` removes the size hint and reverts to natural
+    ///   (container-clamped) size. Any existing non-size title text is
+    ///   preserved — only the `width=N` token is stripped.
+    /// - `newWidth > 0` writes (or replaces) the `width=N` token in the
+    ///   title segment of the image's rawDestination. Existing non-size
+    ///   title text is preserved alongside the token.
+    ///
+    /// Supports images inside `.paragraph` blocks. Other block types
+    /// (heading, list, blockquote) throw `.unsupported` — images in
+    /// those contexts are rare and deliberately out of scope for the
+    /// phase-1 primitive.
+    ///
+    /// - Returns: an EditResult with a block-granular splice. The
+    ///   spliceReplacement is a fresh attachment character carrying
+    ///   the new `.renderedImageWidth` attribute; the hydrator picks
+    ///   it up and scales the rendered bounds on its next pass.
+    public static func setImageSize(
+        blockIndex: Int,
+        inlinePath: [Int],
+        newWidth: Int?,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0, blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        let block = projection.document.blocks[blockIndex]
+
+        guard case .paragraph(let inline) = block else {
+            throw EditingError.unsupported(reason: "setImageSize: only paragraph blocks supported in phase 1 (got \(block))")
+        }
+
+        guard let newInline = setImageWidthAtPath(inline, path: inlinePath, newWidth: newWidth) else {
+            throw EditingError.unsupported(reason: "setImageSize: path does not lead to an image at \(inlinePath)")
+        }
+
+        let newBlock = Block.paragraph(inline: newInline)
+        return try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+    }
+
+    /// Recursive helper: walk `inlines` to `path`, find the `.image`
+    /// inline at the terminal position, and return a new inline tree
+    /// with that image's rawDestination + width updated to reflect
+    /// `newWidth`. Returns nil if the path is invalid or the target
+    /// is not an image.
+    ///
+    /// The rawDestination is rebuilt from (preserved-title + new size
+    /// hint) so round-trip serialization produces canonical output.
+    private static func setImageWidthAtPath(
+        _ inlines: [Inline],
+        path: InlinePath,
+        newWidth: Int?
+    ) -> [Inline]? {
+        guard !path.isEmpty else { return nil }
+        let idx = path.first!
+        guard idx >= 0, idx < inlines.count else { return nil }
+        let rest = Array(path.dropFirst())
+        var result = inlines
+
+        if rest.isEmpty {
+            // Terminal: target must be an .image.
+            guard case let .image(alt, rawDest, _) = inlines[idx] else { return nil }
+            let (url, oldTitle) = MarkdownParser.extractURLAndTitle(from: rawDest)
+            let (preserved, _) = MarkdownParser.ImageSizeTitle.parse(oldTitle ?? "")
+            let newTitle = MarkdownParser.ImageSizeTitle.emit(preserved: preserved, width: newWidth)
+            let newRawDest = MarkdownParser.buildRawDest(url: url, title: newTitle)
+            result[idx] = .image(alt: alt, rawDestination: newRawDest, width: newWidth)
+            return result
+        }
+
+        // Descend into a container inline.
+        switch inlines[idx] {
+        case .bold(let c, let marker):
+            guard let modified = setImageWidthAtPath(c, path: rest, newWidth: newWidth) else { return nil }
+            result[idx] = .bold(modified, marker: marker)
+        case .italic(let c, let marker):
+            guard let modified = setImageWidthAtPath(c, path: rest, newWidth: newWidth) else { return nil }
+            result[idx] = .italic(modified, marker: marker)
+        case .strikethrough(let c):
+            guard let modified = setImageWidthAtPath(c, path: rest, newWidth: newWidth) else { return nil }
+            result[idx] = .strikethrough(modified)
+        case .underline(let c):
+            guard let modified = setImageWidthAtPath(c, path: rest, newWidth: newWidth) else { return nil }
+            result[idx] = .underline(modified)
+        case .highlight(let c):
+            guard let modified = setImageWidthAtPath(c, path: rest, newWidth: newWidth) else { return nil }
+            result[idx] = .highlight(modified)
+        case .link(let text, let dest):
+            guard let modified = setImageWidthAtPath(text, path: rest, newWidth: newWidth) else { return nil }
+            result[idx] = .link(text: modified, rawDestination: dest)
+        default:
+            // Leaf or non-container inline — cannot descend.
+            return nil
+        }
         return result
     }
 
@@ -4184,7 +4285,7 @@ public enum EditingOps {
                 case .underline(let c): current = c
                 case .highlight(let c): current = c
                 case .link(let text, _): current = text
-                case .image(let alt, _): current = alt
+                case .image(let alt, _, _): current = alt
                 default: return false
                 }
             }
@@ -4326,10 +4427,10 @@ public enum EditingOps {
             let len = inlinesLength(text)
             let clampedTo = min(to, len)
             return [.link(text: unwrapTrait(text, trait: trait, from: clampedFrom, to: clampedTo), rawDestination: dest)]
-        case .image(let alt, let dest):
+        case .image(let alt, let dest, let width):
             let len = inlinesLength(alt)
             let clampedTo = min(to, len)
-            return [.image(alt: unwrapTrait(alt, trait: trait, from: clampedFrom, to: clampedTo), rawDestination: dest)]
+            return [.image(alt: unwrapTrait(alt, trait: trait, from: clampedFrom, to: clampedTo), rawDestination: dest, width: width)]
         case .text, .code, .math, .displayMath, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity, .wikilink:
             return [node]
         }
@@ -4422,10 +4523,10 @@ public enum EditingOps {
                 let cleaned = cleanInlines(text)
                 if cleaned.isEmpty { continue }
                 result.append(.link(text: cleaned, rawDestination: dest))
-            case .image(let alt, let dest):
+            case .image(let alt, let dest, let width):
                 let cleaned = cleanInlines(alt)
                 if cleaned.isEmpty { continue }
-                result.append(.image(alt: cleaned, rawDestination: dest))
+                result.append(.image(alt: cleaned, rawDestination: dest, width: width))
             case .autolink(let text, _):
                 if text.isEmpty { continue }
                 result.append(node)

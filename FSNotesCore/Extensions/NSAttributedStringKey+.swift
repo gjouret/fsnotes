@@ -35,4 +35,11 @@ public extension NSAttributedString.Key {
     static let foldedContent = NSAttributedString.Key(rawValue: "es.fsnot.folded.content")
     static let inlineMathSource = NSAttributedString.Key(rawValue: "es.fsnot.inline.math")
     static let displayMathSource = NSAttributedString.Key(rawValue: "es.fsnot.display.math")
+    /// Optional image width hint from the CommonMark title field
+    /// (parsed as `width=N`). When present on an image attachment,
+    /// ImageAttachmentHydrator scales the rendered bounds to this
+    /// width and derives the height from the natural aspect ratio.
+    /// Absent = use natural size clamped to container width.
+    /// Value: NSNumber wrapping an Int (points).
+    static let renderedImageWidth = NSAttributedString.Key(rawValue: "es.fsnot.rendered.image.width")
 }

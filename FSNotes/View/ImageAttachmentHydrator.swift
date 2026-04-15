@@ -133,13 +133,36 @@ enum ImageAttachmentHydrator {
     ) {
         let isRemote = url.scheme == "http" || url.scheme == "https"
 
+        // Read the optional per-image width hint (from the CommonMark
+        // title field `"width=N"`). The renderer sets this attribute
+        // on the attachment character when the inline carries a width.
+        let widthHint: CGFloat? = {
+            guard range.location < textStorage.length else { return nil }
+            if let n = textStorage.attribute(.renderedImageWidth, at: range.location, effectiveRange: nil) as? NSNumber {
+                let v = CGFloat(n.intValue)
+                return v > 0 ? v : nil
+            }
+            return nil
+        }()
+
         if isRemote {
             // Fetch remote image via URLSession.
             let task = URLSession.shared.dataTask(with: url) { data, _, _ in
                 guard let data = data, let image = NSImage(data: data) else { return }
                 let naturalSize = image.size
-                let scale = naturalSize.width > maxWidth ? maxWidth / naturalSize.width : 1.0
-                let loadedSize = CGSize(width: naturalSize.width * scale, height: naturalSize.height * scale)
+                let loadedSize: CGSize
+                if let hint = widthHint {
+                    // Honor explicit width. Clamp to container width as
+                    // a safety cap (prevents runaway layout from a
+                    // hand-edited title like `"width=999999"`).
+                    let targetWidth = min(hint, maxWidth)
+                    let aspect = naturalSize.height / max(naturalSize.width, 1)
+                    loadedSize = CGSize(width: targetWidth, height: targetWidth * aspect)
+                } else {
+                    // Natural size clamped to container width.
+                    let scale = naturalSize.width > maxWidth ? maxWidth / naturalSize.width : 1.0
+                    loadedSize = CGSize(width: naturalSize.width * scale, height: naturalSize.height * scale)
+                }
 
                 DispatchQueue.main.async {
                     guard let manager = editor.layoutManager,
@@ -169,9 +192,23 @@ enum ImageAttachmentHydrator {
             var size: CGSize?
 
             if url.isMedia {
-                let imageSize = url.getBorderSize(maxWidth: maxWidth)
-                size = imageSize
-                image = NoteAttachment.getImage(url: url, size: imageSize)
+                // getBorderSize returns the natural-scaled size clamped
+                // to maxWidth. If a width hint is set, override with
+                // (hint, hint * natural-aspect) — but still clamp to
+                // maxWidth as a safety cap.
+                let naturalScaled = url.getBorderSize(maxWidth: maxWidth)
+                let renderedSize: CGSize
+                if let hint = widthHint {
+                    let targetWidth = min(hint, maxWidth)
+                    // Derive aspect from naturalScaled — it's already at
+                    // the correct shape, just the wrong dimensions.
+                    let aspect = naturalScaled.height / max(naturalScaled.width, 1)
+                    renderedSize = CGSize(width: targetWidth, height: targetWidth * aspect)
+                } else {
+                    renderedSize = naturalScaled
+                }
+                size = renderedSize
+                image = NoteAttachment.getImage(url: url, size: renderedSize)
             } else {
                 let noteAttachment = NoteAttachment(url: url)
                 if let attachmentImage = noteAttachment.getAttachmentImage() {

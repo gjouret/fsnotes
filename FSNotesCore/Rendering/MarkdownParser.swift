@@ -881,8 +881,8 @@ public enum MarkdownParser {
             return .strikethrough(resolveTagPair(children, open: open, close: close, wrap: wrap))
         case .link(let text, let dest):
             return .link(text: resolveTagPair(text, open: open, close: close, wrap: wrap), rawDestination: dest)
-        case .image(let alt, let dest):
-            return .image(alt: resolveTagPair(alt, open: open, close: close, wrap: wrap), rawDestination: dest)
+        case .image(let alt, let dest, let width):
+            return .image(alt: resolveTagPair(alt, open: open, close: close, wrap: wrap), rawDestination: dest, width: width)
         case .underline(let children):
             return .underline(resolveTagPair(children, open: open, close: close, wrap: wrap))
         case .highlight(let children):
@@ -992,7 +992,13 @@ public enum MarkdownParser {
                 if let match = tryMatchImage(chars, from: i, codeSpanRanges: codeSpanRanges) {
                     if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
                         flushPlain()
-                        tokens.append(.inline(.image(alt: parseInlines(match.alt, refDefs: refDefs), rawDestination: match.dest)))
+                        let (_, imgTitle) = extractURLAndTitle(from: match.dest)
+                        let imgWidth = imgTitle.flatMap { ImageSizeTitle.parse($0).width }
+                        tokens.append(.inline(.image(
+                            alt: parseInlines(match.alt, refDefs: refDefs),
+                            rawDestination: match.dest,
+                            width: imgWidth
+                        )))
                         i = match.endIndex
                         continue
                     }
@@ -1001,7 +1007,13 @@ public enum MarkdownParser {
                     if let match = tryMatchReferenceLink(chars, from: i + 1, refDefs: refDefs) {
                         if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
                             flushPlain()
-                            tokens.append(.inline(.image(alt: parseInlines(match.text, refDefs: refDefs), rawDestination: match.dest)))
+                            let (_, imgTitle) = extractURLAndTitle(from: match.dest)
+                            let imgWidth = imgTitle.flatMap { ImageSizeTitle.parse($0).width }
+                            tokens.append(.inline(.image(
+                                alt: parseInlines(match.text, refDefs: refDefs),
+                                rawDestination: match.dest,
+                                width: imgWidth
+                            )))
                             i = match.endIndex
                             continue
                         }
@@ -2518,7 +2530,10 @@ public enum MarkdownParser {
     /// `extractURLAndTitle` can round-trip them correctly.
     /// Uses single-quote delimiters for titles containing double-quotes
     /// (and vice versa) so extractURLAndTitle parses them correctly.
-    private static func buildRawDest(url: String, title: String?) -> String {
+    ///
+    /// Internal (not private) so `EditingOps.setImageSize` can rebuild
+    /// a canonical rawDestination after mutating the size hint.
+    static func buildRawDest(url: String, title: String?) -> String {
         let urlPart: String
         if url.contains(" ") || url.contains("\t") {
             urlPart = "<\(url)>"
@@ -2541,6 +2556,160 @@ public enum MarkdownParser {
             }
         }
         return urlPart
+    }
+
+    // MARK: - URL / title extraction (used by setImageSize)
+
+    /// Split a raw destination string into (url, title).
+    /// Inverse of `buildRawDest`. The `raw` argument is the text between
+    /// the parens of `![alt](...)` or `[text](...)` — exactly what the
+    /// parser stores in `rawDestination`.
+    ///
+    /// Returns nil title when the destination has no title portion
+    /// (bare URL). Handles angle-bracketed URLs, quoted titles
+    /// (single- or double-quoted) and parenthesized titles. Escape
+    /// sequences inside the title are NOT unescaped here — the caller
+    /// gets the text verbatim so a round-trip through buildRawDest
+    /// produces byte-identical output.
+    static func extractURLAndTitle(from raw: String) -> (url: String, title: String?) {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return ("", nil) }
+
+        let chars = Array(trimmed)
+        var i = 0
+        let url: String
+
+        if chars[i] == "<" {
+            // Angle-bracketed URL
+            i += 1
+            let urlStart = i
+            while i < chars.count && chars[i] != ">" {
+                if chars[i] == "\\" && i + 1 < chars.count { i += 1 }
+                i += 1
+            }
+            url = String(chars[urlStart..<i])
+            if i < chars.count { i += 1 } // skip >
+        } else {
+            // Bare URL — take until whitespace, respecting balanced parens
+            let urlStart = i
+            var parenDepth = 0
+            while i < chars.count {
+                if chars[i] == "(" { parenDepth += 1 }
+                else if chars[i] == ")" {
+                    if parenDepth == 0 { break }
+                    parenDepth -= 1
+                } else if chars[i] == " " || chars[i] == "\t" || chars[i] == "\n" {
+                    if parenDepth == 0 { break }
+                } else if chars[i] == "\\" && i + 1 < chars.count {
+                    i += 1
+                }
+                i += 1
+            }
+            url = String(chars[urlStart..<i])
+        }
+
+        // Skip whitespace before optional title
+        while i < chars.count && (chars[i] == " " || chars[i] == "\t" || chars[i] == "\n") { i += 1 }
+
+        var title: String? = nil
+        if i < chars.count {
+            let open = chars[i]
+            if open == "\"" || open == "'" {
+                i += 1
+                let titleStart = i
+                while i < chars.count && chars[i] != open {
+                    if chars[i] == "\\" && i + 1 < chars.count { i += 1 }
+                    i += 1
+                }
+                title = String(chars[titleStart..<i])
+            } else if open == "(" {
+                i += 1
+                let titleStart = i
+                while i < chars.count && chars[i] != ")" {
+                    if chars[i] == "\\" && i + 1 < chars.count { i += 1 }
+                    i += 1
+                }
+                title = String(chars[titleStart..<i])
+            }
+        }
+
+        return (url, title)
+    }
+
+    // MARK: - Image size title hint (width=N)
+
+    /// Parse and emit the `width=N` token carried inside a CommonMark
+    /// image title field. The title may contain arbitrary user text
+    /// alongside the size hint — e.g. `"photo from 2024 width=300"` —
+    /// and we need to preserve that text verbatim on round-trip.
+    ///
+    /// Format rules:
+    /// - The size token is `width=N` where N is a positive integer.
+    /// - It is matched only as a SPACE-DELIMITED SUFFIX of the title
+    ///   (either the whole title, or everything after the last space).
+    ///   This avoids accidental matches inside longer prose.
+    /// - A non-positive or non-numeric N falls through to no match,
+    ///   leaving the entire title as opaque preserved text.
+    enum ImageSizeTitle {
+        /// Parse a title string into (preserved-non-size-part, width).
+        /// Examples:
+        ///   ""                    → (nil, nil)
+        ///   "width=300"           → (nil, 300)
+        ///   "photo"               → ("photo", nil)
+        ///   "photo width=300"     → ("photo", 300)
+        ///   "photo width=0"       → ("photo width=0", nil)  // 0 invalid
+        ///   "photo width=-5"      → ("photo width=-5", nil) // negative invalid
+        ///   "width=abc"           → ("width=abc", nil)      // non-numeric
+        ///   "wide"                → ("wide", nil)           // not width=
+        static func parse(_ title: String) -> (preserved: String?, width: Int?) {
+            if title.isEmpty { return (nil, nil) }
+
+            // Try "whole title is the size token"
+            if let w = parseSizeToken(title) {
+                return (nil, w)
+            }
+
+            // Try "<preserved> <size token>" (split on last space)
+            if let lastSpace = title.lastIndex(of: " ") {
+                let tail = String(title[title.index(after: lastSpace)...])
+                if let w = parseSizeToken(tail) {
+                    let head = String(title[..<lastSpace])
+                    // Trim trailing whitespace from the preserved part
+                    let trimmed = head.trimmingCharacters(in: .whitespaces)
+                    return (trimmed.isEmpty ? nil : trimmed, w)
+                }
+            }
+
+            // No size hint found — whole title is preserved
+            return (title, nil)
+        }
+
+        /// Build a title string from preserved text + optional width.
+        /// Inverse of `parse`. Returns nil when both inputs are nil —
+        /// the caller should then omit the title entirely from the
+        /// rawDestination.
+        static func emit(preserved: String?, width: Int?) -> String? {
+            let p = preserved?.trimmingCharacters(in: .whitespaces)
+            let hasPreserved = (p != nil && !p!.isEmpty)
+            let hasWidth = (width != nil && width! > 0)
+
+            switch (hasPreserved, hasWidth) {
+            case (false, false): return nil
+            case (true, false):  return p
+            case (false, true):  return "width=\(width!)"
+            case (true, true):   return "\(p!) width=\(width!)"
+            }
+        }
+
+        /// Recognize exactly `width=N` where N is a positive integer.
+        /// Returns N, or nil on any failure.
+        private static func parseSizeToken(_ token: String) -> Int? {
+            guard token.hasPrefix("width=") else { return nil }
+            let rest = token.dropFirst("width=".count)
+            guard !rest.isEmpty, !rest.contains(" "), !rest.contains("\t") else { return nil }
+            guard let n = Int(rest), n > 0 else { return nil }
+            return n
+        }
     }
 
     // MARK: - Lazy continuation support

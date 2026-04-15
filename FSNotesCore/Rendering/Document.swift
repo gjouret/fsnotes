@@ -289,7 +289,20 @@ public indirect enum Inline: Equatable {
     case strikethrough([Inline])       // ~~…~~
     case code(String)                  // `…` — content is raw, never parsed
     case link(text: [Inline], rawDestination: String)       // [text](url "title")
-    case image(alt: [Inline], rawDestination: String)       // ![alt](url "title")
+    /// An inline image: `![alt](url "title")`.
+    ///
+    /// `rawDestination` holds everything between the parens verbatim
+    /// (url + optional title) for byte-identical round-trip fidelity.
+    ///
+    /// `width` is a convenience field populated by the parser when the
+    /// title segment matches `width=N` (possibly prefixed by other
+    /// title text — e.g. `"photo from 2024 width=300"`). It is nil when
+    /// the image has no size hint; the renderer then falls back to the
+    /// natural size clamped to the container width. The field is
+    /// strictly a cached parse of the title and MUST stay in sync with
+    /// rawDestination — any mutation of one requires rewriting the
+    /// other. Use `EditingOps.setImageSize` to mutate both atomically.
+    case image(alt: [Inline], rawDestination: String, width: Int?)
     case autolink(text: String, isEmail: Bool)              // <url> or <email>
     case escapedChar(Character)        // \* \[ etc. — literal escaped character
     case lineBreak(raw: String)        // "  \n" or "\\\n" — hard line break

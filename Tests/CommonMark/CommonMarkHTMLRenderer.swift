@@ -350,7 +350,7 @@ struct CommonMarkHTMLRenderer {
                 } else {
                     output += "<a href=\"\(escapedURL)\">\(rendered)</a>"
                 }
-            case .image(let alt, let rawDest):
+            case .image(let alt, let rawDest, _):
                 let (url, imgTitle) = extractURLAndTitle(from: rawDest)
                 let decodedURL = Self.decodeEntitiesInString(url)
                 let percentEncodedURL = Self.percentEncodeNonASCII(decodedURL)
@@ -558,7 +558,7 @@ struct CommonMarkHTMLRenderer {
                 result += t
             case .link(let text, _):
                 result += plainText(from: text)
-            case .image(let alt, _):
+            case .image(let alt, _, _):
                 result += plainText(from: alt)
             case .autolink(let text, _):
                 result += text
