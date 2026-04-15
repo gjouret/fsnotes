@@ -30,8 +30,54 @@ public class Note: NSObject  {
     public var cachedDocument: Document?
 
     /// Cached fold state: set of block indices that were collapsed when
-    /// the user last viewed this note. Preserved across note switches.
-    public var cachedFoldState: Set<Int>?
+    /// the user last viewed this note. Preserved across note switches
+    /// (in-memory) and across app restarts (via UserDefaults — see
+    /// `loadFoldStateFromDisk()` / `saveFoldStateToDisk()`).
+    public var cachedFoldState: Set<Int>? {
+        didSet { saveFoldStateToDisk() }
+    }
+
+    /// UserDefaults key for the persistent fold state of this note.
+    /// Keyed by file URL path so it survives app restarts but stays
+    /// per-note. The fold state is a list of block indices and is
+    /// fragile (block indices shift when the note is edited) — good
+    /// enough for the read-mostly case the user reported.
+    private var foldStateDefaultsKey: String {
+        return "fsnotes.foldState.\(url.path)"
+    }
+
+    /// Suppression flag so `loadFoldStateFromDisk` doesn't re-enter
+    /// `saveFoldStateToDisk` via the `didSet` observer.
+    private var isLoadingFoldState: Bool = false
+
+    /// Load fold state from UserDefaults. Called by the editor when
+    /// the note is first opened, before the projection's renderer
+    /// reads `cachedFoldState`.
+    public func loadFoldStateFromDisk() {
+        if cachedFoldState != nil { return }
+        guard let arr = UserDefaults.standard.array(
+            forKey: foldStateDefaultsKey
+        ) as? [Int] else { return }
+        let loaded = Set(arr)
+        if !loaded.isEmpty {
+            isLoadingFoldState = true
+            cachedFoldState = loaded
+            isLoadingFoldState = false
+        }
+    }
+
+    /// Save the current fold state to UserDefaults. Called from the
+    /// `didSet` of `cachedFoldState` whenever it changes. Removes the
+    /// key when the set is empty so we don't accumulate stale entries.
+    private func saveFoldStateToDisk() {
+        if isLoadingFoldState { return }
+        let key = foldStateDefaultsKey
+        if let folds = cachedFoldState, !folds.isEmpty {
+            UserDefaults.standard.set(Array(folds).sorted(), forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
 
     var creationDate: Date? = Date()
 

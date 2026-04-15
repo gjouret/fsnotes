@@ -35,7 +35,7 @@
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="KF2-I2-ZON"/>
-                                        <menuItem title="Delete Orphaned Attachments..." identifier="fsnotes.deleteOrphanedAttachments" id="ORF-AN-DEL1">
+                                        <menuItem title="Delete Orphaned Attachments..." image="trash.slash" catalog="system" identifier="fsnotes.deleteOrphanedAttachments" id="ORF-AN-DEL1">
                                             <modifierMask key="keyEquivalentModifierMask"/>
                                             <connections>
                                                 <action selector="deleteOrphanedAttachments:" target="L4m-js-agn" id="ORF-AN-ACT1"/>

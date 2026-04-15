@@ -216,6 +216,14 @@ extension EditTextView {
             }
         }
 
+        // Hydrate the incoming note's fold state from disk before the
+        // projection is rendered so the renderer can apply collapsed
+        // attributes to the matching headers on first paint. The load
+        // is a no-op when the in-memory cache is already populated
+        // (e.g., switching back to a note that was open earlier in
+        // the same session).
+        note.loadFoldStateFromDisk()
+
         // Set the rendered attributed string into textStorage.
         // Use isRendering to prevent the source-mode pipeline from
         // processing this setAttributedString.

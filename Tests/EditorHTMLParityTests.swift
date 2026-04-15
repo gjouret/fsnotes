@@ -967,6 +967,59 @@ class EditorHTMLParityTests: XCTestCase {
 
     // MARK: - Family F: RC4 inline re-parsing regressions
 
+    func test_bug25_deleteOnSecondOfTwoBlankParagraphs_collapsesUpward() {
+        // User-reported: with two blank paragraphs in a row, pressing
+        // Delete (Backspace) at home of the SECOND blank paragraph
+        // should collapse it upward (merge with first), not delete
+        // the next line below. The FSM must not behave differently
+        // when there are two blanks vs one.
+        let editor = makeEditor()
+        fill(editor, "before\n\n\n\nafter")
+        // Storage for "before\n\n\n\nafter" is roughly:
+        // before(0..6), blank, blank, blank, after — let's find the
+        // home of the second blank line.
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let beforeRange = s.range(of: "before")
+        let afterRange = s.range(of: "after")
+        // Cursor in the middle of the blank gap (after one separator).
+        let mid = beforeRange.location + beforeRange.length + 1
+        run([.cursorAt(mid), .backspace], on: editor)
+        // "after" must still exist; the delete should remove a blank,
+        // not the "after" paragraph.
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertTrue(md.contains("before"), "before preserved; got: \(md)")
+        XCTAssertTrue(md.contains("after"), "after preserved; got: \(md)")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_bug28_deleteOnEmptyTodoBetweenItems_exitsToParagraph() {
+        // User-reported: blank Todo list line between two todos. Delete
+        // (Backspace at home) should remove the checkbox and convert
+        // the blank to a body text paragraph — NOT delete the line and
+        // jump to the previous item. This is the standard FSM exit-list
+        // path; it must work even when there are sibling items below.
+        let editor = makeEditor()
+        fill(editor, "- [ ] First\n- [ ] \n- [ ] Third")
+        // Cursor at home of the empty middle todo (after its checkbox)
+        let s = editor.textStorage?.string as NSString? ?? ""
+        // Find the second checkbox position by counting attachments
+        // — use string search for "Third" and compute 1 char before its line break
+        let thirdRange = s.range(of: "Third")
+        // The empty todo's home is 2 chars before "Third" (separator + checkbox)
+        // We use a simpler approach: select the empty todo line via paragraph range
+        let emptyLineStart = thirdRange.location - 2
+        run([.cursorAt(emptyLineStart), .backspace], on: editor)
+        // The empty middle todo should become a paragraph (or blank line).
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertTrue(md.contains("- [ ] First"), "First todo preserved; got: \(md)")
+        XCTAssertTrue(md.contains("- [ ] Third"), "Third todo preserved; got: \(md)")
+        XCTAssertFalse(md.contains("- [ ] First\n- [ ] \n- [ ] Third"),
+                       "empty todo should have been converted; got: \(md)")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
     func test_bug26_cmdBToggleOff_subsequentTextNotBold() {
         // User-reported: CMD+B turns bold on, typing produces bold,
         // then CMD+B again to toggle off doesn't work (text stays bold).
