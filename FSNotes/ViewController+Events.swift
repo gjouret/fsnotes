@@ -317,8 +317,13 @@ extension ViewController {
         // The suppress flag is set during our own cursor updates (e.g., after insertion).
         if editor.suppressPendingTraitClear {
             editor.suppressPendingTraitClear = false
-        } else if !editor.pendingInlineTraits.isEmpty {
-            editor.pendingInlineTraits = []
+        } else {
+            if !editor.pendingInlineTraits.isEmpty {
+                editor.pendingInlineTraits = []
+            }
+            if !editor.explicitlyOffTraits.isEmpty {
+                editor.explicitlyOffTraits = []
+            }
         }
 
         formattingToolbar?.updateButtonStates(for: editor)

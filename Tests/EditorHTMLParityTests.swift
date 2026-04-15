@@ -967,6 +967,93 @@ class EditorHTMLParityTests: XCTestCase {
 
     // MARK: - Family F: RC4 inline re-parsing regressions
 
+    func test_bug26_cmdBToggleOff_subsequentTextNotBold() {
+        // User-reported: CMD+B turns bold on, typing produces bold,
+        // then CMD+B again to toggle off doesn't work (text stays bold).
+        // Empty-selection path uses pendingInlineTraits + insertWithTraits.
+        // After the toggle-off, inserted text must NOT be bold.
+        let editor = makeEditor()
+        fill(editor, "x")
+        // Cursor at end of "x" (position 1)
+        run([
+            .cursorAt(1),
+            .toggleBold,         // turn bold on
+            .type("hello"),      // typed bold
+            .toggleBold,         // turn bold off
+            .type("world")       // should NOT be bold
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "x**hello**world")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_bug51_newTodoBetweenUncheckedAndChecked_isUnchecked() {
+        // User-reported: entering a new Todo when the Todo item below
+        // is already completed shows the new one as checked. New items
+        // produced by Return on an unchecked todo must always start
+        // unchecked, regardless of neighbors.
+        let editor = makeEditor()
+        fill(editor, "- [ ] First\n- [x] Second")
+        // Cursor at end of "First" (the unchecked one)
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let firstRange = s.range(of: "First")
+        let end = firstRange.location + firstRange.length
+        run([.cursorAt(end), .pressReturn, .type("Middle")], on: editor)
+        assertEditorMatchesMarkdown(
+            editor,
+            "- [ ] First\n- [ ] Middle\n- [x] Second"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_bug51_toggleTodoOnParagraphAboveCheckedTodo_isUnchecked() {
+        // User clicks Todo button on a paragraph that sits directly
+        // above a checked todo. The new todo must be unchecked — it
+        // should not inherit checked state from the neighbor.
+        // (Asserts via round-trip serialization rather than HTML parity
+        // because the live Document keeps two `.list` blocks separated
+        // by a `.blankLine` while a fresh parse would merge them into
+        // one loose list. Both serialize to the same markdown — the
+        // checked-state of the new item is what we're verifying.)
+        let editor = makeEditor()
+        fill(editor, "shopping\n\n- [x] milk")
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let shopRange = s.range(of: "shopping")
+        run([.cursorAt(shopRange.location), .toggleTodo], on: editor)
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertTrue(
+            md.contains("- [ ] shopping"),
+            "shopping must be unchecked; got: \(md)"
+        )
+        XCTAssertTrue(
+            md.contains("- [x] milk"),
+            "milk must remain checked; got: \(md)"
+        )
+        // Note: assertLiveDocumentRoundTrips would fail here because
+        // the live Document keeps two separate `.list` blocks while a
+        // fresh parse merges them into one loose list. The structural
+        // fidelity gap is a separate issue from bug 51 (checked-state
+        // inheritance), which is what this test verifies.
+    }
+
+    func test_bug51_newTodoBetweenCheckedAndChecked_isUnchecked() {
+        // Even between two checked items, a brand-new item (split via
+        // Return) on a CHECKED one must produce an UNCHECKED next item
+        // — see existing test_script_returnOnCheckedTodo_producesUnchecked.
+        // This variant tests the cursor-mid-text case.
+        let editor = makeEditor()
+        fill(editor, "- [x] First\n- [x] Second")
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let firstRange = s.range(of: "First")
+        let end = firstRange.location + firstRange.length
+        run([.cursorAt(end), .pressReturn, .type("Middle")], on: editor)
+        assertEditorMatchesMarkdown(
+            editor,
+            "- [x] First\n- [ ] Middle\n- [x] Second"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
     func test_rc4_typingLinkClosingParen_parsesAsLink() {
         // User-reported: typed URLs are not clickable until app reload.
         // Typing "](url)" character by character should trigger an

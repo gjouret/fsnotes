@@ -13,6 +13,8 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3752 | 12:50 PM | 🔵 | Bug #51: toggleTodo on paragraph above checked todo fails HTML parity | ~451 |
+| #3749 | 12:31 PM | 🟣 | Added RC4 inline re-parsing regression test suite | ~433 |
 | #3746 | 11:50 AM | 🟣 | All core test suites pass after table rendering refactor | ~503 |
 | #3739 | 11:42 AM | 🔵 | RC3 multi-paragraph toggleList bug: blank separators converted to empty list items | ~469 |
 | #3732 | 10:37 AM | 🟣 | Added RC2 boundary ambiguity regression test suite | ~554 |

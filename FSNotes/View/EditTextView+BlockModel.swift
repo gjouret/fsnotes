@@ -74,6 +74,29 @@ extension EditTextView {
         static var pendingTraits = 1
         static var suppressTraitClear = 2
         static var coalescedLayoutPending = 3
+        static var explicitlyOffTraits = 4
+    }
+
+    /// Inline traits the user JUST toggled OFF on an empty selection.
+    /// Reading flow:
+    ///  - `toggleInlineTraitViaBlockModel` populates this when removing
+    ///    a trait that had been pending (so the user explicitly intends
+    ///    "no bold from here on", not "inherit from surrounding").
+    ///  - `handleEditViaBlockModel` consumes it on the next insert: if
+    ///    set, the insert routes through `insertWithTraits([], ...)`
+    ///    which uses `splitInlines`, so the inserted text becomes a
+    ///    sibling of any surrounding styled run instead of being spliced
+    ///    INTO it (fix for bug 26 "CMD+B stuck on").
+    ///  - `textViewDidChangeSelection` clears it (via the same suppress
+    ///    flag that protects `pendingInlineTraits`) so cursor movement
+    ///    away from the toggle point returns to default inheritance.
+    var explicitlyOffTraits: Set<EditingOps.InlineTrait> {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.explicitlyOffTraits) as? Set<EditingOps.InlineTrait> ?? []
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.explicitlyOffTraits, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
     }
 
     /// Whether a coalesced layout pass is already scheduled.
@@ -516,18 +539,30 @@ extension EditTextView {
             if range.length == 0 && !replacement.isEmpty {
                 // Pure insertion.
                 let traits = pendingInlineTraits
+                let offTraits = explicitlyOffTraits
                 if !traits.isEmpty && replacement != "\n" {
                     // Apply pending inline traits to the inserted text.
                     // Suppress trait clearing during our cursor update.
                     suppressPendingTraitClear = true
                     bmLog("➡️ Calling EditingOps.insertWithTraits('\(replacement)', traits: \(traits), at: \(range.location))")
                     result = try EditingOps.insertWithTraits(replacement, traits: traits, at: range.location, in: projection)
+                } else if !offTraits.isEmpty && replacement != "\n" {
+                    // User explicitly turned a trait off (bug 26 path).
+                    // Route through `insertWithTraits` with empty traits
+                    // so the new text becomes a sibling of any surrounding
+                    // styled run (via `splitInlines`) instead of being
+                    // spliced into it (which the default `insert` path
+                    // does via `flatten` + `runAtInsertionPoint`).
+                    suppressPendingTraitClear = true
+                    bmLog("➡️ Calling EditingOps.insertWithTraits('\(replacement)', traits: [], at: \(range.location)) — explicit off")
+                    result = try EditingOps.insertWithTraits(replacement, traits: [], at: range.location, in: projection)
                 } else {
                     bmLog("➡️ Calling EditingOps.insert('\(replacement)', at: \(range.location))")
                     result = try EditingOps.insert(replacement, at: range.location, in: projection)
                     // Clear pending traits on newline.
                     if replacement == "\n" {
                         pendingInlineTraits = []
+                        explicitlyOffTraits = []
                     }
                 }
             } else if range.length > 0 && replacement.isEmpty {
@@ -1040,15 +1075,23 @@ extension EditTextView {
         let traits = pendingInlineTraits
         let baseFont = (attrs[.font] as? NSFont) ?? UserDefaultsManagement.noteFont
 
-        // Reset font traits first, then apply pending ones.
+        // Sync font traits to the pending set: ADD any present in
+        // `traits`, REMOVE any not present. The previous version only
+        // added — so toggling bold OFF after typing bold text left the
+        // current font already-bold and the cursor stayed bold for the
+        // next keystroke (bug 26: "CMD+B stuck on").
         var descriptor = baseFont.fontDescriptor
         var symbolicTraits = descriptor.symbolicTraits
 
         if traits.contains(.bold) {
             symbolicTraits.insert(.bold)
+        } else {
+            symbolicTraits.remove(.bold)
         }
         if traits.contains(.italic) {
             symbolicTraits.insert(.italic)
+        } else {
+            symbolicTraits.remove(.italic)
         }
 
         descriptor = descriptor.withSymbolicTraits(symbolicTraits)
@@ -1312,15 +1355,31 @@ extension EditTextView {
         if sel.length == 0 {
             // Empty selection: toggle pending trait for next typed characters.
             var traits = pendingInlineTraits
+            var offTraits = explicitlyOffTraits
             if traits.contains(trait) {
+                // Trait was pending → user wants to turn it off. Move it
+                // from `pending` to `explicitlyOff` so the next insert
+                // routes through `insertWithTraits([], ...)` (which uses
+                // splitInlines and produces a sibling node) instead of
+                // the default `insert` path that would extend the
+                // surrounding bold span.
                 traits.remove(trait)
+                offTraits.insert(trait)
             } else {
                 traits.insert(trait)
+                offTraits.remove(trait)
             }
             pendingInlineTraits = traits
-            bmLog("🎨 pendingInlineTraits toggled \(trait): now \(traits)")
+            explicitlyOffTraits = offTraits
+            bmLog("🎨 pendingInlineTraits toggled \(trait): pending=\(traits) off=\(offTraits)")
             // Update typing attributes to reflect the pending trait visually.
             updateTypingAttributesForPendingTraits()
+            // Refresh the toolbar so the button visually toggles too —
+            // the toolbar reads `typingAttributes` and only updates on
+            // selection change, but this path doesn't move the cursor.
+            if let vc = window?.windowController?.contentViewController as? ViewController {
+                vc.formattingToolbar?.updateButtonStates(for: self)
+            }
             return true
         }
 
