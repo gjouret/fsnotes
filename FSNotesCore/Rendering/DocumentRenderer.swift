@@ -293,8 +293,18 @@ public enum DocumentRenderer {
                 style.paragraphSpacing = baseSize * 0.25
             }
 
-        case .paragraph:
+        case .paragraph(let inline):
             style.paragraphSpacing = 12
+            // Image-only paragraphs (a single `.image` inline) are
+            // centered in the text column. Without centering, an
+            // image resize drag visually grows/shrinks from the left
+            // edge (anchored at the glyph's text-flow position);
+            // with centering, it grows/shrinks symmetrically from
+            // the middle, matching typical Markdown editor behavior
+            // (Obsidian, Typora, iA Writer).
+            if inline.count == 1, case .image = inline[0] {
+                style.alignment = .center
+            }
 
         case .codeBlock:
             style.lineSpacing = 0

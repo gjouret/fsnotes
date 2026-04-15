@@ -14,6 +14,14 @@ extension EditTextView {
             saveSelectedRange()
         }
 
+        // Escape clears an image selection (handles drawn by
+        // ImageSelectionHandleDrawer). Fall through to super if there's
+        // no selection to clear so other consumers still see the key.
+        if event.keyCode == 53 /* kVK_Escape */, selectedImageRange != nil {
+            selectedImageRange = nil
+            return
+        }
+
         if let characters = event.characters, characters == "`" {
             // Route through insertText (not super) so that
             // shouldChangeText → block model can intercept.

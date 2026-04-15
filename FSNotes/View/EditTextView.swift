@@ -82,6 +82,105 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var skipLoadSelectedRange = false
     var dragDetected = false
 
+    /// Character range of the currently selected image attachment, or
+    /// nil when no image is selected.
+    ///
+    /// Purely view-layer ephemeral state — not persisted, not undoable,
+    /// never read by the data layer. Cleared on text edit, note switch,
+    /// Escape, or click elsewhere. The `didSet` observer dirties the
+    /// stale and new handle rects so the LayoutManager repaints them.
+    public var selectedImageRange: NSRange? {
+        didSet {
+            guard oldValue != selectedImageRange else { return }
+            if let old = oldValue { invalidateImageSelectionHandles(for: old) }
+            if let new = selectedImageRange { invalidateImageSelectionHandles(for: new) }
+        }
+    }
+
+    /// Ephemeral drag state for the in-progress image resize. Non-nil
+    /// only between mouseDown on a handle and mouseUp. Never persisted.
+    public struct ImageResizeDrag {
+        /// Character range of the attachment being resized.
+        public let range: NSRange
+        /// The image's bounds at the start of the drag (natural size
+        /// before any live-update mutation).
+        public let startBounds: NSRect
+        /// The window-relative mouse point where the drag began.
+        public let startMouse: NSPoint
+        /// height / width at drag start — locked for the whole drag
+        /// so aspect ratio is preserved.
+        public let aspect: CGFloat
+        /// Which handle the user grabbed.
+        public let handle: ImageSelectionHandleDrawer.Handle
+    }
+
+    /// Non-nil while a handle-drag is in progress. Set on mouseDown
+    /// (handle hit), read on mouseDragged, cleared on mouseUp.
+    public var currentImageDrag: ImageResizeDrag?
+
+    /// Compute the visible image rect (in view coordinates) for an
+    /// image attachment at the given character range.
+    ///
+    /// Horizontal (x, width) from `boundingRect(forGlyphRange:in:)` —
+    /// the layout manager's definitive "where does this glyph draw"
+    /// query. This works for both left-aligned and centered
+    /// paragraphs as long as `FSNTextAttachmentCell.cellSize()` does
+    /// not lie about the cell width (see the block-model branch in
+    /// that method — it used to inflate the cell to full container
+    /// width, which broke hit-test for centered images).
+    ///
+    /// Vertical baseline from `lineFragmentRect` + `location(forGlyphAt:)`,
+    /// height from the attachment's own `bounds`. We avoid using
+    /// `boundingRect.height` because NSLayoutManager includes font
+    /// descent + leading below the glyph, which would draw the
+    /// selection ring's bottom edge under the image.
+    public func imageAttachmentRect(forRange range: NSRange) -> NSRect? {
+        guard let lm = layoutManager,
+              let tc = textContainer,
+              let storage = textStorage,
+              range.location < storage.length,
+              let attachment = storage.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment
+        else { return nil }
+        let imageBounds = attachment.bounds
+        guard imageBounds.width > 0, imageBounds.height > 0 else { return nil }
+
+        // Force layout through the attachment glyph before querying.
+        // A freshly-spliced attachment may not have had its glyph
+        // position computed yet; without this, boundingRect returns
+        // stale/zero values.
+        lm.ensureLayout(forCharacterRange: range)
+
+        let glyphRange = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return nil }
+        let glyphIndex = glyphRange.location
+
+        let drawingRect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+        let fragment = lm.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        let glyphLoc = lm.location(forGlyphAt: glyphIndex)
+        let baselineY = fragment.origin.y + glyphLoc.y
+
+        let left = drawingRect.origin.x + imageBounds.origin.x
+        let top  = baselineY - imageBounds.height - imageBounds.origin.y
+
+        var rect = NSRect(x: left, y: top, width: imageBounds.width, height: imageBounds.height)
+        rect.origin.x += textContainerOrigin.x
+        rect.origin.y += textContainerOrigin.y
+        return rect
+    }
+
+    /// Invalidate the display rectangle around an image attachment's
+    /// bounding rect, expanded by the handle half-size so stale corner
+    /// handles get repainted cleanly.
+    private func invalidateImageSelectionHandles(for range: NSRange) {
+        guard let lm = layoutManager, let tc = textContainer else { return }
+        let glyphRange = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        var rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+        rect.origin.x += textContainerOrigin.x
+        rect.origin.y += textContainerOrigin.y
+        // Pad for handle size (6pt handle + 2pt ring slack).
+        setNeedsDisplay(rect.insetBy(dx: -12, dy: -12))
+    }
+
     override func becomeFirstResponder() -> Bool {
         if let note = self.note {
             if note.container == .encryptedTextPack {
@@ -313,7 +412,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     
     override func didChangeText() {
         super.didChangeText()
-        
+
+        // Any text edit invalidates an image selection: the attachment
+        // may have moved, been deleted, or re-rendered with new bounds.
+        if selectedImageRange != nil {
+            selectedImageRange = nil
+        }
+
         if suppressCompletion {
             suppressCompletion = false
             return

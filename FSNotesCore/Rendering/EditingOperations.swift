@@ -699,9 +699,15 @@ public enum EditingOps {
         var newDoc = projection.document
         newDoc.blocks[blockIndex] = newBlock
 
-        // 2. Render ONLY the changed block.
+        // 2. Render ONLY the changed block. Pass the note through so
+        //    image inlines can resolve relative paths and emit real
+        //    attachments — without this, makeImageAttachment bails on
+        //    the nil-note guard and returns alt text instead.
         let blockRendered = DocumentRenderer.renderBlock(
-            newBlock, bodyFont: projection.bodyFont, codeFont: projection.codeFont
+            newBlock,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note
         )
 
         // 3. Apply paragraph style to the rendered block.
@@ -3873,6 +3879,78 @@ public enum EditingOps {
     }
 
     // MARK: - Image size
+
+    /// Find the path to an `.image` inline at a specific render offset
+    /// within a paragraph-style inline tree. Returns nil if no `.image`
+    /// atom sits exactly at `offset`.
+    ///
+    /// Used by the view layer to translate a click on an attachment
+    /// character into the `(blockIndex, inlinePath)` coordinates
+    /// `setImageSize` expects. The paragraph block's inline tree is
+    /// walked depth-first, accumulating render offsets via
+    /// `inlineLength`. Images are length-1 atoms, so the match check
+    /// is "current offset == target and node is an image".
+    public static func findImageInlinePath(
+        in inlines: [Inline],
+        at offset: Int
+    ) -> [Int]? {
+        var running = 0
+        return findImageInlinePathHelper(in: inlines, at: offset, running: &running, path: [])
+    }
+
+    private static func findImageInlinePathHelper(
+        in inlines: [Inline],
+        at target: Int,
+        running: inout Int,
+        path: [Int]
+    ) -> [Int]? {
+        for (idx, node) in inlines.enumerated() {
+            let nodeStart = running
+            let nodeEnd = running + inlineLength(node)
+            // Only descend / consider nodes that can span the target.
+            if target < nodeStart {
+                return nil
+            }
+            if target >= nodeEnd {
+                running = nodeEnd
+                continue
+            }
+            // target is inside this node.
+            switch node {
+            case .image:
+                // Images are length-1 atoms. Match only when the target
+                // equals the node's starting offset.
+                if target == nodeStart {
+                    return path + [idx]
+                }
+                return nil
+            case .bold(let c, _), .italic(let c, _),
+                 .strikethrough(let c), .underline(let c),
+                 .highlight(let c):
+                // Descend into container. Children's offsets are
+                // relative to the container's start.
+                var childRunning = nodeStart
+                if let found = findImageInlinePathHelper(
+                    in: c, at: target, running: &childRunning, path: path + [idx]
+                ) {
+                    return found
+                }
+                running = nodeEnd
+            case .link(let text, _):
+                var childRunning = nodeStart
+                if let found = findImageInlinePathHelper(
+                    in: text, at: target, running: &childRunning, path: path + [idx]
+                ) {
+                    return found
+                }
+                running = nodeEnd
+            default:
+                // Leaf inline that isn't an image — no match.
+                return nil
+            }
+        }
+        return nil
+    }
 
     /// Update the width hint of an inline image at `(blockIndex, inlinePath)`
     /// and route the edit through the standard replaceBlock pipeline.

@@ -67,6 +67,7 @@
 		39719F73DD2051FF45F54FBC /* BlockProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593E5F031A986B6F265DD161 /* BlockProcessor.swift */; };
 		2152B725855467CFB329F670 /* AttributeDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */; };
 		C347F26CE5C1E0AB82880BBF /* HorizontalRuleDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */; };
+		IMGHD00000000000000000B1 /* ImageSelectionHandleDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = IMGHD00000000000000000F1 /* ImageSelectionHandleDrawer.swift */; };
 		641C854C58DB4B33BF6B6C78 /* BulletDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D49CAEA948443F7BE930BF8 /* BulletDrawer.swift */; };
 		41A9498C821A6134CF66697B /* BlockquoteBorderDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2581E31D96188E843F4C07C9 /* BlockquoteBorderDrawer.swift */; };
 		4CDB5D1C50CCB3DEEEC869E7 /* KbdBoxDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D50FD865403E5655FDA7CB1 /* KbdBoxDrawer.swift */; };
@@ -1093,6 +1094,7 @@
 		593E5F031A986B6F265DD161 /* BlockProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockProcessor.swift; sourceTree = "<group>"; };
 		B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributeDrawer.swift; sourceTree = "<group>"; };
 		D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleDrawer.swift; sourceTree = "<group>"; };
+		IMGHD00000000000000000F1 /* ImageSelectionHandleDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSelectionHandleDrawer.swift; sourceTree = "<group>"; };
 		8D49CAEA948443F7BE930BF8 /* BulletDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BulletDrawer.swift; sourceTree = "<group>"; };
 		2581E31D96188E843F4C07C9 /* BlockquoteBorderDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteBorderDrawer.swift; sourceTree = "<group>"; };
 		2D50FD865403E5655FDA7CB1 /* KbdBoxDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KbdBoxDrawer.swift; sourceTree = "<group>"; };
@@ -1590,6 +1592,7 @@
 			children = (
 				B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */,
 				D80336CF93FBF88437BA812F /* HorizontalRuleDrawer.swift */,
+				IMGHD00000000000000000F1 /* ImageSelectionHandleDrawer.swift */,
 				8D49CAEA948443F7BE930BF8 /* BulletDrawer.swift */,
 				2581E31D96188E843F4C07C9 /* BlockquoteBorderDrawer.swift */,
 				2D50FD865403E5655FDA7CB1 /* KbdBoxDrawer.swift */,
@@ -3227,6 +3230,7 @@
 			files = (
 				2152B725855467CFB329F670 /* AttributeDrawer.swift in Sources */,
 				C347F26CE5C1E0AB82880BBF /* HorizontalRuleDrawer.swift in Sources */,
+				IMGHD00000000000000000B1 /* ImageSelectionHandleDrawer.swift in Sources */,
 				641C854C58DB4B33BF6B6C78 /* BulletDrawer.swift in Sources */,
 				41A9498C821A6134CF66697B /* BlockquoteBorderDrawer.swift in Sources */,
 				4CDB5D1C50CCB3DEEEC869E7 /* KbdBoxDrawer.swift in Sources */,

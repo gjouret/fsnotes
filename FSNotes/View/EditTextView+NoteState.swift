@@ -218,6 +218,10 @@ extension EditTextView {
         // note by mistake. (Perf plan #12.)
         flushPendingSave()
 
+        // Clear any image selection carried over from the previous
+        // note — ranges don't survive a note swap.
+        selectedImageRange = nil
+
         isScrollPositionSaverLocked = true
 
         // Reset orphan-tracking when switching notes.

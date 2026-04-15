@@ -259,7 +259,7 @@ extension EditTextView {
     /// - Parameters:
     ///   - result: The EditResult from EditingOps.
     ///   - actionName: Human-readable undo action name (e.g. "Typing", "Bold").
-    private func applyEditResultWithUndo(
+    internal func applyEditResultWithUndo(
         _ result: EditResult,
         actionName: String
     ) {

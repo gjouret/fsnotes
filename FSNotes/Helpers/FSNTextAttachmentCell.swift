@@ -24,7 +24,25 @@ class FSNTextAttachmentCell: NSTextAttachmentCell {
     override func cellSize() -> NSSize {
         let size = super.cellSize()
 
+        // File-pill attachments (small icons at the note font's
+        // "attachment height") always return their natural size.
         if size.height == UserDefaultsManagement.noteFont.getAttachmentHeight() {
+            return size
+        }
+
+        // Block-model path: return the intrinsic image size.
+        // NSLayoutManager then reports the true glyph rect via
+        // boundingRect(forGlyphRange:), which lets the image-resize
+        // selection ring hit-test and draw at the correct position.
+        //
+        // Source-mode legacy path: inflate the cell width to full
+        // container width. This is a long-standing hack that makes
+        // the source-mode pipeline place the attachment alone on its
+        // line — the block-model pipeline does not need it because
+        // image paragraphs own their own line by construction.
+        let blockModelActive = (textContainer.textView as? EditTextView)?
+            .textStorageProcessor?.blockModelActive ?? false
+        if blockModelActive {
             return size
         }
 

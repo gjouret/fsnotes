@@ -226,6 +226,21 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let cr = characterRange(forGlyphRange: range, actualGlyphRange: nil)
             guard NSMaxRange(cr) <= (textStorage?.length ?? 0) else { continue }
             super.drawGlyphs(forGlyphRange: range, at: origin)
+
+            // Image selection ring + resize handles. Drawn AFTER the
+            // attachment cell paints the image so the ring and handles
+            // sit on top of the image, not behind it. drawBackground()
+            // runs before attachments, so drawing there would bury the
+            // overlay under the image bitmap.
+            if let editor = self.textContainers.first?.textView as? EditTextView,
+               let selRange = editor.selectedImageRange,
+               let tc = textContainers.first,
+               NSLocationInRange(selRange.location, cr) {
+                ImageSelectionHandleDrawer.draw(
+                    in: self, container: tc,
+                    range: selRange, origin: origin
+                )
+            }
         }
     }
 
