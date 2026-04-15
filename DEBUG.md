@@ -5,13 +5,16 @@
 
 ## Status (2026-04-15)
 
-- **RC1** (typingAttributes sync): ✅ `syncTypingAttributesToCursorBlock()` is implemented and called at the end of `applyEditResultWithUndo`.
-- **RC2** (blockContaining boundary): ✅ Boundary + listEntryContaining fixes landed; regression tests green (`test_rc2_*`).
-- **RC3** (multi-block selection): ✅ Multi-block toolbar ops implemented via `blockIndices(overlapping:)`. Blank lines skipped. Multi-paragraph list/todo collapse into one list via `wrapSelectionInSingleList`. `insertCodeBlock` rewritten on top of new `EditingOps.wrapInCodeBlock` primitive (preserves text before/after the selection).
-- **RC6** (table widget): ✅ Substantially resolved by the Stage 1–4 table cell editing refactor (commit `1ab84a1`).
-- **RC8** (HTML-parity tests): ✅ 65 `EditorHTMLParityTests` now exist (up from DEBUG.md's original count of 8), covering all FSM transitions plus new RC2/RC3 regression families.
+All 8 root causes are resolved in code. Remaining work is live verification by the user against the original "FSNotes++ Bugs 3" note.
 
-Remaining open: **RC4** (inline re-rendering for links/wikilinks/auto-URLs), **RC5** (fold state persistence), **RC7** (batch ensureLayout + wider invalidation).
+- **RC1** (typingAttributes sync): ✅ `syncTypingAttributesToCursorBlock()` implemented and called at end of `applyEditResultWithUndo`. Empty-block synthesis path handles list-exit / Return-on-heading.
+- **RC2** (blockContaining boundary): ✅ Boundary + `listEntryContaining` fixes landed; 5 regression tests in `test_rc2_*` cover toggle/type/delete at boundaries.
+- **RC3** (multi-block selection): ✅ Multi-block toolbar ops via `blockIndices(overlapping:)` + shared `applyToggleAcrossSelection` helper that skips blank lines. Multi-paragraph list/todo collapse into one list via `wrapSelectionInSingleList`. `insertCodeBlock` rewritten on top of `EditingOps.wrapInCodeBlock` primitive (preserves text before/after the selection).
+- **RC4** (inline re-rendering): ✅ `EditingOps.reparseInlinesIfNeeded` walks the current block after every multi-char insertion or closer character (`)`, `]`, `}`, `` ` ``, `>`, `*`, `_`, `~`). Three `test_rc4_*` parity tests cover typed link, pasted link, typed bold.
+- **RC5** (fold state persistence): ✅ `Note.cachedFoldState: Set<Int>?` saved in `fillViaBlockModel` for the outgoing note and restored for the incoming one.
+- **RC6** (table widget): ✅ Substantially resolved by the Stage 1–4 table cell editing refactor (commit `1ab84a1`).
+- **RC7** (batch ensureLayout): ✅ `scheduleCoalescedLayout()` exists for mermaid/math; `applyEditResultWithUndo` invalidation extends from splice point to end of storage.
+- **RC8** (HTML-parity tests): ✅ 68 `EditorHTMLParityTests` cover the original 8 plus the RC2/RC3/RC4 regression families.
 
 ---
 

@@ -965,6 +965,51 @@ class EditorHTMLParityTests: XCTestCase {
         assertLiveDocumentRoundTrips(editor)
     }
 
+    // MARK: - Family F: RC4 inline re-parsing regressions
+
+    func test_rc4_typingLinkClosingParen_parsesAsLink() {
+        // User-reported: typed URLs are not clickable until app reload.
+        // Typing "](url)" character by character should trigger an
+        // inline re-parse that produces an `Inline.link`, which renders
+        // as a clickable `<a>` in HTML parity.
+        let editor = makeEditor()
+        fill(editor, "x")
+        var steps: [EditStep] = [.cursorAt(0)]
+        for ch in "[text](https://example.com)" {
+            steps.append(.type(String(ch)))
+        }
+        run(steps, on: editor)
+        assertEditorMatchesMarkdown(editor, "[text](https://example.com)x")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc4_pasteLinkMarkdown_parsesAsLink() {
+        // Toolbar-driven link insertion (`linkMenu` / `wikiLinks`) and
+        // paste both go through `insertText` with multi-char content.
+        // The RC4 hook should re-parse on multi-char insertions.
+        let editor = makeEditor()
+        fill(editor, "x")
+        run([
+            .cursorAt(0),
+            .type("[click](https://example.com)")
+        ], on: editor)
+        assertEditorMatchesMarkdown(editor, "[click](https://example.com)x")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc4_typingBoldStarStarStar_parsesAsBold() {
+        // Bold marker close should trigger reparse.
+        let editor = makeEditor()
+        fill(editor, "x")
+        var steps: [EditStep] = [.cursorAt(0)]
+        for ch in "**bold**" {
+            steps.append(.type(String(ch)))
+        }
+        run(steps, on: editor)
+        assertEditorMatchesMarkdown(editor, "**bold**x")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
     func test_rc3_multiParagraphSelection_toggleList_convertsAll() {
         let editor = makeEditor()
         fill(editor, "First\n\nSecond\n\nThird")
