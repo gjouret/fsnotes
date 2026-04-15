@@ -18,8 +18,15 @@ extension Storage {
     }
 
     public func loadNotesContent() {
-        for note in noteList {
-            note.load()
+        // Parallelize note loading (Perf plan item #4b). Each `Note.load()`
+        // reads its own file from disk and populates its own `content` /
+        // `title` / `preview` / `tags` fields — no shared mutable state
+        // (tag aggregation happens later in `sidebarOutlineView.loadAllTags`).
+        // `concurrentPerform` caps concurrency at `activeProcessorCount`
+        // automatically so disk I/O doesn't thrash.
+        let notes = noteList
+        DispatchQueue.concurrentPerform(iterations: notes.count) { i in
+            notes[i].load()
         }
     }
 

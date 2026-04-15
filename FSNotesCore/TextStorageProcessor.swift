@@ -111,6 +111,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// rendering pipeline. When blockModelActive==true, populated
     /// via syncBlocksFromProjection() instead of updateBlockModel().
     public var blocks: [MarkdownBlock] = []
+
+    /// Identity reference of the last attributed string that
+    /// `syncBlocksFromProjection` saw. Used to skip the O(blocks) walk
+    /// when the projection hasn't actually changed (Perf plan item #9).
+    private weak var lastSyncedAttributed: NSAttributedString?
     private var pendingRenderedBlockIDs = Set<UUID>()
 
     /// Return the set of block indices that are currently collapsed.
@@ -186,6 +191,19 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// IMPORTANT: preserves the `collapsed` flag from any existing blocks
     /// that match by type + position, so fold state survives re-renders.
     public func syncBlocksFromProjection(_ projection: DocumentProjection) {
+        // Perf plan item #9: memoize on the rendered attributed string's
+        // object identity. Typing doesn't allocate a fresh attributed
+        // string — it patches the existing one via `replaceCharacters`
+        // — so most keystrokes keep `rendered.attributed === last`.
+        // Only structural operations (splits, merges, block-type changes)
+        // produce a new projection with a new attributed instance, and
+        // those are the cases where the O(blocks) walk is actually needed.
+        if lastSyncedAttributed === projection.rendered.attributed,
+           blocks.count == projection.document.blocks.count {
+            return
+        }
+        lastSyncedAttributed = projection.rendered.attributed
+
         let doc = projection.document
         let spans = projection.blockSpans
         guard doc.blocks.count == spans.count else {

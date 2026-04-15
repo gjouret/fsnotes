@@ -1436,7 +1436,12 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         if editor.isEditable {
             note.isBlocked = true
 
-            editor.save()
+            // Debounce save (Perf plan #12): typing in a long note used
+            // to write the full markdown to disk on every keystroke.
+            // `scheduleDebouncedSave` coalesces to at most one disk
+            // write per 800ms; `flushPendingSave` is called from note
+            // switch / app quit paths so no data is ever lost.
+            editor.scheduleDebouncedSave()
 
             updateLastEditedStatus()
             vc.reSort(note: note)

@@ -66,6 +66,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     
     public var timer: Timer?
     public var tagsTimer: Timer?
+    /// Debounce timer for autosave during typing. See
+    /// `EditTextView+NoteState.scheduleDebouncedSave()` (Perf plan #12).
+    public var saveDebounceTimer: Timer?
     public var isLastEdited: Bool = false
     
     @IBOutlet weak var previewMathJax: NSMenuItem!

@@ -124,11 +124,18 @@ extension ViewController {
         print("2. Tags loading finished in \(tagsPoint.timeIntervalSinceNow * -1) seconds")
 
         let highlightCachePoint = Date()
-        for note in self.storage.noteList {
-            note.cache()
+        // Parallelize note-attribute caching (Perf plan item #8). Each
+        // `Note.cache()` runs an independent regex highlight + FNV hash
+        // on its own `content`; the only shared state is the note's own
+        // `cacheLock` flag, which is per-instance. `concurrentPerform`
+        // caps concurrency at `activeProcessorCount` automatically, so
+        // disk/CPU doesn't thrash.
+        let notes = self.storage.noteList
+        DispatchQueue.concurrentPerform(iterations: notes.count) { i in
+            notes[i].cache()
         }
 
-        print("3. Notes attributes cache for \(self.storage.noteList.count) notes in \(highlightCachePoint.timeIntervalSinceNow * -1) seconds")
+        print("3. Notes attributes cache for \(notes.count) notes in \(highlightCachePoint.timeIntervalSinceNow * -1) seconds")
 
         let gitCachePoint = Date()
         self.cacheGitRepositories()

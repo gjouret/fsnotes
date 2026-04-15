@@ -96,7 +96,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UserDefaultsManagement.crashedLastTime = false
-        
+
+        // Flush any debounced save pending in any open editor
+        // (Perf plan #12). The save debounce is 0.8s, so on a fast
+        // quit after typing there can be an in-flight timer that
+        // hasn't fired yet — force it before we lose the timer.
+        for editor in AppDelegate.getEditTextViews() {
+            editor.flushPendingSave()
+        }
+
         AppDelegate.saveWindowsState()
         
         Storage.shared().saveUploadPaths()

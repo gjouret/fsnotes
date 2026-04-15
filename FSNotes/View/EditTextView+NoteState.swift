@@ -26,6 +26,39 @@ extension EditTextView {
         return self.window?.contentViewController as? EditorViewController
     }
 
+    /// Debounce window (seconds) for autosave during typing. The
+    /// `textDidChange` hook calls `save()` on every keystroke; the
+    /// debounce coalesces those into at most one disk write per window.
+    /// Trade-off: up to this many seconds of un-persisted work on crash
+    /// or unexpected quit — acceptable because note switches, app quit,
+    /// and window close all call `flushPendingSave()` to force a flush.
+    private static let saveDebounceInterval: TimeInterval = 0.8
+
+    /// Schedule a debounced save. Called from `textDidChange` so typing
+    /// in long notes doesn't write megabytes of markdown per minute of
+    /// typing (Perf plan item #12). The save still runs through the same
+    /// `save()` entry point — only the scheduling changes.
+    public func scheduleDebouncedSave() {
+        saveDebounceTimer?.invalidate()
+        saveDebounceTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.saveDebounceInterval,
+            repeats: false
+        ) { [weak self] _ in
+            self?.save()
+        }
+    }
+
+    /// Force-flush any pending debounced save. Call from note switch,
+    /// app termination, window close — anywhere where losing the
+    /// pending edit would be worse than the small autosave pause.
+    public func flushPendingSave() {
+        if saveDebounceTimer?.isValid == true {
+            saveDebounceTimer?.invalidate()
+            saveDebounceTimer = nil
+            save()
+        }
+    }
+
     public func save() {
         guard let note = self.note else { return }
         // Safety: only save when the user has actually edited the note.
@@ -36,6 +69,9 @@ extension EditTextView {
             bmLog("⏭️ save skipped (no user edits): \(note.title)")
             return
         }
+        // Cancel any pending debounced save — we're saving right now.
+        saveDebounceTimer?.invalidate()
+        saveDebounceTimer = nil
         // Block-model pipeline: serialize Document to markdown
         // directly, bypassing the attribute-stripping save path.
         if let markdown = serializeViaBlockModel() {
@@ -176,6 +212,12 @@ extension EditTextView {
 
     func fill(note: Note, highlight: Bool = false, force: Bool = false) {
         bmLog("📋 fill() called: \(note.title)")
+        // Flush any pending debounced save from the OUTGOING note
+        // before we replace `self.note`. Otherwise the save would
+        // either be lost (timer cancelled) or fire against the new
+        // note by mistake. (Perf plan #12.)
+        flushPendingSave()
+
         isScrollPositionSaverLocked = true
 
         // Reset orphan-tracking when switching notes.
