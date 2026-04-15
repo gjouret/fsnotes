@@ -286,6 +286,28 @@ extension EditTextView {
             return
         }
 
+        // No-op edit guard (Perf plan #5): if the splice replaces a
+        // range with a byte-identical string, skip the entire mutation
+        // path. This catches phantom NSTextView delegate calls (e.g.
+        // spurious `shouldChangeText` from a selection click that doesn't
+        // actually type anything) which used to invalidate layout,
+        // re-run syncTypingAttributes, and fire didChangeText on every
+        // selection change in an image-heavy note.
+        if result.spliceRange.length == result.spliceReplacement.length {
+            let oldSub = storage.attributedSubstring(from: result.spliceRange)
+            if oldSub.string == result.spliceReplacement.string {
+                // Still need to update the projection + cursor, but we
+                // can skip the storage mutation and layout invalidation.
+                documentProjection = result.newProjection
+                let cursorPos = min(result.newCursorPosition, storage.length)
+                let selLen = min(result.newSelectionLength, storage.length - cursorPos)
+                setSelectedRange(NSRange(location: cursorPos, length: selLen),
+                                 affinity: .downstream, stillSelecting: false)
+                syncTypingAttributesToCursorBlock()
+                return
+            }
+        }
+
         // Mark that the user has made an edit — enables save().
         hasUserEdits = true
 

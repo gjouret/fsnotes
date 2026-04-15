@@ -24,9 +24,44 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     // Cache rendered images by source hash
     private static var cache = NSCache<NSString, NSImage>()
 
+    /// Disk cache directory for rendered mermaid/math images (Perf #2).
+    /// Persists across app restarts so the second time you open a note
+    /// with a mermaid diagram it's instant — not just the second time
+    /// in the same session. Keyed by fnv1a hash of "<type>:<source>".
+    private static let diskCacheURL: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let dir = caches.appendingPathComponent("co.fluder.FSNotes/blockrenderer", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     /// Clear all cached rendered images (e.g., when rendering templates change).
     static func clearCache() {
         cache.removeAllObjects()
+        try? FileManager.default.removeItem(at: diskCacheURL)
+        try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
+    }
+
+    private static func diskCacheFile(forKey key: String) -> URL {
+        // fnv1a gives a stable 64-bit hash independent of NSString's
+        // per-process hash randomization. Filename is hex.
+        let hash = key.fnv1a
+        return diskCacheURL.appendingPathComponent(String(format: "%016x.png", hash))
+    }
+
+    private static func loadFromDisk(key: String) -> NSImage? {
+        let url = diskCacheFile(forKey: key)
+        guard let data = try? Data(contentsOf: url),
+              let image = NSImage(data: data) else { return nil }
+        return image
+    }
+
+    private static func writeToDisk(image: NSImage, key: String) {
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return }
+        let url = diskCacheFile(forKey: key)
+        try? png.write(to: url, options: .atomic)
     }
 
     // Keep strong references to active renderers so they aren't deallocated
@@ -34,9 +69,21 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     private static var activeRenderers = Set<BlockRenderer>()
 
     static func render(source: String, type: BlockType, maxWidth: CGFloat = 480, completion: @escaping (NSImage?) -> Void) {
-        let cacheKey = "\(type):\(source)" as NSString
+        let cacheKeyString = "\(type):\(source)"
+        let cacheKey = cacheKeyString as NSString
+
+        // In-memory cache — same-session hit.
         if let cached = cache.object(forKey: cacheKey) {
             completion(cached)
+            return
+        }
+
+        // Disk cache (Perf #2): cross-session hit. Lets a note with a
+        // mermaid diagram appear instantly on the SECOND-ever open, not
+        // just the second open in the same session.
+        if let diskCached = loadFromDisk(key: cacheKeyString) {
+            cache.setObject(diskCached, forKey: cacheKey)
+            completion(diskCached)
             return
         }
 
@@ -45,6 +92,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         renderer.completion = { [weak renderer] image in
             if let image = image {
                 cache.setObject(image, forKey: cacheKey)
+                writeToDisk(image: image, key: cacheKeyString)
             }
             completion(image)
             if let renderer = renderer {
@@ -135,21 +183,28 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
                     // producing visibly fuzzy text in snapshots.
                     mermaid.initialize({ startOnLoad: false, theme: '\(mermaidTheme)', flowchart: { useMaxWidth: true, htmlLabels: false } });
                     mermaid.run().then(function() {
-                        setTimeout(function() {
-                            // Use the CSS-rendered size so mermaid's useMaxWidth:true
-                            // fills the container. viewBox reports intrinsic content
-                            // size which is often narrower than the container.
-                            var el = document.querySelector('.mermaid svg') || document.querySelector('.mermaid');
-                            var rect = el.getBoundingClientRect();
-                            // Add 2px stroke clearance on right/bottom: getBoundingClientRect
-                            // gives a tight geometric box, but stroked paths are centered on
-                            // their geometry so half the stroke width extends outside the box.
-                            // Without padding, the right-edge strokes get clipped.
-                            window.webkit.messageHandlers.renderComplete.postMessage({
-                                width: Math.ceil(rect.right) + 2,
-                                height: Math.ceil(rect.bottom) + 2
+                        // Two rAF ticks let CSS layout + font metrics settle
+                        // after mermaid injects the SVG. Replaces a hardcoded
+                        // 200ms setTimeout (Perf #2) that fired regardless of
+                        // whether the browser was ready, costing user-visible
+                        // latency on every first-load.
+                        requestAnimationFrame(function() {
+                            requestAnimationFrame(function() {
+                                // Use the CSS-rendered size so mermaid's useMaxWidth:true
+                                // fills the container. viewBox reports intrinsic content
+                                // size which is often narrower than the container.
+                                var el = document.querySelector('.mermaid svg') || document.querySelector('.mermaid');
+                                var rect = el.getBoundingClientRect();
+                                // Add 2px stroke clearance on right/bottom: getBoundingClientRect
+                                // gives a tight geometric box, but stroked paths are centered on
+                                // their geometry so half the stroke width extends outside the box.
+                                // Without padding, the right-edge strokes get clipped.
+                                window.webkit.messageHandlers.renderComplete.postMessage({
+                                    width: Math.ceil(rect.right) + 2,
+                                    height: Math.ceil(rect.bottom) + 2
+                                });
                             });
-                        }, 200);
+                        });
                     }).catch(function(e) {
                         var errMsg = (e && e.message) ? e.message : (e && e.toString ? e.toString() : 'unknown');
                         if (errMsg === '[object Object]') {
@@ -302,12 +357,17 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             return
         }
 
-        bmLog("🎭 BlockRenderer got dimensions: \(width)x\(height), taking snapshot after 300ms delay")
+        bmLog("🎭 BlockRenderer got dimensions: \(width)x\(height), taking snapshot after 50ms resize settle")
 
         // Resize webview to exact content size and take snapshot
         webView?.frame = NSRect(x: 0, y: 0, width: width, height: height)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        // 50ms is the minimum we need to let WebKit propagate the frame
+        // resize before snapshotting. Was 300ms — reduced as part of
+        // Perf #2 to shave the user-visible first-render latency.
+        // `afterScreenUpdates: true` on WKSnapshotConfiguration already
+        // ensures we snapshot after the next screen refresh.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             guard let webView = self?.webView else {
                 bmLog("🎭 BlockRenderer asyncAfter: webView is nil! self=\(self != nil)")
                 self?.completion?(nil)
