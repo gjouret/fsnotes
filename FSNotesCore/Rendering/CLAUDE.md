@@ -7,6 +7,7 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3789 | 3:44 PM | 🟣 | Mermaid/math block rendering optimized with disk cache and timing improvements | ~623 |
 | #3717 | 3:48 AM | 🟣 | Added TableAttachmentHosting marker protocol for type-safe cell identification | ~494 |
 | #3709 | 3:45 AM | 🔵 | Atomic attachment blocks (.table, .horizontalRule) handled specially in EditingOperations | ~485 |
 | #3695 | 3:07 AM | 🔵 | EditingOps.delete() family follows block-type dispatch pattern | ~382 |

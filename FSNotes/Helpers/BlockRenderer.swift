@@ -110,7 +110,13 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
 
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: maxWidth, height: 100), configuration: config)
+        // Use a generous initial height so mermaid/math diagrams fit
+        // inside the viewport and the snapshot crop rect never extends
+        // beyond the view bounds. Avoids a post-render frame resize +
+        // wait-for-propagation race that the old code covered with a
+        // hardcoded 300ms delay. 4000pt handles every reasonable
+        // diagram; tall diagrams just mean taller empty space below.
+        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: maxWidth, height: 4000), configuration: config)
         webView?.navigationDelegate = self
         // Use opaque background matching the editor theme (dark/light).
         // Transparent backgrounds caused invisible text in snapshots on
@@ -119,7 +125,7 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         // WKWebView requires being in a window hierarchy to render content on recent macOS.
         // Add it to a hidden offscreen window.
         if let wv = webView {
-            let offscreenWindow = NSWindow.makeOffscreen(width: maxWidth, height: 100)
+            let offscreenWindow = NSWindow.makeOffscreen(width: maxWidth, height: 4000)
             offscreenWindow.contentView?.addSubview(wv)
             self.offscreenWindow = offscreenWindow
         }
@@ -183,27 +189,36 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
                     // producing visibly fuzzy text in snapshots.
                     mermaid.initialize({ startOnLoad: false, theme: '\(mermaidTheme)', flowchart: { useMaxWidth: true, htmlLabels: false } });
                     mermaid.run().then(function() {
-                        // Two rAF ticks let CSS layout + font metrics settle
-                        // after mermaid injects the SVG. Replaces a hardcoded
-                        // 200ms setTimeout (Perf #2) that fired regardless of
-                        // whether the browser was ready, costing user-visible
-                        // latency on every first-load.
-                        requestAnimationFrame(function() {
-                            requestAnimationFrame(function() {
-                                // Use the CSS-rendered size so mermaid's useMaxWidth:true
-                                // fills the container. viewBox reports intrinsic content
-                                // size which is often narrower than the container.
-                                var el = document.querySelector('.mermaid svg') || document.querySelector('.mermaid');
-                                var rect = el.getBoundingClientRect();
-                                // Add 2px stroke clearance on right/bottom: getBoundingClientRect
-                                // gives a tight geometric box, but stroked paths are centered on
-                                // their geometry so half the stroke width extends outside the box.
-                                // Without padding, the right-edge strokes get clipped.
-                                window.webkit.messageHandlers.renderComplete.postMessage({
-                                    width: Math.ceil(rect.right) + 2,
-                                    height: Math.ceil(rect.bottom) + 2
-                                });
-                            });
+                        // After mermaid.run() resolves, the SVG is in the
+                        // DOM but SVG <text> metrics are only accurate once
+                        // the browser has fully loaded the fonts those
+                        // <text> elements reference. WebKit reports system
+                        // fonts as "not loaded" until the first glyph is
+                        // actually rendered — which is the race the old
+                        // hardcoded 200ms setTimeout was masking.
+                        //
+                        // `document.fonts.ready` resolves when all active
+                        // font loads complete (standard Web API, supported
+                        // in WebKit). For the system-font case it's nearly
+                        // instant; for any future web-font usage in the
+                        // mermaid template it waits exactly as long as the
+                        // fonts need. This is the actual signal we want —
+                        // not a blind timeout, not requestAnimationFrame
+                        // (which WebKit throttles on offscreen views).
+                        return document.fonts.ready;
+                    }).then(function() {
+                        // CSS layout is forced synchronously the instant
+                        // we call getBoundingClientRect, so no explicit
+                        // wait is needed for layout completion.
+                        var el = document.querySelector('.mermaid svg') || document.querySelector('.mermaid');
+                        var rect = el.getBoundingClientRect();
+                        // Add 2px stroke clearance on right/bottom: getBoundingClientRect
+                        // gives a tight geometric box, but stroked paths are centered on
+                        // their geometry so half the stroke width extends outside the box.
+                        // Without padding, the right-edge strokes get clipped.
+                        window.webkit.messageHandlers.renderComplete.postMessage({
+                            width: Math.ceil(rect.right) + 2,
+                            height: Math.ceil(rect.bottom) + 2
                         });
                     }).catch(function(e) {
                         var errMsg = (e && e.message) ? e.message : (e && e.toString ? e.toString() : 'unknown');
@@ -357,40 +372,30 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             return
         }
 
-        bmLog("🎭 BlockRenderer got dimensions: \(width)x\(height), taking snapshot after 50ms resize settle")
+        bmLog("🎭 BlockRenderer got dimensions: \(width)x\(height), taking snapshot")
 
-        // Resize webview to exact content size and take snapshot
-        webView?.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        // The webview was created at (maxWidth, 4000) — generous enough
+        // to contain the rendered SVG without a post-render resize. The
+        // snapshot crop rect specifies the exact content area; anything
+        // beyond the crop is discarded. This avoids the
+        // frame-resize-then-wait-for-propagation race that the old code
+        // papered over with a hardcoded 300ms delay. (Perf #2.)
+        guard let webView = self.webView else {
+            completion?(nil)
+            cleanup()
+            return
+        }
 
-        // 50ms is the minimum we need to let WebKit propagate the frame
-        // resize before snapshotting. Was 300ms — reduced as part of
-        // Perf #2 to shave the user-visible first-render latency.
-        // `afterScreenUpdates: true` on WKSnapshotConfiguration already
-        // ensures we snapshot after the next screen refresh.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let webView = self?.webView else {
-                bmLog("🎭 BlockRenderer asyncAfter: webView is nil! self=\(self != nil)")
-                self?.completion?(nil)
-                return
-            }
+        let snapshotConfig = WKSnapshotConfiguration()
+        snapshotConfig.rect = NSRect(x: 0, y: 0, width: width, height: height)
+        snapshotConfig.afterScreenUpdates = true
 
-            let snapshotConfig = WKSnapshotConfiguration()
-            snapshotConfig.rect = NSRect(x: 0, y: 0, width: width, height: height)
-            snapshotConfig.afterScreenUpdates = true
-
-            bmLog("🎭 BlockRenderer taking snapshot...")
-            webView.takeSnapshot(with: snapshotConfig) { [weak self] image, error in
-                bmLog("🎭 BlockRenderer snapshot result: image=\(image != nil ? "\(image!.size)" : "nil"), error=\(error?.localizedDescription ?? "none")")
-                if let image = image,
-                   let tiff = image.tiffRepresentation,
-                   let rep = NSBitmapImageRep(data: tiff),
-                   let png = rep.representation(using: .png, properties: [:]) {
-                    try? png.write(to: URL(fileURLWithPath: NSHomeDirectory() + "/dpi-snapshot.png"))
-                }
-                DispatchQueue.main.async {
-                    self?.completion?(image)
-                    self?.cleanup()
-                }
+        bmLog("🎭 BlockRenderer taking snapshot...")
+        webView.takeSnapshot(with: snapshotConfig) { [weak self] image, error in
+            bmLog("🎭 BlockRenderer snapshot result: image=\(image != nil ? "\(image!.size)" : "nil"), error=\(error?.localizedDescription ?? "none")")
+            DispatchQueue.main.async {
+                self?.completion?(image)
+                self?.cleanup()
             }
         }
     }
