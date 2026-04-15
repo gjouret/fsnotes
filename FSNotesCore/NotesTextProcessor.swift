@@ -116,14 +116,35 @@ public class NotesTextProcessor {
     private var width: CGFloat?
     
     public static var hl: SwiftHighlighter? = nil
-        
+
+    /// Serializes lazy init of `hl`. Required because
+    /// `preLoadProjectsData` fans out `Note.cache()` across
+    /// `DispatchQueue.concurrentPerform`, and two workers racing into
+    /// `getHighlighter()` would both construct a SwiftHighlighter. The
+    /// constructor populates a Dictionary (language registration) that
+    /// isn't thread-safe — two concurrent inits corrupt the dictionary
+    /// and abort with `-[NSIndexPath count]: unrecognized selector`.
+    private static let hlLock = NSLock()
+
     init(note: Note? = nil, storage: NSTextStorage? = nil, range: NSRange? = nil) {
         self.note = note
         self.storage = storage
         self.range = range
     }
-    
+
     public static func getHighlighter() -> SwiftHighlighter {
+        // Fast path: already constructed. Reads of an Optional pointer
+        // are atomic on every platform we run on, so this doesn't need
+        // the lock in the common case.
+        if let instance = self.hl {
+            return instance
+        }
+
+        hlLock.lock()
+        defer { hlLock.unlock() }
+
+        // Double-checked: another thread may have constructed between
+        // the first read and acquiring the lock.
         if let instance = self.hl {
             return instance
         }
@@ -132,11 +153,13 @@ public class NotesTextProcessor {
         let style = UserDefaultsManagement.codeTheme.makeStyle(isDark: isDark)
         let highlighter = SwiftHighlighter(options: .init(style: style))
         self.hl = highlighter
-        
+
         return highlighter
     }
 
     public static func resetCaches() {
+        hlLock.lock()
+        defer { hlLock.unlock() }
         NotesTextProcessor.hl = nil
         NotesTextProcessor.codeFont = UserDefaultsManagement.codeFont
     }
