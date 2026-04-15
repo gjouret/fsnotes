@@ -299,4 +299,10 @@ public indirect enum Inline: Equatable {
     case highlight([Inline])           // <mark>…</mark>
     case math(String)                  // $…$ — inline LaTeX math
     case displayMath(String)           // $$…$$ — display LaTeX math
+    /// A wikilink: `[[target]]` or `[[target|display]]`. The target is
+    /// the note name (resolved by the editor at click time); `display`
+    /// is the optional pipe-delimited alt text shown in place of the
+    /// target. The brackets do NOT appear in the rendered output —
+    /// only the display text (or the target if no display).
+    case wikilink(target: String, display: String?)
 }

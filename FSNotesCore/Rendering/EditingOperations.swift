@@ -106,7 +106,33 @@ public enum EditingOps {
         // Route newline-containing strings by block type.
         if string.contains("\n") {
             switch oldBlock {
-            case .codeBlock:
+            case .codeBlock(let language, let content, let fence):
+                // FSM exit (bug 88): pressing Return on a blank line
+                // inside a code block ends the code block. Heuristic:
+                // cursor is at the END of the content AND the last char
+                // is "\n" (i.e. the user just pressed Return on what
+                // is now an empty trailing line). Truncate the trailing
+                // blank, keep the code block, and insert a new empty
+                // paragraph after it. Without this, there's no keyboard
+                // way to leave a code block — the user has to switch
+                // to source mode.
+                if string == "\n",
+                   offsetInBlock == content.count,
+                   content.hasSuffix("\n") {
+                    let trimmedContent = String(content.dropLast())
+                    let newCode = Block.codeBlock(
+                        language: language, content: trimmedContent, fence: fence
+                    )
+                    let newPara = Block.paragraph(inline: [])
+                    var result = try replaceBlocks(
+                        atIndex: blockIndex,
+                        with: [newCode, newPara],
+                        in: projection
+                    )
+                    let paraSpan = result.newProjection.blockSpans[blockIndex + 1]
+                    result.newCursorPosition = paraSpan.location
+                    return result
+                }
                 // Code blocks accept any content verbatim — fall through
                 // to the in-block splice path.
                 break
@@ -1488,6 +1514,7 @@ public enum EditingOps {
         case .lineBreak: return "\n"
         case .rawHTML(let html): return html
         case .entity(let raw): return raw
+        case .wikilink(let target, let display): return display ?? target
         }
     }
 
@@ -1522,34 +1549,44 @@ public enum EditingOps {
         in projection: DocumentProjection
     ) throws -> EditResult {
         let (before, after) = splitInlines(inline, at: offset)
-        let lines = pastedText.split(
-            separator: "\n",
-            omittingEmptySubsequences: false
-        ).map(String.init)
 
-        var newBlocks: [Block] = []
+        // Bug 39: parse the pasted text as a full document so inline
+        // markers (bold/italic/links/wikilinks) and block structure
+        // (paragraphs separated by blank lines, headings, lists) all
+        // survive. The previous implementation split on every `\n`
+        // and wrapped each line as a single `.text` node, losing:
+        //   (a) inline formatting (bold, italic, etc.)
+        //   (b) paragraph vs soft-break distinction (single `\n` in
+        //       source markdown is a soft break within a paragraph;
+        //       `\n\n` is a paragraph separator)
+        let pastedDoc = MarkdownParser.parse(pastedText)
+        var pastedBlocks = pastedDoc.blocks
 
-        for (i, line) in lines.enumerated() {
-            let isFirst = (i == 0)
-            let isLast = (i == lines.count - 1)
-
-            var lineInline: [Inline] = line.isEmpty ? [] : [.text(line)]
-            if isFirst { lineInline = before + lineInline }
-            if isLast  { lineInline = lineInline + after }
-
-            if isInlineEmpty(lineInline) {
-                newBlocks.append(.blankLine)
-            } else {
-                newBlocks.append(.paragraph(inline: lineInline))
-            }
+        // Merge the `before` inlines into the first pasted block if it
+        // is a paragraph, and `after` into the last one, preserving the
+        // inline formatting on either side of the insertion point.
+        if !before.isEmpty, !pastedBlocks.isEmpty,
+           case .paragraph(let firstInline) = pastedBlocks.first! {
+            pastedBlocks[0] = .paragraph(inline: before + firstInline)
+        } else if !before.isEmpty {
+            pastedBlocks.insert(.paragraph(inline: before), at: 0)
         }
 
-        if newBlocks.isEmpty {
-            // Defensive: shouldn't happen (split always produces ≥ 1 part).
-            newBlocks.append(.paragraph(inline: before + after))
+        if !after.isEmpty, !pastedBlocks.isEmpty,
+           case .paragraph(let lastInline) = pastedBlocks.last! {
+            pastedBlocks[pastedBlocks.count - 1] = .paragraph(
+                inline: lastInline + after
+            )
+        } else if !after.isEmpty {
+            pastedBlocks.append(.paragraph(inline: after))
         }
 
-        return try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+        if pastedBlocks.isEmpty {
+            // Defensive: empty paste.
+            pastedBlocks.append(.paragraph(inline: before + after))
+        }
+
+        return try replaceBlocks(atIndex: blockIndex, with: pastedBlocks, in: projection)
     }
 
     // MARK: - List newline (Return key)
@@ -2280,6 +2317,8 @@ public enum EditingOps {
         case .lineBreak: return 1
         case .rawHTML(let html): return html.count
         case .entity(let raw): return raw.count
+        case .wikilink(let target, let display):
+            return (display ?? target).count
         }
     }
 
@@ -2396,6 +2435,17 @@ public enum EditingOps {
                     // Since localOffset > 0 and nodeLen == 1, localOffset == 1 == nodeLen,
                     // which means offset >= acc + nodeLen, handled above. This is unreachable.
                     before.append(node)
+                case .wikilink(let target, let display):
+                    // Wikilinks are atomic: split at a wikilink's interior
+                    // would produce two half-targets. Treat as before/after
+                    // boundary like images.
+                    let visible = display ?? target
+                    let idx = visible.index(visible.startIndex, offsetBy: localOffset)
+                    let leftStr = String(visible[..<idx])
+                    let rightStr = String(visible[idx...])
+                    before.append(.text(leftStr))
+                    after.append(.text(rightStr))
+                    _ = target
                 }
             }
             acc += nodeLen
@@ -2468,6 +2518,12 @@ public enum EditingOps {
                 runs.append(LeafRun(path: path, text: html, isCode: false))
             case .entity(let raw):
                 runs.append(LeafRun(path: path, text: raw, isCode: false))
+            case .wikilink(let target, let display):
+                // Wikilinks are atomic from the editor's perspective —
+                // emit a single leaf run with the visible text so the
+                // run-based insertion machinery can position the cursor
+                // at the wikilink's edges (but not inside).
+                runs.append(LeafRun(path: path, text: display ?? target, isCode: false))
             }
             path.removeLast()
         }
@@ -2545,6 +2601,7 @@ public enum EditingOps {
             case .lineBreak: return .text(newText)
             case .rawHTML: return .rawHTML(newText)
             case .entity: return .entity(newText)
+            case .wikilink: return .text(newText)
             case .bold, .italic, .strikethrough, .underline, .highlight, .link, .image, .math, .displayMath:
                 // Path exhausted on a container: should not happen
                 // when paths come from `flatten`. Leave unchanged.
@@ -2554,7 +2611,7 @@ public enum EditingOps {
         let idx = path.first!
         let rest = Array(path.dropFirst())
         switch inline {
-        case .text, .code, .math, .displayMath, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
+        case .text, .code, .math, .displayMath, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity, .wikilink:
             // Cannot descend into a leaf.
             return inline
         case .bold(let children, let marker):
@@ -4273,7 +4330,7 @@ public enum EditingOps {
             let len = inlinesLength(alt)
             let clampedTo = min(to, len)
             return [.image(alt: unwrapTrait(alt, trait: trait, from: clampedFrom, to: clampedTo), rawDestination: dest)]
-        case .text, .code, .math, .displayMath, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity:
+        case .text, .code, .math, .displayMath, .autolink, .escapedChar, .lineBreak, .rawHTML, .entity, .wikilink:
             return [node]
         }
     }
@@ -4381,6 +4438,9 @@ public enum EditingOps {
                 result.append(node)
             case .entity(let raw):
                 if raw.isEmpty { continue }
+                result.append(node)
+            case .wikilink(let target, _):
+                if target.isEmpty { continue }
                 result.append(node)
             }
         }

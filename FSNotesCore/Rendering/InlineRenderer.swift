@@ -149,6 +149,18 @@ public enum InlineRenderer {
             var attrs = baseAttributes
             attrs[.backgroundColor] = Self.highlightColor
             return render(children, baseAttributes: attrs, note: note)
+        case .wikilink(let target, let display):
+            // Wikilink renders as styled clickable text (no [[ ]]
+            // brackets in the output). The .link attribute uses the
+            // `wiki:` URL scheme so the click handler can dispatch
+            // to the wiki-link resolver instead of opening a web URL.
+            var attrs = baseAttributes
+            let visible = display ?? target
+            if let url = URL(string: "wiki:" + (target.addingPercentEncoding(
+                withAllowedCharacters: .urlPathAllowed) ?? target)) {
+                attrs[.link] = url
+            }
+            return NSAttributedString(string: visible, attributes: attrs)
         }
     }
 
@@ -287,6 +299,7 @@ public enum InlineRenderer {
         case .highlight(let c):          c.forEach { plainTextAppend($0, into: &out) }
         case .math(let s):               out += s
         case .displayMath(let s):        out += s
+        case .wikilink(let t, let d):    out += d ?? t
         }
     }
 

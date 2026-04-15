@@ -59,6 +59,19 @@ extension EditTextView {
             return
         }
 
+        // Block-model path (bug 39): copy the selected range as
+        // MARKDOWN so paste can reconstruct the inline tree (bold,
+        // italic, links, wikilinks, etc.) instead of landing as plain
+        // rendered text. The branches below are source-mode legacy:
+        // they read `paragraph.string`, which strips all markers.
+        if let mdCopy = copyAsMarkdownViaBlockModel() {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.declareTypes([.string], owner: nil)
+            pb.setString(mdCopy, forType: .string)
+            return
+        }
+
         if selectedRanges.count > 1 {
             var combined = String()
             for range in selectedRanges {
@@ -417,6 +430,82 @@ extension EditTextView {
             }
         }
         return cells
+    }
+
+    /// Copy the current selection (or the paragraph under the cursor
+    /// when the selection is empty) as MARKDOWN via the block-model
+    /// pipeline. Returns nil when we're not in block-model mode or
+    /// the selection can't be resolved — callers fall back to the
+    /// source-mode behavior.
+    ///
+    /// The serialization walks each overlapped block, computes the
+    /// overlap range in render coordinates, uses `splitInlines` to
+    /// isolate the covered inline sub-tree, and passes the result
+    /// through `MarkdownSerializer.serializeInlines`. Partial heading
+    /// / code block selections fall back to plain-text overlap since
+    /// those blocks don't carry an inline tree.
+    func copyAsMarkdownViaBlockModel() -> String? {
+        guard let projection = documentProjection else { return nil }
+        let sel = selectedRange()
+
+        // Resolve the range: use the cursor's paragraph range if the
+        // selection is empty, matching the source-mode copy behavior.
+        let range: NSRange
+        if sel.length > 0 {
+            range = sel
+        } else if let paragraphRange = getParagraphRange() {
+            range = paragraphRange
+        } else {
+            return nil
+        }
+
+        let indices = projection.blockIndices(overlapping: range)
+        guard !indices.isEmpty else { return nil }
+
+        let rangeEnd = NSMaxRange(range)
+        var parts: [String] = []
+        for idx in indices {
+            let span = projection.blockSpans[idx]
+            let block = projection.document.blocks[idx]
+            let overlapStart = max(span.location, range.location)
+            let overlapEnd = min(NSMaxRange(span), rangeEnd)
+            let inBlockStart = overlapStart - span.location
+            let inBlockEnd = overlapEnd - span.location
+            let fullyCovered = (overlapStart == span.location && overlapEnd == NSMaxRange(span))
+
+            if fullyCovered {
+                // Wrap in a single-block Document to reuse the public
+                // `serialize` entry point. `trailingNewline: false`
+                // prevents a stray "\n" from being appended.
+                let singleBlockDoc = Document(
+                    blocks: [block], trailingNewline: false
+                )
+                parts.append(MarkdownSerializer.serialize(singleBlockDoc))
+            } else {
+                parts.append(partialBlockMarkdown(
+                    block, from: inBlockStart, to: inBlockEnd
+                ))
+            }
+        }
+        let joined = parts.joined(separator: "\n")
+        return joined.isEmpty ? nil : joined.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Serialize a partial slice of a block to markdown. Paragraphs
+    /// and list items with plain paragraphs use `splitInlines` + the
+    /// inline serializer so formatting survives. Other block types
+    /// fall back to plain-text overlap (no markers preserved).
+    private func partialBlockMarkdown(
+        _ block: Block, from: Int, to: Int
+    ) -> String {
+        switch block {
+        case .paragraph(let inline):
+            let (_, rest) = EditingOps.splitInlines(inline, at: from)
+            let (middle, _) = EditingOps.splitInlines(rest, at: to - from)
+            return MarkdownSerializer.serializeInlines(middle)
+        default:
+            return ""
+        }
     }
 
     func deleteUnusedImages(checkRange: NSRange) {

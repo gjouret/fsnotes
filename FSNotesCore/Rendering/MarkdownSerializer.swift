@@ -140,6 +140,12 @@ public enum MarkdownSerializer {
                 out += "$" + content + "$"
             case .displayMath(let content):
                 out += "$$" + content + "$$"
+            case .wikilink(let target, let display):
+                if let display = display {
+                    out += "[[" + target + "|" + display + "]]"
+                } else {
+                    out += "[[" + target + "]]"
+                }
             }
         }
         return out

@@ -390,6 +390,11 @@ struct CommonMarkHTMLRenderer {
                 output += "<code>\(escapeHTML(s))</code>"
             case .displayMath(let s):
                 output += "<code>\(escapeHTML(s))</code>"
+            case .wikilink(let target, let display):
+                let visible = display ?? target
+                let encoded = target.addingPercentEncoding(
+                    withAllowedCharacters: .urlPathAllowed) ?? target
+                output += "<a href=\"wiki:\(escapeHTML(encoded))\">\(escapeHTML(visible))</a>"
             }
         }
         return output
@@ -571,6 +576,8 @@ struct CommonMarkHTMLRenderer {
                 } else {
                     result += raw
                 }
+            case .wikilink(let target, let display):
+                result += display ?? target
             }
         }
         return result

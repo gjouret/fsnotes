@@ -28,7 +28,9 @@ raw markdown ──► MarkdownParser ──► Document (block tree)
 
 Seven block types: `paragraph`, `heading(level:suffix:)`, `codeBlock(fence:info:content:)`, `list(items:)`, `blockquote(lines:)`, `horizontalRule`, `table(header:separator:rows:)`. Plus `blankLine` and `htmlBlock` for structural fidelity.
 
-Each block contains `[Inline]` trees for rich text. Inline nodes: `.text`, `.emphasis`, `.strong`, `.code`, `.strikethrough`, `.link`, `.image`, `.html`, `.softBreak`, `.hardBreak`, `.escaped`.
+Each block contains `[Inline]` trees for rich text. Inline nodes: `.text`, `.bold`, `.italic`, `.strikethrough`, `.underline`, `.highlight`, `.code`, `.link`, `.image`, `.autolink`, `.wikilink(target:display:)`, `.rawHTML`, `.entity`, `.escapedChar`, `.lineBreak`, `.math`, `.displayMath`.
+
+Wikilinks parse from `[[target]]` or `[[target|display]]` and render as styled clickable text using the `wiki:<target>` URL scheme — the `[[ ]]` brackets never appear in rendered storage. The click handler in the view layer dispatches `wiki:` URLs to the note resolver.
 
 ### Save Path
 
@@ -85,7 +87,7 @@ Per CommonMark 4.5: fenced code blocks open with `` ` `` or `~` (3+ chars). Cont
 
 | Action | Result |
 |--------|--------|
-| **Return** | Insert literal newline within code content. No structural change. |
+| **Return** | Insert literal newline within code content. No structural change. *Special:* Return at the end of the content with a trailing `\n` exits the code block and inserts a new empty paragraph after — the keyboard escape from fenced code (bug 88). |
 | **Backspace at start** | Delete within code content. If content empty and at boundary, merge with previous. |
 | **Tab** | Insert literal tab character. |
 | **Shift-Tab** | No operation. |
@@ -211,6 +213,12 @@ When backspace crosses a block boundary, `mergeAdjacentBlocks` combines the tail
 | any | horizontalRule | HR removed |
 | any | codeBlock | Code block removed (content lost) |
 | any | blockquote | Blockquote removed (first line's inlines appended) |
+
+## Paste Pipeline
+
+Copy reads `EditTextView.copyAsMarkdownViaBlockModel()` which walks `blockIndices(overlapping: selection)` and either serializes each fully-covered block through `MarkdownSerializer.serialize(Document(blocks: [block]))` or (for partial paragraph overlaps) calls `splitInlines` to isolate the covered inline sub-tree and runs it through `serializeInlines`. The result is pushed to the pasteboard as markdown — bold/italic/links/wikilinks survive a copy → paste round-trip.
+
+Paste reads the clipboard string and calls `insertText(markdown)`, which routes through `handleEditViaBlockModel` → `EditingOps.insert` → `pasteIntoParagraph`. That primitive parses the pasted text as a full `Document` via `MarkdownParser.parse` (not a per-line split) so paragraph boundaries (`\n\n`), headings, lists, code blocks, and inline formatting are all preserved. The `before` and `after` halves of the original paragraph merge into the first and last pasted blocks when they are paragraphs, otherwise they wrap as new sibling paragraphs.
 
 ## Inline Re-parsing (RC4)
 

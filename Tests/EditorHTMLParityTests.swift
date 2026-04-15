@@ -967,6 +967,148 @@ class EditorHTMLParityTests: XCTestCase {
 
     // MARK: - Family F: RC4 inline re-parsing regressions
 
+    func test_bug39_pasteMultilineWithBold_preservesFormatting() {
+        // User-reported: copying a list line that contains bold loses
+        // the bold on paste. Paste path: insertText(markdown) →
+        // handleEditViaBlockModel → EditingOps.insert → pasteIntoParagraph.
+        // The old implementation wrapped each pasted line as a single
+        // `.text` node, stripping all inline markers. Now each line
+        // is parsed via `MarkdownParser.parseInlines`.
+        let editor = makeEditor()
+        fill(editor, "x")
+        // Simulate a paste by inserting multi-line markdown text.
+        editor.setSelectedRange(NSRange(location: 1, length: 0))
+        _ = editor.handleEditViaBlockModel(
+            in: NSRange(location: 1, length: 0),
+            replacementString: "\n**hello** world\nplain line"
+        )
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertTrue(
+            md.contains("**hello**"),
+            "bold must survive paste; got: \(md)"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_bug75_wikilink_parsesAndRenders() {
+        let editor = makeEditor()
+        fill(editor, "see [[My Note]] for details")
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        // Find the wikilink inline in the first paragraph.
+        var found = false
+        if case .paragraph(let inline) = doc.blocks[0] {
+            for node in inline {
+                if case .wikilink(let target, _) = node, target == "My Note" {
+                    found = true
+                    break
+                }
+            }
+        }
+        XCTAssertTrue(found, "expected Inline.wikilink in parsed document; got: \(doc.blocks)")
+        // Round-trip: serialize should re-emit `[[My Note]]` verbatim.
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertTrue(
+            md.contains("[[My Note]]"),
+            "expected wikilink in serialized output; got: \(md)"
+        )
+        // Rendered storage must NOT contain the `[[ ]]` brackets.
+        let rendered = editor.textStorage?.string ?? ""
+        XCTAssertFalse(rendered.contains("[["), "brackets must not appear in rendered text; got: \(rendered)")
+        XCTAssertFalse(rendered.contains("]]"), "brackets must not appear in rendered text; got: \(rendered)")
+        XCTAssertTrue(rendered.contains("My Note"), "wikilink text must appear; got: \(rendered)")
+    }
+
+    func test_bug75_wikilink_withDisplayText() {
+        let editor = makeEditor()
+        fill(editor, "see [[target|Alt Text]] here")
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        if case .paragraph(let inline) = doc.blocks[0] {
+            for node in inline {
+                if case .wikilink(let target, let display) = node {
+                    XCTAssertEqual(target, "target")
+                    XCTAssertEqual(display, "Alt Text")
+                    return
+                }
+            }
+        }
+        XCTFail("expected wikilink with display text")
+    }
+
+    func test_bug75_wikilink_roundTrip() {
+        let editor = makeEditor()
+        fill(editor, "[[Note A]] and [[Note B|B]]")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_bug90_codeBlockToolbarOnSelection_rendersAsCodeBlock() {
+        // User-reported: selecting text + Format/Code Block produces
+        // fences but doesn't render properly. Verify that the resulting
+        // Document contains a `.codeBlock` block (renderable) rather
+        // than a `.paragraph` containing the fences as plain text.
+        let editor = makeEditor()
+        fill(editor, "foo bar baz")
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let barRange = s.range(of: "bar")
+        editor.setSelectedRange(barRange)
+        _ = editor.perform(#selector(EditTextView.insertCodeBlock(_:)), with: nil)
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let hasCodeBlock = doc.blocks.contains(where: { block in
+            if case .codeBlock = block { return true }
+            return false
+        })
+        XCTAssertTrue(
+            hasCodeBlock,
+            "expected a code block in document; got: \(doc.blocks)"
+        )
+        // Re-parsing the serialized output must also yield a code block
+        // (i.e. the markdown is well-formed and the renderer's HTML
+        // matches the parser's HTML).
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_bug88_returnOnBlankLineInCodeBlock_exitsToParagraph() {
+        // User-reported: no keyboard way to leave a code block — the
+        // user has to switch to source mode to escape. Heuristic: at
+        // the end of the content with a trailing newline (i.e. the
+        // user just pressed Return on what is now an empty line),
+        // close the code block and insert a paragraph after.
+        let editor = makeEditor()
+        fill(editor, "```\nlet x = 1\n```")
+        // Cursor at end of the content; press Return to add a blank
+        // trailing line, then press Return again to exit.
+        let len = editor.textStorage?.length ?? 0
+        run([
+            .cursorAt(len),
+            .pressReturn,        // adds trailing newline within code
+            .pressReturn,        // exits the code block
+            .type("after")
+        ], on: editor)
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let md = MarkdownSerializer.serialize(doc)
+        // The "after" paragraph must exist OUTSIDE the code block.
+        XCTAssertTrue(
+            md.contains("after"),
+            "expected paragraph after code block; got: \(md)"
+        )
+        XCTAssertTrue(
+            md.contains("let x = 1"),
+            "code content preserved; got: \(md)"
+        )
+        // The code block must close before "after" — i.e. there must
+        // be a closing fence somewhere before "after" in the markdown.
+        if let fenceClose = md.range(of: "```", options: .backwards),
+           let afterRange = md.range(of: "after") {
+            XCTAssertLessThan(
+                fenceClose.lowerBound, afterRange.lowerBound,
+                "closing fence must precede 'after'; got: \(md)"
+            )
+        } else {
+            XCTFail("expected closing fence and 'after' in: \(md)")
+        }
+        assertLiveDocumentRoundTrips(editor)
+    }
+
     func test_bug25_deleteOnSecondOfTwoBlankParagraphs_collapsesUpward() {
         // User-reported: with two blank paragraphs in a row, pressing
         // Delete (Backspace) at home of the SECOND blank paragraph

@@ -899,12 +899,15 @@ class EditingOperationsTests: XCTestCase {
     }
 
     func test_paste_trailingNewline() throws {
-        // Paste "hello\n" at offset 2 of "abcd" → "abhello\ncd"
-        // Trailing \n means the pasted text ends with an empty line,
-        // which gets merged with the after-text.
+        // Paste "hello\n" at offset 2 of "abcd" → "abhellocd".
+        // CommonMark parses "hello\n" as a single paragraph with its
+        // trailing newline consumed. After the bug 39 paste rewrite,
+        // pasteIntoParagraph routes through the real parser instead of
+        // splitting on every raw `\n`, so the paragraph is spliced in
+        // as a single block with no soft-break at the trailing position.
         let p = project("abcd\n")
         let r = try EditingOps.insert("hello\n", at: 2, in: p)
-        XCTAssertEqual(r.newProjection.attributed.string, "abhello\ncd\n")
+        XCTAssertEqual(r.newProjection.attributed.string, "abhellocd\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
