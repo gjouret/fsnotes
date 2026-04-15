@@ -287,15 +287,22 @@ extension EditTextView {
         }
 
         // No-op edit guard (Perf plan #5): if the splice replaces a
-        // range with a byte-identical string, skip the entire mutation
-        // path. This catches phantom NSTextView delegate calls (e.g.
-        // spurious `shouldChangeText` from a selection click that doesn't
+        // range with a byte-identical attributed string (same text AND
+        // same attributes), skip the entire mutation path. This catches
+        // phantom NSTextView delegate calls (e.g. spurious
+        // `shouldChangeText` from a selection click that doesn't
         // actually type anything) which used to invalidate layout,
         // re-run syncTypingAttributes, and fire didChangeText on every
         // selection change in an image-heavy note.
+        //
+        // IMPORTANT: must compare attributes, not just .string. Heading
+        // level changes and inline trait toggles (bold/italic/etc.)
+        // leave the plain-text string unchanged because syntax markers
+        // live outside storage in the block model — only attributes
+        // differ. A string-only comparison would swallow those edits.
         if result.spliceRange.length == result.spliceReplacement.length {
             let oldSub = storage.attributedSubstring(from: result.spliceRange)
-            if oldSub.string == result.spliceReplacement.string {
+            if oldSub.isEqual(to: result.spliceReplacement) {
                 // Still need to update the projection + cursor, but we
                 // can skip the storage mutation and layout invalidation.
                 documentProjection = result.newProjection
