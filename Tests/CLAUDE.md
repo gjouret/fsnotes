@@ -8,4 +8,12 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #2771 | 9:56 AM | 🟣 | Created Visual Renderer Comparison Script | ~382 |
+
+### Apr 15, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #3746 | 11:50 AM | 🟣 | All core test suites pass after table rendering refactor | ~503 |
+| #3739 | 11:42 AM | 🔵 | RC3 multi-paragraph toggleList bug: blank separators converted to empty list items | ~469 |
+| #3732 | 10:37 AM | 🟣 | Added RC2 boundary ambiguity regression test suite | ~554 |
 </claude-mem-context>

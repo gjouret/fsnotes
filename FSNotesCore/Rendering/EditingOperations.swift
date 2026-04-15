@@ -584,6 +584,50 @@ public enum EditingOps {
         )
     }
 
+    /// Replace `document.blocks[range]` (a contiguous span of existing
+    /// blocks) with `newBlocks`. The splice range covers from the first
+    /// old block's span start to the last old block's span end; the
+    /// replacement is the rendered concatenation of the new blocks.
+    ///
+    /// Public sibling of the single-index `replaceBlock`. Use this when
+    /// a multi-block selection needs to collapse into fewer blocks
+    /// (e.g. wrapping three paragraphs in a single list, or fencing a
+    /// mid-paragraph selection as a code block).
+    public static func replaceBlockRange(
+        _ range: ClosedRange<Int>,
+        with newBlocks: [Block],
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        precondition(!newBlocks.isEmpty, "replaceBlockRange requires at least one new block")
+        guard range.lowerBound >= 0,
+              range.upperBound < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        var newDoc = projection.document
+        newDoc.blocks.replaceSubrange(range, with: newBlocks)
+        let newProjection = DocumentProjection(
+            document: newDoc,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note
+        )
+        let oldStart = projection.blockSpans[range.lowerBound].location
+        let oldEnd = NSMaxRange(projection.blockSpans[range.upperBound])
+        let newStart = newProjection.blockSpans[range.lowerBound].location
+        let newEnd = NSMaxRange(
+            newProjection.blockSpans[range.lowerBound + newBlocks.count - 1]
+        )
+        let replacement = newProjection.attributed.attributedSubstring(
+            from: NSRange(location: newStart, length: newEnd - newStart)
+        )
+        return narrowSplice(
+            oldAttributedString: projection.attributed,
+            oldRange: NSRange(location: oldStart, length: oldEnd - oldStart),
+            newReplacement: replacement,
+            newProjection: newProjection
+        )
+    }
+
     /// Replace `document.blocks[blockIndex]` with a sequence of new
     /// blocks, producing a block-granular splice. The splice range
     /// is the OLD block's span; the replacement is the rendered
@@ -3545,6 +3589,165 @@ public enum EditingOps {
         // +1 to skip the inter-block separator "\n" that follows the HR.
         result.newCursorPosition = NSMaxRange(newHRSpan) + 1
         return result
+    }
+
+    /// Wrap the text covered by `range` in a fenced code block.
+    ///
+    /// Three shapes:
+    /// 1. Cursor-only (`range.length == 0`): insert an EMPTY code block
+    ///    after the containing block. The original block is untouched.
+    /// 2. Selection within a single paragraph: split the paragraph at
+    ///    the selection boundaries and replace the block with
+    ///    `[beforeParagraph?, codeBlock(selectedPlainText), afterParagraph?]`.
+    ///    The prefix/suffix halves become their own paragraphs only if
+    ///    non-empty.
+    /// 3. Selection spanning multiple blocks: replaced by the concatenated
+    ///    plain-text of the OVERLAP between `range` and each block's span
+    ///    (so partial heads/tails at the endpoints are preserved as
+    ///    surrounding paragraphs).
+    ///
+    /// The goal is that no user text is lost — the bug this replaces
+    /// ("Select 'bar' in 'foo bar baz' + Code Block → everything else
+    /// disappears") was caused by replacing the entire containing block
+    /// with a code block whose content was only the selection.
+    public static func wrapInCodeBlock(
+        range: NSRange,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        // 1. Cursor-only: insert an empty code block after the current block.
+        if range.length == 0 {
+            guard let (blockIndex, _) = projection.blockContaining(
+                storageIndex: range.location
+            ) else {
+                throw EditingError.notInsideBlock(storageIndex: range.location)
+            }
+            let emptyCode = Block.codeBlock(
+                language: nil, content: "",
+                fence: FenceStyle(character: .backtick, length: 3, infoRaw: "")
+            )
+            let originalBlock = projection.document.blocks[blockIndex]
+            var result = try replaceBlockRange(
+                blockIndex...blockIndex,
+                with: [originalBlock, .blankLine, emptyCode],
+                in: projection
+            )
+            // Position cursor inside the (empty) code block content area.
+            let newCodeSpan = result.newProjection.blockSpans[blockIndex + 2]
+            result.newCursorPosition = newCodeSpan.location
+            return result
+        }
+
+        // 2 / 3. Non-empty range.
+        let overlapping = projection.blockIndices(overlapping: range)
+        guard let firstIdx = overlapping.first,
+              let lastIdx = overlapping.last else {
+            throw EditingError.notInsideBlock(storageIndex: range.location)
+        }
+
+        let rangeStart = range.location
+        let rangeEnd = NSMaxRange(range)
+
+        // Extract the plain text for each overlapped block's intersection
+        // with `range`. For partial-first and partial-last, also record
+        // the leading/trailing halves so we can preserve them as
+        // surrounding paragraphs.
+        var leadingInline: [Inline] = []
+        var trailingInline: [Inline] = []
+        var codeLines: [String] = []
+
+        for (i, idx) in overlapping.enumerated() {
+            let span = projection.blockSpans[idx]
+            let block = projection.document.blocks[idx]
+            let overlapStart = max(span.location, rangeStart)
+            let overlapEnd = min(NSMaxRange(span), rangeEnd)
+            let inBlockStart = overlapStart - span.location
+            let inBlockEnd = overlapEnd - span.location
+
+            // Extract plain text for the selected portion of the block.
+            let blockText = plainTextOfBlock(block)
+            let startClamped = min(max(inBlockStart, 0), blockText.count)
+            let endClamped = min(max(inBlockEnd, startClamped), blockText.count)
+            let startI = blockText.index(blockText.startIndex, offsetBy: startClamped)
+            let endI = blockText.index(blockText.startIndex, offsetBy: endClamped)
+            codeLines.append(String(blockText[startI..<endI]))
+
+            // First block: the portion BEFORE the selection becomes the
+            // leading paragraph (keeps inline formatting for paragraphs).
+            if i == 0, inBlockStart > 0 {
+                if case .paragraph(let inline) = block {
+                    let (before, _) = splitInlines(inline, at: inBlockStart)
+                    leadingInline = before
+                } else {
+                    // For non-paragraph blocks, preserve the leading
+                    // half as plain text (loses formatting, but at
+                    // least no data loss).
+                    let leadStr = String(blockText[blockText.startIndex..<startI])
+                    if !leadStr.isEmpty { leadingInline = [.text(leadStr)] }
+                }
+            }
+
+            // Last block: the portion AFTER the selection becomes the
+            // trailing paragraph.
+            if i == overlapping.count - 1, inBlockEnd < blockText.count {
+                if case .paragraph(let inline) = block {
+                    let (_, after) = splitInlines(inline, at: inBlockEnd)
+                    trailingInline = after
+                } else {
+                    let tailStr = String(blockText[endI..<blockText.endIndex])
+                    if !tailStr.isEmpty { trailingInline = [.text(tailStr)] }
+                }
+            }
+        }
+
+        let codeContent = codeLines.joined(separator: "\n")
+        let codeBlock = Block.codeBlock(
+            language: nil, content: codeContent,
+            fence: FenceStyle(character: .backtick, length: 3, infoRaw: "")
+        )
+
+        var replacementBlocks: [Block] = []
+        if !leadingInline.isEmpty {
+            replacementBlocks.append(.paragraph(inline: leadingInline))
+        }
+        replacementBlocks.append(codeBlock)
+        if !trailingInline.isEmpty {
+            replacementBlocks.append(.paragraph(inline: trailingInline))
+        }
+
+        var result = try replaceBlockRange(
+            firstIdx...lastIdx, with: replacementBlocks, in: projection
+        )
+        // Position cursor at the start of the code block's content area.
+        let codeBlockOffsetInReplacement = leadingInline.isEmpty ? 0 : 1
+        let codeBlockIdx = firstIdx + codeBlockOffsetInReplacement
+        let codeSpan = result.newProjection.blockSpans[codeBlockIdx]
+        result.newCursorPosition = codeSpan.location
+        return result
+    }
+
+    /// Plain-text projection of a block's inline content, matching the
+    /// character length used by `blockSpans`. Used by `wrapInCodeBlock`
+    /// to extract selection-aligned substrings.
+    private static func plainTextOfBlock(_ block: Block) -> String {
+        switch block {
+        case .paragraph(let inline):
+            return inlinesToText(inline)
+        case .heading(_, let suffix):
+            // `suffix` is the raw heading text (after `#` markers) — it
+            // typically has a leading space; trim it to match the
+            // rendered block span which omits that space.
+            return suffix.hasPrefix(" ") ? String(suffix.dropFirst()) : suffix
+        case .blockquote(let lines):
+            return lines.map { inlinesToText($0.inline) }.joined(separator: "\n")
+        case .codeBlock(_, let content, _):
+            return content
+        case .list(let items, _):
+            return listItemsToText(items, depth: 0)
+        case .htmlBlock(let raw):
+            return raw
+        default:
+            return ""
+        }
     }
 
     /// Insert an image (or PDF) attachment as a new paragraph block

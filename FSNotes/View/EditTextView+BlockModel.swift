@@ -1348,55 +1348,118 @@ extension EditTextView {
     }
 
     /// Change heading level via the block model.
-    /// When multiple blocks are selected, applies to each block.
+    /// When multiple blocks are selected, applies to each non-blank block.
     /// Returns true if handled.
     func changeHeadingLevelViaBlockModel(_ level: Int) -> Bool {
+        return applyToggleAcrossSelection(actionName: "Heading") { proj, loc in
+            try EditingOps.changeHeadingLevel(level, at: loc, in: proj)
+        }
+    }
+
+    /// Apply a single-block toggle across every block overlapping the
+    /// current selection. Blank line blocks are skipped — converting
+    /// them to a list item would produce stray empty `<li>` entries and
+    /// visually "broken" multi-list output. Runs in reverse order so
+    /// earlier splices don't shift later block indices; re-resolves
+    /// storage-relative block locations against each updated projection.
+    ///
+    /// `action` maps a (projection, storageIndex) pair to an `EditResult`
+    /// — this keeps the per-primitive differences (`EditingOps.toggleList`
+    /// vs `toggleBlockquote` vs `toggleTodoList`) contained to their one
+    /// call site, while the iteration scaffolding is shared.
+    private func applyToggleAcrossSelection(
+        actionName: String,
+        action: (DocumentProjection, Int) throws -> EditResult
+    ) -> Bool {
         guard var projection = documentProjection else { return false }
         let sel = selectedRange()
 
         do {
-            let blockIndices = projection.blockIndices(overlapping: sel)
-            guard !blockIndices.isEmpty else { return false }
+            let indices = projection.blockIndices(overlapping: sel).filter { idx in
+                if case .blankLine = projection.document.blocks[idx] { return false }
+                return true
+            }
+            guard !indices.isEmpty else { return false }
 
-            // Apply to each block in reverse order so indices stay valid.
-            for blockIdx in blockIndices.reversed() {
+            for blockIdx in indices.reversed() {
                 let span = projection.blockSpans[blockIdx]
-                let result = try EditingOps.changeHeadingLevel(
-                    level, at: span.location, in: projection
-                )
-                applyEditResultWithUndo(result, actionName: "Heading")
+                let result = try action(projection, span.location)
+                applyEditResultWithUndo(result, actionName: actionName)
                 projection = result.newProjection
                 documentProjection = projection
             }
             return true
         } catch {
-            bmLog("⚠️ changeHeadingLevel failed: \(error)")
+            bmLog("⚠️ \(actionName) failed: \(error)")
             return false
         }
     }
 
     /// Toggle list via the block model.
-    /// When multiple blocks are selected, converts each to a list item.
+    ///
+    /// Single-block or cursor-only selection delegates to the existing
+    /// single-block primitive. Multi-block selection collapses every
+    /// overlapped non-blank block into ONE list block (one item per
+    /// block), dropping blank lines between them — otherwise the
+    /// serializer would emit N separate `<ul>` blocks with visible
+    /// gaps, which is almost never what the user wanted when they
+    /// highlighted three paragraphs and clicked the list button.
     func toggleListViaBlockModel(marker: String = "-") -> Bool {
-        guard var projection = documentProjection else { return false }
+        if wrapSelectionInSingleList(marker: marker, checkbox: nil) {
+            return true
+        }
+        return applyToggleAcrossSelection(actionName: "List") { proj, loc in
+            try EditingOps.toggleList(marker: marker, at: loc, in: proj)
+        }
+    }
+
+    /// Wrap all non-blank blocks overlapping the current selection into
+    /// a single `.list` block (optionally with checkbox prefix). Returns
+    /// true when the wrap was applied; false means the caller should
+    /// fall through to per-block toggling (e.g. single-block toggles
+    /// still handle their unwrap-list-to-paragraphs case).
+    private func wrapSelectionInSingleList(marker: String, checkbox: Checkbox?) -> Bool {
+        guard let projection = documentProjection else { return false }
         let sel = selectedRange()
+        let overlapping = projection.blockIndices(overlapping: sel)
+        guard overlapping.count >= 2 else { return false }
+
+        // Only handle conversion TO a list: all overlapped blocks must
+        // be paragraphs or blank lines. If any block is already a list
+        // (or quote/heading/code), fall back to per-block toggling so
+        // the user can still unwrap one list inside a mixed selection.
+        var items: [ListItem] = []
+        for idx in overlapping {
+            let block = projection.document.blocks[idx]
+            switch block {
+            case .paragraph(let inline):
+                items.append(ListItem(
+                    indent: "", marker: marker, afterMarker: " ",
+                    checkbox: checkbox, inline: inline, children: []
+                ))
+            case .blankLine:
+                continue
+            default:
+                return false
+            }
+        }
+        guard !items.isEmpty, let firstIdx = overlapping.first,
+              let lastIdx = overlapping.last else {
+            return false
+        }
 
         do {
-            let blockIndices = projection.blockIndices(overlapping: sel)
-            guard !blockIndices.isEmpty else { return false }
-
-            for blockIdx in blockIndices.reversed() {
-                let span = projection.blockSpans[blockIdx]
-                let result = try EditingOps.toggleList(
-                    marker: marker, at: span.location, in: projection
-                )
-                applyEditResultWithUndo(result, actionName: "List")
-                projection = result.newProjection
-                documentProjection = projection
-            }
+            var result = try EditingOps.replaceBlockRange(
+                firstIdx...lastIdx,
+                with: [.list(items: items)],
+                in: projection
+            )
+            let newListSpan = result.newProjection.blockSpans[firstIdx]
+            result.newCursorPosition = newListSpan.location + 1
+            applyBlockModelResult(result, actionName: "List")
             return true
         } catch {
-            bmLog("⚠️ toggleList failed: \(error)")
+            bmLog("⚠️ wrapSelectionInSingleList failed: \(error)")
             return false
         }
     }
@@ -1404,26 +1467,8 @@ extension EditTextView {
     /// Toggle blockquote via the block model.
     /// When multiple blocks are selected, converts each.
     func toggleBlockquoteViaBlockModel() -> Bool {
-        guard var projection = documentProjection else { return false }
-        let sel = selectedRange()
-
-        do {
-            let blockIndices = projection.blockIndices(overlapping: sel)
-            guard !blockIndices.isEmpty else { return false }
-
-            for blockIdx in blockIndices.reversed() {
-                let span = projection.blockSpans[blockIdx]
-                let result = try EditingOps.toggleBlockquote(
-                    at: span.location, in: projection
-                )
-                applyEditResultWithUndo(result, actionName: "Blockquote")
-                projection = result.newProjection
-                documentProjection = projection
-            }
-            return true
-        } catch {
-            bmLog("⚠️ toggleBlockquote failed: \(error)")
-            return false
+        return applyToggleAcrossSelection(actionName: "Blockquote") { proj, loc in
+            try EditingOps.toggleBlockquote(at: loc, in: proj)
         }
     }
 
@@ -1446,28 +1491,15 @@ extension EditTextView {
     }
 
     /// Toggle todo list via the block model.
-    /// When multiple blocks are selected, converts each.
+    /// Multi-block selections collapse into a single todo list with one
+    /// checkbox item per non-blank block (see `wrapSelectionInSingleList`).
     func toggleTodoViaBlockModel() -> Bool {
-        guard var projection = documentProjection else { return false }
-        let sel = selectedRange()
-
-        do {
-            let blockIndices = projection.blockIndices(overlapping: sel)
-            guard !blockIndices.isEmpty else { return false }
-
-            for blockIdx in blockIndices.reversed() {
-                let span = projection.blockSpans[blockIdx]
-                let result = try EditingOps.toggleTodoList(
-                    at: span.location, in: projection
-                )
-                applyEditResultWithUndo(result, actionName: "Todo List")
-                projection = result.newProjection
-                documentProjection = projection
-            }
+        let checkbox = Checkbox(text: "[ ]", afterText: " ")
+        if wrapSelectionInSingleList(marker: "-", checkbox: checkbox) {
             return true
-        } catch {
-            bmLog("⚠️ toggleTodoList failed: \(error)")
-            return false
+        }
+        return applyToggleAcrossSelection(actionName: "Todo List") { proj, loc in
+            try EditingOps.toggleTodoList(at: loc, in: proj)
         }
     }
 

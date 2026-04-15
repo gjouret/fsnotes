@@ -876,6 +876,156 @@ class EditorHTMLParityTests: XCTestCase {
         XCTAssertFalse(serialized.contains("### Third"), "Third para must not become H3; got: \(serialized)")
     }
 
+    // MARK: - Family D: RC2 boundary ambiguity regressions
+    //
+    // Cursor positions at exact block boundaries (end of block A ==
+    // start of separator before block B) used to map to the wrong
+    // block. Each test pins down one boundary symptom.
+
+    func test_rc2_toggleTodo_onSecondParagraph_affectsOnlyThatParagraph() {
+        let editor = makeEditor()
+        fill(editor, "First para\n\nSecond para\n\nThird para")
+        // Cursor on the SECOND paragraph, at its start
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let secondRange = s.range(of: "Second para")
+        run([.cursorAt(secondRange.location), .toggleTodo], on: editor)
+        assertEditorMatchesMarkdown(
+            editor,
+            "First para\n\n- [ ] Second para\n\nThird para"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc2_toggleTodo_atEndOfSecondParagraph_affectsOnlyThatParagraph() {
+        let editor = makeEditor()
+        fill(editor, "First para\n\nSecond para\n\nThird para")
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let secondRange = s.range(of: "Second para")
+        let end = secondRange.location + secondRange.length
+        run([.cursorAt(end), .toggleTodo], on: editor)
+        assertEditorMatchesMarkdown(
+            editor,
+            "First para\n\n- [ ] Second para\n\nThird para"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc2_typeAtStartOfSecondParagraph_appendsToSecond() {
+        let editor = makeEditor()
+        fill(editor, "First\n\nSecond")
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let secondRange = s.range(of: "Second")
+        run([.cursorAt(secondRange.location), .type("X")], on: editor)
+        assertEditorMatchesMarkdown(editor, "First\n\nXSecond")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc2_setHeadingOnSecondParagraph_affectsOnlyThatParagraph() {
+        let editor = makeEditor()
+        fill(editor, "First para\n\nSecond para\n\nThird para")
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let secondRange = s.range(of: "Second para")
+        run([.cursorAt(secondRange.location), .setHeading(level: 2)], on: editor)
+        assertEditorMatchesMarkdown(
+            editor,
+            "First para\n\n## Second para\n\nThird para"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc2_deleteAtEndOfListItem_staysInList() {
+        let editor = makeEditor()
+        fill(editor, "- First\n- Second\n- Third")
+        // Cursor at the end of "Second"
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let secondRange = s.range(of: "Second")
+        let end = secondRange.location + secondRange.length
+        run([.cursorAt(end), .backspace], on: editor)
+        assertEditorMatchesMarkdown(editor, "- First\n- Secon\n- Third")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    // MARK: - Family E: RC3 multi-block & code-block selection regressions
+
+    func test_rc3_insertCodeBlock_withSelection_preservesUnselectedText() {
+        // User-reported: select text + Code Block button deletes text.
+        // Selecting "bar" in "foo bar baz" then pressing Code Block used
+        // to replace the entire paragraph with a code block containing
+        // just "bar", losing "foo " and " baz".
+        let editor = makeEditor()
+        fill(editor, "foo bar baz")
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let barRange = s.range(of: "bar")
+        editor.setSelectedRange(barRange)
+        _ = editor.perform(#selector(EditTextView.insertCodeBlock(_:)), with: nil)
+        assertEditorMatchesMarkdown(
+            editor,
+            "foo \n\n```\nbar\n```\n\n baz"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc3_multiParagraphSelection_toggleList_convertsAll() {
+        let editor = makeEditor()
+        fill(editor, "First\n\nSecond\n\nThird")
+        // Select across all three paragraphs
+        let len = editor.textStorage?.length ?? 0
+        run([.select(NSRange(location: 0, length: len)),
+             .toggleList(marker: "-")], on: editor)
+        assertEditorMatchesMarkdown(editor, "- First\n- Second\n- Third")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc3_multiParagraphSelection_setHeading_convertsAll() {
+        let editor = makeEditor()
+        fill(editor, "First\n\nSecond\n\nThird")
+        let len = editor.textStorage?.length ?? 0
+        run([.select(NSRange(location: 0, length: len)),
+             .setHeading(level: 2)], on: editor)
+        assertEditorMatchesMarkdown(editor, "## First\n\n## Second\n\n## Third")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc3_multiParagraphSelection_toggleTodo_convertsAll() {
+        let editor = makeEditor()
+        fill(editor, "First\n\nSecond\n\nThird")
+        let len = editor.textStorage?.length ?? 0
+        run([.select(NSRange(location: 0, length: len)),
+             .toggleTodo], on: editor)
+        assertEditorMatchesMarkdown(
+            editor,
+            "- [ ] First\n- [ ] Second\n- [ ] Third"
+        )
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc3_multiParagraphSelection_toggleBlockquote_convertsAll() {
+        let editor = makeEditor()
+        fill(editor, "First\n\nSecond\n\nThird")
+        let len = editor.textStorage?.length ?? 0
+        run([.select(NSRange(location: 0, length: len)),
+             .toggleQuote], on: editor)
+        assertEditorMatchesMarkdown(editor, "> First\n\n> Second\n\n> Third")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_rc3_insertCodeBlock_noSelection_insertsEmptyCodeBlock() {
+        let editor = makeEditor()
+        fill(editor, "before\n\nafter")
+        // Cursor at start of "after"
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let afterRange = s.range(of: "after")
+        editor.setSelectedRange(NSRange(location: afterRange.location, length: 0))
+        _ = editor.perform(#selector(EditTextView.insertCodeBlock(_:)), with: nil)
+        // An empty code block is added; surrounding content must remain.
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertTrue(md.contains("before"), "before preserved; got: \(md)")
+        XCTAssertTrue(md.contains("after"), "after preserved; got: \(md)")
+        XCTAssertTrue(md.contains("```"), "code block inserted; got: \(md)")
+        assertLiveDocumentRoundTrips(editor)
+    }
+
     func test_script_headingThenListThenBody() {
         let editor = makeEditor()
         fill(editor, "# Title")

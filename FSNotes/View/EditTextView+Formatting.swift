@@ -443,40 +443,17 @@ extension EditTextView {
 
         let currentRange = selectedRange()
 
-        // Block-model path: wrap selected text in a code block or insert
-        // an empty one. Operates on the Document directly instead of
-        // routing raw markdown fences through insertText (which would
-        // treat them as plain text and delete the selection).
+        // Block-model path: wrap the selection in a code block via
+        // `EditingOps.wrapInCodeBlock`, which splits the containing
+        // paragraph (preserving text before and after the selection)
+        // instead of replacing the whole block. Cursor-only selection
+        // inserts an empty code block after the containing block.
         if let projection = documentProjection {
             do {
-                let selectedText: String
-                if currentRange.length > 0,
-                   let sub = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
-                    selectedText = sub.string
-                } else {
-                    selectedText = ""
-                }
-
-                // Find the block(s) containing the selection.
-                let blockIndices = projection.blockIndices(overlapping: currentRange)
-                guard let firstIdx = blockIndices.first else { return }
-
-                // Create a code block with the selected text as content.
-                let codeBlock = Block.codeBlock(
-                    language: nil,
-                    content: selectedText,
-                    fence: FenceStyle(character: .backtick, length: 3, infoRaw: "")
-                )
-
-                let result = try EditingOps.replaceBlock(
-                    atIndex: firstIdx,
-                    with: codeBlock,
-                    in: projection
+                let result = try EditingOps.wrapInCodeBlock(
+                    range: currentRange, in: projection
                 )
                 applyBlockModelResult(result, actionName: "Code Block")
-                // Position cursor at the info string position (after ```)
-                let newSpan = result.newProjection.blockSpans[firstIdx]
-                setSelectedRange(NSRange(location: newSpan.location, length: 0))
                 return
             } catch {
                 bmLog("⚠️ insertCodeBlock via block model failed: \(error)")

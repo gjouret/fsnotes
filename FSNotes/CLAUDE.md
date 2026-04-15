@@ -19,6 +19,7 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3729 | 4:01 AM | 🔄 | Simplified wrappedCellHeight API by removing redundant parameter | ~266 |
 | #3725 | 3:55 AM | 🔄 | Simplified applyInlineTableCellFormat documentation | ~440 |
 | #3706 | 3:43 AM | 🔄 | Simplified table selection width calculation in LayoutManager | ~450 |
 </claude-mem-context>

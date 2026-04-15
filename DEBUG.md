@@ -3,6 +3,16 @@
 **Source**: Note "FSNotes++ Bugs 3" (2026-04-13 13:30 CET)
 **Scope**: ~40 open bugs across headers, lists, tables, links, formatting, fold, attachments
 
+## Status (2026-04-15)
+
+- **RC1** (typingAttributes sync): ✅ `syncTypingAttributesToCursorBlock()` is implemented and called at the end of `applyEditResultWithUndo`.
+- **RC2** (blockContaining boundary): ✅ Boundary + listEntryContaining fixes landed; regression tests green (`test_rc2_*`).
+- **RC3** (multi-block selection): ✅ Multi-block toolbar ops implemented via `blockIndices(overlapping:)`. Blank lines skipped. Multi-paragraph list/todo collapse into one list via `wrapSelectionInSingleList`. `insertCodeBlock` rewritten on top of new `EditingOps.wrapInCodeBlock` primitive (preserves text before/after the selection).
+- **RC6** (table widget): ✅ Substantially resolved by the Stage 1–4 table cell editing refactor (commit `1ab84a1`).
+- **RC8** (HTML-parity tests): ✅ 65 `EditorHTMLParityTests` now exist (up from DEBUG.md's original count of 8), covering all FSM transitions plus new RC2/RC3 regression families.
+
+Remaining open: **RC4** (inline re-rendering for links/wikilinks/auto-URLs), **RC5** (fold state persistence), **RC7** (batch ensureLayout + wider invalidation).
+
 ---
 
 ## Summary

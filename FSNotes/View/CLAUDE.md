@@ -8,4 +8,10 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #2490 | 10:49 AM | 🔄 | Image Extension Detection Refactored with Static Set | ~335 |
+
+### Apr 15, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #3729 | 4:01 AM | 🔄 | Simplified wrappedCellHeight API by removing redundant parameter | ~266 |
 </claude-mem-context>

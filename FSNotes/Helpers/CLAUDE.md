@@ -13,6 +13,7 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3729 | 4:01 AM | 🔄 | Simplified wrappedCellHeight API by removing redundant parameter | ~266 |
 | #3701 | 3:31 AM | 🔵 | InlineTableView positioned by InlineTableAttachmentCell.draw() at line 2242 | ~464 |
 | #3689 | 3:01 AM | 🔵 | Six remaining collectCellData() call sites identified in InlineTableView | ~410 |
 | #3686 | 2:53 AM | 🔴 | Table cell text size mismatch fixed by migrating to InlineRenderer | ~428 |
