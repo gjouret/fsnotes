@@ -1082,14 +1082,20 @@ class EditingOperationsTests: XCTestCase {
         }
     }
 
-    func test_delete_horizontalRule_noop() throws {
+    func test_delete_horizontalRule_fullSpan_removesBlock() throws {
         let p = project("---\n")
-        // Delete within HR is a no-op (returns the same block).
+        // HR is an atomic attachment block: selecting its full span
+        // and pressing delete REMOVES the block (replacing it with
+        // an empty paragraph), same as selecting a table. Previously
+        // this was a silent no-op — `deleteInBlock(.horizontalRule)`
+        // returned the block unchanged — which is the same bug that
+        // made `select-table + delete` do nothing. See
+        // `TableCellEditingRefactorTests.test_delete_selectedTable_removesTheBlock`.
         let r = try EditingOps.delete(range: NSRange(location: 0, length: 1), in: p)
-        XCTAssertEqual(
-            MarkdownSerializer.serialize(r.newProjection.document),
-            "---\n"
-        )
+        let hasHR = r.newProjection.document.blocks.contains { block in
+            if case .horizontalRule = block { return true } else { return false }
+        }
+        XCTAssertFalse(hasHR, "HR should be removed after full-span delete")
     }
 
     // MARK: - List Return key cursor position

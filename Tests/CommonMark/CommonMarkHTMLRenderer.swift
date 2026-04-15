@@ -257,7 +257,7 @@ struct CommonMarkHTMLRenderer {
 
     // MARK: - Table rendering
 
-    private func renderTable(header: [String], alignments: [TableAlignment], rows: [[String]]) -> String {
+    private func renderTable(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]]) -> String {
         var html = "<table>\n<thead>\n<tr>\n"
         for (i, cell) in header.enumerated() {
             let align = i < alignments.count ? alignments[i] : .none
@@ -268,8 +268,9 @@ struct CommonMarkHTMLRenderer {
             case .right: alignAttr = " align=\"right\""
             case .none: alignAttr = ""
             }
-            let inlines = MarkdownParser.parseInlines(cell, refDefs: refDefs)
-            html += "<th\(alignAttr)>\(Self.renderInlines(inlines))</th>\n"
+            // Cells already carry parsed inline trees — render them
+            // directly via renderInlines without re-parsing.
+            html += "<th\(alignAttr)>\(Self.renderInlines(cell.inline))</th>\n"
         }
         html += "</tr>\n</thead>\n<tbody>\n"
         for row in rows {
@@ -283,8 +284,7 @@ struct CommonMarkHTMLRenderer {
                 case .right: alignAttr = " align=\"right\""
                 case .none: alignAttr = ""
                 }
-                let inlines = MarkdownParser.parseInlines(cell, refDefs: refDefs)
-                html += "<td\(alignAttr)>\(Self.renderInlines(inlines))</td>\n"
+                html += "<td\(alignAttr)>\(Self.renderInlines(cell.inline))</td>\n"
             }
             html += "</tr>\n"
         }

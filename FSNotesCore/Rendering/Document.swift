@@ -113,11 +113,22 @@ public enum Block: Equatable {
     /// same way — just the raw source text.
     case htmlBlock(raw: String)
 
-    /// A pipe-delimited markdown table. `header` holds the raw cell
-    /// strings from the header row, `alignments` from the separator
-    /// row, and `rows` from the data rows. The `raw` string preserves
-    /// the exact source text for byte-equal round-trip serialization.
-    case table(header: [String], alignments: [TableAlignment], rows: [[String]], raw: String)
+    /// A pipe-delimited markdown table. `header` and `rows` hold
+    /// `TableCell` values — each cell is its own inline tree, parsed
+    /// and rendered the same way paragraph content is. `alignments`
+    /// comes from the separator row. The `raw` string preserves the
+    /// exact source text for byte-equal round-trip serialization of
+    /// tables the user never edits; once a cell is edited, `raw` is
+    /// recomputed canonically from the inline trees.
+    ///
+    /// The refactor from opaque cell strings to inline trees is the
+    /// Option C unification described in CLAUDE.md — cell content is
+    /// "a paragraph inside a cell, that's all it is." The widget and
+    /// the primitives both operate on inline trees; the local
+    /// `parseInlineMarkdown` in `InlineTableView` that used to
+    /// re-implement inline parsing has been replaced with the real
+    /// `InlineRenderer`.
+    case table(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], raw: String)
 
     /// A literal blank line separating blocks.
     case blankLine
@@ -225,6 +236,41 @@ public struct BlockquoteLine: Equatable {
 /// Column alignment in a markdown table.
 public enum TableAlignment: Equatable {
     case left, center, right, none
+}
+
+/// A single cell inside a `Block.table`. The cell content is a
+/// markdown inline tree — the same `Inline` type that backs the
+/// content of a `Block.paragraph`. This is the Option C unification:
+/// "a paragraph inside a cell" — cells parse, render, and edit
+/// through the same primitives as paragraphs, not through a separate
+/// table-specific code path.
+///
+/// `rawText` is the markdown source for the cell (e.g. `"**foo**"`)
+/// and is used during the transition period by widget code that
+/// still expects a string-shaped cell. New code should operate on
+/// `inline` directly.
+public struct TableCell: Equatable {
+    /// The parsed inline tree for this cell's content. Empty for an
+    /// empty cell.
+    public var inline: [Inline]
+
+    public init(_ inline: [Inline]) {
+        self.inline = inline
+    }
+
+    /// Serialize the inline tree back to markdown source text.
+    /// Equivalent to what `MarkdownSerializer.serializeInlines`
+    /// produces — a round-trip-safe representation of the cell's
+    /// content as a raw markdown string.
+    public var rawText: String {
+        return MarkdownSerializer.serializeInlines(inline)
+    }
+
+    /// Convenience: build a cell directly from raw markdown source.
+    /// Parses the string as inline content and wraps the result.
+    public static func parsing(_ source: String) -> TableCell {
+        return TableCell(MarkdownParser.parseInlines(source, refDefs: [:]))
+    }
 }
 
 /// The delimiter character used for emphasis markers. Carried on bold/italic

@@ -2044,6 +2044,11 @@ public enum MarkdownParser {
     ///  (a) lines[at] is the header, lines[at+1] is the separator.
     ///  (b) rawBuffer.last is the header, lines[at] is the separator.
     /// Returns nil if no table is found.
+    ///
+    /// Each cell's raw string is parsed via `parseInlines` so the
+    /// table carries `TableCell` values (inline trees) rather than
+    /// opaque strings — this is the Option C unification, cells are
+    /// paragraphs.
     private static func detectTable(
         lines: [String],
         at i: Int,
@@ -2057,21 +2062,29 @@ public enum MarkdownParser {
             if !(i + 1 == lines.count - 1 && sepLine.isEmpty && markdown.hasSuffix("\n")),
                isTableRow(headerLine),
                isTableSeparator(sepLine) {
-                let headerCells = parseTableRow(headerLine)
+                let headerStrings = parseTableRow(headerLine)
                 let alignments = parseAlignments(sepLine)
-                let colCount = headerCells.count
+                let colCount = headerStrings.count
+                let headerCells = headerStrings.map {
+                    TableCell(parseInlines($0, refDefs: [:]))
+                }
                 var rawLines = [headerLine, sepLine]
-                var dataRows: [[String]] = []
+                var dataRows: [[TableCell]] = []
                 var j = i + 2
                 while j < lines.count {
                     let l = lines[j]
                     if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") { break }
                     guard isTableRow(l) else { break }
-                    var row = parseTableRow(l)
+                    var rowStrings = parseTableRow(l)
                     // Pad or truncate to match header column count.
-                    while row.count < colCount { row.append("") }
-                    if row.count > colCount { row = Array(row.prefix(colCount)) }
-                    dataRows.append(row)
+                    while rowStrings.count < colCount { rowStrings.append("") }
+                    if rowStrings.count > colCount {
+                        rowStrings = Array(rowStrings.prefix(colCount))
+                    }
+                    let rowCells = rowStrings.map {
+                        TableCell(parseInlines($0, refDefs: [:]))
+                    }
+                    dataRows.append(rowCells)
                     rawLines.append(l)
                     j += 1
                 }
@@ -2089,20 +2102,28 @@ public enum MarkdownParser {
             let headerLine = rawBuffer.last!
             let sepLine = lines[i]
             guard isTableRow(headerLine) else { return nil }
-            let headerCells = parseTableRow(headerLine)
+            let headerStrings = parseTableRow(headerLine)
             let alignments = parseAlignments(sepLine)
-            let colCount = headerCells.count
+            let colCount = headerStrings.count
+            let headerCells = headerStrings.map {
+                TableCell(parseInlines($0, refDefs: [:]))
+            }
             var rawLines = [headerLine, sepLine]
-            var dataRows: [[String]] = []
+            var dataRows: [[TableCell]] = []
             var j = i + 1
             while j < lines.count {
                 let l = lines[j]
                 if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") { break }
                 guard isTableRow(l) else { break }
-                var row = parseTableRow(l)
-                while row.count < colCount { row.append("") }
-                if row.count > colCount { row = Array(row.prefix(colCount)) }
-                dataRows.append(row)
+                var rowStrings = parseTableRow(l)
+                while rowStrings.count < colCount { rowStrings.append("") }
+                if rowStrings.count > colCount {
+                    rowStrings = Array(rowStrings.prefix(colCount))
+                }
+                let rowCells = rowStrings.map {
+                    TableCell(parseInlines($0, refDefs: [:]))
+                }
+                dataRows.append(rowCells)
                 rawLines.append(l)
                 j += 1
             }

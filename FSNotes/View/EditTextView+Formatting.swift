@@ -363,20 +363,29 @@ extension EditTextView {
             let cursorPos = selectedRange().location
             guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursorPos) else { return }
 
+            let empty = TableCell([])
             let tableBlock = Block.table(
-                header: ["", ""],
+                header: [empty, empty],
                 alignments: [.none, .none],
-                rows: [["", ""]],
+                rows: [[empty, empty]],
                 raw: tableMarkdown
             )
             var newDoc = projection.document
             newDoc.blocks.insert(tableBlock, at: blockIndex + 1)
 
-            note.content = NSMutableAttributedString(
-                string: MarkdownSerializer.serialize(newDoc)
-            )
-            note.cachedDocument = nil
-            hasUserEdits = true
+            // Persist the new markdown to disk BEFORE calling fill(), and
+            // populate `cachedDocument` so fillViaBlockModel uses the new
+            // doc directly instead of re-reading disk. Without the
+            // save, `fillViaBlockModel` would re-parse the OLD markdown
+            // from disk (because disk hadn't been written yet) and
+            // silently drop the new table. Without the cache set,
+            // fillViaBlockModel would re-read disk anyway and do
+            // extra work.
+            let newMarkdown = MarkdownSerializer.serialize(newDoc)
+            note.content = NSMutableAttributedString(string: newMarkdown)
+            note.save(markdown: newMarkdown)
+            note.cachedDocument = newDoc
+            hasUserEdits = false
             fill(note: note)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                 self?.focusFirstInlineTableCell()

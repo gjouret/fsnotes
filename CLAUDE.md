@@ -48,6 +48,34 @@ When asked why a shortcut exists, the honest answer is "I took it because the co
 
 556+ tests all passing while the user reports 30+ live bugs means the test suite is testing the pipeline and ignoring the live paths. That's not "the tests are good, the product is bad" — it's "the tests are in the wrong place." The fix is not to write more pipeline tests. The fix is to move the logic that's currently hiding in views into pure primitives, then test those primitives. See rule 3.
 
+### 7. Mechanical pre-edit check for banned-pattern keywords.
+
+Rule 4 ("catch yourself before violating a principle") fails when you're in fix-the-bug flow and reading existing code for "what tools are available." You pattern-match from what's already in the file. If what's in the file is itself a violation, you inherit and extend the violation. This has a name: **inherited-violation**, and every compound bug in `InlineTableView` / `TableRenderController` is an instance of it.
+
+The fix is not more discipline. Discipline fails under load. The fix is mechanical: before editing a file that renders block-model content, grep the file and the diff for these tokens. If any match, stop and check against the architectural rules *before* writing.
+
+**Banned patterns in view-layer and renderer code** (anything in `FSNotes/` or `FSNotesCore/Rendering/` that's not explicitly the inline renderer):
+
+```bash
+# Marker-hiding via visual attributes — the banned phase-4 pattern.
+# If you catch these in code you're writing or extending, STOP.
+grep -nE 'systemFont\(ofSize: 0\.[0-9]|ofSize: ?0\b|foregroundColor.*clear|NSColor\.clear.*foreground|addAttribute\(\.kern' <file>
+
+# Bidirectional data flow: reading back view state into the model.
+grep -nE '\.stringValue\s*$|cell\.attributedStringValue\s*[^=]|fieldEditor\.string.*=.*rows\[|headers\[.*\]\s*=.*\.stringValue' <file>
+
+# Re-implementations of InlineRenderer inside widgets.
+grep -nE 'NSRegularExpression.*(\\\\\*\\\\\*|~~|<mark>|<u>|parseInlineMarkdown' <file>
+```
+
+The first hit on any of these in a file I'm editing means I stop writing and check:
+- Is this existing code a violation I'm about to extend? (Read rules 1–3 against it.)
+- Is the fix I'm planning going to add more matches?
+
+If yes to either, stop the tool call, tell the user exactly which rule is in tension, and propose the architecturally clean fix *before* the minimal-change one.
+
+**Meta-rule**: when editing `InlineTableView.swift`, `TableRenderController.swift`, or any file whose name contains `Inline` or `Table`, assume the existing code is a violation until proven otherwise. Read the file's function you're about to extend, check it against rules 1–3, and only then proceed. Do not pattern-match from what's there. The whole point of the cautionary tale in rule 1 is that the existing shortcuts compound.
+
 **The rule:** before claiming a feature is done, identify the pure function that represents its core logic and write a test against that function. If no such function exists, the feature isn't done — the logic is still tangled in the view layer.
 
 ---
@@ -238,14 +266,25 @@ Always compare "loaded note" (known-good) vs "live editing" (what you're testing
 - **Dark mode / highlight guards**: All `NotesTextProcessor.highlight()` calls guarded by `documentProjection == nil`. LayoutManager source-mode drawing (bullets, checkboxes, ordered markers) skipped when `blockModelActive == true`.
 - Diagnostic log: `~/Documents/block-model.log`
 
-### Outstanding technical debt: table cell editing
-`InlineTableView` currently violates rules 1, 2, and 3 in the top section. Cell edits do not route through `EditingOps`; the widget owns its own mutable `rows`/`headers`/`alignments`; `serializeViaBlockModel` contains a special-case walk that reaches into live view state at save time. This is scheduled to be rewritten so that:
-- `Block.table` is the source of truth; the widget reads from it and never owns data.
-- A new `EditingOps.replaceTableCell(blockIndex:row:col:newSourceText:in:)` primitive handles cell edits as pure functions on the projection.
-- `serializeViaBlockModel()` returns to being `MarkdownSerializer.serialize(projection.document)` with no view walking.
-- Tests exercise the new primitive at the pure-function layer.
+### Table cell editing (Stage 1–4 refactor, landed)
 
-Do not add new features to `InlineTableView` or `TableRenderController` until this refactor lands. New features accreted onto the existing shape will violate the same rules.
+The InlineTableView cautionary tale described in the top section of this file has been resolved end to end. The refactor landed in four stages, each test-first and live-verified:
+
+**Stage 1 — data shape.** `Block.table` now carries `TableCell` values (`{ inline: [Inline] }`) — the same inline-tree type backing `Block.paragraph`. The parser populates cells via `MarkdownParser.parseInlines` per cell string. `raw: String` is retained for B1 byte-identical preservation of untouched tables (non-canonical source text) and gets recomputed canonically by `EditingOps.rebuildTableRaw` on any edit.
+
+**Stage 2 — rendering.** `InlineTableView.configureCell` renders every cell via `InlineRenderer.render(cell.inline, baseAttributes:)` — the same code path paragraphs use. The widget's local regex re-implementation of inline parsing (`parseInlineMarkdown`) has been deleted. Column widths and row heights measure via the attributed string's `boundingRect`, so visually-invisible markers don't contribute to layout.
+
+**Stage 3 — editing.**
+- New pure function `InlineRenderer.inlineTreeFromAttributedString(_:)` is the inverse of `render`. 24 round-trip unit tests cover every formatting combination (plain, bold, italic, strike, underline, highlight, code, link, nested bold+italic, mixed nesting, multi-line `<br>/\n`, literal asterisks, empty strings).
+- New primitive `EditingOps.replaceTableCellInline(blockIndex:at:inline:in:)` takes `[Inline]` directly; the raw-string variant `replaceTableCell(newSourceText:)` forwards to it.
+- New editor entry point `EditTextView.applyTableCellInlineEdit(from:at:inline:)` is the sibling of `applyTableCellEdit`. It holds the attachment-reuse contract: splice-free in-place update on same-shape edits.
+- `InlineTableView.controlTextDidChange` reads `fieldEditor.textStorage` as an `NSAttributedString`, converts to an inline tree via the new pure function, and routes through the inline primitive. Zero raw-markdown round-trips; zero `.string` reads of attributed field editors.
+- `TableRenderController.applyInlineTableCellFormat` toggles attributes on the field-editor storage (e.g. `.font` bold/italic, `.strikethroughStyle`, `.underlineStyle`, `.backgroundColor` highlight) and flushes through the inline primitive. No marker insertion, no marker hiding, no `.kern` / tiny font / `.clear` foreground tricks.
+- Cells are configured with `allowsEditingTextAttributes = true` so the field editor preserves attribute runs on attach. Without this flag, `NSTextField` downgrades the attributed string to plain text + default cell font on edit mode entry — which was the "formatting disappears when cursor enters cell" symptom.
+
+**Stage 4 — cleanup.** Deleted: `InlineTableView.parseInlineMarkdown`, `InlineTableView.collectCellData` (silent corruption vector under Stage 3 — it read `fieldEditor.string` plain and stripped all formatting), `InlineTableView.generateMarkdown`, the `skipCollect` parameter on `rebuild`, `TableRenderController.prepareRenderedTablesForSave` (the save-path walker that was the cautionary tale), the `EditTextView.prepareRenderedTablesForSave` forwarder, the `EditTextView.attributedStringForSaving` call to it, the old string-based `EditTextView.applyTableCellEdit` entry point (zero live callers), `hideMarker` + `applyLiveAttributes` in `TableRenderController` (the banned tiny-font marker-hiding helpers). The rule 7 grep-conscience returns zero matches in both widget files.
+
+**What the refactor left behind.** Cell rendering, measurement, and editing all flow through the same primitives as paragraph content — "a paragraph inside a cell." 820 unit tests pass including 24 new converter round-trip tests, 15 primitive tests, and the 2 cross-cell persistence contract tests that opened this whole effort.
 
 ### CommonMark Spec Compliance (v0.31.2)
 - **Overall: 526/652 (80.7%)**

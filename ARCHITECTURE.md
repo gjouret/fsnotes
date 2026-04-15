@@ -175,14 +175,19 @@ Per CommonMark 4.1: thematic breaks are `---`, `***`, or `___` (3+ chars, option
 
 ### Table
 
-Tables are a GFM extension (not core CommonMark). They render as `InlineTableView` (NSTextAttachment). Editing happens inside the table widget, not through the block-model pipeline.
+Tables are a GFM extension (not core CommonMark). They render as `InlineTableView` (NSTextAttachment). Cell content is an inline tree — `Block.table` holds `[TableCell]` values where each cell is a `[Inline]` tree, the same type backing `Block.paragraph`. Cell editing routes through the block-model pipeline the same way paragraph editing does.
+
+- **Display**: `InlineTableView.configureCell` renders every cell via `InlineRenderer.render(cell.inline, baseAttributes:)` — the same code path paragraphs use. Zero markdown markers appear in the display; formatting lives entirely in `.font`, `.underlineStyle`, `.strikethroughStyle`, `.backgroundColor`, and `.link` attributes. Cells are configured with `allowsEditingTextAttributes = true` so the field editor preserves those attributes on attach.
+- **Editing**: `controlTextDidChange` reads the field editor's `attributedString()`, converts to an inline tree via `InlineRenderer.inlineTreeFromAttributedString(_:)` (the pure inverse of `render`), and routes through `EditingOps.replaceTableCellInline(blockIndex:at:inline:in:)`. No raw-markdown round-trip.
+- **Formatting**: `TableRenderController.applyInlineTableCellFormat` toggles attributes on the field editor's storage directly (e.g. `.font` bold, `.backgroundColor` highlight). Then it reads the updated attributed string, converts to inline tree, and pushes through the same primitive. No marker insertion.
+- **Structural changes** (add row, delete column, move, alignment): widget mutates its `headers`/`rows`/`alignments` arrays in place, calls `notifyChanged()`, which builds a new `Block.table` from the current widget state and pushes it into `documentProjection.document` via `EditTextView.pushTableBlockToProjection`.
 
 | Action | Result |
 |--------|--------|
-| **Return** | Unsupported (tables are attachment-rendered). |
+| **Return** | Within a cell: insert newline (stored as `<br>`, rendered as `\n`). Outside a cell: unsupported. |
 | **Backspace at start** | Remove table; merge surrounding blocks. |
 | **Tab / Shift-Tab** | Routes to table widget (cell navigation). |
-| **Inline format** | Routes to `applyInlineTableCellFormatting` inside the widget. |
+| **Inline format** | Toggles attributes on the field editor's storage, then flushes through `EditingOps.replaceTableCellInline`. |
 | **Set heading level** | Unsupported. |
 | **Toggle list** | Unsupported. |
 | **Toggle blockquote** | Unsupported. |

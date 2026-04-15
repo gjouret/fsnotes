@@ -41,29 +41,13 @@ extension EditTextView {
         if let markdown = serializeViaBlockModel() {
             bmLog("💾 save (block-model): \(note.title) — \(markdown.prefix(60))")
             note.save(markdown: markdown)
-            // Preserve the cached Document from the current projection —
-            // save(markdown:) invalidates it, but the projection's document
-            // is still the correct one.
-            //
-            // EXCEPTION: if the storage contains live InlineTableView
-            // attachments, the projection's document holds STALE table
-            // `raw` fields (live cell edits are only reconciled into the
-            // markdown inside `serializeViaBlockModel()`, not pushed back
-            // into the projection). Caching the stale doc would cause the
-            // next fill() to re-render with old table content. Leave the
-            // cache invalidated so the next load re-parses from disk.
-            var hasLiveTables = false
-            if let storage = textStorage {
-                let fullRange = NSRange(location: 0, length: storage.length)
-                storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, stop in
-                    if let att = value as? NSTextAttachment,
-                       att.attachmentCell is InlineTableAttachmentCell {
-                        hasLiveTables = true
-                        stop.pointee = true
-                    }
-                }
-            }
-            if !hasLiveTables, let doc = documentProjection?.document {
+            // Preserve the cached Document from the current projection.
+            // save(markdown:) invalidates `note.cachedDocument`, but the
+            // projection's document IS the post-edit state for every
+            // block type now — including tables, which route through
+            // `EditingOps.replaceTableCell` on every cell edit. No
+            // live-table walk exception any more.
+            if let doc = documentProjection?.document {
                 note.cachedDocument = doc
             }
             cleanupOrphanedAttachmentsIfNeeded(note: note, markdown: markdown)
@@ -442,12 +426,10 @@ extension EditTextView {
     }
 
     func removeAllInlineTableViews() {
-        for subview in subviews {
-            if let tableView = subview as? InlineTableView {
-                tableView.collectCellData()
-            }
-        }
-
+        // Widget state is always in sync with the Document via Stage 3
+        // of the table refactor — every cell edit flushes through
+        // `EditingOps.replaceTableCellInline`. No pre-removal data
+        // collection needed.
         for subview in subviews {
             if subview is InlineTableView {
                 subview.removeFromSuperview()
@@ -475,53 +457,72 @@ extension EditTextView {
         }
     }
 
-    /// Remove InlinePDFView subviews whose attachment is no longer in
-    /// the text storage. Called after edits to clean up orphaned viewers
-    /// without removing still-valid ones (which would cause flicker).
-    func removeOrphanedInlinePDFViews() {
-        guard let storage = textStorage else {
-            removeAllInlinePDFViews()
-            return
-        }
-
-        // Collect all InlinePDFViews currently hosted by attachment cells
-        // in the text storage.
+    /// Remove subviews of `View` type whose backing attachment cell
+    /// is no longer hosted by any attachment character in the text
+    /// storage. `ViewType` and `CellType` are the specific view and
+    /// attachment-cell classes; `hostedView` extracts the view
+    /// instance from a given cell.
+    ///
+    /// Attachment-backed widgets (`InlinePDFView`, `InlineQuickLookView`,
+    /// `InlineTableView`) are added as direct subviews of the
+    /// NSTextView by their attachment cell's `draw(withFrame:…)`
+    /// method. When a splice removes an attachment character, the
+    /// layout manager stops calling `draw` but does NOT remove the
+    /// subview — this helper cleans up the orphans while leaving
+    /// still-valid widgets in place so they don't flicker.
+    private func removeOrphanedInlineViews<CellType: NSTextAttachmentCell, ViewType: NSView>(
+        cellType: CellType.Type,
+        viewType: ViewType.Type,
+        hostedView: (CellType) -> ViewType
+    ) {
+        guard let storage = textStorage else { return }
         var liveViews = Set<ObjectIdentifier>()
         let fullRange = NSRange(location: 0, length: storage.length)
         storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
             guard let attachment = value as? NSTextAttachment,
-                  let cell = attachment.attachmentCell as? PDFAttachmentCell else { return }
-            liveViews.insert(ObjectIdentifier(cell.inlinePDFView))
+                  let cell = attachment.attachmentCell as? CellType else { return }
+            liveViews.insert(ObjectIdentifier(hostedView(cell)))
         }
-
         for subview in subviews {
-            guard let pdfView = subview as? InlinePDFView else { continue }
-            if !liveViews.contains(ObjectIdentifier(pdfView)) {
-                pdfView.removeFromSuperview()
+            guard let view = subview as? ViewType else { continue }
+            if !liveViews.contains(ObjectIdentifier(view)) {
+                view.removeFromSuperview()
             }
         }
     }
 
-    /// Remove QuickLook subviews whose attachment is no longer in storage.
+    /// Remove `InlinePDFView` subviews whose backing attachment has
+    /// been spliced out of storage. Mirrors the QuickLook and table
+    /// orphan cleanups. Falls back to a full teardown if there's no
+    /// storage to enumerate.
+    func removeOrphanedInlinePDFViews() {
+        guard textStorage != nil else { removeAllInlinePDFViews(); return }
+        removeOrphanedInlineViews(
+            cellType: PDFAttachmentCell.self,
+            viewType: InlinePDFView.self,
+            hostedView: { $0.inlinePDFView }
+        )
+    }
+
+    /// Remove `InlineQuickLookView` subviews whose backing attachment
+    /// has been spliced out of storage.
     func removeOrphanedInlineQuickLookViews() {
-        guard let storage = textStorage else {
-            removeAllInlineQuickLookViews()
-            return
-        }
+        guard textStorage != nil else { removeAllInlineQuickLookViews(); return }
+        removeOrphanedInlineViews(
+            cellType: QuickLookAttachmentCell.self,
+            viewType: InlineQuickLookView.self,
+            hostedView: { $0.inlineView }
+        )
+    }
 
-        var liveViews = Set<ObjectIdentifier>()
-        let fullRange = NSRange(location: 0, length: storage.length)
-        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
-            guard let attachment = value as? NSTextAttachment,
-                  let cell = attachment.attachmentCell as? QuickLookAttachmentCell else { return }
-            liveViews.insert(ObjectIdentifier(cell.inlineView))
-        }
-
-        for subview in subviews {
-            guard let qlView = subview as? InlineQuickLookView else { continue }
-            if !liveViews.contains(ObjectIdentifier(qlView)) {
-                qlView.removeFromSuperview()
-            }
-        }
+    /// Remove `InlineTableView` subviews whose backing attachment has
+    /// been spliced out of storage.
+    func removeOrphanedInlineTableViews() {
+        guard textStorage != nil else { removeAllInlineTableViews(); return }
+        removeOrphanedInlineViews(
+            cellType: InlineTableAttachmentCell.self,
+            viewType: InlineTableView.self,
+            hostedView: { $0.inlineTableView }
+        )
     }
 }

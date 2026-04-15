@@ -24,9 +24,69 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Data
 
-    var headers: [String] = ["", ""]
-    var rows: [[String]] = [["", ""]]
+    /// View-layer cache of `currentBlock`'s structural fields.
+    /// Written only by `applyBlockUpdate` (from an editor-produced
+    /// Document) and by structural-mutation methods that then call
+    /// `notifyChanged()`. Never written from field-editor state —
+    /// cell content edits route through `applyTableCellInlineEdit`.
+    var headers: [TableCell] = [TableCell([]), TableCell([])]
+    var rows: [[TableCell]] = [[TableCell([]), TableCell([])]]
     var alignments: [NSTextAlignment] = [.left, .left]
+
+    /// The `Block.table` value this widget is currently rendering.
+    /// `headers`/`rows`/`alignments` above are a cache computed from
+    /// this on each `applyBlockUpdate`.
+    private(set) var currentBlock: Block?
+
+    /// Render a single table cell via the real block-model
+    /// `InlineRenderer` — the same code path paragraph content uses.
+    /// Output has zero markdown markers; `.font` carries bold/italic,
+    /// `.strikethroughStyle`/`.underlineStyle` carry strike/underline,
+    /// `.backgroundColor` carries highlight, `.link` carries links.
+    private func renderedCellText(
+        _ cell: TableCell,
+        font: NSFont,
+        alignment: NSTextAlignment
+    ) -> NSAttributedString {
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.textColor
+        ]
+        let para = NSMutableParagraphStyle()
+        para.alignment = alignment
+        attrs[.paragraphStyle] = para
+        let rendered = InlineRenderer.render(cell.inline, baseAttributes: attrs, note: nil)
+        // InlineRenderer preserves baseAttributes on its output, but
+        // .paragraphStyle is a per-run attribute — re-apply to the
+        // whole range so alignment takes effect uniformly even when
+        // the renderer split runs for inline formatting.
+        let mutable = NSMutableAttributedString(attributedString: rendered)
+        if mutable.length > 0 {
+            mutable.addAttribute(
+                .paragraphStyle, value: para,
+                range: NSRange(location: 0, length: mutable.length)
+            )
+        }
+        // Cells store multi-line content as the HTML `<br>` tag for
+        // round-trip fidelity with the legacy format. `InlineRenderer`
+        // parses those as `.rawHTML` and emits them verbatim — we want
+        // them displayed as actual newlines. Post-process the rendered
+        // string to replace every `<br>` run with a newline character,
+        // preserving the existing attributes on the replacement range.
+        var searchStart = 0
+        while searchStart < mutable.length {
+            let searchRange = NSRange(
+                location: searchStart, length: mutable.length - searchStart
+            )
+            let brRange = (mutable.string as NSString).range(
+                of: "<br>", options: [.caseInsensitive], range: searchRange
+            )
+            if brRange.location == NSNotFound { break }
+            mutable.replaceCharacters(in: brRange, with: "\n")
+            searchStart = brRange.location + 1
+        }
+        return mutable
+    }
 
     var focusState: TableFocusState = .unfocused {
         didSet {
@@ -240,11 +300,190 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Configuration
 
     func configure(with data: TableUtility.TableData) {
-        headers = data.headers
-        rows = data.rows
+        // Legacy paste path: `TableUtility.TableData` still carries
+        // string cells. Parse each one through `TableCell.parsing` so
+        // the widget stores inline trees like all other code paths.
+        headers = data.headers.map { TableCell.parsing($0) }
+        rows = data.rows.map { row in row.map { TableCell.parsing($0) } }
         alignments = data.alignments
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
         rebuild()
+    }
+
+    /// Block-aware construction path. Takes a `Block.table` value as
+    /// the single source of truth for the widget's content. The
+    /// editor passes this in at attachment-construction time and then
+    /// calls `applyBlockUpdate(...)` for every subsequent cell edit.
+    ///
+    /// This is the replacement for `configure(with:)` — the old
+    /// `TableUtility.TableData` path remains for compatibility with
+    /// clipboard paste (which hasn't been migrated yet) but new call
+    /// sites should use this one.
+    func configure(withBlock block: Block) {
+        guard case .table(let header, let blockAlignments, let bodyRows, _) = block else {
+            return
+        }
+        self.currentBlock = block
+        self.headers = header
+        self.rows = bodyRows
+        self.alignments = blockAlignments.map { nsAlignment(for: $0) }
+        let colCount = max(header.count, 1)
+        self.columnWidthRatios = Array(
+            repeating: 1.0 / CGFloat(colCount), count: colCount
+        )
+        rebuild()
+    }
+
+    /// Apply an updated `Block.table` to this widget in-place. Called
+    /// by the editor after `EditingOps.replaceTableCell(...)` produces
+    /// a new Document. The widget diffs the new block against its
+    /// `currentBlock` and takes one of two paths:
+    ///
+    ///  - **Shape unchanged** (same row/column count): refresh the
+    ///    cells whose content changed. The cell currently holding the
+    ///    field editor is left alone — it's the user's source of
+    ///    truth for that one cell during an in-flight edit, and
+    ///    overwriting it would reset the caret. Other cells get their
+    ///    `attributedStringValue` re-parsed from the new raw markdown.
+    ///
+    ///  - **Shape changed** (row or column added/removed): full grid
+    ///    rebuild via `rebuild()`. Shape changes are rare, and any
+    ///    in-flight selection or focus is intentionally lost — the
+    ///    grid is different now.
+    ///
+    /// Either way, `currentBlock` is updated to the new value before
+    /// returning. No AppKit mutation happens outside this method in
+    /// response to a cell edit, and this method never writes back into
+    /// the document — it is a one-way projection renderer.
+    func applyBlockUpdate(_ newBlock: Block) {
+        guard case .table(let newHeader, let newAlignments, let newRows, _) = newBlock else {
+            return
+        }
+
+        // First-time update (or `currentBlock` was nil): treat as a
+        // full configure.
+        guard case .table(let oldHeader, _, let oldRows, _)? = currentBlock else {
+            configure(withBlock: newBlock)
+            return
+        }
+
+        // Update the cached arrays and the canonical block first, so
+        // that any helper that reads `headers`/`rows`/`alignments`
+        // during `recalculateAndResize()` or `rebuild()` sees the new
+        // values.
+        self.currentBlock = newBlock
+        self.headers = newHeader
+        self.rows = newRows
+        self.alignments = newAlignments.map { nsAlignment(for: $0) }
+
+        // Shape change → full rebuild. We also re-derive column width
+        // ratios so a newly-added column has a proportional slice.
+        let shapeChanged =
+            (newHeader.count != oldHeader.count) ||
+            (newRows.count != oldRows.count) ||
+            !oldRows.enumerated().allSatisfy { (i, row) in
+                i < newRows.count && row.count == newRows[i].count
+            }
+        if shapeChanged {
+            let colCount = max(newHeader.count, 1)
+            self.columnWidthRatios = Array(
+                repeating: 1.0 / CGFloat(colCount), count: colCount
+            )
+            rebuild()
+            return
+        }
+
+        // Shape unchanged → in-place cell refresh. Identify the cell
+        // that currently owns the field editor (if any) so we don't
+        // trample the user's in-flight edit.
+        let activeCell: NSTextField? = {
+            guard let fieldEditor = window?.fieldEditor(false, for: nil) else {
+                return nil
+            }
+            return fieldEditor.delegate as? NSTextField
+        }()
+
+        let font = UserDefaultsManagement.noteFont
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+
+        // Refresh header row cells. Diff on inline-tree equality —
+        // unchanged cells do zero work.
+        for col in 0..<min(headerCells.count, newHeader.count) {
+            let cell = headerCells[col]
+            if cell === activeCell { continue }
+            if col < oldHeader.count && oldHeader[col] == newHeader[col] { continue }
+            let alignment = col < alignments.count ? alignments[col] : .left
+            cell.attributedStringValue = renderedCellText(
+                newHeader[col], font: boldFont, alignment: alignment
+            )
+        }
+
+        // Refresh data row cells.
+        for row in 0..<min(dataCells.count, newRows.count) {
+            let rowCells = dataCells[row]
+            let newRow = newRows[row]
+            let oldRow = row < oldRows.count ? oldRows[row] : []
+            for col in 0..<min(rowCells.count, newRow.count) {
+                let cell = rowCells[col]
+                if cell === activeCell { continue }
+                if col < oldRow.count && oldRow[col] == newRow[col] { continue }
+                let alignment = col < alignments.count ? alignments[col] : .left
+                cell.attributedStringValue = renderedCellText(
+                    newRow[col], font: font, alignment: alignment
+                )
+            }
+        }
+
+        // Column widths may have changed because a cell's content
+        // grew or shrank. Recalculate the layout in-place, preserving
+        // first responder.
+        recalculateAndResize()
+    }
+
+    /// Map a block-model `TableAlignment` value to the widget's
+    /// AppKit-flavoured `NSTextAlignment`. `.none` collapses to `.left`
+    /// to match existing rendering behavior.
+    private func nsAlignment(for alignment: TableAlignment) -> NSTextAlignment {
+        switch alignment {
+        case .left, .none: return .left
+        case .center:      return .center
+        case .right:       return .right
+        }
+    }
+
+    /// Inverse of `nsAlignment(for:)` — map the widget's
+    /// `NSTextAlignment` back to a block-model `TableAlignment`.
+    /// Used when pushing the widget's structural state back into the
+    /// Document via `notifyChanged()`. `.justified`/`.natural` collapse
+    /// to `.none` because they have no markdown equivalent.
+    private func blockAlignment(for alignment: NSTextAlignment) -> TableAlignment {
+        switch alignment {
+        case .left:   return .left
+        case .center: return .center
+        case .right:  return .right
+        default:      return .none
+        }
+    }
+
+    /// Build a `Block.table` value that represents the widget's
+    /// current state (`headers`, `rows`, `alignments`), with `raw`
+    /// recomputed canonically via `EditingOps.rebuildTableRaw`. This
+    /// is the bridge from widget state back into the Document model:
+    /// `notifyChanged()` uses it to push structural changes (add/
+    /// remove row/column, move, alignment change) into the editor's
+    /// `documentProjection` so the save path sees them.
+    private func buildCurrentTableBlock() -> Block {
+        let blockAlignments = alignments.map { blockAlignment(for: $0) }
+        let raw = EditingOps.rebuildTableRaw(
+            header: headers, alignments: blockAlignments, rows: rows
+        )
+        return .table(
+            header: headers,
+            alignments: blockAlignments,
+            rows: rows,
+            raw: raw
+        )
     }
 
     func focusFirstCell() {
@@ -551,7 +790,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Column Width Calculation
 
-    /// Compute the height for each row based on multi-line content (<br> tags).
+    /// Compute the height for each row based on multi-line content.
     /// Row 0 = header, rows 1..N = data rows.
     func rowHeights(colWidths: [CGFloat]? = nil) -> [CGFloat] {
         let colCount = headers.count
@@ -559,27 +798,26 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
         let font = UserDefaultsManagement.noteFont
         let boldFont = NSFontManager.shared.convert(UserDefaultsManagement.noteFont, toHaveTrait: .boldFontMask)
-        let cellPad = cellPaddingH * 2
 
         var heights: [CGFloat] = []
 
-        // Header row
+        // Header row. Measure visible rendered height via InlineRenderer.
         var maxH: CGFloat = minCellHeight
         for col in 0..<colCount {
-            let text = headers[col].replacingOccurrences(of: "<br>", with: "\n")
+            let alignment = col < alignments.count ? alignments[col] : .left
             let cw = (colWidths != nil && col < colWidths!.count) ? colWidths![col] : nil
-            let h = wrappedTextHeight(text, font: boldFont, colWidth: cw, cellPad: cellPad)
+            let h = wrappedCellHeight(headers[col], font: boldFont, alignment: alignment, colWidth: cw)
             maxH = max(maxH, h)
         }
         heights.append(maxH)
 
-        // Data rows
+        // Data rows.
         for row in rows {
             maxH = minCellHeight
             for col in 0..<min(colCount, row.count) {
-                let text = row[col].replacingOccurrences(of: "<br>", with: "\n")
+                let alignment = col < alignments.count ? alignments[col] : .left
                 let cw = (colWidths != nil && col < colWidths!.count) ? colWidths![col] : nil
-                let h = wrappedTextHeight(text, font: font, colWidth: cw, cellPad: cellPad)
+                let h = wrappedCellHeight(row[col], font: font, alignment: alignment, colWidth: cw)
                 maxH = max(maxH, h)
             }
             heights.append(maxH)
@@ -587,20 +825,29 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         return heights
     }
 
-    /// Calculate the height needed for text in a constrained column width.
-    private func wrappedTextHeight(_ text: String, font: NSFont, colWidth: CGFloat?, cellPad: CGFloat) -> CGFloat {
+    /// Calculate the height needed for a cell in a constrained column
+    /// width. The cell renders via `InlineRenderer` and the resulting
+    /// attributed string's `boundingRect` gives the true rendered
+    /// height — no markdown markers contribute to the measurement.
+    private func wrappedCellHeight(
+        _ cell: TableCell,
+        font: NSFont,
+        alignment: NSTextAlignment,
+        colWidth: CGFloat?
+    ) -> CGFloat {
+        let cellPad = cellPaddingH * 2
+        let rendered = renderedCellText(cell, font: font, alignment: alignment)
         guard let colWidth = colWidth else {
-            // Fallback: count lines manually
-            let lineCount = max(1, text.components(separatedBy: "\n").count)
+            // Fallback: count visible lines from the rendered string.
+            let displayText = rendered.string
+            let lineCount = max(1, displayText.components(separatedBy: "\n").count)
             return max(minCellHeight, CGFloat(lineCount) * lineHeight + cellPaddingTop + cellPaddingBot)
         }
 
         let availableWidth = max(1, colWidth - cellPad)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        let boundingRect = (text as NSString).boundingRect(
+        let boundingRect = rendered.boundingRect(
             with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: attrs
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         return max(minCellHeight, ceil(boundingRect.height) + cellPaddingTop + cellPaddingBot + CGFloat(UserDefaultsManagement.editorLineSpacing))
     }
@@ -620,13 +867,44 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let boldFont = NSFontManager.shared.convert(UserDefaultsManagement.noteFont, toHaveTrait: .boldFontMask)
         let padding: CGFloat = columnTextPadding
 
+        // Measure the VISIBLE rendered width of each cell via the
+        // real InlineRenderer — not the raw markdown length. The
+        // renderer produces an attributed string with zero markers
+        // in it (bold is a font attribute, italic is a font attribute,
+        // etc.) so .size().width is the true rendered width.
+        func renderedMaxLineWidth(_ cell: TableCell, alignment: NSTextAlignment, font: NSFont) -> CGFloat {
+            let attributed = renderedCellText(cell, font: font, alignment: alignment)
+            let displayText = attributed.string
+            let lines = displayText.components(separatedBy: "\n")
+            if lines.count <= 1 {
+                return attributed.size().width
+            }
+            // Multi-line cell: build per-line attributed substrings
+            // and take the widest.
+            var maxWidth: CGFloat = 0
+            var offset = 0
+            for line in lines {
+                let lineLen = (line as NSString).length
+                if lineLen == 0 {
+                    offset += 1 // newline
+                    continue
+                }
+                let range = NSRange(location: offset, length: lineLen)
+                let substring = attributed.attributedSubstring(from: range)
+                maxWidth = max(maxWidth, substring.size().width)
+                offset += lineLen + 1
+            }
+            return maxWidth
+        }
+
         var widths = Array(repeating: minColumnWidth, count: colCount)
         for col in 0..<colCount {
-            let hw = maxLineWidth(headers[col], font: boldFont) + padding
+            let alignment = col < alignments.count ? alignments[col] : .left
+            let hw = renderedMaxLineWidth(headers[col], alignment: alignment, font: boldFont) + padding
             widths[col] = max(widths[col], hw)
             for row in rows {
                 if col < row.count {
-                    let cw = maxLineWidth(row[col], font: font) + padding
+                    let cw = renderedMaxLineWidth(row[col], alignment: alignment, font: font) + padding
                     widths[col] = max(widths[col], cw)
                 }
             }
@@ -673,9 +951,16 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Build (Stable Cell Pool)
 
-    func rebuild(skipCollect: Bool = false) {
-        if !skipCollect { collectCellData() }
-
+    func rebuild() {
+        // No pre-rebuild view-to-data sync any more. Under Stage 3
+        // of the table cell editing refactor (see CLAUDE.md
+        // "Rules That Exist Because I Broke Them"), every cell
+        // edit flushes through `EditingOps.replaceTableCellInline`
+        // on each keystroke, so the widget's `headers` / `rows`
+        // arrays are always in sync with the Document — reading
+        // back from `fieldEditor.string` here would strip
+        // formatting (plain-string read of an attributed-string
+        // field editor) and silently corrupt the active cell.
         let L = computeLayout()
 
         if columnWidthRatios.count != L.colCount {
@@ -702,7 +987,8 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         for col in 0..<L.colCount {
             let cell = cellPool[cellIndex]; cellIndex += 1
             let colRect = NSRect(x: xOffset, y: L.gridHeight - L.headerHeight, width: L.colWidths[col], height: L.headerHeight)
-            configureCell(cell, text: headers[col], frame: colRect, isHeader: true, isEditing: isEditing, row: 0, col: col)
+            let tableCell = col < headers.count ? headers[col] : TableCell([])
+            configureCell(cell, cellData: tableCell, frame: colRect, isHeader: true, isEditing: isEditing, row: 0, col: col)
             headerCells.append(cell)
             xOffset += L.colWidths[col]
         }
@@ -716,9 +1002,9 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             var rowCellArray: [NSTextField] = []
             for col in 0..<L.colCount {
                 let cell = cellPool[cellIndex]; cellIndex += 1
-                let value = col < rows[row].count ? rows[row][col] : ""
+                let tableCell = col < rows[row].count ? rows[row][col] : TableCell([])
                 let colRect = NSRect(x: xOffset, y: yBottom, width: L.colWidths[col], height: rowH)
-                configureCell(cell, text: value, frame: colRect, isHeader: false, isEditing: isEditing, row: row + 1, col: col)
+                configureCell(cell, cellData: tableCell, frame: colRect, isHeader: false, isEditing: isEditing, row: row + 1, col: col)
                 rowCellArray.append(cell)
                 xOffset += L.colWidths[col]
             }
@@ -746,6 +1032,12 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
         gridDocumentView.needsDisplay = true
         invalidateIntrinsicContentSize()
+        // Structural rebuilds (add/remove row/column) change the
+        // widget's intrinsic size. Without telling the hosting text
+        // attachment cell, NSLayoutManager keeps using the old bounds
+        // and the table ends up drawn at the wrong position (commonly
+        // overlapping the heading above it) on the next click-away.
+        invalidateAttachmentLayout()
     }
 
     /// Apply outer frame, scroll view, and document view frames from a layout computation.
@@ -768,21 +1060,41 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
     }
 
-    private func configureCell(_ cell: NSTextField, text: String, frame: NSRect, isHeader: Bool, isEditing: Bool, row: Int, col: Int) {
+    private func configureCell(_ cell: NSTextField, cellData: TableCell, frame: NSRect, isHeader: Bool, isEditing: Bool, row: Int, col: Int) {
         cell.frame = cellFrame(from: frame)
 
         let cellFont = isHeader ? NSFontManager.shared.convert(UserDefaultsManagement.noteFont, toHaveTrait: .boldFontMask) : UserDefaultsManagement.noteFont
         let cellAlignment = col < alignments.count ? alignments[col] : NSTextAlignment.left
 
-        // When not editing, render inline markdown (bold, italic, strikethrough).
-        // When editing, show raw markdown markers so the user can edit them.
-        if !isEditing && (text.contains("**") || text.contains("*") || text.contains("~~") || text.contains("__")) {
-            cell.attributedStringValue = parseInlineMarkdown(text, font: cellFont, alignment: cellAlignment)
-        } else {
-            cell.stringValue = text.replacingOccurrences(of: "<br>", with: "\n")
-            cell.font = cellFont
-            cell.alignment = cellAlignment
-        }
+        // Rich-text mode is REQUIRED so that the field editor, when
+        // it attaches to this cell, preserves the attributed
+        // string's per-character attributes instead of downgrading
+        // to plain text + the cell's default font. Without this
+        // flag, `attributedStringValue` still displays correctly
+        // in the non-editing state, but the moment the user clicks
+        // into a cell the field editor reverts to the cell's plain
+        // `font` property at the system default size — which looks
+        // slightly smaller than the `renderedCellText` output.
+        cell.allowsEditingTextAttributes = true
+
+        // Also set the cell's font property as the fallback used by
+        // the field editor's `typingAttributes` when the user types
+        // new characters. Without this, newly typed characters can
+        // inherit system defaults rather than the note body font.
+        cell.font = cellFont
+        cell.alignment = cellAlignment
+
+        // Render via the real block-model `InlineRenderer` — the
+        // same path paragraph content uses. Applies to BOTH
+        // editing and non-editing modes (Stage 3): when the field
+        // editor attaches to this cell, it inherits the rendered
+        // attributed string (no markers), so the user sees and
+        // edits the rendered form. Every keystroke flows back
+        // through `inlineTreeFromAttributedString` → primitive,
+        // with zero raw-markdown round-trips.
+        cell.attributedStringValue = renderedCellText(
+            cellData, font: cellFont, alignment: cellAlignment
+        )
 
         cell.isHidden = false
         cell.isEditable = isEditing
@@ -861,38 +1173,35 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Context Menu Actions
 
     @objc private func contextInsertColumnLeft(_ sender: NSMenuItem) {
-        collectCellData()
         let col = sender.tag
-        headers.insert("", at: col)
+        headers.insert(TableCell([]), at: col)
         alignments.insert(.left, at: col)
-        for i in 0..<rows.count { rows[i].insert("", at: min(col, rows[i].count)) }
+        for i in 0..<rows.count { rows[i].insert(TableCell([]), at: min(col, rows[i].count)) }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
     @objc private func contextInsertColumnRight(_ sender: NSMenuItem) {
-        collectCellData()
         let col = min(sender.tag + 1, headers.count)
-        headers.insert("", at: col)
+        headers.insert(TableCell([]), at: col)
         alignments.insert(.left, at: col)
-        for i in 0..<rows.count { rows[i].insert("", at: min(col, rows[i].count)) }
+        for i in 0..<rows.count { rows[i].insert(TableCell([]), at: min(col, rows[i].count)) }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
     @objc private func contextDeleteColumn(_ sender: NSMenuItem) {
         let col = sender.tag
         guard headers.count > 1, col < headers.count else { return }
-        collectCellData()
         headers.remove(at: col)
         if col < alignments.count { alignments.remove(at: col) }
         for i in 0..<rows.count {
             if col < rows[i].count { rows[i].remove(at: col) }
         }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
@@ -902,66 +1211,59 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     private func setAlignment(_ alignment: NSTextAlignment, column: Int) {
         guard column < alignments.count else { return }
-        collectCellData()
         alignments[column] = alignment
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
     @objc private func contextInsertRowAbove(_ sender: NSMenuItem) {
-        collectCellData()
         let dataRow = sender.tag - 1  // tag 0 = header, data starts at 1
-        let newRow = Array(repeating: "", count: headers.count)
+        let newRow = Array(repeating: TableCell([]), count: headers.count)
         if dataRow < 0 {
             rows.insert(newRow, at: 0)
         } else {
             rows.insert(newRow, at: min(dataRow, rows.count))
         }
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
     @objc private func contextInsertRowBelow(_ sender: NSMenuItem) {
-        collectCellData()
         let dataRow = sender.tag  // insert after this row (tag includes header offset)
-        let newRow = Array(repeating: "", count: headers.count)
+        let newRow = Array(repeating: TableCell([]), count: headers.count)
         rows.insert(newRow, at: min(dataRow, rows.count))
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
     @objc private func contextDeleteRow(_ sender: NSMenuItem) {
         let dataRow = sender.tag - 1
         guard dataRow >= 0, dataRow < rows.count, rows.count > 1 else { return }
-        collectCellData()
         rows.remove(at: dataRow)
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
     // MARK: - Edge Button Actions
 
     private func addColumnAtEnd() {
-        collectCellData()
-        headers.append("")
+        headers.append(TableCell([]))
         alignments.append(.left)
-        for i in 0..<rows.count { rows[i].append("") }
+        for i in 0..<rows.count { rows[i].append(TableCell([])) }
         columnWidthRatios = Array(repeating: 1.0 / CGFloat(headers.count), count: headers.count)
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
     private func addRowAtEnd() {
-        collectCellData()
-        rows.append(Array(repeating: "", count: headers.count))
-        rebuild(skipCollect: true)
+        rows.append(Array(repeating: TableCell([]), count: headers.count))
+        rebuild()
         notifyChanged()
     }
 
     // MARK: - Drag-to-Reorder
 
     private func startColumnDrag(column: Int) {
-        collectCellData()
         let colCount = headers.count
         guard column >= 0, column < colCount else { return }
 
@@ -1070,8 +1372,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private func startRowDrag(row: Int) {
         // Row handle indices: 0 = header, 1+ = data rows.
         // Header row CAN be dragged — special handling below.
-        collectCellData()
-
         let rHeights = rowHeights()
         let gridHeight = rHeights.reduce(0, +)
         let leftMargin: CGFloat = handleBarWidth
@@ -1163,7 +1463,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard src < totalRows, dst < totalRows else { return }
 
         // Build a unified row array: [headers] + rows
-        var allRows: [[String]] = [headers] + rows
+        var allRows: [[TableCell]] = [headers] + rows
 
         let moved = allRows.remove(at: src)
         allRows.insert(moved, at: dst)
@@ -1172,7 +1472,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         headers = allRows[0]
         rows = Array(allRows.dropFirst())
 
-        rebuild(skipCollect: true)
+        rebuild()
         notifyChanged()
     }
 
@@ -1189,7 +1489,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             }
         }
 
-        rebuild(skipCollect: true)  // Data already swapped — don't read from old cells
+        rebuild()
         notifyChanged()
     }
 
@@ -1197,68 +1497,102 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard src >= 0, src < rows.count, dst >= 0, dst < rows.count, src != dst else { return }
         let r = rows.remove(at: src)
         rows.insert(r, at: dst)
-        rebuild(skipCollect: true)  // Data already swapped — don't read from old cells
+        rebuild()
         notifyChanged()
     }
 
-    // MARK: - Data Collection
-
-    func collectCellData() {
-        // Only read from the cell whose field editor is currently active.
-        // `headers` / `rows` are the source of truth for every other cell —
-        // the data model is only mutated via the field editor, so non-active
-        // cells already have the correct raw-markdown value.
-        //
-        // Previous versions read `stringValue` from ALL cells while in
-        // editing mode on the assumption that editing-mode cells contained
-        // raw markdown. That assumption breaks in two places:
-        //   (a) The hovered→editing transition does NOT rebuild cells, so
-        //       they still hold the parsed `attributedStringValue` from
-        //       .hovered state, where markdown markers are STRIPPED by
-        //       parseInlineMarkdown. Reading `cell.stringValue` in that
-        //       state silently wiped `**bold**` back to `bold` on any cell
-        //       the user hadn't explicitly touched.
-        //   (b) Cells rendered by `configureCell` with
-        //       `attributedStringValue` have no authoritative "raw text" —
-        //       stringValue is whatever the attributed string's plain
-        //       content happens to be, which has already lost its markers.
-        //
-        // The data model is authoritative; trust it.
-        guard let fieldEditor = window?.fieldEditor(false, for: nil),
-              let activeCell = fieldEditor.delegate as? NSTextField else { return }
-
-        let liveText = fieldEditor.string.replacingOccurrences(of: "\n", with: "<br>")
-
-        for (i, cell) in headerCells.enumerated() where i < headers.count {
-            if cell === activeCell {
-                headers[i] = liveText
-                return
-            }
-        }
-        for (r, rowCells) in dataCells.enumerated() where r < rows.count {
-            for (c, cell) in rowCells.enumerated() where c < rows[r].count {
-                if cell === activeCell {
-                    rows[r][c] = liveText
-                    return
-                }
-            }
-        }
-    }
+    // NOTE: the former `collectCellData()` helper — which walked
+    // the active field editor and wrote its `.string` back into
+    // `rows[r][c]` — has been deleted. Under Stage 3 it became a
+    // silent corruption vector: cells render via `InlineRenderer`
+    // with attributes (not markers), so `fieldEditor.string`
+    // returns the VISIBLE text with no formatting. Writing that
+    // back into the cell stripped every bold/italic/highlight/
+    // strike/underline from the active cell. The correct path is
+    // `controlTextDidChange` → `inlineTreeFromAttributedString` →
+    // `EditingOps.replaceTableCellInline`, which is called on
+    // every keystroke and preserves all attribute runs.
 
     // MARK: - NSTextFieldDelegate
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        collectCellData()
-        notifyChanged()
+        // AppKit's field-editor commit copies the field editor's
+        // plain string back into the NSTextField's attributedStringValue,
+        // erasing the rendered form — re-render via InlineRenderer
+        // so the marker-free display comes back on detach. The
+        // Document is already in sync from per-keystroke
+        // `controlTextDidChange` → `applyTableCellInlineEdit`.
+        guard let cell = obj.object as? NSTextField,
+              let location = cellLocation(for: cell) else { return }
+        let font = UserDefaultsManagement.noteFont
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let tableCell: TableCell
+        let isHeader: Bool
+        let col: Int
+        switch location {
+        case .header(let c):
+            col = c
+            isHeader = true
+            guard col < headers.count else { return }
+            tableCell = headers[col]
+        case .body(let r, let c):
+            col = c
+            isHeader = false
+            guard r < rows.count, col < rows[r].count else { return }
+            tableCell = rows[r][col]
+        }
+        let alignment = col < alignments.count ? alignments[col] : .left
+        let cellFont = isHeader
+            ? NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+            : font
+        cell.attributedStringValue = renderedCellText(
+            tableCell, font: cellFont, alignment: alignment
+        )
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        // Clear column/row selection when user starts typing in a cell
         clearHoverHandles()
-        // Live-resize columns and table as user types
-        collectCellData()
-        recalculateAndResize()
-        notifyChanged()
+
+        // `NSControl.textDidChangeNotification` delivers the
+        // NSTextField (the NSControl) as `obj.object`, NOT the field
+        // editor NSTextView. Query the window for the field editor.
+        guard
+            let fieldEditor = window?.fieldEditor(false, for: nil),
+            let activeCell = fieldEditor.delegate as? NSTextField,
+            let editor = findParentEditTextView(),
+            let location = cellLocation(for: activeCell)
+        else {
+            return
+        }
+
+        // Pass the field editor's storage directly — `NSTextStorage`
+        // IS an `NSAttributedString` and the converter only reads.
+        // Skipping the copy saves an allocation per keystroke.
+        let attr: NSAttributedString
+        if let tv = fieldEditor as? NSTextView, let storage = tv.textStorage {
+            attr = storage
+        } else {
+            attr = NSAttributedString(string: fieldEditor.string)
+        }
+        let inline = InlineRenderer.inlineTreeFromAttributedString(attr)
+        _ = editor.applyTableCellInlineEdit(
+            from: self, at: location, inline: inline
+        )
+    }
+
+    /// Find which cell in the grid is the given `NSTextField`, and
+    /// return the corresponding `TableCellLocation`. Returns nil if
+    /// the cell is not part of this widget.
+    func cellLocation(for cell: NSTextField) -> EditingOps.TableCellLocation? {
+        for (col, headerCell) in headerCells.enumerated() {
+            if headerCell === cell { return .header(col: col) }
+        }
+        for (row, rowCells) in dataCells.enumerated() {
+            for (col, dataCell) in rowCells.enumerated() {
+                if dataCell === cell { return .body(row: row, col: col) }
+            }
+        }
+        return nil
     }
 
     /// Recalculate column widths from content and resize the table frame.
@@ -1270,6 +1604,12 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         layoutCells(L)
         gridDocumentView.needsDisplay = true
         invalidateIntrinsicContentSize()
+        // The attachment cell's bounds must be updated whenever the
+        // widget's intrinsic size changes, or the NSTextView layout
+        // manager keeps using the stale size and the table ends up
+        // mispositioned (e.g. overlapping the H1 title) on the next
+        // layout pass triggered by a click outside the widget.
+        invalidateAttachmentLayout()
     }
 
     /// Update cell AND handle frames in-place from a TableLayout (preserves first responder).
@@ -1309,8 +1649,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                 let isLastRow = (row == rows.count)  // row 0 = header, rows.count = last data row
                 let isLastCol = (col == headers.count - 1)
                 if isLastRow && isLastCol {
-                    collectCellData()
-                    rows.append(Array(repeating: "", count: headers.count))
+                    rows.append(Array(repeating: TableCell([]), count: headers.count))
                     rebuild()
                     notifyChanged()
                     // Focus first cell of new row
@@ -1350,7 +1689,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard let cell = cell else { return }
         let (row, col) = decodeTag(cell.tag)
         if let next = cellAt(row: row, col: col + 1) ?? cellAt(row: row + 1, col: 0) {
-            collectCellData()
             window?.makeFirstResponder(next)
         }
     }
@@ -1359,7 +1697,6 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard let cell = cell else { return }
         let (row, col) = decodeTag(cell.tag)
         if let prev = cellAt(row: row, col: col - 1) ?? cellAt(row: row - 1, col: headers.count - 1) {
-            collectCellData()
             window?.makeFirstResponder(prev)
         }
     }
@@ -1368,12 +1705,10 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         guard let cell = cell else { return }
         let (row, col) = decodeTag(cell.tag)
         if let below = cellAt(row: row + 1, col: col) {
-            collectCellData()
             window?.makeFirstResponder(below)
         } else {
             // At bottom — add new row
-            collectCellData()
-            rows.append(Array(repeating: "", count: headers.count))
+            rows.append(Array(repeating: TableCell([]), count: headers.count))
             rebuild()
             notifyChanged()
             if let newCell = cellAt(row: row + 1, col: col) {
@@ -1425,11 +1760,10 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     // MARK: - Copy as TSV
 
     private func copyTableAsTSV() {
-        collectCellData()
         var lines: [String] = []
-        lines.append(headers.joined(separator: "\t"))
+        lines.append(headers.map { $0.rawText }.joined(separator: "\t"))
         for row in rows {
-            lines.append(row.joined(separator: "\t"))
+            lines.append(row.map { $0.rawText }.joined(separator: "\t"))
         }
         let tsv = lines.joined(separator: "\n")
 
@@ -1473,142 +1807,27 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         }
     }
 
-    // MARK: - Inline Markdown Formatting
-
-    /// Parse inline markdown (bold, italic, strike, underline, highlight,
-    /// code, link) into an NSAttributedString. Used to render cell text in
-    /// WYSIWYG style when not actively editing.
-    private func parseInlineMarkdown(_ text: String, font: NSFont, alignment: NSTextAlignment) -> NSAttributedString {
-        let displayText = text.replacingOccurrences(of: "<br>", with: "\n")
-        let result = NSMutableAttributedString(string: displayText, attributes: [
-            .font: font,
-            .foregroundColor: NSColor.textColor
-        ])
-
-        // Marker kind drives which visual style is applied to the match's
-        // capture group. Keep this in sync with
-        // `TableRenderController.InlineCellFormat` — the cell formatter
-        // writes these markers, this parser strips them at render time.
-        enum Kind {
-            case bold
-            case italic
-            case strike
-            case underline
-            case highlight
-            case code
-            case link
-        }
-
-        let patterns: [(pattern: String, kind: Kind)] = [
-            ("\\*\\*(.+?)\\*\\*", .bold),                                     // **bold**
-            ("__(.+?)__", .bold),                                              // __bold__
-            ("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)", .italic),           // *italic* (not **)
-            ("_(.+?)_", .italic),                                              // _italic_
-            ("~~(.+?)~~", .strike),                                            // ~~strike~~
-            ("<u>(.+?)</u>", .underline),                                     // <u>underline</u>
-            ("<mark>(.+?)</mark>", .highlight),                               // <mark>highlight</mark>
-            ("`([^`]+?)`", .code),                                             // `code`
-            ("\\[([^\\]]+?)\\]\\(([^)]*?)\\)", .link),                         // [text](url)
-        ]
-
-        // Collect ALL matches across all patterns first, then apply in one reverse pass.
-        // Applying per-pattern mutates `result`, making ranges from subsequent patterns invalid.
-        struct MatchInfo {
-            let fullRange: NSRange
-            let content: String
-            let attrs: [NSAttributedString.Key: Any]
-        }
-        var allMatches: [MatchInfo] = []
-
-        let fontManager = NSFontManager.shared
-        let nsText = displayText as NSString
-        for (pattern, kind) in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            let matches = regex.matches(in: displayText, range: NSRange(location: 0, length: nsText.length))
-            for match in matches {
-                let fullRange = match.range
-                let contentRange = match.range(at: 1)
-                let content = nsText.substring(with: contentRange)
-
-                var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.textColor, .font: font]
-                switch kind {
-                case .bold:
-                    attrs[.font] = fontManager.convert(font, toHaveTrait: .boldFontMask)
-                case .italic:
-                    attrs[.font] = fontManager.convert(font, toHaveTrait: .italicFontMask)
-                case .strike:
-                    attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-                case .underline:
-                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-                case .highlight:
-                    attrs[.backgroundColor] = NSColor.systemYellow.withAlphaComponent(0.35)
-                case .code:
-                    let mono = NSFont.userFixedPitchFont(ofSize: font.pointSize)
-                        ?? NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
-                    attrs[.font] = mono
-                    attrs[.backgroundColor] = NSColor.secondaryLabelColor.withAlphaComponent(0.15)
-                case .link:
-                    attrs[.foregroundColor] = NSColor.linkColor
-                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-                    if match.numberOfRanges > 2 {
-                        let urlRange = match.range(at: 2)
-                        let urlString = nsText.substring(with: urlRange)
-                        if let url = URL(string: urlString) {
-                            attrs[.link] = url
-                        }
-                    }
-                }
-
-                allMatches.append(MatchInfo(fullRange: fullRange, content: content, attrs: attrs))
-            }
-        }
-
-        // Sort by location descending so replacements don't invalidate earlier ranges.
-        // Also filter out overlapping matches (e.g., _ inside **bold_text**).
-        allMatches.sort { $0.fullRange.location > $1.fullRange.location }
-
-        var usedRanges: [NSRange] = []
-        allMatches = allMatches.filter { info in
-            let overlaps = usedRanges.contains { NSIntersectionRange($0, info.fullRange).length > 0 }
-            if !overlaps { usedRanges.append(info.fullRange) }
-            return !overlaps
-        }
-
-        for info in allMatches {
-            let styled = NSAttributedString(string: info.content, attributes: info.attrs)
-            result.replaceCharacters(in: info.fullRange, with: styled)
-        }
-
-        // Apply alignment as paragraph style
-        let para = NSMutableParagraphStyle()
-        para.alignment = alignment
-        result.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: result.length))
-
-        return result
-    }
-
-    // MARK: - Markdown Generation
-
-    func generateMarkdown() -> String {
-        return TableUtility.generate(headers: headers, rows: rows, alignments: alignments)
-    }
+    // NOTE: `parseInlineMarkdown` and `generateMarkdown` — the
+    // widget's local regex inline renderer and TSV/markdown
+    // generator — are DELETED. Cell rendering goes through
+    // `renderedCellText` → `InlineRenderer.render`; markdown
+    // generation flows through `MarkdownSerializer.serialize(.table)`
+    // reading `Block.table.raw` (recomputed by
+    // `EditingOps.rebuildTableRaw` on every edit). Don't reintroduce
+    // — rule 7 prohibits marker-hiding attribute tricks that the
+    // old widget path used to need.
 
     // MARK: - Notify
 
+    /// Called by every structural-mutation path (add/remove row,
+    /// add/remove column, move, alignment change) to push the
+    /// widget's post-mutation state into the Document via
+    /// `EditTextView.pushTableBlockToProjection`.
     func notifyChanged() {
-        let md = generateMarkdown()
-        guard let editTextView = findParentEditTextView(),
-              let storage = editTextView.textStorage else { return }
-        // Update the attachment attribute so the save path picks up current table state
-        let fullRange = NSRange(location: 0, length: storage.length)
-        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, stop in
-            guard let att = value as? NSTextAttachment,
-                  let cell = att.attachmentCell as? InlineTableAttachmentCell,
-                  cell.inlineTableView === self else { return }
-            storage.addAttribute(.renderedBlockOriginalMarkdown, value: md, range: range)
-            storage.addAttribute(.renderedBlockSource, value: md, range: range)
-            stop.pointee = true
-        }
+        guard let editTextView = findParentEditTextView() else { return }
+        let newBlock = buildCurrentTableBlock()
+        self.currentBlock = newBlock
+        editTextView.pushTableBlockToProjection(from: self, newBlock: newBlock)
         editTextView.hasUserEdits = true
         editTextView.save()
     }
@@ -1911,7 +2130,7 @@ class GlassButton: NSVisualEffectView {
 // MARK: - Attachment Cell
 
 /// Custom NSTextAttachmentCell that hosts an InlineTableView.
-class InlineTableAttachmentCell: NSTextAttachmentCell {
+class InlineTableAttachmentCell: NSTextAttachmentCell, TableAttachmentHosting {
 
     let inlineTableView: InlineTableView
     private let desiredSize: NSSize

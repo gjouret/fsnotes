@@ -16,43 +16,19 @@ class TableRenderController {
         self.textView = textView
     }
 
-    // MARK: - Table Data Sync
-
-    /// Materialize live InlineTableView cell data back into attachment attributes.
-    /// If there are no live inline table views, saving should remain a pure read.
-    func prepareRenderedTablesForSave() {
-        guard let textView = textView, let storage = textView.textStorage else { return }
-        guard textView.subviews.contains(where: { $0 is InlineTableView }) else { return }
-
-        // Clean up "spread" rendered-block attributes from non-attachment chars.
-        let fullRange = NSRange(location: 0, length: storage.length)
-        let string = storage.string as NSString
-        var cleanRanges: [NSRange] = []
-        storage.enumerateAttribute(.renderedBlockOriginalMarkdown, in: fullRange, options: []) { value, range, _ in
-            guard value != nil else { return }
-            for i in range.location..<NSMaxRange(range) {
-                if i < string.length && string.character(at: i) != 0xFFFC {
-                    cleanRanges.append(NSRange(location: i, length: 1))
-                }
-            }
-        }
-        for r in cleanRanges.reversed() {
-            storage.removeAttribute(.renderedBlockOriginalMarkdown, range: r)
-            storage.removeAttribute(.renderedBlockSource, range: r)
-            storage.removeAttribute(.renderedBlockType, range: r)
-        }
-
-        // Update each table attachment with current cell data.
-        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, stop in
-            guard let att = value as? NSTextAttachment,
-                  let cell = att.attachmentCell as? InlineTableAttachmentCell else { return }
-            let tableView = cell.inlineTableView
-            tableView.collectCellData()
-            let markdown = tableView.generateMarkdown()
-            storage.addAttribute(.renderedBlockOriginalMarkdown, value: markdown, range: range)
-            storage.addAttribute(.renderedBlockSource, value: markdown, range: range)
-        }
-    }
+    // NOTE: the former `prepareRenderedTablesForSave()` — which
+    // walked every live `InlineTableView`, ran `collectCellData` on
+    // it, serialized via `generateMarkdown`, and wrote the result
+    // into `.renderedBlockOriginalMarkdown` / `.renderedBlockSource`
+    // attributes on the attachment character — has been deleted.
+    // It was the post-hoc save-path walker that CLAUDE.md rule 1
+    // describes as the cautionary tale for the whole project.
+    //
+    // All table state now flows through the block-model Document:
+    // every cell edit routes through `EditingOps.replaceTableCellInline`
+    // (Stage 3), which recomputes `Block.table.raw` on the projection
+    // immediately. `MarkdownSerializer.serialize(.table)` reads
+    // `raw` directly — no view walk, no attribute round-trip.
 
     // MARK: - Table Rendering
 
@@ -76,22 +52,20 @@ class TableRenderController {
             // Already configured — skip.
             if tableAtt.attachmentCell is InlineTableAttachmentCell { return }
 
-            // Build TableData from the attachment's parsed data.
-            let nsAlignments = tableAtt.alignments.map { align -> NSTextAlignment in
-                switch align {
-                case .left, .none: return .left
-                case .center: return .center
-                case .right: return .right
-                }
-            }
-            let data = TableUtility.TableData(
-                headers: tableAtt.header,
+            // Build a Block.table from the attachment's parsed data.
+            // The widget takes the Block as its single source of truth
+            // via `configure(withBlock:)` — no more TableUtility.TableData
+            // intermediary, no more parallel `headers`/`rows` state that
+            // can drift from the Document.
+            let block: Block = .table(
+                header: tableAtt.header,
+                alignments: tableAtt.alignments,
                 rows: tableAtt.rows,
-                alignments: nsAlignments
+                raw: tableAtt.rawMarkdown
             )
 
             let tableView = InlineTableView()
-            tableView.configure(with: data)
+            tableView.configure(withBlock: block)
             tableView.containerWidth = maxWidth
             tableView.isFocused = false
             tableView.rebuild()
@@ -100,10 +74,13 @@ class TableRenderController {
             tableAtt.attachmentCell = cell
             tableAtt.bounds = NSRect(origin: .zero, size: tableView.intrinsicContentSize)
 
-            // Tag the attachment character with block metadata for save.
+            // Tag the attachment character with block-type metadata so
+            // click-handling / navigation code can identify it. The
+            // `.renderedBlockOriginalMarkdown` / `.renderedBlockSource`
+            // attributes are NOT written on tables anymore — the Block
+            // model is the source of truth, and the serializer reads
+            // from Document, not from storage attributes.
             storage.addAttributes([
-                .renderedBlockOriginalMarkdown: tableAtt.rawMarkdown,
-                .renderedBlockSource: tableAtt.rawMarkdown,
                 .renderedBlockType: RenderedBlockType.table.rawValue
             ], range: range)
         }
@@ -192,140 +169,195 @@ class TableRenderController {
         return applyInlineTableCellFormat(format)
     }
 
-    /// Apply any supported inline format to the active table cell's field
-    /// editor: wraps/unwraps the selection with the format's open/close
-    /// markers, repositions the selection, applies visual attributes for
-    /// immediate Live-Preview feedback, and synthesizes the change
-    /// notification so the InlineTableView's data model + save path pick
-    /// up the edit. Returns true if a table cell was active.
+    /// Toggle an inline format on the selection inside the active
+    /// table cell's field editor by mutating attributes (no marker
+    /// text inserted). If the selection already has the trait
+    /// uniformly applied, it's removed; otherwise it's added. After
+    /// the mutation, the updated attributed string is converted to
+    /// an inline tree via `InlineRenderer.inlineTreeFromAttributedString`
+    /// and flushed through `EditTextView.applyTableCellInlineEdit`
+    /// — field-editor attribute mutations don't fire
+    /// `controlTextDidChange`, so the flush is manual.
+    ///
+    /// Caret-only (no selection) is a no-op: there's nothing visible
+    /// to decorate and nothing to serialize.
     func applyInlineTableCellFormat(_ format: InlineCellFormat) -> Bool {
         guard let textView = textView,
               let fieldEditor = textView.window?.fieldEditor(false, for: nil),
               let cell = fieldEditor.delegate as? NSTextField,
-              let tableView = findEnclosingTable(cell) else { return false }
+              let tableView = findEnclosingTable(cell),
+              let tv = fieldEditor as? NSTextView,
+              let storage = tv.textStorage else { return false }
 
-        let open = format.open
-        let close = format.close
         let sel = fieldEditor.selectedRange
-        let nsText = fieldEditor.string as NSString
-
-        // Resulting inner range in the field editor AFTER mutation — used
-        // below to apply visual attributes (bold, italic, underline, ...)
-        // so the user sees formatted text immediately rather than raw
-        // markdown markers.
-        var innerRange = NSRange(location: NSNotFound, length: 0)
-        var didUnwrap = false
-
-        // Ranges of the open/close markers in the field editor AFTER
-        // mutation, used below to visually hide the markers so the cell
-        // shows rendered text immediately (no raw `**` / `<u>` / etc.
-        // fences while the user is still inside the cell).
-        var openMarkerRange = NSRange(location: NSNotFound, length: 0)
-        var closeMarkerRange = NSRange(location: NSNotFound, length: 0)
-
-        if sel.length > 0 {
-            let selected = nsText.substring(with: sel)
-            if selected.hasPrefix(open) && selected.hasSuffix(close) && selected.count > open.count + close.count {
-                // Unwrap.
-                let inner = String(selected.dropFirst(open.count).dropLast(close.count))
-                fieldEditor.replaceCharacters(in: sel, with: inner)
-                fieldEditor.selectedRange = NSRange(location: sel.location, length: inner.count)
-                didUnwrap = true
-            } else {
-                // Wrap.
-                let wrapped = open + selected + close
-                fieldEditor.replaceCharacters(in: sel, with: wrapped)
-                fieldEditor.selectedRange = NSRange(location: sel.location + open.count, length: sel.length)
-                innerRange = NSRange(location: sel.location + open.count, length: sel.length)
-                openMarkerRange = NSRange(location: sel.location, length: (open as NSString).length)
-                closeMarkerRange = NSRange(location: sel.location + open.count + sel.length, length: (close as NSString).length)
-            }
-        } else {
-            // Caret-only: insert open+close and park the caret between them.
-            let both = open + close
-            fieldEditor.replaceCharacters(in: sel, with: both)
-            fieldEditor.selectedRange = NSRange(location: sel.location + open.count, length: 0)
-            openMarkerRange = NSRange(location: sel.location, length: (open as NSString).length)
-            closeMarkerRange = NSRange(location: sel.location + open.count, length: (close as NSString).length)
+        guard sel.length > 0 else {
+            // Caret-only formatting not yet supported under the
+            // attribute-toggle model. Bail quietly so the toolbar
+            // click is a no-op instead of producing a broken edit.
+            return true
         }
 
-        // Live visual rendering on the field editor. The field editor is
-        // an NSTextView; applying attributes to its textStorage shows up
-        // immediately. We (a) style the inner range with the target format
-        // (bold / italic / …) and (b) collapse the open/close markers to
-        // near-zero width so the cell shows rendered text like the
-        // non-editing state — no raw `**` fences visible while typing.
-        // The underlying plain string still contains the markers, so
-        // collectCellData() + notifyChanged() serialize correct markdown.
-        if !didUnwrap,
-           let tv = fieldEditor as? NSTextView,
-           let storage = tv.textStorage {
-            if innerRange.location != NSNotFound, innerRange.length > 0 {
-                applyLiveAttributes(for: format, to: storage, range: innerRange, baseCell: cell)
-            }
-            hideMarker(in: storage, range: openMarkerRange)
-            hideMarker(in: storage, range: closeMarkerRange)
-        }
+        toggleTraitAttribute(format, on: storage, range: sel, baseCell: cell)
+        fieldEditor.selectedRange = sel
 
-        // Programmatic `replaceCharacters` on the field editor does NOT
-        // fire `controlTextDidChange`, so the InlineTableView's data
-        // model never sees the new text. Synthesize the notification
-        // so collectCellData + recalculate + notifyChanged run exactly
-        // as if the user had typed the characters themselves.
-        let note = Notification(name: NSControl.textDidChangeNotification, object: cell)
-        tableView.controlTextDidChange(note)
+        // Push the new state through the primitive. The field editor's
+        // attribute mutation doesn't fire `controlTextDidChange`, so
+        // we run the same code path manually: convert the attributed
+        // string to an inline tree and call the editor's inline-edit
+        // entry point.
+        guard let editTextView = findParentEditTextView(for: textView),
+              let location = tableView.cellLocation(for: cell) else {
+            return true
+        }
+        let attr = NSAttributedString(attributedString: storage)
+        let inline = InlineRenderer.inlineTreeFromAttributedString(attr)
+        _ = editTextView.applyTableCellInlineEdit(
+            from: tableView,
+            at: location,
+            inline: inline
+        )
         return true
     }
 
-    /// Apply visual attributes to the field editor's textStorage to
-    /// preview the formatting that was just wrapped into markdown. Uses
-    /// the base cell's current font as the starting point so italic/bold
-    /// traits layer correctly on whatever the cell inherited.
-    private func applyLiveAttributes(
-        for format: InlineCellFormat,
-        to storage: NSTextStorage,
+    /// Walk up from a given view to find the hosting EditTextView.
+    private func findParentEditTextView(for view: NSView?) -> EditTextView? {
+        var current: NSView? = view
+        while let v = current {
+            if let etv = v as? EditTextView { return etv }
+            current = v.superview
+        }
+        return nil
+    }
+
+    /// Toggle a single inline format attribute on the given range of
+    /// the field editor's storage. If the selection already has the
+    /// trait applied uniformly, remove it; otherwise apply it. The
+    /// semantics match how the main text view's `toggleInlineTrait`
+    /// behaves on paragraph content — cells are paragraphs.
+    private func toggleTraitAttribute(
+        _ format: InlineCellFormat,
+        on storage: NSTextStorage,
         range: NSRange,
         baseCell: NSTextField
     ) {
         let baseFont = baseCell.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let fm = NSFontManager.shared
+
         switch format {
         case .bold:
-            let f = fm.convert(baseFont, toHaveTrait: .boldFontMask)
-            storage.addAttribute(.font, value: f, range: range)
+            toggleFontTrait(on: storage, range: range, baseFont: baseFont,
+                            add: .boldFontMask, remove: .unboldFontMask,
+                            isActive: { fm.traits(of: $0).contains(.boldFontMask) })
         case .italic:
-            let f = fm.convert(baseFont, toHaveTrait: .italicFontMask)
-            storage.addAttribute(.font, value: f, range: range)
+            toggleFontTrait(on: storage, range: range, baseFont: baseFont,
+                            add: .italicFontMask, remove: .unitalicFontMask,
+                            isActive: { fm.traits(of: $0).contains(.italicFontMask) })
         case .strike:
-            storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            toggleScalarAttribute(.strikethroughStyle,
+                                  value: NSUnderlineStyle.single.rawValue,
+                                  on: storage, range: range)
         case .underline:
-            storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            toggleScalarAttribute(.underlineStyle,
+                                  value: NSUnderlineStyle.single.rawValue,
+                                  on: storage, range: range)
         case .highlight:
-            storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.35), range: range)
+            // Shared constant with `InlineRenderer.render(.highlight)`
+            // so the converter's round-trip detection recognizes the
+            // background color on the way back.
+            toggleColorAttribute(.backgroundColor,
+                                 value: InlineRenderer.highlightColor,
+                                 on: storage, range: range)
         case .code:
             let size = baseFont.pointSize
-            let mono = NSFont.userFixedPitchFont(ofSize: size) ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-            storage.addAttribute(.font, value: mono, range: range)
-            storage.addAttribute(.backgroundColor, value: NSColor.secondaryLabelColor.withAlphaComponent(0.15), range: range)
+            let mono = NSFont.userFixedPitchFont(ofSize: size)
+                ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+            // Code is a binary: either the whole selection is code
+            // or none of it is. Check the first character's font
+            // to decide toggle direction.
+            let firstFont = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont
+            let isActive = firstFont.map {
+                $0.fontDescriptor.symbolicTraits.contains(.monoSpace)
+            } ?? false
+            if isActive {
+                storage.addAttribute(.font, value: baseFont, range: range)
+            } else {
+                storage.addAttribute(.font, value: mono, range: range)
+            }
         case .link:
-            storage.addAttribute(.foregroundColor, value: NSColor.linkColor, range: range)
-            storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            // Link toggling needs its own flow (dialog for URL, etc.)
+            // and is handled by the link-menu path, not this toggle.
+            break
         }
     }
 
-    /// Collapse a run of marker characters to near-zero visual width.
-    /// The characters stay in the field editor's plain string (so that
-    /// `collectCellData()` and `generateMarkdown()` still see them), but
-    /// are drawn with a tiny transparent font — effectively invisible.
-    /// This matches the non-editing cell appearance where markdown
-    /// markers are stripped by `parseInlineMarkdown`.
-    private func hideMarker(in storage: NSTextStorage, range: NSRange) {
-        guard range.location != NSNotFound,
-              range.length > 0,
-              NSMaxRange(range) <= storage.length else { return }
-        let tinyFont = NSFont.systemFont(ofSize: 0.01)
-        storage.addAttribute(.font, value: tinyFont, range: range)
-        storage.addAttribute(.foregroundColor, value: NSColor.clear, range: range)
+    /// Toggle a font trait (bold/italic) on a range by walking font
+    /// runs once, collecting `(subRange, font)` pairs, then flipping
+    /// the trait in a second loop over the collected pairs (no
+    /// second `enumerateAttribute` call). If every run had the trait,
+    /// strip it; otherwise add it. Preserves any non-toggled trait
+    /// (e.g. toggling italic leaves bold alone).
+    private func toggleFontTrait(
+        on storage: NSTextStorage,
+        range: NSRange,
+        baseFont: NSFont,
+        add addMask: NSFontTraitMask,
+        remove removeMask: NSFontTraitMask,
+        isActive: (NSFont) -> Bool
+    ) {
+        let fm = NSFontManager.shared
+        var runs: [(NSRange, NSFont)] = []
+        var allActive = true
+        storage.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+            let font = (value as? NSFont) ?? baseFont
+            if !isActive(font) { allActive = false }
+            runs.append((subRange, font))
+        }
+        for (subRange, font) in runs {
+            let newFont = allActive
+                ? fm.convert(font, toNotHaveTrait: addMask)
+                : fm.convert(font, toHaveTrait: addMask)
+            storage.addAttribute(.font, value: newFont, range: subRange)
+        }
+    }
+
+    /// Toggle an integer attribute (strikethroughStyle, underlineStyle)
+    /// on a range. Active ⇔ every character currently has `value`.
+    private func toggleScalarAttribute(
+        _ key: NSAttributedString.Key,
+        value: Int,
+        on storage: NSTextStorage,
+        range: NSRange
+    ) {
+        var allActive = true
+        storage.enumerateAttribute(key, in: range, options: []) { v, _, _ in
+            if (v as? Int) != value { allActive = false }
+        }
+        if allActive {
+            storage.removeAttribute(key, range: range)
+        } else {
+            storage.addAttribute(key, value: value, range: range)
+        }
+    }
+
+    /// Toggle a color attribute on a range. Active ⇔ every character
+    /// currently has a color equal to `value` within the tolerance
+    /// `InlineRenderer.colorsApproximatelyEqual` uses.
+    private func toggleColorAttribute(
+        _ key: NSAttributedString.Key,
+        value: NSColor,
+        on storage: NSTextStorage,
+        range: NSRange
+    ) {
+        var allActive = true
+        storage.enumerateAttribute(key, in: range, options: []) { v, _, _ in
+            guard let c = v as? NSColor else { allActive = false; return }
+            if !InlineRenderer.colorsApproximatelyEqual(c, value) { allActive = false }
+        }
+        if allActive {
+            storage.removeAttribute(key, range: range)
+        } else {
+            storage.addAttribute(key, value: value, range: range)
+        }
     }
 
     /// Walk up the view hierarchy to locate the owning InlineTableView.

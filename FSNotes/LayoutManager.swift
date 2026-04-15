@@ -313,11 +313,88 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let storageLength = self.textStorage?.length ?? 0
         let storageFullRange = NSRange(location: 0, length: storageLength)
         let safeCharRange = charRange.clamped(to: storageFullRange)
-        if color == NSColor.selectedTextBackgroundColor ||
-           color == NSColor.unemphasizedSelectedTextBackgroundColor ||
-           !isInCodeBlock(characterIndex: safeCharRange.location) {
+        let isSelectionColor =
+            color == NSColor.selectedTextBackgroundColor ||
+            color == NSColor.unemphasizedSelectedTextBackgroundColor
+
+        // Table-attachment selection widening: when the user selects
+        // a range that includes a table attachment character, AppKit
+        // computes the selection rect from the attachment's own cell
+        // size — which for `InlineTableAttachmentCell` stops somewhere
+        // inside the last column, not at the text container's right
+        // edge. Widen each selection rect that covers a table
+        // attachment glyph to fill the full line fragment width.
+        // Rects for non-table lines (paragraphs, headings, etc.) are
+        // left at their original extents so multi-line selections
+        // don't get over-highlighted into the right margin.
+        if isSelectionColor,
+           rectCount > 0,
+           let ts = self.textStorage,
+           let tc = self.textContainers.first {
+            let fullWidth = tc.size.width
+            let padding = tc.lineFragmentPadding
+            let widenedWidth = max(0, fullWidth - padding * 2)
+            var widened = Array(UnsafeBufferPointer(start: rectArray, count: rectCount))
+            var changed = false
+            for i in 0..<rectCount {
+                let r = widened[i]
+                if rectCoversTableAttachment(r, charRange: safeCharRange, in: ts) {
+                    widened[i] = NSRect(
+                        x: padding,
+                        y: r.origin.y,
+                        width: max(r.size.width, widenedWidth),
+                        height: r.size.height
+                    )
+                    changed = true
+                }
+            }
+            if changed {
+                widened.withUnsafeBufferPointer { buf in
+                    super.fillBackgroundRectArray(
+                        buf.baseAddress!, count: rectCount,
+                        forCharacterRange: charRange, color: color
+                    )
+                }
+                return
+            }
+        }
+
+        if isSelectionColor || !isInCodeBlock(characterIndex: safeCharRange.location) {
             super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
         }
+    }
+
+    /// True iff the given selection rect covers a line fragment that
+    /// contains a table-attachment glyph whose character index falls
+    /// within `charRange`. Maps the rect's center point back to a
+    /// glyph index, then asks the text storage whether the
+    /// underlying character is an `InlineTableAttachmentCell`-backed
+    /// attachment.
+    private func rectCoversTableAttachment(
+        _ rect: NSRect,
+        charRange: NSRange,
+        in ts: NSTextStorage
+    ) -> Bool {
+        guard rect.height > 0, rect.width > 0, ts.length > 0 else { return false }
+        let nsString = ts.string as NSString
+        guard let tc = textContainers.first else { return false }
+
+        // Probe the center of the rect. NSLayoutManager maps the
+        // point to the nearest glyph via `glyphIndex(for:in:)`.
+        let probe = NSPoint(x: rect.midX, y: rect.midY)
+        let glyphIdx = glyphIndex(for: probe, in: tc)
+        guard glyphIdx < numberOfGlyphs else { return false }
+        let charIdx = characterIndexForGlyph(at: glyphIdx)
+        guard charIdx >= 0, charIdx < nsString.length else { return false }
+        // The probed character must be within the selection range —
+        // otherwise we'd widen the rect based on a glyph that isn't
+        // actually being highlighted.
+        guard NSLocationInRange(charIdx, charRange) else { return false }
+        // And it must be a table attachment specifically.
+        guard nsString.character(at: charIdx) == 0xFFFC else { return false }
+        guard let att = ts.attribute(.attachment, at: charIdx, effectiveRange: nil) as? NSTextAttachment,
+              let cell = att.attachmentCell else { return false }
+        return cell is TableAttachmentHosting
     }
     
     /// Bullet glyph for a given nesting depth (0 = top level).

@@ -147,7 +147,7 @@ public enum InlineRenderer {
             return render(children, baseAttributes: attrs, note: note)
         case .highlight(let children):
             var attrs = baseAttributes
-            attrs[.backgroundColor] = PlatformColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)
+            attrs[.backgroundColor] = Self.highlightColor
             return render(children, baseAttributes: attrs, note: note)
         }
     }
@@ -337,5 +337,271 @@ public enum InlineRenderer {
         let descriptor = base.fontDescriptor.withSymbolicTraits(traits) ?? base.fontDescriptor
         return PlatformFont(descriptor: descriptor, size: base.pointSize)
         #endif
+    }
+
+    // MARK: - Inverse: NSAttributedString → [Inline]
+
+    /// Convert a rendered `NSAttributedString` back into an inline
+    /// tree. This is the inverse of `render(_:baseAttributes:note:)`
+    /// and is used by the Stage 3 table-cell editing path: the field
+    /// editor's attributed string (which the user types into and
+    /// which the toolbar applies attributes to) is walked run-by-run
+    /// and re-serialized into `[Inline]` so the primitive can update
+    /// the Document.
+    ///
+    /// Mapping rules (inverse of the `render` match above):
+    ///  - Font with bold trait          → `.bold([...])`
+    ///  - Font with italic trait        → `.italic([...])`
+    ///  - `.strikethroughStyle` present → `.strikethrough([...])`
+    ///  - `.underlineStyle` present     → `.underline([...])`
+    ///  - `.backgroundColor` matches highlight → `.highlight([...])`
+    ///  - Monospaced font               → `.code(String)` (non-nesting)
+    ///  - `.link` URL present           → `.link(text: [...], rawDestination: url.absoluteString)`
+    ///  - `\n` characters               → `.rawHTML("<br>")`
+    ///  - Anything else                 → `.text(String)`
+    ///
+    /// Trait nesting is canonical outer-to-inner:
+    /// `.bold(.italic(.strikethrough(.underline(.highlight(.text)))))`.
+    /// Adjacent runs with identical trait sets merge into one text
+    /// node. Runs whose traits differ emit the longest common prefix
+    /// as outer wrappers, so e.g. a paragraph "bold _italic_ more bold"
+    /// round-trips as a single outer `.bold` wrapping three children.
+    public static func inlineTreeFromAttributedString(
+        _ attributed: NSAttributedString
+    ) -> [Inline] {
+        let length = attributed.length
+        if length == 0 { return [] }
+
+        // Split into spans where newline characters break the string
+        // into segments separated by `.rawHTML("<br>")` nodes. Each
+        // non-newline segment is converted independently, then joined.
+        let nsString = attributed.string as NSString
+        var out: [Inline] = []
+        var segmentStart = 0
+        var i = 0
+        while i < length {
+            let ch = nsString.character(at: i)
+            if ch == 0x0A /* \n */ {
+                if i > segmentStart {
+                    let segRange = NSRange(location: segmentStart, length: i - segmentStart)
+                    let seg = attributed.attributedSubstring(from: segRange)
+                    out.append(contentsOf: convertNewlineFreeSegment(seg))
+                }
+                out.append(.rawHTML("<br>"))
+                segmentStart = i + 1
+            }
+            i += 1
+        }
+        if segmentStart < length {
+            let segRange = NSRange(location: segmentStart, length: length - segmentStart)
+            let seg = attributed.attributedSubstring(from: segRange)
+            out.append(contentsOf: convertNewlineFreeSegment(seg))
+        }
+        return out
+    }
+
+    // MARK: - Converter internals
+
+    /// Trait set for a single attributed-string run. Equatable so
+    /// adjacent runs can be grouped by identical traits.
+    private struct RunTraits: Equatable {
+        var bold: Bool = false
+        var italic: Bool = false
+        var strikethrough: Bool = false
+        var underline: Bool = false
+        var highlight: Bool = false
+        var code: Bool = false
+        var link: URL? = nil
+    }
+
+    /// Convert a segment that contains no newline characters into an
+    /// inline tree. Walks runs, computes trait sets, groups adjacent
+    /// runs with identical traits, and emits nested inline wrappers.
+    private static func convertNewlineFreeSegment(
+        _ attributed: NSAttributedString
+    ) -> [Inline] {
+        if attributed.length == 0 { return [] }
+
+        // Phase 1: collect (text, traits) pairs run by run.
+        struct Span {
+            let text: String
+            let traits: RunTraits
+        }
+        var spans: [Span] = []
+        attributed.enumerateAttributes(
+            in: NSRange(location: 0, length: attributed.length),
+            options: []
+        ) { attrs, range, _ in
+            let text = (attributed.string as NSString).substring(with: range)
+            let traits = traitsFromAttributes(attrs)
+            // Merge with the previous span if traits match — keeps
+            // the downstream tree shallow when the attributed string
+            // has unnecessary run breaks.
+            if let last = spans.last, last.traits == traits {
+                spans[spans.count - 1] = Span(text: last.text + text, traits: traits)
+            } else {
+                spans.append(Span(text: text, traits: traits))
+            }
+        }
+        if spans.isEmpty { return [] }
+
+        // Phase 2: build the inline tree. Code and link traits are
+        // "leaf" wrappers — they cannot nest formatting inside, so
+        // runs with those traits emit terminal nodes. Other traits
+        // wrap each other in canonical outer-to-inner order.
+        var result: [Inline] = []
+        for span in spans {
+            result.append(inlineFromSpan(text: span.text, traits: span.traits))
+        }
+        // Phase 3: fuse adjacent inline nodes whose outermost wrapper
+        // is the same, so that e.g. ".bold(a) .bold(b)" becomes
+        // ".bold([a, b])". This preserves the nesting shape the
+        // original inline tree had before rendering.
+        return fuseAdjacent(result)
+    }
+
+    /// Extract a `RunTraits` value from an attribute dictionary. All
+    /// trait detection happens here so `convertNewlineFreeSegment`
+    /// stays simple.
+    private static func traitsFromAttributes(
+        _ attrs: [NSAttributedString.Key: Any]
+    ) -> RunTraits {
+        var t = RunTraits()
+        if let font = attrs[.font] as? PlatformFont {
+            #if os(OSX)
+            let symbolicTraits = font.fontDescriptor.symbolicTraits
+            if symbolicTraits.contains(.bold)   { t.bold = true }
+            if symbolicTraits.contains(.italic) { t.italic = true }
+            if symbolicTraits.contains(.monoSpace) { t.code = true }
+            #else
+            let symbolicTraits = font.fontDescriptor.symbolicTraits
+            if symbolicTraits.contains(.traitBold)      { t.bold = true }
+            if symbolicTraits.contains(.traitItalic)    { t.italic = true }
+            if symbolicTraits.contains(.traitMonoSpace) { t.code = true }
+            #endif
+        }
+        if let style = attrs[.strikethroughStyle] as? Int, style != 0 {
+            t.strikethrough = true
+        }
+        if let style = attrs[.underlineStyle] as? Int, style != 0 {
+            t.underline = true
+        }
+        if let bg = attrs[.backgroundColor] as? PlatformColor {
+            if isHighlightColor(bg) { t.highlight = true }
+        }
+        if let url = attrs[.link] as? URL {
+            t.link = url
+        }
+        return t
+    }
+
+    /// The highlight background color emitted by `render(.highlight)`.
+    /// Single source of truth — also consumed by the table cell
+    /// formatting toolbar path in `TableRenderController` and by
+    /// `isHighlightColor` below.
+    public static let highlightColor = PlatformColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)
+
+    /// True iff `a` and `b` are the same color within a 0.02-per-
+    /// component tolerance. The tolerance absorbs the small RGBA
+    /// drift that color-space conversions introduce on the way
+    /// through AppKit. Used by the converter (highlight detection)
+    /// and by `TableRenderController`'s attribute-toggle path.
+    public static func colorsApproximatelyEqual(_ a: PlatformColor, _ b: PlatformColor) -> Bool {
+        #if os(OSX)
+        guard let aRGB = a.usingColorSpace(.sRGB),
+              let bRGB = b.usingColorSpace(.sRGB) else { return false }
+        let eps: CGFloat = 0.02
+        return abs(aRGB.redComponent - bRGB.redComponent) < eps
+            && abs(aRGB.greenComponent - bRGB.greenComponent) < eps
+            && abs(aRGB.blueComponent - bRGB.blueComponent) < eps
+            && abs(aRGB.alphaComponent - bRGB.alphaComponent) < eps
+        #else
+        var ar: CGFloat = 0, ag: CGFloat = 0, ab: CGFloat = 0, aa: CGFloat = 0
+        a.getRed(&ar, green: &ag, blue: &ab, alpha: &aa)
+        var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+        b.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
+        let eps: CGFloat = 0.02
+        return abs(ar - br) < eps && abs(ag - bg) < eps
+            && abs(ab - bb) < eps && abs(aa - ba) < eps
+        #endif
+    }
+
+    private static func isHighlightColor(_ color: PlatformColor) -> Bool {
+        return colorsApproximatelyEqual(color, highlightColor)
+    }
+
+    /// Build a single inline node from a run's text + traits. Leaf
+    /// wrappers (code, link) terminate the recursion; container
+    /// wrappers (bold → italic → strike → underline → highlight) are
+    /// applied in canonical order.
+    private static func inlineFromSpan(text: String, traits: RunTraits) -> Inline {
+        // Code is a leaf trait — it stores a String directly and
+        // cannot host other inline formatting. If a run has code +
+        // other traits, code wins and the others are dropped, which
+        // matches CommonMark semantics (inline code is verbatim).
+        if traits.code {
+            return .code(text)
+        }
+        // Link is a wrapper whose inner content can still carry
+        // bold/italic/etc. Peel off the link trait and recurse.
+        if let url = traits.link {
+            var inner = traits
+            inner.link = nil
+            let innerNode = inlineFromSpan(text: text, traits: inner)
+            return .link(text: [innerNode], rawDestination: url.absoluteString)
+        }
+        // Canonical wrapping order: bold outer, then italic, strike,
+        // underline, highlight. Innermost is `.text(text)`.
+        var node: Inline = .text(text)
+        if traits.highlight     { node = .highlight([node]) }
+        if traits.underline     { node = .underline([node]) }
+        if traits.strikethrough { node = .strikethrough([node]) }
+        if traits.italic        { node = .italic([node]) }
+        if traits.bold          { node = .bold([node]) }
+        return node
+    }
+
+    /// Fuse adjacent siblings whose outermost wrapper matches, so
+    /// that a sequence `[.bold([.text("a")]), .bold([.text("b")])]`
+    /// collapses to `[.bold([.text("a"), .text("b")])]`. Applied
+    /// recursively to the children of the fused wrapper so nested
+    /// shapes (bold containing italic) round-trip correctly.
+    private static func fuseAdjacent(_ nodes: [Inline]) -> [Inline] {
+        var out: [Inline] = []
+        for node in nodes {
+            guard let last = out.last else {
+                out.append(node)
+                continue
+            }
+            if let fused = fuseIfSameShape(last, node) {
+                out.removeLast()
+                out.append(fused)
+            } else {
+                out.append(node)
+            }
+        }
+        return out
+    }
+
+    /// If `a` and `b` have the same outermost wrapper kind, return a
+    /// new wrapper whose children are the concatenation of theirs
+    /// (recursively fused). Otherwise return nil.
+    private static func fuseIfSameShape(_ a: Inline, _ b: Inline) -> Inline? {
+        switch (a, b) {
+        case (.bold(let ac, let am), .bold(let bc, let bm)) where am == bm:
+            return .bold(fuseAdjacent(ac + bc), marker: am)
+        case (.italic(let ac, let am), .italic(let bc, let bm)) where am == bm:
+            return .italic(fuseAdjacent(ac + bc), marker: am)
+        case (.strikethrough(let ac), .strikethrough(let bc)):
+            return .strikethrough(fuseAdjacent(ac + bc))
+        case (.underline(let ac), .underline(let bc)):
+            return .underline(fuseAdjacent(ac + bc))
+        case (.highlight(let ac), .highlight(let bc)):
+            return .highlight(fuseAdjacent(ac + bc))
+        case (.text(let a1), .text(let a2)):
+            return .text(a1 + a2)
+        default:
+            return nil
+        }
     }
 }

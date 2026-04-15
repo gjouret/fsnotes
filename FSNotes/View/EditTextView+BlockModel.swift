@@ -262,6 +262,15 @@ extension EditTextView {
         // transient layout changes from saving wrong scroll positions.
         isScrollPositionSaverLocked = true
 
+        // Count attachment characters in the pre-splice range so the
+        // orphan sweep below can be gated on whether the splice
+        // actually removed any. Typical cell-edit splices touch zero
+        // attachment chars, so the sweep becomes a no-op — saving
+        // a per-keystroke full-storage attachment walk.
+        let preSpliceAttachmentCount = countAttachmentCharacters(
+            in: result.spliceRange, of: storage
+        )
+
         textStorageProcessor?.isRendering = true
         storage.beginEditing()
         storage.replaceCharacters(
@@ -269,6 +278,10 @@ extension EditTextView {
             with: result.spliceReplacement
         )
         storage.endEditing()
+
+        let postSpliceAttachmentCount = countAttachmentCharacters(
+            in: result.spliceReplacement
+        )
 
         // Re-apply paragraphStyle attribute from the new projection onto
         // storage. narrowSplice() does CHARACTER-only diffing (intentional
@@ -349,10 +362,19 @@ extension EditTextView {
         isScrollPositionSaverLocked = false
         needsDisplay = true
 
-        // Clean up orphaned inline PDF subviews after edits that may
-        // have removed attachment characters from the text storage.
-        removeOrphanedInlinePDFViews()
-        removeOrphanedInlineQuickLookViews()
+        // Clean up orphaned inline PDF / QuickLook / table subviews
+        // ONLY when the splice actually removed attachment
+        // characters. The common per-keystroke cell edit has a
+        // splice that doesn't touch any attachment, so this gate
+        // skips an O(subviews + storage.length) walk on the hot
+        // path. Widgets get added as direct subviews by their
+        // attachment cell's draw() method and the splice does not
+        // automatically tear them out when the attachment disappears.
+        if postSpliceAttachmentCount < preSpliceAttachmentCount {
+            removeOrphanedInlinePDFViews()
+            removeOrphanedInlineQuickLookViews()
+            removeOrphanedInlineTableViews()
+        }
 
         // Mark note as modified.
         note?.cacheHash = nil
@@ -371,6 +393,32 @@ extension EditTextView {
             }
             um.setActionName(actionName)
         }
+    }
+
+    /// Count U+FFFC attachment characters in the given range of a
+    /// text storage. Used by `applyEditResultWithUndo` to gate the
+    /// orphan-view cleanup on whether the splice actually removed
+    /// an attachment.
+    private func countAttachmentCharacters(in range: NSRange, of storage: NSTextStorage) -> Int {
+        let s = storage.string as NSString
+        let end = min(NSMaxRange(range), s.length)
+        var count = 0
+        if range.location < end {
+            for i in range.location..<end {
+                if s.character(at: i) == 0xFFFC { count += 1 }
+            }
+        }
+        return count
+    }
+
+    /// Count U+FFFC attachment characters in an attributed string.
+    private func countAttachmentCharacters(in attributed: NSAttributedString) -> Int {
+        let s = attributed.string as NSString
+        var count = 0
+        for i in 0..<s.length {
+            if s.character(at: i) == 0xFFFC { count += 1 }
+        }
+        return count
     }
 
     /// Restore a previous block-model state (used by undo/redo).
@@ -413,6 +461,7 @@ extension EditTextView {
 
         removeOrphanedInlinePDFViews()
         removeOrphanedInlineQuickLookViews()
+        removeOrphanedInlineTableViews()
 
         note?.cacheHash = nil
 
@@ -624,48 +673,22 @@ extension EditTextView {
         guard let projection = documentProjection else {
             return nil
         }
-
-        var doc = projection.document
-
-        // Live InlineTableView cells hold the user's in-flight edits that
-        // have NOT been pushed back into the projection document (the
-        // projection is immutable and we don't round-trip table edits
-        // through EditingOps on every keystroke — that would rebuild the
-        // attachment and lose the live cell state).
+        // Pure serialization: the Document is the single source of
+        // truth at save time. Every mutation (typing, formatting,
+        // cell edits) must have already been routed through
+        // `EditingOps` primitives, which produce a new Document and
+        // a new projection. If a change didn't go through that path,
+        // it shouldn't survive a save.
         //
-        // At save time, collect the current markdown from every live table
-        // in storage order and patch the matching Block.table's `raw`
-        // field. MarkdownSerializer emits tables from `raw` verbatim, so
-        // updating `raw` is sufficient for the on-disk file.
-        if let storage = textStorage {
-            var liveTableMarkdowns: [String] = []
-            let fullRange = NSRange(location: 0, length: storage.length)
-            storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
-                guard let att = value as? NSTextAttachment,
-                      let cell = att.attachmentCell as? InlineTableAttachmentCell else { return }
-                cell.inlineTableView.collectCellData()
-                liveTableMarkdowns.append(cell.inlineTableView.generateMarkdown())
-            }
-
-            if !liveTableMarkdowns.isEmpty {
-                var tableIdx = 0
-                for i in 0..<doc.blocks.count {
-                    guard tableIdx < liveTableMarkdowns.count else { break }
-                    if case .table(let header, let alignments, let rows, _) = doc.blocks[i] {
-                        let newRaw = liveTableMarkdowns[tableIdx]
-                        doc.blocks[i] = .table(
-                            header: header,
-                            alignments: alignments,
-                            rows: rows,
-                            raw: newRaw
-                        )
-                        tableIdx += 1
-                    }
-                }
-            }
-        }
-
-        return MarkdownSerializer.serialize(doc)
+        // This used to walk live `InlineTableView` attachments and
+        // rewrite `Block.table.raw` from each widget's current state.
+        // That was the post-hoc save-path patch described in
+        // CLAUDE.md "Rules That Exist Because I Broke Them" — it was
+        // the cautionary tale for why views must never be read back
+        // into data. The walk has been deleted along with the
+        // `collectCellData` / `notifyChanged` / `generateMarkdown`
+        // path in `InlineTableView`.
+        return MarkdownSerializer.serialize(projection.document)
     }
 
     // MARK: - List FSM transition handling
@@ -1066,6 +1089,139 @@ extension EditTextView {
         guard textStorage != nil, documentProjection != nil else { return }
         applyEditResultWithUndo(result, actionName: actionName)
     }
+
+    // MARK: - Table cell editing
+
+    /// Push a widget-constructed `Block.table` back into the editor's
+    /// projection after a structural mutation (add/remove row,
+    /// add/remove column, move, alignment change). Swaps one block
+    /// in the Document without calling `storage.replaceCharacters` —
+    /// the attachment character's storage position is unchanged
+    /// (the table renders as a single attachment char regardless of
+    /// shape), so a fresh projection is all that's needed.
+    func pushTableBlockToProjection(
+        from tableView: InlineTableView,
+        newBlock: Block
+    ) {
+        guard let projection = documentProjection else { return }
+        guard let blockIndex = blockIndex(for: tableView) else {
+            bmLog("⛔ pushTableBlockToProjection: widget not found in storage")
+            return
+        }
+
+        var newDoc = projection.document
+        newDoc.blocks[blockIndex] = newBlock
+        let newProjection = DocumentProjection(
+            document: newDoc,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note
+        )
+        documentProjection = newProjection
+    }
+
+    /// Find the `Document` block index for the table widget by
+    /// walking storage's attachment characters. Used by both
+    /// `pushTableBlockToProjection` (structural mutations) and
+    /// `applyTableCellInlineEdit` (cell content edits) to avoid
+    /// duplicating the same attachment → block-index scan.
+    private func blockIndex(for tableView: InlineTableView) -> Int? {
+        guard let projection = documentProjection,
+              let storage = textStorage else { return nil }
+        var found: Int? = nil
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, attRange, stop in
+            guard let att = value as? NSTextAttachment,
+                  let cell = att.attachmentCell as? InlineTableAttachmentCell,
+                  cell.inlineTableView === tableView else { return }
+            if let (blockIdx, _) = projection.blockContaining(storageIndex: attRange.location) {
+                found = blockIdx
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
+    /// Stage 3 cell-edit entry point: push an inline tree directly
+    /// into the cell at `location` inside `tableView`'s table block.
+    /// Called from `controlTextDidChange` on every keystroke and
+    /// from the toolbar formatting path after attribute toggles.
+    ///
+    /// The attachment character in storage stays in place — no
+    /// `storage.replaceCharacters` call. The widget receives the
+    /// updated block via `applyBlockUpdate`, and save is marked
+    /// (but not fired synchronously; the existing periodic save
+    /// flushes to disk off the keystroke hot path).
+    @discardableResult
+    func applyTableCellInlineEdit(
+        from tableView: InlineTableView,
+        at location: EditingOps.TableCellLocation,
+        inline: [Inline]
+    ) -> Bool {
+        guard let projection = documentProjection else {
+            bmLog("⛔ applyTableCellInlineEdit: no projection")
+            return false
+        }
+        guard let blockIndex = blockIndex(for: tableView) else {
+            bmLog("⛔ applyTableCellInlineEdit: widget not found in storage")
+            return false
+        }
+
+        // Early-return when the new inline tree equals the existing
+        // cell. Arrow keys and other selection-only events still
+        // fire `controlTextDidChange`, so without this check the
+        // full primitive + save pipeline runs for every caret move.
+        if case .table(let header, _, let rows, _) = projection.document.blocks[blockIndex] {
+            let existing: [Inline]?
+            switch location {
+            case .header(let col):
+                existing = col < header.count ? header[col].inline : nil
+            case .body(let row, let col):
+                existing = (row < rows.count && col < rows[row].count) ? rows[row][col].inline : nil
+            }
+            if let existing = existing, existing == inline {
+                return true
+            }
+        }
+
+        let result: EditResult
+        do {
+            result = try EditingOps.replaceTableCellInline(
+                blockIndex: blockIndex,
+                at: location,
+                inline: inline,
+                in: projection
+            )
+        } catch {
+            bmLog("⚠️ applyTableCellInlineEdit: replaceTableCellInline threw \(error)")
+            return false
+        }
+
+        documentProjection = result.newProjection
+        hasUserEdits = true
+
+        guard blockIndex < result.newProjection.document.blocks.count,
+              case .table = result.newProjection.document.blocks[blockIndex] else {
+            bmLog("⛔ applyTableCellInlineEdit: new block at \(blockIndex) is not a table")
+            return false
+        }
+        tableView.applyBlockUpdate(result.newProjection.document.blocks[blockIndex])
+        // Intentionally NOT calling save() here — per-keystroke
+        // synchronous disk writes are the most expensive thing in the
+        // edit hot path. `hasUserEdits` signals the existing periodic
+        // save trigger (note-switch, blur, quit) to persist.
+        return true
+    }
+
+    // NOTE: the former `applyTableCellEdit(from:at:newSourceText:)`
+    // entry point — which took a raw markdown string and forwarded
+    // to `EditingOps.replaceTableCell` — has been deleted. Stage 3
+    // routes every cell edit through `applyTableCellInlineEdit`
+    // (which takes an `[Inline]` tree directly), so the raw-string
+    // path has zero live callers. The `EditingOps.replaceTableCell`
+    // primitive is still retained as a convenience for paste and
+    // test paths, and it now forwards to `replaceTableCellInline`.
+
 
     /// Insert an image (or PDF) attachment block at the current cursor
     /// position via the block model. Returns true if the block-model

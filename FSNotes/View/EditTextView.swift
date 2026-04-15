@@ -13,14 +13,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var editorViewController: EditorViewController?
     public var textStorageProcessor: TextStorageProcessor?
 
-    /// Materialize live table widget state back into the attachment attributes
-    /// before a save reads the editor storage.
-    func prepareRenderedTablesForSave() {
-        tableController.prepareRenderedTablesForSave()
-    }
-
     /// Explicit save boundary for the editor. Reading the storage remains pure;
-    /// only this method is allowed to prepare live rendered widgets first.
+    /// no view-state materialization happens here.
     ///
     /// SAFETY: When the block-model pipeline is active, the textStorage
     /// contains RENDERED content with no markdown markers. We MUST
@@ -32,7 +26,6 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         if let markdown = serializeViaBlockModel() {
             return NSAttributedString(string: markdown)
         }
-        prepareRenderedTablesForSave()
         return attributedString()
     }
 
@@ -567,7 +560,60 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             menu?.removeItem(removeLink)
         }
 
+        // If the right-click lands on or immediately adjacent to a
+        // table attachment, add a "Delete Table" item. This gives the
+        // user a way to remove a table without having to select it
+        // with the keyboard first (the delete-key path works too, via
+        // `EditingOps.delete` with the block's full span).
+        if let deleteItem = makeDeleteTableMenuItemIfNeeded(for: event) {
+            menu?.insertItem(NSMenuItem.separator(), at: 0)
+            menu?.insertItem(deleteItem, at: 0)
+        }
+
         return menu
+    }
+
+    /// If `event`'s location falls inside a `.table` block, return an
+    /// `NSMenuItem` whose action removes that block (routing through
+    /// `EditingOps.delete` so the removal is an undoable block-model
+    /// edit). Otherwise return nil and the menu is unchanged.
+    ///
+    /// The block index is captured on `representedObject` of the
+    /// menu item so the action handler doesn't need to re-run the
+    /// hit test.
+    private func makeDeleteTableMenuItemIfNeeded(for event: NSEvent) -> NSMenuItem? {
+        guard let projection = documentProjection,
+              let storage = textStorage else { return nil }
+        let pointInView = convert(event.locationInWindow, from: nil)
+        let charIdx = characterIndexForInsertion(at: pointInView)
+        guard charIdx >= 0, charIdx < storage.length else { return nil }
+        guard let (blockIdx, _) = projection.blockContaining(storageIndex: charIdx) else {
+            return nil
+        }
+        guard case .table = projection.document.blocks[blockIdx] else { return nil }
+
+        let item = NSMenuItem(
+            title: NSLocalizedString("Delete Table", comment: ""),
+            action: #selector(deleteTableFromContextMenu(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = blockIdx
+        return item
+    }
+
+    /// Menu-action handler for "Delete Table". Reads the block index
+    /// from `sender.representedObject`, re-derives the block's span
+    /// against the current projection, and calls the same
+    /// `EditingOps.delete` path the keyboard delete key uses.
+    @objc private func deleteTableFromContextMenu(_ sender: NSMenuItem) {
+        guard let blockIdx = sender.representedObject as? Int,
+              let projection = documentProjection,
+              blockIdx < projection.blockSpans.count else { return }
+        let span = projection.blockSpans[blockIdx]
+        // Route through the standard delete path so the operation is
+        // undoable and the splice goes through `applyEditResultWithUndo`.
+        _ = handleEditViaBlockModel(in: span, replacementString: "")
     }
 
     /**

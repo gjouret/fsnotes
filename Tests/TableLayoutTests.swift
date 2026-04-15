@@ -15,8 +15,11 @@ class TableLayoutTests: XCTestCase {
 
     private func makeTable(headers: [String], rows: [[String]], containerWidth: CGFloat = 600) -> InlineTableView {
         let table = InlineTableView()
-        table.headers = headers
-        table.rows = rows
+        // The widget now stores TableCell values (inline trees). Parse
+        // each string-cell through `TableCell.parsing` so tests written
+        // against the old string API keep their intent.
+        table.headers = headers.map { TableCell.parsing($0) }
+        table.rows = rows.map { row in row.map { TableCell.parsing($0) } }
         table.containerWidth = containerWidth
         return table
     }
@@ -184,7 +187,7 @@ class TableLayoutTests: XCTestCase {
         // any copy button subview. Verify the button is NOT a subview.
         let table = makeTable(headers: ["A", "B"], rows: [["1", "2"]])
         table.focusState = .hovered
-        table.rebuild(skipCollect: true)
+        table.rebuild()
 
         let buttons = table.subviews.compactMap { $0 as? GlassButton }
         XCTAssertTrue(buttons.isEmpty,
@@ -194,7 +197,7 @@ class TableLayoutTests: XCTestCase {
     func test_copyButton_absentWhenUnfocused() {
         let table = makeTable(headers: ["A", "B"], rows: [["1", "2"]])
         table.focusState = .unfocused
-        table.rebuild(skipCollect: true)
+        table.rebuild()
 
         // Only the scrollView should be a subview, no GlassButtons
         let buttons = table.subviews.compactMap { $0 as? GlassButton }
@@ -210,7 +213,7 @@ class TableLayoutTests: XCTestCase {
             containerWidth: 400
         )
         table.focusState = .unfocused
-        table.rebuild(skipCollect: true)
+        table.rebuild()
         snapshotTable(table, filename: "table_unfocused.png")
     }
 
@@ -221,7 +224,7 @@ class TableLayoutTests: XCTestCase {
             containerWidth: 400
         )
         table.focusState = .editing
-        table.rebuild(skipCollect: true)
+        table.rebuild()
         snapshotTable(table, filename: "table_editing.png")
     }
 
@@ -232,7 +235,7 @@ class TableLayoutTests: XCTestCase {
             containerWidth: 400
         )
         table.focusState = .hovered
-        table.rebuild(skipCollect: true)
+        table.rebuild()
         snapshotTable(table, filename: "table_hovered.png")
     }
 }

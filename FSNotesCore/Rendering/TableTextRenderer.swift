@@ -22,6 +22,15 @@ import AppKit
 import UIKit
 #endif
 
+// MARK: - Table Attachment Cell Marker
+
+/// Marker protocol conformed to by the app target's
+/// `InlineTableAttachmentCell`. Lives in `FSNotesCore` so that
+/// `LayoutManager` and other framework code can identify
+/// table-hosting attachment cells via `cell is TableAttachmentHosting`
+/// without a cross-module type dependency.
+public protocol TableAttachmentHosting: AnyObject {}
+
 // MARK: - Table Block Attachment
 
 /// NSTextAttachment subclass that carries the parsed table data.
@@ -30,12 +39,12 @@ import UIKit
 /// after fill — DocumentRenderer (in FSNotesCore) can't reference
 /// InlineTableView (in the app target).
 public class TableBlockAttachment: NSTextAttachment {
-    public let header: [String]
-    public let rows: [[String]]
+    public let header: [TableCell]
+    public let rows: [[TableCell]]
     public let alignments: [TableAlignment]
     public let rawMarkdown: String
 
-    public init(header: [String], rows: [[String]], alignments: [TableAlignment], rawMarkdown: String) {
+    public init(header: [TableCell], rows: [[TableCell]], alignments: [TableAlignment], rawMarkdown: String) {
         self.header = header
         self.rows = rows
         self.alignments = alignments
@@ -54,8 +63,8 @@ public class TableBlockAttachment: NSTextAttachment {
 
     public override var hash: Int {
         var h = Hasher()
-        h.combine(header)
-        h.combine(rows)
+        for cell in header { h.combine(cell.rawText) }
+        for row in rows { for cell in row { h.combine(cell.rawText) } }
         return h.finalize()
     }
 }
@@ -68,8 +77,8 @@ public enum TableTextRenderer {
     /// The attachment stores the parsed data; the app target
     /// configures the visual cell after fillViaBlockModel.
     public static func render(
-        header: [String],
-        rows: [[String]],
+        header: [TableCell],
+        rows: [[TableCell]],
         alignments: [TableAlignment],
         rawMarkdown: String,
         bodyFont: PlatformFont
