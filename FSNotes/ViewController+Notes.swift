@@ -479,11 +479,25 @@ extension ViewController {
     public func updateCounters(note: Note? = nil, charRange: NSRange? = nil) {
         guard let note else {
             self.counter.stringValue = String()
+            counterDebounceTimer?.invalidate()
+            counterDebounceTimer = nil
             return
         }
 
-        counterQueue.cancelAllOperations()
+        // Debounce (Perf plan #1c): arrow-key scrolling fires
+        // `textViewDidChangeSelection` on every cursor move, and the
+        // previous implementation queued+cancelled a BlockOperation on
+        // each call. Coalesce into one count after 100ms of inactivity.
+        counterDebounceTimer?.invalidate()
+        counterDebounceTimer = Timer.scheduledTimer(
+            withTimeInterval: 0.1, repeats: false
+        ) { [weak self] _ in
+            self?.runCounterUpdate(note: note, charRange: charRange)
+        }
+    }
 
+    private func runCounterUpdate(note: Note, charRange: NSRange?) {
+        counterQueue.cancelAllOperations()
         let operation = BlockOperation()
         operation.addExecutionBlock { [weak self] in
             let title: String
@@ -492,16 +506,11 @@ extension ViewController {
             } else {
                 title = "W: \(note.content.string.countWords()) | C: \(note.content.string.countChars())"
             }
-
-            if operation.isCancelled {
-                return
-            }
-
+            if operation.isCancelled { return }
             DispatchQueue.main.async {
                 self?.counter.stringValue = title
             }
         }
-
         counterQueue.addOperation(operation)
     }
 

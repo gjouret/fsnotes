@@ -182,6 +182,11 @@ class ViewController: EditorViewController,
     @IBOutlet weak var counter: NSTextField!
     @IBOutlet weak var notesCounterViewHeight: NSLayoutConstraint!
     @IBOutlet weak var notesCounter: NSTextField!
+    /// Debounce timer for word/char counter updates (Perf plan #1c).
+    /// Cursor moves used to enqueue+cancel a BlockOperation on every
+    /// arrow key; this timer coalesces rapid cursor events into a
+    /// single count after 100ms of inactivity.
+    var counterDebounceTimer: Timer?
     
     // MARK: - Overrides
     

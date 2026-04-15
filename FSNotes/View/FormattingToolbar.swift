@@ -12,6 +12,17 @@ class FormattingToolbar: NSView {
     private var stackView: NSStackView!
     private var buttons: [String: NSButton] = [:]
 
+    /// Memoization state for `updateButtonStates` (Perf plan #1). Arrow
+    /// keys fire `textViewDidChangeSelection` on every cursor move; the
+    /// unmemoized path walks `processor.blocks` and reads multiple
+    /// storage attributes per call. Caching by (projection identity,
+    /// cursor block index, paragraph range) lets us skip the work
+    /// entirely while the cursor stays in the same block.
+    private weak var cachedProjectionAttributed: NSAttributedString?
+    private var cachedBlockIndex: Int = -1
+    private var cachedParagraphRange: NSRange = .init(location: NSNotFound, length: 0)
+    private var cachedTypingAttributesSnapshot: [NSAttributedString.Key: NSObject] = [:]
+
     static let toolbarHeight: CGFloat = 32
 
     override init(frame frameRect: NSRect) {
@@ -164,6 +175,27 @@ class FormattingToolbar: NSView {
 
     // MARK: - Button State Updates
 
+    /// Capture only the inline-format-relevant bits of typingAttributes
+    /// (font, strikethrough, underline, background color). Used as the
+    /// memoization key for `updateButtonStates` so cursor moves within
+    /// the same block don't redo the same work.
+    private func toolbarTypingAttributesSnapshot(_ editor: EditTextView) -> [NSAttributedString.Key: NSObject] {
+        var snap: [NSAttributedString.Key: NSObject] = [:]
+        if let font = editor.typingAttributes[.font] as? NSFont {
+            snap[.font] = font
+        }
+        if let s = editor.typingAttributes[.strikethroughStyle] as? NSNumber {
+            snap[.strikethroughStyle] = s
+        }
+        if let u = editor.typingAttributes[.underlineStyle] as? NSNumber {
+            snap[.underlineStyle] = u
+        }
+        if let bg = editor.typingAttributes[.backgroundColor] as? NSColor {
+            snap[.backgroundColor] = bg
+        }
+        return snap
+    }
+
     func updateButtonStates(for editor: EditTextView) {
         // If the field editor is currently inside a table cell, reflect
         // the cell's formatting at the cursor rather than the outer
@@ -189,12 +221,44 @@ class FormattingToolbar: NSView {
         }
         let location = range.location
 
-        // Determine heading level from block model (reliable) instead of font size (fragile).
-        // Use paragraph range intersection — the cursor at end-of-line is past block.range
-        // but still logically on the heading line.
-        var headingLevel = 0
+        // Fast-path memoization (Perf plan #1): when the cursor stayed
+        // inside the same block of the same projection AND typing
+        // attributes haven't changed, the toolbar state is identical
+        // to the last call. Skip everything.
         let paragraphRange = (storage.string as NSString).paragraphRange(for: NSRange(location: location, length: 0))
-        if let processor = editor.textStorageProcessor {
+        let projectionAttr = editor.documentProjection?.rendered.attributed
+        let currentCursorBlock: Int = {
+            if let proj = editor.documentProjection,
+               let (bIdx, _) = proj.blockContaining(storageIndex: location) {
+                return bIdx
+            }
+            return -1
+        }()
+        let typingSnapshot = toolbarTypingAttributesSnapshot(editor)
+        if projectionAttr != nil,
+           cachedProjectionAttributed === projectionAttr,
+           cachedBlockIndex == currentCursorBlock,
+           NSEqualRanges(cachedParagraphRange, paragraphRange),
+           cachedTypingAttributesSnapshot == typingSnapshot {
+            return
+        }
+        cachedProjectionAttributed = projectionAttr
+        cachedBlockIndex = currentCursorBlock
+        cachedParagraphRange = paragraphRange
+        cachedTypingAttributesSnapshot = typingSnapshot
+
+        // Determine heading level. Prefer the block-model lookup (O(log N)
+        // via binary search in `blockContaining`) over walking the
+        // source-mode `processor.blocks` array. The source-mode path is
+        // kept as a fallback for the legacy pipeline.
+        var headingLevel = 0
+        if let proj = editor.documentProjection,
+           currentCursorBlock >= 0,
+           currentCursorBlock < proj.document.blocks.count {
+            if case .heading(let level, _) = proj.document.blocks[currentCursorBlock] {
+                headingLevel = level
+            }
+        } else if let processor = editor.textStorageProcessor {
             for block in processor.blocks {
                 guard NSIntersectionRange(paragraphRange, block.range).length > 0 else { continue }
                 switch block.type {

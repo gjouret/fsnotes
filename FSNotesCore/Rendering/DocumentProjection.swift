@@ -102,22 +102,43 @@ public struct DocumentProjection {
     /// end of a paragraph appends to that paragraph.
     public func blockContaining(storageIndex idx: Int) -> (blockIndex: Int, offsetInBlock: Int)? {
         guard idx >= 0 else { return nil }
-        for (i, span) in rendered.blockSpans.enumerated() {
-            let lower = span.location
-            let upper = span.location + span.length
-            if idx >= lower && idx <= upper {
-                return (i, idx - lower)
+
+        let spans = rendered.blockSpans
+        guard !spans.isEmpty else { return nil }
+
+        // Binary search: spans are sorted by `location` and are
+        // non-overlapping (each block's span ends before the next block's
+        // starts, modulo inter-block separators). Find the largest span
+        // whose `location` is ≤ idx, then check that span's range. This
+        // replaces the O(N) linear scan that ran on every keystroke via
+        // `updateButtonStates`, `syncTypingAttributesToCursorBlock`, etc.
+        // (Perf plan item #1.)
+        var lo = 0
+        var hi = spans.count - 1
+        var candidate = 0
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if spans[mid].location <= idx {
+                candidate = mid
+                lo = mid + 1
+            } else {
+                hi = mid - 1
             }
         }
+        let span = spans[candidate]
+        let upper = span.location + span.length
+        if idx >= span.location && idx <= upper {
+            return (candidate, idx - span.location)
+        }
+
         // Cursor past all block spans but still within the rendered string
         // (e.g. on a trailing newline or at attributed.length). Map to the
         // last block so that operations like toggleTodoList work when the
         // cursor is at the document end.
-        if let lastSpan = rendered.blockSpans.last,
-           idx > lastSpan.location + lastSpan.length,
+        let lastSpan = spans[spans.count - 1]
+        if idx > lastSpan.location + lastSpan.length,
            idx <= rendered.attributed.length {
-            let lastIndex = rendered.blockSpans.count - 1
-            return (lastIndex, lastSpan.length)
+            return (spans.count - 1, lastSpan.length)
         }
         return nil
     }
