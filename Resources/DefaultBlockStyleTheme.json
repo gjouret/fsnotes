@@ -1,0 +1,56 @@
+{
+    "noteFontName": null,
+    "noteFontSize": 14,
+    "codeFontName": "Source Code Pro",
+    "codeFontSize": 14,
+
+    "editorLineSpacing": 4,
+    "lineWidth": 1000,
+    "marginSize": 20,
+    "imagesWidth": 450,
+
+    "headingFontScales": [2.0, 1.7, 1.4, 1.2, 1.1, 1.05],
+    "headingSpacingBefore": [1.2, 1.0, 0.9, 0.8, 0.7, 0.6],
+    "headingSpacingAfter": [0.67, 0.5, 0.4, 0.35, 0.3, 0.25],
+
+    "paragraphSpacing": 12,
+
+    "codeBlockLineSpacing": 0,
+    "codeBlockParagraphSpacing": 16,
+    "codeBlockSpacingBefore": 0,
+
+    "listIndentScale": 1.8,
+    "listCellScale": 2.0,
+    "listBulletSizeScale": 0.7,
+    "listNumberDrawScale": 1.0,
+    "listCheckboxDrawScale": 1.2,
+    "listBulletStrokeInset": 0.5,
+    "listBulletStrokeWidth": 1.0,
+    "listBlockSpacing": 16,
+
+    "blockquoteBarInitialOffset": 2,
+    "blockquoteBarSpacing": 10,
+    "blockquoteBarWidth": 4,
+    "blockquoteGapAfterBars": 4,
+    "blockquoteBlockSpacing": 16,
+
+    "tablePlaceholderWidth": 400,
+    "tablePlaceholderHeight": 100,
+    "tableBlockSpacing": 16,
+
+    "hrBlockSpacing": 16,
+
+    "htmlBlockLineSpacing": 0,
+    "htmlBlockParagraphSpacing": 16,
+    "htmlBlockSpacingBefore": 0,
+
+    "highlightColor": {
+        "red": 1.0,
+        "green": 0.9,
+        "blue": 0.0,
+        "alpha": 0.5
+    },
+
+    "blankLineMinHeight": 0.01,
+    "blankLineMaxHeight": 0.01
+}

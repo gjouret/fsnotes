@@ -715,10 +715,15 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return true
     }
     
-    func refreshLayoutSoftly() {
-        invalidateLayout(forCharacterRange: NSRange(location: 0, length: textStorage?.length ?? 0),
-                                actualCharacterRange: nil)
-                
+    func refreshLayoutSoftly(range: NSRange? = nil) {
+        let target: NSRange
+        if let r = range {
+            target = r
+        } else {
+            target = NSRange(location: 0, length: textStorage?.length ?? 0)
+        }
+        invalidateLayout(forCharacterRange: target, actualCharacterRange: nil)
+
         textContainers.forEach { container in
             container.textView?.needsDisplay = true
         }

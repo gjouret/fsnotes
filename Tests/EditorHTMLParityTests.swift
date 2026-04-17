@@ -1373,4 +1373,20 @@ class EditorHTMLParityTests: XCTestCase {
         // valid markdown; blank-line insertion is a future enhancement.
         assertLiveDocumentRoundTrips(editor, "complex scenario")
     }
+
+    // MARK: - Bug: Heading conversion affects all paragraphs
+
+    func test_headingConversion_onlyAffectsSelectedBlock() {
+        let editor = makeEditor()
+        // Three paragraphs - cursor in middle one, apply H2
+        // Only middle should become heading
+        fill(editor, "First paragraph\n\nSecond paragraph\n\nThird paragraph")
+        
+        // Place cursor in "Second paragraph" (after "First paragraph\n\n" = 17 chars)
+        run([.cursorAt(17), .setHeading(level: 2)], on: editor)
+        
+        // Verify only second paragraph became H2
+        assertEditorMatchesMarkdown(editor, "First paragraph\n\n## Second paragraph\n\nThird paragraph")
+        assertLiveDocumentRoundTrips(editor)
+    }
 }

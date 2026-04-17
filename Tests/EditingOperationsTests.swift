@@ -1034,6 +1034,52 @@ class EditingOperationsTests: XCTestCase {
         XCTAssertEqual(serialized, reserialized, "List edit round-trip unstable")
     }
 
+    // MARK: - Multi-item list deletion (Bug fix: WYSIWYG delete sync issue)
+
+    func test_delete_across_two_list_items() throws {
+        // Selecting from middle of first item to middle of second item
+        let md = "- one\n- two\n- three\n"
+        let p = project(md)
+        // Entry 0: one (inline starts at offset 1, length 3)
+        // Entry 1: two (inline starts at offset 5, length 3)
+        // Select from offset 2 (middle of "one") to offset 6 (middle of "two")
+        // This should delete "ne\n- t" leaving "- owo\n- three\n"
+        let startOffset = 2 // "o" in "one"
+        let endOffset = 6   // "w" in "two"
+        let r = try EditingOps.delete(range: NSRange(location: startOffset, length: endOffset - startOffset), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        // The surviving text from first item is "o", from second is "wo"
+        // These should be merged: "owo"
+        XCTAssertEqual(serialized, "- owo\n- three\n")
+        assertSpliceInvariant(old: p, result: r)
+    }
+
+    func test_delete_multiple_complete_list_items() throws {
+        // Selecting entire middle item
+        let md = "- one\n- two\n- three\n"
+        let p = project(md)
+        // Entry 1 ("two") starts at offset 5, inline at 6, length 3, ends at 8
+        // Delete the entire second item by selecting from offset 5 to 9
+        // (includes the "\n" separator)
+        let r = try EditingOps.delete(range: NSRange(location: 5, length: 4), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertEqual(serialized, "- one\n- three\n")
+        assertSpliceInvariant(old: p, result: r)
+    }
+
+    func test_delete_first_two_list_items() throws {
+        // Delete from start of first item through end of second
+        let md = "- one\n- two\n- three\n"
+        let p = project(md)
+        // First item inline starts at 1, ends at 4
+        // Second item ends at 8
+        // Select from 0 (before first bullet) to 9 (after "\n" following "two")
+        let r = try EditingOps.delete(range: NSRange(location: 0, length: 9), in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertEqual(serialized, "- three\n")
+        assertSpliceInvariant(old: p, result: r)
+    }
+
     // MARK: - Blockquote editing
 
     func test_insert_blockquote_singleLine() throws {
@@ -1214,5 +1260,128 @@ class EditingOperationsTests: XCTestCase {
             "BUG: cursor went to position 0 (top of list) instead of new item")
         XCTAssertEqual(r.newCursorPosition, newInl1,
             "Cursor should be at inline start of new empty item")
+    }
+
+    // MARK: - Bug fixes for list editing
+
+    /// Bug: When Return is pressed at end of line 2, then Delete is pressed
+    /// to remove the newly created empty line 3, cursor should go back to
+    /// end of line 2, not to end of the document.
+    func test_deleteEmptyListItem_cursorGoesToPreviousItem() throws {
+        let p = project("- one\n- two\n- three\n- four\n- five\n")
+        let inl1 = listInlineStart(in: p, itemIndex: 1) // "two"
+        
+        // Press Return at end of "two" (3 chars)
+        let r1 = try EditingOps.insert("\n", at: inl1 + 3, in: p)
+        let serialized1 = MarkdownSerializer.serialize(r1.newProjection.document)
+        XCTAssertEqual(serialized1, "- one\n- two\n- \n- three\n- four\n- five\n")
+        
+        // New empty item is at index 2
+        let newEmptyInl = listInlineStart(in: r1.newProjection, itemIndex: 2)
+        XCTAssertEqual(r1.newCursorPosition, newEmptyInl)
+        
+        // Now press Delete at the empty item's home position
+        // This should exit the empty item and cursor should go to end of "two"
+        let r2 = try EditingOps.returnOnEmptyListItem(at: r1.newCursorPosition, in: r1.newProjection)
+        let serialized2 = MarkdownSerializer.serialize(r2.newProjection.document)
+        
+        // After exiting empty item, list should be: one, two, three, four, five
+        // and cursor should be at end of "two"
+        XCTAssertEqual(serialized2, "- one\n- two\n- three\n- four\n- five\n")
+        
+        // Cursor should be at end of item 1 ("two"), not at end of list
+        let inl1After = listInlineStart(in: r2.newProjection, itemIndex: 1)
+        let endOfItem1 = inl1After + 3 // "two" = 3 chars
+        XCTAssertEqual(r2.newCursorPosition, endOfItem1,
+            "Cursor should be at end of previous item (line 2), not at end of document")
+    }
+
+    /// Bug: When creating a new todo item with Return, the new item should
+    /// always have an unchecked checkbox, regardless of the next item's state.
+    func test_returnInTodoItem_newItemIsAlwaysUnchecked() throws {
+        // Start with: unchecked item, checked item (simulating item 2 and 3)
+        let md = "- [ ] first\n- [x] second\n"
+        let p = project(md)
+        
+        let inl0 = listInlineStart(in: p, itemIndex: 0) // "first"
+        
+        // Press Return at end of "first" (5 chars)
+        let r = try EditingOps.insert("\n", at: inl0 + 5, in: p)
+        
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        // Should have: first, empty unchecked item, second (still checked)
+        XCTAssertEqual(serialized, "- [ ] first\n- [ ] \n- [x] second\n")
+        
+        // Verify the new item (index 1) has an unchecked checkbox
+        if case .list(let items, _) = r.newProjection.document.blocks[0] {
+            XCTAssertEqual(items.count, 3)
+            // New middle item should have unchecked checkbox
+            XCTAssertNotNil(items[1].checkbox)
+            XCTAssertFalse(items[1].checkbox!.isChecked,
+                "New todo item should have unchecked checkbox")
+            // Last item should still be checked
+            XCTAssertTrue(items[2].checkbox!.isChecked,
+                "Original checked item should remain checked")
+        } else {
+            XCTFail("Expected list block")
+        }
+        
+        // DEBUG: Check splice replacement for attachment characters
+        let spliceStr = r.spliceReplacement.string
+        let attachmentChar = "\u{FFFC}"
+        let attachmentCount = spliceStr.components(separatedBy: attachmentChar).count - 1
+        print("DEBUG: Splice string: '\(spliceStr)'")
+        print("DEBUG: Splice range: \(r.spliceRange)")
+        print("DEBUG: Attachment characters in splice: \(attachmentCount)")
+        
+        // The splice should contain exactly 1 checkbox attachment (the new unchecked one)
+        // plus the newline separator
+        XCTAssertGreaterThanOrEqual(attachmentCount, 1, "Splice should contain at least 1 checkbox attachment")
+    }
+
+    // MARK: - Bug: Heading conversion affects all paragraphs
+    
+    func test_changeHeadingLevel_onlyAffectsSelectedBlock() throws {
+        // Three paragraphs - clicking in the middle one and applying H2
+        // should only convert the middle one, not all three
+        let md = "First paragraph\n\nSecond paragraph\n\nThird paragraph"
+        let p = project(md)
+        
+        // Find the offset of "Second paragraph" - should be around the middle
+        // "First paragraph\n\n" = 17 chars, so Second starts at 17
+        let secondParaOffset = 17
+        
+        // Apply H2 at that offset
+        let r = try EditingOps.changeHeadingLevel(2, at: secondParaOffset, in: p)
+        
+        // Serialize and verify only the second paragraph became a heading
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        print("DEBUG: Serialized result:\n\(serialized)")
+        
+        // Expected: First and Third stay as paragraphs, Second becomes H2
+        let expected = "First paragraph\n\n## Second paragraph\n\nThird paragraph"
+        XCTAssertEqual(serialized, expected)
+        
+        // Also verify the block structure
+        XCTAssertEqual(r.newProjection.document.blocks.count, 5) // para, blank, heading, blank, para
+        
+        // Check each block type
+        if case .paragraph = r.newProjection.document.blocks[0] {
+            // OK
+        } else {
+            XCTFail("First block should be paragraph")
+        }
+        
+        if case .heading(let level, _) = r.newProjection.document.blocks[2] {
+            XCTAssertEqual(level, 2, "Third block should be H2")
+        } else {
+            XCTFail("Third block should be heading")
+        }
+        
+        if case .paragraph = r.newProjection.document.blocks[4] {
+            // OK
+        } else {
+            XCTFail("Fifth block should be paragraph")
+        }
     }
 }

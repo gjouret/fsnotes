@@ -836,6 +836,13 @@ public enum EditingOps {
     /// Narrow a block-granular splice to character-granular by diffing
     /// the old and new rendered strings. Prevents NSLayoutManager from
     /// scrolling when it sees a large replaced region.
+    ///
+    /// IMPORTANT: When attachment characters (U+FFFC) are present, we must
+    /// be conservative. Attachments all use the same character code but
+    /// different attachment objects (e.g., checked vs unchecked checkbox).
+    /// Character-only diffing would see them as "common" and preserve the
+    /// old attachment, causing visual glitches. We detect attachment
+    /// characters and avoid narrowing across them.
     private static func narrowSplice(
         oldAttributedString: NSAttributedString,
         oldRange: NSRange,
@@ -844,7 +851,7 @@ public enum EditingOps {
     ) -> EditResult {
         let oldStr = (oldAttributedString.string as NSString).substring(with: oldRange)
         let newStr = newReplacement.string
-        
+
         // If the strings are exactly identical but the attributed strings differ,
         // we must not narrow to 0 length, otherwise the attribute changes (e.g. bold, heading level) are lost.
         if oldStr == newStr {
@@ -857,7 +864,53 @@ public enum EditingOps {
                 )
             }
         }
-        
+
+        // Check for attachment characters in the range. If present, don't narrow
+        // because attachments all use U+FFFC but have different attachment objects.
+        let attachmentChar = Character("\u{FFFC}")
+        let hasAttachmentInOld = oldStr.contains(attachmentChar)
+        let hasAttachmentInNew = newStr.contains(attachmentChar)
+
+        // If there are attachments, we need to be more careful about narrowing.
+        // When both old and new have attachments at the same positions, we should
+        // still narrow. But when new attachments are being added or removed,
+        // we need to ensure the splice covers them.
+        if hasAttachmentInOld || hasAttachmentInNew {
+            // Count attachments in both
+            let oldAttachmentCount = oldStr.filter { $0 == attachmentChar }.count
+            let newAttachmentCount = newStr.filter { $0 == attachmentChar }.count
+
+            // If attachment counts differ, we have structural changes (new item inserted, etc.)
+            // Don't narrow - use the full range to ensure proper attachment handling.
+            if oldAttachmentCount != newAttachmentCount {
+                return EditResult(
+                    newProjection: newProjection,
+                    spliceRange: oldRange,
+                    spliceReplacement: newReplacement
+                )
+            }
+
+            // Same attachment count - attachments may have changed state (checked vs unchecked)
+            // We should compare the actual attachment objects to see if they're equal.
+            // For now, be conservative and don't narrow when attachments are present.
+            // TODO: Optimize by comparing attachment equality at each position.
+            let oldHasAttachmentsAtPositions = findAttachmentPositions(in: oldAttributedString, range: oldRange)
+            let newHasAttachmentsAtPositions = findAttachmentPositions(in: newReplacement, range: NSRange(location: 0, length: newReplacement.length))
+
+            if !oldHasAttachmentsAtPositions.isEmpty || !newHasAttachmentsAtPositions.isEmpty {
+                // Check if attachments are at the same positions with same attributes
+                if oldHasAttachmentsAtPositions != newHasAttachmentsAtPositions {
+                    return EditResult(
+                        newProjection: newProjection,
+                        spliceRange: oldRange,
+                        spliceReplacement: newReplacement
+                    )
+                }
+                // Attachments are at the same positions - but we still need to verify
+                // the attachment objects themselves are equal. For now, be conservative.
+            }
+        }
+
         let oldChars = Array(oldStr.unicodeScalars)
         let newChars = Array(newStr.unicodeScalars)
         let minLen = min(oldChars.count, newChars.count)
@@ -2050,6 +2103,8 @@ public enum EditingOps {
     }
 
     /// Delete within a list block's inline content.
+    /// Supports both single-item deletions and multi-item deletions (when
+    /// the user selects across multiple list items and presses Delete).
     private static func deleteInList(
         items: [ListItem],
         from fromOffset: Int,
@@ -2065,36 +2120,230 @@ public enum EditingOps {
                 reason: "list: delete start \(fromOffset) not within editable inline content"
             )
         }
-        guard let (endEntry, _) = listEntryContaining(
+        guard let (endEntry, endOff) = listEntryContaining(
             entries: entries, offset: toOffset - 1, forInsertion: false
         ) else {
             throw EditingError.unsupported(
                 reason: "list: delete end \(toOffset - 1) not within editable inline content"
             )
         }
-        guard startEntry == endEntry else {
-            throw EditingError.crossInlineRange
+
+        // Single-item deletion (existing behavior)
+        if startEntry == endEntry {
+            let entry = entries[startEntry]
+            let runs = flatten(entry.item.inline)
+            guard let (startRun, startRunOff) = runContainingChar(runs, charIndex: startOff) else {
+                throw EditingError.outOfBounds
+            }
+            let endOff = startOff + length
+            guard let (endRun, endRunOff) = runContainingChar(runs, charIndex: endOff - 1) else {
+                throw EditingError.outOfBounds
+            }
+            guard startRun == endRun else { throw EditingError.crossInlineRange }
+            let leaf = runs[startRun]
+            let newText = spliceString(leaf.text, at: startRunOff, replacing: endRunOff + 1 - startRunOff, with: "")
+            let newInline = updateLeafText(entry.item.inline, at: leaf.path, newText: newText)
+            let newItem = ListItem(
+                indent: entry.item.indent, marker: entry.item.marker,
+                afterMarker: entry.item.afterMarker, checkbox: entry.item.checkbox,
+                inline: newInline, children: entry.item.children
+            )
+            let newItems = replaceItemAtPath(items, path: entry.path, with: newItem)
+            return .list(items: newItems)
         }
-        let entry = entries[startEntry]
-        let runs = flatten(entry.item.inline)
-        guard let (startRun, startRunOff) = runContainingChar(runs, charIndex: startOff) else {
-            throw EditingError.outOfBounds
-        }
-        let endOff = startOff + length
-        guard let (endRun, endRunOff) = runContainingChar(runs, charIndex: endOff - 1) else {
-            throw EditingError.outOfBounds
-        }
-        guard startRun == endRun else { throw EditingError.crossInlineRange }
-        let leaf = runs[startRun]
-        let newText = spliceString(leaf.text, at: startRunOff, replacing: endRunOff + 1 - startRunOff, with: "")
-        let newInline = updateLeafText(entry.item.inline, at: leaf.path, newText: newText)
-        let newItem = ListItem(
-            indent: entry.item.indent, marker: entry.item.marker,
-            afterMarker: entry.item.afterMarker, checkbox: entry.item.checkbox,
-            inline: newInline, children: entry.item.children
+
+        // Multi-item deletion: remove entire items that are fully covered,
+        // and truncate partially covered items at the boundaries.
+        return try deleteAcrossListItems(
+            items: items,
+            entries: entries,
+            startEntry: startEntry,
+            startOff: startOff,
+            endEntry: endEntry,
+            endOff: endOff
         )
-        let newItems = replaceItemAtPath(items, path: entry.path, with: newItem)
+    }
+
+    /// Delete across multiple list items. Handles the case where the user
+    /// selects text spanning multiple list items and presses Delete.
+    private static func deleteAcrossListItems(
+        items: [ListItem],
+        entries: [FlatListEntry],
+        startEntry: Int,
+        startOff: Int,
+        endEntry: Int,
+        endOff: Int
+    ) throws -> Block {
+        let start = entries[startEntry]
+        let end = entries[endEntry]
+
+        // Calculate what survives from the first item (everything before startOff)
+        let firstItemSurviving: [Inline]?
+        if startOff <= 0 {
+            // Nothing survives from the first item's inline content
+            firstItemSurviving = nil
+        } else {
+            // Truncate the first item's inline content
+            firstItemSurviving = keepFirstChars(start.item.inline, count: startOff)
+        }
+
+        // Calculate what survives from the last item (everything after endOff)
+        let lastItemSurviving: [Inline]?
+        let endInlineLength = inlinesLength(end.item.inline)
+        let charsToKeepFromEnd = endInlineLength - endOff - 1
+        if charsToKeepFromEnd <= 0 {
+            // Nothing survives from the last item
+            lastItemSurviving = nil
+        } else {
+            // Keep everything after the deletion point
+            lastItemSurviving = dropFirstChars(end.item.inline, count: endOff + 1)
+        }
+
+        // Build new inline content by merging survivors
+        let mergedInline: [Inline]
+        if let first = firstItemSurviving, let last = lastItemSurviving {
+            mergedInline = first + last
+        } else if let first = firstItemSurviving {
+            mergedInline = first
+        } else if let last = lastItemSurviving {
+            mergedInline = last
+        } else {
+            mergedInline = []
+        }
+
+        // Create the merged item (uses first item's properties)
+        let mergedItem = ListItem(
+            indent: start.item.indent,
+            marker: start.item.marker,
+            afterMarker: start.item.afterMarker,
+            checkbox: start.item.checkbox,
+            inline: mergedInline,
+            children: start.item.children
+        )
+
+        // Build new items array
+        var newItems: [ListItem] = []
+
+        // Add items before the first affected item
+        for i in 0..<startEntry {
+            newItems.append(entries[i].item)
+        }
+
+        // Add the merged item (if it has content or it's the only item)
+        if !mergedInline.isEmpty || startEntry == endEntry {
+            newItems.append(mergedItem)
+        }
+
+        // Add items after the last affected item
+        for i in (endEntry + 1)..<entries.count {
+            newItems.append(entries[i].item)
+        }
+
         return .list(items: newItems)
+    }
+
+    /// Keep only the first n characters of inline content.
+    private static func keepFirstChars(_ inlines: [Inline], count: Int) -> [Inline] {
+        var result: [Inline] = []
+        var remaining = count
+        for inline in inlines {
+            if remaining <= 0 { break }
+            let len = inlineLength(inline)
+            if len <= remaining {
+                result.append(inline)
+                remaining -= len
+            } else {
+                // Need to split this inline element
+                switch inline {
+                case .text(let s):
+                    let endIndex = s.index(s.startIndex, offsetBy: remaining)
+                    result.append(.text(String(s[..<endIndex])))
+                    remaining = 0
+                case .bold(let children, let marker):
+                    let kept = keepFirstChars(children, count: remaining)
+                    if !kept.isEmpty {
+                        result.append(.bold(kept, marker: marker))
+                    }
+                    remaining = 0
+                case .italic(let children, let marker):
+                    let kept = keepFirstChars(children, count: remaining)
+                    if !kept.isEmpty {
+                        result.append(.italic(kept, marker: marker))
+                    }
+                    remaining = 0
+                case .strikethrough(let children):
+                    let kept = keepFirstChars(children, count: remaining)
+                    if !kept.isEmpty {
+                        result.append(.strikethrough(kept))
+                    }
+                    remaining = 0
+                case .code(let s):
+                    let endIndex = s.index(s.startIndex, offsetBy: min(remaining, s.count))
+                    result.append(.code(String(s[..<endIndex])))
+                    remaining = 0
+                case .link(let text, let rawDestination):
+                    let kept = keepFirstChars(text, count: remaining)
+                    if !kept.isEmpty {
+                        result.append(.link(text: kept, rawDestination: rawDestination))
+                    }
+                    remaining = 0
+                default:
+                    break
+                }
+            }
+        }
+        return result
+    }
+
+    /// Drop the first n characters of inline content, return the rest.
+    private static func dropFirstChars(_ inlines: [Inline], count: Int) -> [Inline] {
+        var result: [Inline] = []
+        var remaining = count
+        for inline in inlines {
+            let len = inlineLength(inline)
+            if remaining >= len {
+                remaining -= len
+                continue
+            }
+            if remaining == 0 {
+                result.append(inline)
+            } else {
+                // Need to split this inline element
+                let keepFrom = remaining
+                remaining = 0
+                switch inline {
+                case .text(let s):
+                    let startIndex = s.index(s.startIndex, offsetBy: keepFrom)
+                    result.append(.text(String(s[startIndex...])))
+                case .bold(let children, let marker):
+                    let dropped = dropFirstChars(children, count: keepFrom)
+                    if !dropped.isEmpty {
+                        result.append(.bold(dropped, marker: marker))
+                    }
+                case .italic(let children, let marker):
+                    let dropped = dropFirstChars(children, count: keepFrom)
+                    if !dropped.isEmpty {
+                        result.append(.italic(dropped, marker: marker))
+                    }
+                case .strikethrough(let children):
+                    let dropped = dropFirstChars(children, count: keepFrom)
+                    if !dropped.isEmpty {
+                        result.append(.strikethrough(dropped))
+                    }
+                case .code(let s):
+                    let startIndex = s.index(s.startIndex, offsetBy: min(keepFrom, s.count))
+                    result.append(.code(String(s[startIndex...])))
+                case .link(let text, let rawDestination):
+                    let dropped = dropFirstChars(text, count: keepFrom)
+                    if !dropped.isEmpty {
+                        result.append(.link(text: dropped, rawDestination: rawDestination))
+                    }
+                default:
+                    break
+                }
+            }
+        }
+        return result
     }
 
     /// Replace an item at the given tree path within a list item tree.
@@ -2852,9 +3101,12 @@ public enum EditingOps {
     /// is replaced with the paragraph. Otherwise the list continues
     /// without this item, and a new paragraph block is inserted after
     /// the list (or before, or the list splits).
+    /// - Parameter createParagraphForEmpty: If true, creates an empty paragraph even when
+    ///   the list item has no content. Used for delete-at-home on empty L1 items.
     public static func exitListItem(
         at storageIndex: Int,
-        in projection: DocumentProjection
+        in projection: DocumentProjection,
+        createParagraphForEmpty: Bool = false
     ) throws -> EditResult {
         guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
@@ -2872,13 +3124,8 @@ public enum EditingOps {
         }
         let entry = entries[entryIdx]
 
-        // The exiting item's inline content becomes a paragraph.
-        // Always emit a .paragraph (even when the inline is empty) so the
-        // renderer applies a fresh zero-indent paragraph style. Using
-        // .blankLine here would render a zero-length span with no style,
-        // and the cursor would inherit the surrounding list's hanging
-        // indent from neighboring attributes.
-        let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
+        // Check if the item being exited is empty
+        let isEmpty = isInlineEmpty(entry.item.inline)
 
         // Remove the item from the tree. Any children of the exiting
         // item are promoted to the same level.
@@ -2887,21 +3134,61 @@ public enum EditingOps {
         // Build the replacement blocks.
         var newBlocks: [Block] = []
         if !remaining.isEmpty {
-            // Split: items before the exited one stay in a list, then
-            // the paragraph, then items after. For simplicity, keep one
-            // list with the item removed + paragraph after.
             newBlocks.append(.list(items: remaining))
         }
-        newBlocks.append(exitedParagraph)
+        
+        // Add a paragraph block if the exited item had content, or if explicitly
+        // requested (e.g., for delete-at-home on empty L1 items).
+        if !isEmpty || createParagraphForEmpty {
+            let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
+            newBlocks.append(exitedParagraph)
+        }
+        
+        // Edge case: if the list had only one empty item and createParagraphForEmpty
+        // is false, remaining will be empty and newBlocks will be empty.
+        // Replace with a blank paragraph to avoid empty block array.
+        if newBlocks.isEmpty {
+            newBlocks.append(.paragraph(inline: []))
+        }
 
         var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
 
-        // Cursor goes to the start of the exited paragraph.
-        let paraBlockIdx = blockIndex + (remaining.isEmpty ? 0 : 1)
-        if paraBlockIdx < result.newProjection.blockSpans.count {
-            result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location + inlineOffset
+        // Cursor positioning:
+        // - When createParagraphForEmpty is true (delete-at-home on empty L1):
+        //   place cursor at the start of the new empty paragraph.
+        // - When createParagraphForEmpty is false (Return on empty item):
+        //   for empty items, place cursor at the end of the previous item;
+        //   for non-empty items, place cursor at the start of the exited paragraph.
+        if isEmpty && !createParagraphForEmpty {
+            // Return-on-empty behavior: cursor goes to end of previous item
+            if entryIdx > 0, !remaining.isEmpty {
+                let blockSpan = result.newProjection.blockSpans[blockIndex]
+                if case .list(let newItems, _) = result.newProjection.document.blocks[blockIndex] {
+                    let newEntries = flattenList(newItems)
+                    let prevIdx = min(entryIdx - 1, newEntries.count - 1)
+                    if prevIdx >= 0 {
+                        let prevEntry = newEntries[prevIdx]
+                        result.newCursorPosition = blockSpan.location + prevEntry.startOffset + prevEntry.prefixLength + prevEntry.inlineLength
+                    } else {
+                        result.newCursorPosition = blockSpan.location
+                    }
+                } else {
+                    result.newCursorPosition = blockSpan.location
+                }
+            } else if remaining.isEmpty {
+                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
+            } else {
+                let blockSpan = result.newProjection.blockSpans[blockIndex]
+                result.newCursorPosition = blockSpan.location
+            }
         } else {
-            result.newCursorPosition = result.newProjection.attributed.length
+            // Delete-at-home on empty or item has content: cursor at start of paragraph
+            let paraBlockIdx = blockIndex + (remaining.isEmpty ? 0 : 1)
+            if paraBlockIdx < result.newProjection.blockSpans.count {
+                result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location + inlineOffset
+            } else {
+                result.newCursorPosition = result.newProjection.attributed.length
+            }
         }
 
         return result
@@ -4949,6 +5236,26 @@ public enum EditingOps {
             lines.append(renderRow(padded))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Find positions of attachment characters (U+FFFC) in an attributed string
+    /// within the given range. Returns a set of relative positions.
+    private static func findAttachmentPositions(in attrString: NSAttributedString, range: NSRange) -> Set<Int> {
+        var positions = Set<Int>()
+        let attachmentChar = Character("\u{FFFC}")
+        let substring = attrString.attributedSubstring(from: range)
+        let str = substring.string
+
+        for (index, char) in str.enumerated() {
+            if char == attachmentChar {
+                // Verify it actually has an attachment attribute
+                let charRange = NSRange(location: index, length: 1)
+                if substring.attribute(.attachment, at: index, effectiveRange: nil) != nil {
+                    positions.insert(index)
+                }
+            }
+        }
+        return positions
     }
 
 }

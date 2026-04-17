@@ -116,6 +116,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// `syncBlocksFromProjection` saw. Used to skip the O(blocks) walk
     /// when the projection hasn't actually changed (Perf plan item #9).
     private weak var lastSyncedAttributed: NSAttributedString?
+    /// Snapshot of the last-synced Document.blocks and blockSpans. When the
+    /// attributed string IS new (fast-path 1 misses) but most blocks are
+    /// unchanged — the common case during single-block typing — this lets
+    /// us rebuild only the entries whose Document.Block or span actually
+    /// differs, instead of reallocating the entire `blocks` array.
+    private var lastSyncedDocBlocks: [Block] = []
+    private var lastSyncedSpans: [NSRange] = []
     private var pendingRenderedBlockIDs = Set<UUID>()
 
     /// Return the set of block indices that are currently collapsed.
@@ -202,14 +209,59 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
            blocks.count == projection.document.blocks.count {
             return
         }
-        lastSyncedAttributed = projection.rendered.attributed
 
         let doc = projection.document
         let spans = projection.blockSpans
         guard doc.blocks.count == spans.count else {
             blocks = []
+            lastSyncedAttributed = projection.rendered.attributed
+            lastSyncedDocBlocks = []
+            lastSyncedSpans = []
             return
         }
+
+        // Differential fast-path: when fast-path 1 missed because a fresh
+        // attributed string was allocated, but the block count matches and
+        // most blocks are structurally unchanged (the common case during
+        // single-block typing), rebuild only the entries whose underlying
+        // Document.Block or span actually differs. Preserves semantics
+        // exactly — the per-entry rebuild uses identical logic to the
+        // slow path below — but avoids reallocating entries that haven't
+        // changed and skips the per-paragraph attributedSubstring +
+        // looksLikeTable check for unchanged paragraphs.
+        if blocks.count == doc.blocks.count,
+           lastSyncedDocBlocks.count == doc.blocks.count,
+           lastSyncedSpans.count == spans.count {
+            var allSame = true
+            for i in 0..<doc.blocks.count {
+                if lastSyncedDocBlocks[i] == doc.blocks[i],
+                   NSEqualRanges(lastSyncedSpans[i], spans[i]) {
+                    continue
+                }
+                allSame = false
+                // Rebuild this entry in place using the same logic as the
+                // slow path. Preserves the existing `collapsed` flag at
+                // this index (matches the dictionary-keyed-by-index
+                // preservation in the slow path).
+                let preservedCollapsed = blocks[i].collapsed
+                blocks[i] = makeBlockEntry(
+                    block: doc.blocks[i],
+                    span: spans[i],
+                    projection: projection
+                )
+                if preservedCollapsed {
+                    blocks[i].collapsed = true
+                }
+            }
+            if !allSame || lastSyncedAttributed !== projection.rendered.attributed {
+                lastSyncedAttributed = projection.rendered.attributed
+                lastSyncedDocBlocks = doc.blocks
+                lastSyncedSpans = spans
+            }
+            return
+        }
+
+        lastSyncedAttributed = projection.rendered.attributed
 
         // Snapshot previous collapsed states keyed by block index
         let previousCollapsed = Dictionary(
@@ -220,73 +272,83 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
         var newBlocks: [MarkdownBlock] = []
         for (i, block) in doc.blocks.enumerated() {
-            let span = spans[i]
-            let blockType: MarkdownBlockType
-            var isRenderedCodeBlock = false
-            switch block {
-            case .heading(let level, _):
-                blockType = .heading(level: level)
-            case .paragraph:
-                // Check if this paragraph's rendered content looks like a
-                // markdown table (lines starting/ending with `|` and a
-                // separator row). If so, tag it as .table so renderTables()
-                // can pick it up and overlay the table widget.
-                let content = projection.attributed.attributedSubstring(from: span).string
-                if Self.looksLikeTable(content) {
-                    blockType = .table
-                } else {
-                    blockType = .paragraph
-                }
-            case .codeBlock(let lang, _, _):
-                blockType = .codeBlock(language: lang)
-                // Mark rendered code blocks (mermaid/math/latex) so
-                // codeBlockRanges excludes them from gray background drawing.
-                if let l = lang?.lowercased(), l == "mermaid" || l == "math" || l == "latex" {
-                    isRenderedCodeBlock = true
-                }
-            case .list(let items, _):
-                // Determine list type from first item
-                if items.first?.checkbox != nil {
-                    blockType = .todoItem(checked: items.first?.isChecked ?? false)
-                } else if let marker = items.first?.marker,
-                          marker == "-" || marker == "*" || marker == "+" {
-                    blockType = .unorderedList
-                } else {
-                    blockType = .orderedList
-                }
-            case .blockquote:
-                blockType = .blockquote
-            case .horizontalRule:
-                blockType = .horizontalRule
-            case .htmlBlock:
-                blockType = .paragraph  // HTML blocks render as plain text blocks
-            case .blankLine:
-                blockType = .empty
-            case .table(_, _, _, let raw):
-                blockType = .table
-            }
-
-            var mb = MarkdownBlock(
-                type: blockType,
-                range: span,
-                contentRange: span
-            )
-            if isRenderedCodeBlock {
-                mb.renderMode = .rendered
-            }
+            var mb = makeBlockEntry(block: block, span: spans[i], projection: projection)
             // Preserve collapsed state from previous blocks at the same index
             if previousCollapsed[i] == true {
                 mb.collapsed = true
             }
-            // Carry original markdown for table blocks so renderTables()
-            // can parse the pipe-delimited source (the rendered storage
-            // uses spaces/box-drawing, not pipes).
-            if case .table(_, _, _, let raw) = block {
-                mb.rawMarkdown = raw
-            }
             newBlocks.append(mb)
         }
         blocks = newBlocks
+        lastSyncedDocBlocks = doc.blocks
+        lastSyncedSpans = spans
+    }
+
+    /// Build a single `MarkdownBlock` entry from a `Document.Block` + its
+    /// rendered span. Extracted from `syncBlocksFromProjection` so both the
+    /// full rebuild and the differential fast-path share one construction
+    /// path, guaranteeing identical semantics.
+    private func makeBlockEntry(block: Block, span: NSRange, projection: DocumentProjection) -> MarkdownBlock {
+        let blockType: MarkdownBlockType
+        var isRenderedCodeBlock = false
+        switch block {
+        case .heading(let level, _):
+            blockType = .heading(level: level)
+        case .paragraph:
+            // Check if this paragraph's rendered content looks like a
+            // markdown table (lines starting/ending with `|` and a
+            // separator row). If so, tag it as .table so renderTables()
+            // can pick it up and overlay the table widget.
+            let content = projection.attributed.attributedSubstring(from: span).string
+            if Self.looksLikeTable(content) {
+                blockType = .table
+            } else {
+                blockType = .paragraph
+            }
+        case .codeBlock(let lang, _, _):
+            blockType = .codeBlock(language: lang)
+            // Mark rendered code blocks (mermaid/math/latex) so
+            // codeBlockRanges excludes them from gray background drawing.
+            if let l = lang?.lowercased(), l == "mermaid" || l == "math" || l == "latex" {
+                isRenderedCodeBlock = true
+            }
+        case .list(let items, _):
+            // Determine list type from first item
+            if items.first?.checkbox != nil {
+                blockType = .todoItem(checked: items.first?.isChecked ?? false)
+            } else if let marker = items.first?.marker,
+                      marker == "-" || marker == "*" || marker == "+" {
+                blockType = .unorderedList
+            } else {
+                blockType = .orderedList
+            }
+        case .blockquote:
+            blockType = .blockquote
+        case .horizontalRule:
+            blockType = .horizontalRule
+        case .htmlBlock:
+            blockType = .paragraph  // HTML blocks render as plain text blocks
+        case .blankLine:
+            blockType = .empty
+        case .table:
+            blockType = .table
+        }
+
+        var mb = MarkdownBlock(
+            type: blockType,
+            range: span,
+            contentRange: span
+        )
+        if isRenderedCodeBlock {
+            mb.renderMode = .rendered
+        }
+        // Carry original markdown for table blocks so renderTables()
+        // can parse the pipe-delimited source (the rendered storage
+        // uses spaces/box-drawing, not pipes).
+        if case .table(_, _, _, let raw) = block {
+            mb.rawMarkdown = raw
+        }
+        return mb
     }
 
     /// Heuristic: does the text content look like a markdown table?

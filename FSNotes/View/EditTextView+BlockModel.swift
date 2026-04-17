@@ -322,6 +322,25 @@ extension EditTextView {
         // transient layout changes from saving wrong scroll positions.
         isScrollPositionSaverLocked = true
 
+        // Save the scroll origin before the mutation so we can restore
+        // it at the end. Typing into a list item (especially a Todo)
+        // mid-document triggers AppKit's internal
+        // `_enableTextViewResizing` → `_resizeTextViewForTextContainer:`
+        // chain, which scrolls the clip view DIRECTLY (bypassing
+        // `scrollRangeToVisible`, so overriding that alone can't stop
+        // it). The range passed to internal scroll calls spans
+        // thousands of characters — far larger than the splice — and
+        // AppKit scrolls to the START of that range, which in a long
+        // note is well above the cursor. Result: every keystroke scrolls
+        // the cursor off-screen downward.
+        //
+        // The clean fix is to save the scroll origin before any
+        // mutation and restore it after all layout work is done.
+        // The cursor was visible before the edit (user is typing into
+        // it), so restoring the original scroll keeps it visible.
+        let savedScrollOrigin: NSPoint? =
+            enclosingScrollView?.contentView.bounds.origin
+
         // Count attachment characters in the pre-splice range so the
         // orphan sweep below can be gated on whether the splice
         // actually removed any. Typical cell-edit splices touch zero
@@ -359,17 +378,60 @@ extension EditTextView {
         // paragraphStyle runs and apply them to the same storage range.
         let newAttr = result.newProjection.attributed
         if newAttr.length == storage.length {
-            storage.beginEditing()
+            // Collect only the runs whose paragraphStyle actually DIFFERS
+            // from what's already in storage. Writing every run
+            // unconditionally (old implementation) marked every
+            // paragraph in the document as "edited" on every keystroke.
+            // AppKit's `_enableTextViewResizing` reacts to that edit
+            // notification by scrolling the clip view relative to the
+            // invalidated range — which in a long note shifted the
+            // scroll ~2 lines per keystroke until the layout manager's
+            // internal state settled (~5-6 chars later). Skipping
+            // identical runs eliminates the notification, and with it
+            // the scroll drift.
+            //
+            // Additionally, narrow the enumeration to the block
+            // containing the splice plus one neighbour on each side.
+            // Characters outside this band were either untouched (their
+            // attributes preserved by NSTextStorage.replaceCharacters)
+            // or shifted in bulk (attributes shift with them). Only
+            // blocks adjacent to a structural change need re-checking.
+            let scanRange = Self.paragraphSyncScanRange(
+                for: result.spliceRange,
+                projection: result.newProjection,
+                storageLength: newAttr.length
+            )
+            var pendingUpdates: [(NSRange, NSParagraphStyle)] = []
             newAttr.enumerateAttribute(
                 .paragraphStyle,
-                in: NSRange(location: 0, length: newAttr.length),
+                in: scanRange,
                 options: []
             ) { value, range, _ in
-                if let style = value {
-                    storage.addAttribute(.paragraphStyle, value: style, range: range)
+                guard let newStyle = value as? NSParagraphStyle else { return }
+                // Check whether storage already has this exact style
+                // across the full run. If every position in `range`
+                // already matches, skip the update.
+                var identical = true
+                storage.enumerateAttribute(
+                    .paragraphStyle, in: range, options: []
+                ) { oldValue, _, stop in
+                    let oldStyle = oldValue as? NSParagraphStyle
+                    if oldStyle == nil || !(oldStyle!.isEqual(newStyle)) {
+                        identical = false
+                        stop.pointee = true
+                    }
+                }
+                if !identical {
+                    pendingUpdates.append((range, newStyle))
                 }
             }
-            storage.endEditing()
+            if !pendingUpdates.isEmpty {
+                storage.beginEditing()
+                for (range, style) in pendingUpdates {
+                    storage.addAttribute(.paragraphStyle, value: style, range: range)
+                }
+                storage.endEditing()
+            }
         }
 
         bmLog("🔧 applyEditResultWithUndo AFTER: storage.length=\(storage.length), storage.string='\(storage.string)'")
@@ -406,17 +468,52 @@ extension EditTextView {
         // updates, the display refreshes, and the delegate saves.
         didChangeText()
 
-        // Invalidate from the splice point to the end of storage.
-        // Narrower ranges (just the affected block + 1) can cause judder
-        // because the splice may shift all subsequent block positions.
+        // Invalidate ONLY the spliced region (the characters that
+        // actually changed). The previous implementation invalidated
+        // from splice.location to end of storage AND called
+        // `ensureLayout` on that huge range, which forced the layout
+        // manager to synchronously re-measure every line below the
+        // cursor. When the re-measured heights differed from the
+        // previously-estimated (non-contiguous) heights, AppKit's
+        // auto-scroll followed the cursor's new Y-coordinate,
+        // shifting the scroll position by roughly a line per
+        // keystroke. Over ~10-15 keystrokes this accumulated into
+        // a scroll jump large enough to push the cursor off-screen
+        // (see bug: typing in a Todo mid-document caused half-pane
+        // scroll drift).
+        //
+        // Narrow invalidation: the splice already ran through
+        // storage.beginEditing/endEditing which correctly notified
+        // the layout manager of the edit. We only need to display-
+        // invalidate the new region so it repaints. Lazy layout
+        // handles the rest as the user scrolls or as AppKit
+        // decides to re-measure.
         if let lm = layoutManager {
-            let start = result.spliceRange.location
-            let affectedRange = NSRange(location: start, length: max(0, storage.length - start))
-            lm.invalidateGlyphs(forCharacterRange: affectedRange, changeInLength: 0, actualCharacterRange: nil)
-            lm.invalidateLayout(forCharacterRange: affectedRange, actualCharacterRange: nil)
-            lm.ensureLayout(forCharacterRange: affectedRange)
-            let glyphRange = lm.glyphRange(forCharacterRange: affectedRange, actualCharacterRange: nil)
-            lm.invalidateDisplay(forGlyphRange: glyphRange)
+            let invalidatedRange = NSRange(
+                location: result.spliceRange.location,
+                length: result.spliceReplacement.length
+            )
+            let safeRange = NSRange(
+                location: min(invalidatedRange.location, storage.length),
+                length: min(invalidatedRange.length,
+                            max(0, storage.length - invalidatedRange.location))
+            )
+            if safeRange.length > 0 {
+                let glyphRange = lm.glyphRange(
+                    forCharacterRange: safeRange,
+                    actualCharacterRange: nil
+                )
+                lm.invalidateDisplay(forGlyphRange: glyphRange)
+            }
+        }
+
+        // Restore scroll origin if AppKit's internal resize logic
+        // scrolled the clip view during the mutation.
+        if let saved = savedScrollOrigin,
+           let clipView = enclosingScrollView?.contentView,
+           clipView.bounds.origin != saved {
+            clipView.scroll(to: saved)
+            enclosingScrollView?.reflectScrolledClipView(clipView)
         }
 
         isScrollPositionSaverLocked = false
@@ -603,8 +700,16 @@ extension EditTextView {
                     }
                 }
             } else if range.length > 0 && replacement.isEmpty {
+                // DEBUG: Log all delete operations using NSLog
+                NSLog("=== DELETE OPERATION === range: %@", NSStringFromRange(range))
+                
                 // Check for delete-at-home in a list item (FSM intercept).
-                if handleDeleteAtHomeInList(range: range, in: projection) {
+                let handled = handleDeleteAtHomeInList(range: range, in: projection)
+                
+                // DEBUG: Log result
+                NSLog("handleDeleteAtHomeInList returned: %@", handled ? "true" : "false")
+                
+                if handled {
                     return true
                 }
                 // Check for delete-at-home in a heading (convert to paragraph).
@@ -811,18 +916,53 @@ extension EditTextView {
         range: NSRange,
         in projection: DocumentProjection
     ) -> Bool {
-        // Only intercept single-char backspace at the start of inline content.
-        guard range.length == 1 else { return false }
-
         let cursorPos = range.location + range.length
-        guard ListEditingFSM.isAtHomePosition(storageIndex: cursorPos, in: projection) else {
+        
+        // DEBUG using NSLog
+        NSLog("=== handleDeleteAtHomeInList === range: %@, cursorPos: %d", NSStringFromRange(range), cursorPos)
+        
+        // Check if we're at the "home" position (start of inline content in a list item)
+        let isAtHome = ListEditingFSM.isAtHomePosition(storageIndex: cursorPos, in: projection)
+        
+        NSLog("isAtHome: %@", isAtHome ? "true" : "false")
+        
+        guard isAtHome else {
+            NSLog("GUARD FAILED: not at home position")
             return false
         }
 
         let state = ListEditingFSM.detectState(storageIndex: cursorPos, in: projection)
-        guard case .listItem = state else { return false }
+        
+        NSLog("state: %@", String(describing: state))
+        
+        guard case .listItem = state else {
+            NSLog("GUARD FAILED: not in list item")
+            return false
+        }
 
         let transition = ListEditingFSM.transition(state: state, action: .deleteAtHome)
+        
+        let isEmpty = ListEditingFSM.isCurrentItemEmpty(storageIndex: cursorPos, in: projection)
+        NSLog("transition: %@, isEmpty: %@", String(describing: transition), isEmpty ? "true" : "false")
+        
+        // Handle exitToBody specially for delete-at-home on empty L1 items
+        if case .exitToBody = transition {
+            if isEmpty {
+                do {
+                    let result = try EditingOps.exitListItem(at: cursorPos, in: projection, createParagraphForEmpty: true)
+                    bmLog("📋 list FSM: \(transition) → splice \(result.spliceRange) → \(result.spliceReplacement.length) chars")
+                    applyEditResultWithUndo(result, actionName: "Exit List")
+                    NSLog("HANDLED: exitToBody with createParagraphForEmpty")
+                    return true
+                } catch {
+                    bmLog("⚠️ list FSM transition failed: \(error)")
+                    NSLog("ERROR: %@", String(describing: error))
+                    return false
+                }
+            }
+        }
+        
+        // For non-empty items or non-exitToBody transitions, use standard handler
         return handleListTransition(transition, at: cursorPos)
     }
 
@@ -1470,11 +1610,32 @@ extension EditTextView {
         guard var projection = documentProjection else { return false }
         let sel = selectedRange()
 
+        // DEBUG - write to file
+        let debugLog = """
+            === applyToggleAcrossSelection ===
+            actionName: \(actionName)
+            sel: \(sel)
+            storage.length: \(textStorage?.length ?? -1)
+            blockSpans: \(projection.blockSpans)
+            blocks: \(projection.document.blocks.map { String(describing: $0) })
+            """
+        let logPath = "/tmp/fsnotes_debug.log"
+        try? debugLog.write(toFile: logPath, atomically: true, encoding: .utf8)
+
         do {
             let indices = projection.blockIndices(overlapping: sel).filter { idx in
                 if case .blankLine = projection.document.blocks[idx] { return false }
                 return true
             }
+            
+            // Append to debug log
+            let indicesLog = "\nindices after filter: \(indices)"
+            if let handle = FileHandle(forWritingAtPath: logPath) {
+                handle.seekToEndOfFile()
+                handle.write(indicesLog.data(using: .utf8)!)
+                handle.closeFile()
+            }
+            
             guard !indices.isEmpty else { return false }
 
             for blockIdx in indices.reversed() {
@@ -1744,12 +1905,16 @@ extension EditTextView {
                     storage.endEditing()
                     self.textStorageProcessor?.isRendering = false
 
-                    // Invalidate layout. The actual ensureLayout is deferred
-                    // to a single coalesced call after all replacements complete.
+                    // Invalidate layout only for the replaced span. The
+                    // actual ensureLayout is deferred to a single coalesced
+                    // call after all replacements complete.
                     if let lm = self.layoutManager {
-                        let fullRange = NSRange(location: 0, length: storage.length)
-                        lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
-                        lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+                        let replacedRange = NSRange(
+                            location: currentSpan.location,
+                            length: attachmentString.length
+                        )
+                        lm.invalidateGlyphs(forCharacterRange: replacedRange, changeInLength: 0, actualCharacterRange: nil)
+                        lm.invalidateLayout(forCharacterRange: replacedRange, actualCharacterRange: nil)
                     }
                     self.scheduleCoalescedLayout()
 
@@ -1794,6 +1959,106 @@ extension EditTextView {
 
         // --- Display math ($$...$$): render as centered block image ---
         renderDisplayMathViaBlockModel()
+    }
+
+    /// Compute the range of characters whose paragraphStyle attribute
+    /// may need resyncing after a splice. This is the union of the
+    /// block spans overlapping `spliceRange` (in post-splice coords),
+    /// expanded by one block on each side to cover structural changes
+    /// that alter a neighbour's paragraph style (e.g. heading Return
+    /// splitting into heading + paragraph).
+    ///
+    /// Returns `NSRange(0, storageLength)` as a safe fallback when block
+    /// spans are unavailable or the splice can't be localised.
+    static func paragraphSyncScanRange(
+        for spliceRange: NSRange,
+        projection: DocumentProjection,
+        storageLength: Int
+    ) -> NSRange {
+        let spans = projection.blockSpans
+        guard !spans.isEmpty else {
+            return NSRange(location: 0, length: storageLength)
+        }
+
+        // Post-splice storage position of the splice. The old
+        // `spliceRange` is a contiguous region replaced in storage.
+        // In the NEW projection/storage, the replacement occupies
+        // [spliceRange.location, spliceRange.location + ...]. The
+        // exact length doesn't matter here — we just need the block
+        // indices that overlap the splice's START and END-of-insertion
+        // in the new projection. The splice location is stable
+        // across the replace (it's where the insertion begins).
+        let spliceStart = max(0, min(spliceRange.location, storageLength))
+
+        // Find the block whose span contains `spliceStart`. Linear
+        // scan is fine — typical notes have <200 blocks and this
+        // isn't per-glyph.
+        var firstIdx = 0
+        for (i, span) in spans.enumerated() {
+            if NSLocationInRange(spliceStart, span) ||
+               spliceStart == NSMaxRange(span) {
+                firstIdx = i
+                break
+            }
+            if spliceStart < span.location {
+                firstIdx = max(0, i - 1)
+                break
+            }
+            firstIdx = i
+        }
+
+        // Expand by one block on each side.
+        let lo = max(0, firstIdx - 1)
+        let hi = min(spans.count - 1, firstIdx + 1)
+        let startLoc = spans[lo].location
+        let endLoc = min(storageLength, NSMaxRange(spans[hi]))
+        guard endLoc > startLoc else {
+            return NSRange(location: 0, length: storageLength)
+        }
+        return NSRange(location: startLoc, length: endLoc - startLoc)
+    }
+
+    /// Locate a range of characters that carry `attribute` with a value
+    /// equal to `matching`, starting from a local window around `near`
+    /// and only falling back to a full-storage scan if not found locally.
+    ///
+    /// Used by the math/mermaid render callbacks which previously did an
+    /// unconditional full-storage `enumerateAttribute` every time an image
+    /// render completed — O(runs) per callback, N callbacks per note.
+    /// Shifts in storage position between the original render and the
+    /// callback firing are bounded by the total size of prior attachment
+    /// swaps, which in practice is small. A ±2KB local window finds the
+    /// target in the common case; the fallback preserves correctness.
+    static func findAttributeRange(
+        attribute: NSAttributedString.Key,
+        matching value: String,
+        near originalRange: NSRange,
+        in storage: NSTextStorage
+    ) -> NSRange? {
+        let windowRadius = 2048
+        let localStart = max(0, originalRange.location - windowRadius)
+        let localEnd = min(storage.length, NSMaxRange(originalRange) + windowRadius)
+        guard localEnd > localStart else { return nil }
+        let localRange = NSRange(location: localStart, length: localEnd - localStart)
+
+        var found: NSRange?
+        storage.enumerateAttribute(attribute, in: localRange, options: []) { val, range, stop in
+            if let s = val as? String, s == value {
+                found = range
+                stop.pointee = true
+            }
+        }
+        if let hit = found { return hit }
+
+        // Local window missed — fall back to full storage (rare).
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(attribute, in: fullRange, options: []) { val, range, stop in
+            if let s = val as? String, s == value {
+                found = range
+                stop.pointee = true
+            }
+        }
+        return found
     }
 
     /// Tracks inline math ranges currently being rendered to avoid duplicates.
@@ -1847,14 +2112,16 @@ extension EditTextView {
                     defer { EditTextView._renderedInlineMathRanges.remove(originalRange) }
 
                     // Find the current range of this math text in storage.
-                    // It may have shifted due to earlier replacements.
-                    var currentRange: NSRange?
-                    storage.enumerateAttribute(.inlineMathSource, in: NSRange(location: 0, length: storage.length), options: []) { value, range, stop in
-                        if let val = value as? String, val == source {
-                            currentRange = range
-                            stop.pointee = true
-                        }
-                    }
+                    // It may have shifted due to earlier replacements, but
+                    // the shift is bounded by the cumulative size of prior
+                    // attachment swaps. Scan a local window first; only
+                    // fall back to full-storage scan if not found locally.
+                    let currentRange: NSRange? = Self.findAttributeRange(
+                        attribute: .inlineMathSource,
+                        matching: source,
+                        near: originalRange,
+                        in: storage
+                    )
 
                     guard let range = currentRange,
                           range.location < storage.length,
@@ -1898,11 +2165,15 @@ extension EditTextView {
                     storage.endEditing()
                     self.textStorageProcessor?.isRendering = false
 
-                    // Invalidate layout; ensureLayout deferred to coalesced call.
+                    // Invalidate layout only for the replaced range;
+                    // ensureLayout deferred to coalesced call.
                     if let lm = self.layoutManager {
-                        let fullRange = NSRange(location: 0, length: storage.length)
-                        lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
-                        lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+                        let replacedRange = NSRange(
+                            location: range.location,
+                            length: attachmentString.length
+                        )
+                        lm.invalidateGlyphs(forCharacterRange: replacedRange, changeInLength: 0, actualCharacterRange: nil)
+                        lm.invalidateLayout(forCharacterRange: replacedRange, actualCharacterRange: nil)
                     }
                     self.scheduleCoalescedLayout()
 
@@ -1989,13 +2260,13 @@ extension EditTextView {
                     defer { EditTextView._renderedDisplayMathRanges.remove(originalRange) }
 
                     // Find the current range of this display math in storage.
-                    var currentRange: NSRange?
-                    storage.enumerateAttribute(.displayMathSource, in: NSRange(location: 0, length: storage.length), options: []) { value, range, stop in
-                        if let val = value as? String, val == source {
-                            currentRange = range
-                            stop.pointee = true
-                        }
-                    }
+                    // Use the bounded local-scan helper — see inline math for rationale.
+                    let currentRange: NSRange? = Self.findAttributeRange(
+                        attribute: .displayMathSource,
+                        matching: source,
+                        near: originalRange,
+                        in: storage
+                    )
 
                     guard let range = currentRange,
                           range.location < storage.length,
@@ -2027,13 +2298,21 @@ extension EditTextView {
                     storage.endEditing()
                     self.textStorageProcessor?.isRendering = false
 
-                    // Layout invalidation
+                    // Layout invalidation — narrow to the replaced range.
+                    // Previously this invalidated the whole document AND
+                    // called a blocking ensureLayout over full storage, which
+                    // re-measured every line and caused cumulative scroll
+                    // drift on every edit. Narrow invalidation + coalesced
+                    // deferred layout is sufficient.
                     if let lm = self.layoutManager {
-                        let fullRange = NSRange(location: 0, length: storage.length)
-                        lm.invalidateGlyphs(forCharacterRange: fullRange, changeInLength: 0, actualCharacterRange: nil)
-                        lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
-                        lm.ensureLayout(forCharacterRange: fullRange)
+                        let replacedRange = NSRange(
+                            location: range.location,
+                            length: attachmentString.length
+                        )
+                        lm.invalidateGlyphs(forCharacterRange: replacedRange, changeInLength: 0, actualCharacterRange: nil)
+                        lm.invalidateLayout(forCharacterRange: replacedRange, actualCharacterRange: nil)
                     }
+                    self.scheduleCoalescedLayout()
 
                     // Update projection spans.
                     if let proj = self.documentProjection {
