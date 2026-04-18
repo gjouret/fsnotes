@@ -106,10 +106,11 @@ public enum ListFSMOperations {
     }
 
     /// Exit a list item: remove it from the list and convert it to a
-    /// body paragraph. If this was the only item, the entire list block
-    /// is replaced with the paragraph. Otherwise the list continues
-    /// without this item, and a new paragraph block is inserted after
-    /// the list (or before, or the list splits).
+    /// body paragraph. The item is removed from the list, and a new
+    /// paragraph block is inserted after the list. If the item was empty,
+    /// the paragraph will also be empty (providing a clean exit from
+    /// list editing). If this was the only item, the entire list block
+    /// is replaced with the paragraph.
     public static func exitListItem(
         at storageIndex: Int,
         in projection: DocumentProjection
@@ -143,55 +144,19 @@ public enum ListFSMOperations {
             newBlocks.append(.list(items: remaining))
         }
         
-        // Only add a paragraph block if the exited item had content.
-        // For empty items, we just remove them without creating a blank paragraph.
-        if !isEmpty {
-            let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
-            newBlocks.append(exitedParagraph)
-        }
+        // Always create a paragraph block for the exited item.
+        // For empty items, this creates an empty paragraph (clean exit from list editing).
+        let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
+        newBlocks.append(exitedParagraph)
 
         var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
 
-        // Cursor positioning:
-        // - If the exited item was empty and there's a previous item,
-        //   place cursor at the end of that previous item.
-        // - If the exited item was empty and it's the first item,
-        //   place cursor at the start of the list (or document).
-        // - Otherwise, place cursor at the start of the exited paragraph.
-        if isEmpty {
-            if entryIdx > 0, !remaining.isEmpty {
-                // Find the previous item's end position in the new projection
-                let blockSpan = result.newProjection.blockSpans[blockIndex]
-                if case .list(let newItems, _) = result.newProjection.document.blocks[blockIndex] {
-                    let newEntries = flattenList(newItems)
-                    // entryIdx - 1 because we removed the current item
-                    let prevIdx = min(entryIdx - 1, newEntries.count - 1)
-                    if prevIdx >= 0 {
-                        let prevEntry = newEntries[prevIdx]
-                        // Position cursor at end of previous item's inline content
-                        result.newCursorPosition = blockSpan.location + prevEntry.startOffset + prevEntry.prefixLength + prevEntry.inlineLength
-                    } else {
-                        result.newCursorPosition = blockSpan.location
-                    }
-                } else {
-                    result.newCursorPosition = blockSpan.location
-                }
-            } else if remaining.isEmpty {
-                // List is now empty - cursor at end of the block
-                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
-            } else {
-                // First item was removed - cursor at start of list
-                let blockSpan = result.newProjection.blockSpans[blockIndex]
-                result.newCursorPosition = blockSpan.location
-            }
+        // Cursor goes to the start of the exited paragraph.
+        let paraBlockIdx = blockIndex + (remaining.isEmpty ? 0 : 1)
+        if paraBlockIdx < result.newProjection.blockSpans.count {
+            result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
         } else {
-            // Cursor goes to the start of the exited paragraph.
-            let paraBlockIdx = blockIndex + (remaining.isEmpty ? 0 : 1)
-            if paraBlockIdx < result.newProjection.blockSpans.count {
-                result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location + inlineOffset
-            } else {
-                result.newCursorPosition = result.newProjection.attributed.length
-            }
+            result.newCursorPosition = result.newProjection.attributed.length
         }
 
         return result

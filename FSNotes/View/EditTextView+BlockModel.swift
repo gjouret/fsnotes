@@ -942,27 +942,7 @@ extension EditTextView {
 
         let transition = ListEditingFSM.transition(state: state, action: .deleteAtHome)
         
-        let isEmpty = ListEditingFSM.isCurrentItemEmpty(storageIndex: cursorPos, in: projection)
-        NSLog("transition: %@, isEmpty: %@", String(describing: transition), isEmpty ? "true" : "false")
-        
-        // Handle exitToBody specially for delete-at-home on empty L1 items
-        if case .exitToBody = transition {
-            if isEmpty {
-                do {
-                    let result = try EditingOps.exitListItem(at: cursorPos, in: projection, createParagraphForEmpty: true)
-                    bmLog("📋 list FSM: \(transition) → splice \(result.spliceRange) → \(result.spliceReplacement.length) chars")
-                    applyEditResultWithUndo(result, actionName: "Exit List")
-                    NSLog("HANDLED: exitToBody with createParagraphForEmpty")
-                    return true
-                } catch {
-                    bmLog("⚠️ list FSM transition failed: \(error)")
-                    NSLog("ERROR: %@", String(describing: error))
-                    return false
-                }
-            }
-        }
-        
-        // For non-empty items or non-exitToBody transitions, use standard handler
+        // Use standard handler for all transitions (exitListItem now always creates a paragraph)
         return handleListTransition(transition, at: cursorPos)
     }
 

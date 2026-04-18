@@ -68,7 +68,9 @@ public enum ListEditingFSM {
         case indent
         /// Move item one level shallower (sibling of parent).
         case unindent
-        /// Remove item from list, convert to body paragraph.
+        /// Remove item from list and convert to body paragraph.
+        /// For empty items at depth 0, creates an empty paragraph.
+        /// For nested items, use unindent instead.
         case exitToBody
         /// Insert a new empty item after the current one at the same depth.
         case newItem

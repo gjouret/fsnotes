@@ -40,7 +40,7 @@ Wikilinks parse from `[[target]]` or `[[target|display]]` and render as styled c
 
 2. **Cursor position checks fail**: A check like `cursorLoc >= span.location && cursorLoc < span.location + span.length` can never be true for zero-length blocks (since `span.location + 0 == span.location`). Code operating on zero-length blocks must special-case `span.length == 0` and use `span.location` directly.
 
-3. **Blank lines are structural, not visual**: In the rendered output, blank lines exist only as the `"\n"` separator between adjacent blocks. They carry no content of their own. The `DocumentRenderer` uses collapsed paragraph styles (`minimumLineHeight = 0.01`) for separators adjacent to blank lines.
+3. **Blank lines are structural, not visual**: In the rendered output, blank lines exist only as the `"\n"` separator between adjacent blocks. They carry no content of their own. The separator uses the same paragraph style as empty paragraphs (`paragraphSpacing = 12`) to ensure consistent line metrics and prevent visual jumps when typing begins.
 
 4. **No fallback to source mode**: The block-model and source-mode pipelines are completely separate. When `documentProjection` is non-nil, ALL operations must route through `EditingOps`. Returning `false` from a block-model function does NOT fall back to source mode — it typically results in a no-op or broken state.
 
@@ -123,8 +123,8 @@ Structural operations route through **ListEditingFSM** (see below).
 | Action | Result |
 |--------|--------|
 | **Return (non-empty item)** | FSM `newItem`: split item at cursor. New item inherits marker; checkbox resets to unchecked. Children stay with original. |
-| **Return (empty item, depth 0)** | FSM `exitToBody`: convert item to paragraph. |
-| **Return (empty item, depth > 0)** | FSM `unindent`: move item one level shallower. |
+| **Return (empty item, depth 0)** | FSM `exitToBody`: remove empty item from list and convert to paragraph. Cursor positioned at start of new paragraph. |
+| **Return (empty item, depth > 0)** | FSM `unindent`: move item one level shallower (L4→L3, L3→L2, L2→L1). |
 | **Backspace at start (depth 0)** | FSM `exitToBody`: convert item to paragraph. |
 | **Backspace at start (depth > 0)** | FSM `unindent`: move item one level shallower. |
 | **Tab (has previous sibling)** | FSM `indent`: item becomes child of previous sibling. Indent = parent indent + `"  "`. |

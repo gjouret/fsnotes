@@ -47,6 +47,63 @@ public struct RenderedDocument {
 
 public enum DocumentRenderer {
 
+    // MARK: - Debug Logging
+    
+    private static let logFilePath = NSHomeDirectory() + "/Documents/render-debug.log"
+    
+    private static func logAttributes(_ label: String, range: NSRange, style: NSParagraphStyle, font: PlatformFont) {
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        let log = """
+            [\(timestamp)] \(label)
+              Range: \(range.location),\(range.length)
+              Font: \(font.fontName) \(font.pointSize)pt
+              LineSpacing: \(style.lineSpacing)
+              ParagraphSpacing: \(style.paragraphSpacing)
+              ParagraphSpacingBefore: \(style.paragraphSpacingBefore)
+              MinLineHeight: \(style.minimumLineHeight)
+              MaxLineHeight: \(style.maximumLineHeight)
+            ---
+            """
+        
+        if let data = log.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: logFilePath) {
+                if let fileHandle = FileHandle(forWritingAtPath: logFilePath) {
+                    _ = fileHandle.seekToEndOfFile()
+                    fileHandle.write(data)
+                    fileHandle.closeFile()
+                }
+            } else {
+                try? data.write(to: URL(fileURLWithPath: logFilePath))
+            }
+        }
+    }
+
+    // MARK: - Paragraph Spacing Constants
+    // These multipliers are applied to the base font size to determine
+    // paragraph spacing. Defined here to avoid magic numbers.
+    
+    /// Spacing after paragraphs and blank lines (0.85 × font size)
+    private static let paragraphSpacingMultiplier: CGFloat = 0.85
+    
+    /// Spacing after structural blocks (code, lists, blockquotes, etc.)
+    /// (1.1 × font size) - slightly more visual separation
+    private static let structuralBlockSpacingMultiplier: CGFloat = 1.1
+    
+    // Heading spacing multipliers (proportional to level)
+    private static let h1SpacingMultiplier: CGFloat = 0.67
+    private static let h2SpacingMultiplier: CGFloat = 0.5
+    private static let h3SpacingMultiplier: CGFloat = 0.4
+    private static let h4SpacingMultiplier: CGFloat = 0.35
+    private static let h5SpacingMultiplier: CGFloat = 0.3
+    private static let h6SpacingMultiplier: CGFloat = 0.25
+    
+    private static let h1SpacingBeforeMultiplier: CGFloat = 1.2
+    private static let h2SpacingBeforeMultiplier: CGFloat = 1.0
+    private static let h3SpacingBeforeMultiplier: CGFloat = 0.9
+    private static let h4SpacingBeforeMultiplier: CGFloat = 0.8
+    private static let h5SpacingBeforeMultiplier: CGFloat = 0.7
+    private static let h6SpacingBeforeMultiplier: CGFloat = 0.6
+
     /// Render a document to an attributed string + per-block span map.
     ///
     /// - Parameter note: optional note context threaded through to
@@ -67,21 +124,6 @@ public enum DocumentRenderer {
             .foregroundColor: PlatformColor.label
         ]
 
-        // Near-zero-height separator for "\n" characters adjacent to
-        // blankLine blocks. BlankLines are structural (for markdown
-        // round-trip) but should be visually invisible.
-        let collapsedStyle = NSMutableParagraphStyle()
-        collapsedStyle.minimumLineHeight = 0.01
-        collapsedStyle.maximumLineHeight = 0.01
-        collapsedStyle.lineSpacing = 0
-        collapsedStyle.paragraphSpacing = 0
-        collapsedStyle.paragraphSpacingBefore = 0
-        let collapsedSepAttrs: [NSAttributedString.Key: Any] = [
-            .font: bodyFont,
-            .foregroundColor: PlatformColor.label,
-            .paragraphStyle: collapsedStyle
-        ]
-
         let lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
 
         for (i, block) in document.blocks.enumerated() {
@@ -95,6 +137,14 @@ public enum DocumentRenderer {
             // Apply paragraph styles (spacing, indentation) based on
             // block type. This replicates the essential parts of the
             // source-mode phase5_paragraphStyles.
+            // DEBUG: Log paragraph style application
+            let paraStyle = paragraphStyle(
+                for: block, isFirst: (i == 0),
+                baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+            )
+            logAttributes("BLOCK-\(i)-\(type(of: block))", range: blockRange, style: paraStyle, font: bodyFont)
+            // Skip paragraph style application for blank lines (zero-length content)
+            // and for blocks with actual content.
             if blockRange.length > 0 {
                 applyParagraphStyle(
                     to: out,
@@ -109,37 +159,28 @@ public enum DocumentRenderer {
             // Inter-block separator: a single "\n" between consecutive
             // blocks. NOT included in the block's span.
             if i < document.blocks.count - 1 {
-                let isAdjacentToBlankLine: Bool = {
-                    if case .blankLine = block { return true }
-                    if i + 1 < document.blocks.count,
-                       case .blankLine = document.blocks[i + 1] { return true }
-                    return false
-                }()
-                if isAdjacentToBlankLine {
-                    // Collapse separators next to blankLines to near-zero
-                    // height. BlankLines exist only for serialization
-                    // round-trip — visually the paragraphSpacing on
-                    // surrounding blocks provides all inter-block gaps.
-                    out.append(NSAttributedString(string: "\n", attributes: collapsedSepAttrs))
-                } else if blockRange.length == 0 {
-                    // EMPTY block: the separator "\n" we just append IS
-                    // the terminator of this block's visual line (because
-                    // the block itself contributed zero characters). Its
-                    // paragraph style drives the line's height, indent,
-                    // and spacing. Without this, NSLayoutManager reads the
-                    // separator's default style — which results in a
-                    // cursor that inherits metrics from the PRECEDING
-                    // non-empty block (heading, list item, etc.) via
-                    // fixAttributes propagation.
-                    let emptyStyle = paragraphStyle(
+                // For blank lines, use paragraph spacing (not the previous block's spacing)
+                // to ensure consistent visual appearance when they convert to paragraphs.
+                let nextBlock = document.blocks[i + 1]
+                if case .blankLine = nextBlock {
+                    let paraStyle = paragraphStyle(
+                        for: .paragraph(inline: []), isFirst: false,
+                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                    )
+                    var blankLineSepAttrs = separatorAttrs
+                    blankLineSepAttrs[.paragraphStyle] = paraStyle
+                    out.append(NSAttributedString(string: "\n", attributes: blankLineSepAttrs))
+                } else {
+                    // For other blocks, apply the block's paragraph style to the separator.
+                    let blockStyle = paragraphStyle(
                         for: block, isFirst: (i == 0),
                         baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
                     )
-                    var emptyAttrs = separatorAttrs
-                    emptyAttrs[.paragraphStyle] = emptyStyle
-                    out.append(NSAttributedString(string: "\n", attributes: emptyAttrs))
-                } else {
-                    out.append(NSAttributedString(string: "\n", attributes: separatorAttrs))
+                    var blockSepAttrs = separatorAttrs
+                    blockSepAttrs[.paragraphStyle] = blockStyle
+                    let sepRange = NSRange(location: out.length, length: 1)
+                    logAttributes("SEPARATOR-\(i)", range: sepRange, style: blockStyle, font: bodyFont)
+                    out.append(NSAttributedString(string: "\n", attributes: blockSepAttrs))
                 }
             }
         }
@@ -147,25 +188,17 @@ public enum DocumentRenderer {
         // Optional trailing newline: preserved for byte-equal round-trip
         // with the source markdown file. NOT part of any block's span.
         if document.trailingNewline && !document.blocks.isEmpty {
-            // If the LAST block is empty, tag the trailing "\n" with that
-            // block's paragraph style — same reasoning as the inter-block
-            // separator above. Without this, a doc that ends with an
-            // empty paragraph would render the cursor with default (or
-            // inherited) line metrics.
+            // Always apply the last block's paragraph style to the trailing
+            // newline for consistent line metrics.
             let lastIdx = document.blocks.count - 1
             let lastBlock = document.blocks[lastIdx]
-            let lastSpan = spans[lastIdx]
-            if lastSpan.length == 0 {
-                let emptyStyle = paragraphStyle(
-                    for: lastBlock, isFirst: (lastIdx == 0),
-                    baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
-                )
-                var emptyAttrs = separatorAttrs
-                emptyAttrs[.paragraphStyle] = emptyStyle
-                out.append(NSAttributedString(string: "\n", attributes: emptyAttrs))
-            } else {
-                out.append(NSAttributedString(string: "\n", attributes: separatorAttrs))
-            }
+            let lastStyle = paragraphStyle(
+                for: lastBlock, isFirst: (lastIdx == 0),
+                baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+            )
+            var lastAttrs = separatorAttrs
+            lastAttrs[.paragraphStyle] = lastStyle
+            out.append(NSAttributedString(string: "\n", attributes: lastAttrs))
         }
 
         // Post-processing: auto-link bare URLs in paragraph/heading text.
@@ -274,27 +307,28 @@ public enum DocumentRenderer {
             // Spacing proportional to heading level for clear visual hierarchy.
             switch level {
             case 1:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 1.2 }
-                style.paragraphSpacing = baseSize * 0.67
+                if !isFirst { style.paragraphSpacingBefore = baseSize * h1SpacingBeforeMultiplier }
+                style.paragraphSpacing = baseSize * h1SpacingMultiplier
             case 2:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 1.0 }
-                style.paragraphSpacing = baseSize * 0.5
+                if !isFirst { style.paragraphSpacingBefore = baseSize * h2SpacingBeforeMultiplier }
+                style.paragraphSpacing = baseSize * h2SpacingMultiplier
             case 3:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.9 }
-                style.paragraphSpacing = baseSize * 0.4
+                if !isFirst { style.paragraphSpacingBefore = baseSize * h3SpacingBeforeMultiplier }
+                style.paragraphSpacing = baseSize * h3SpacingMultiplier
             case 4:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.8 }
-                style.paragraphSpacing = baseSize * 0.35
+                if !isFirst { style.paragraphSpacingBefore = baseSize * h4SpacingBeforeMultiplier }
+                style.paragraphSpacing = baseSize * h4SpacingMultiplier
             case 5:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.7 }
-                style.paragraphSpacing = baseSize * 0.3
+                if !isFirst { style.paragraphSpacingBefore = baseSize * h5SpacingBeforeMultiplier }
+                style.paragraphSpacing = baseSize * h5SpacingMultiplier
             default:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * 0.6 }
-                style.paragraphSpacing = baseSize * 0.25
+                if !isFirst { style.paragraphSpacingBefore = baseSize * h6SpacingBeforeMultiplier }
+                style.paragraphSpacing = baseSize * h6SpacingMultiplier
             }
 
         case .paragraph(let inline):
-            style.paragraphSpacing = 12
+            // Use proportional spacing based on actual font size
+            style.paragraphSpacing = baseSize * paragraphSpacingMultiplier
             // Image-only paragraphs (a single `.image` inline) are
             // centered in the text column. Without centering, an
             // image resize drag visually grows/shrinks from the left
@@ -308,19 +342,21 @@ public enum DocumentRenderer {
 
         case .codeBlock:
             style.lineSpacing = 0
-            style.paragraphSpacing = 16
+            style.paragraphSpacing = baseSize * structuralBlockSpacingMultiplier
             style.paragraphSpacingBefore = 0
 
         case .blankLine:
-            break
+            // Blank lines should have same spacing as empty paragraphs
+            // to prevent visual jumps when they convert to paragraphs
+            style.paragraphSpacing = baseSize * paragraphSpacingMultiplier
 
         case .list, .blockquote, .horizontalRule, .table:
             // Structural block types. Basic spacing for read-only display.
-            style.paragraphSpacing = 16
+            style.paragraphSpacing = baseSize * structuralBlockSpacingMultiplier
 
         case .htmlBlock:
             style.lineSpacing = 0
-            style.paragraphSpacing = 16
+            style.paragraphSpacing = baseSize * structuralBlockSpacingMultiplier
             style.paragraphSpacingBefore = 0
         }
 
@@ -346,8 +382,6 @@ public enum DocumentRenderer {
         baseSize: CGFloat,
         lineSpacing: CGFloat
     ) {
-        guard range.length > 0 else { return }
-
         switch block {
         case .blockquote, .list:
             let blockSpacing = paragraphStyle(
@@ -402,6 +436,8 @@ public enum DocumentRenderer {
             // A blank line has no rendered content — it is represented
             // purely by the inter-block "\n" separators on either side.
             // The block's span will be empty (length 0).
+            // Note: No paragraph style is applied to the separator for
+            // blank lines to avoid visual jumps when they become paragraphs.
             return NSAttributedString(string: "", attributes: [:])
         }
     }

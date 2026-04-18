@@ -3097,12 +3097,12 @@ public enum EditingOps {
     }
 
     /// Exit a list item: remove it from the list and convert it to a
-    /// body paragraph. If this was the only item, the entire list block
-    /// is replaced with the paragraph. Otherwise the list continues
-    /// without this item, and a new paragraph block is inserted after
-    /// the list (or before, or the list splits).
-    /// - Parameter createParagraphForEmpty: If true, creates an empty paragraph even when
-    ///   the list item has no content. Used for delete-at-home on empty L1 items.
+    /// body paragraph. The item is removed from the list, and a new
+    /// paragraph block is inserted after the list. If the item was empty,
+    /// the paragraph will also be empty (providing a clean exit from
+    /// list editing). If this was the only item, the entire list block
+    /// is replaced with the paragraph.
+    /// - Parameter createParagraphForEmpty: Deprecated. Paragraph is always created.
     public static func exitListItem(
         at storageIndex: Int,
         in projection: DocumentProjection,
@@ -3117,19 +3117,16 @@ public enum EditingOps {
         }
 
         let entries = flattenList(items)
-        guard let (entryIdx, inlineOffset) = listEntryContaining(
+        guard let (entryIdx, _) = listEntryContaining(
             entries: entries, offset: offsetInBlock, forInsertion: true
         ) else {
             throw EditingError.unsupported(reason: "exitListItem: cursor not in inline content")
         }
         let entry = entries[entryIdx]
 
-        // Check if the item being exited is empty
-        let isEmpty = isInlineEmpty(entry.item.inline)
-
         // Build the replacement blocks by splitting the list at the exited item's position.
-        // This creates: [items before] + [paragraph?] + [items after]
-        // Paragraph is only created if item has content OR if createParagraphForEmpty is true.
+        // This creates: [items before] + [paragraph] + [items after]
+        // Paragraph is always created, even for empty items (clean exit from list editing).
         
         var newBlocks: [Block] = []
         
@@ -3139,36 +3136,13 @@ public enum EditingOps {
         
         // Build replacement blocks
         if !remaining.isEmpty {
-            // Check if we need to set blankLineBefore on the item after the removed one
-            // to preserve the "gap" where the empty item was
-            var modifiedRemaining = remaining
-            if createParagraphForEmpty && isEmpty {
-                // Find the item that was after the removed one and set blankLineBefore
-                // The removed item was at entry.path[0] (top level)
-                let removedIndex = entry.path[0]
-                if removedIndex < modifiedRemaining.count {
-                    // The item at removedIndex is now what was after the removed item
-                    // (since removeItemAtPath shifts items down)
-                    modifiedRemaining[removedIndex] = ListItem(
-                        indent: modifiedRemaining[removedIndex].indent,
-                        marker: modifiedRemaining[removedIndex].marker,
-                        afterMarker: modifiedRemaining[removedIndex].afterMarker,
-                        checkbox: modifiedRemaining[removedIndex].checkbox,
-                        inline: modifiedRemaining[removedIndex].inline,
-                        children: modifiedRemaining[removedIndex].children,
-                        blankLineBefore: true  // Mark as having a blank line before
-                    )
-                }
-            }
-            newBlocks.append(.list(items: modifiedRemaining))
+            newBlocks.append(.list(items: remaining))
         }
         
-        // Add the paragraph only if item has content OR if explicitly requested
-        // (e.g., for delete-at-home on empty L1 items)
-        if !isEmpty || createParagraphForEmpty {
-            let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
-            newBlocks.append(exitedParagraph)
-        }
+        // Always create a paragraph block for the exited item.
+        // For empty items, this creates an empty paragraph (clean exit from list editing).
+        let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
+        newBlocks.append(exitedParagraph)
         
         // Edge case: if newBlocks is empty, add a blank paragraph
         if newBlocks.isEmpty {
@@ -3177,48 +3151,19 @@ public enum EditingOps {
 
         var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
 
-        // Cursor positioning:
-        // - For non-empty items: place cursor at the start of the exited paragraph.
-        // - For empty items with createParagraphForEmpty=true (delete-at-home): 
-        //   place cursor at start of the new empty paragraph.
-        // - For empty items with createParagraphForEmpty=false (Return key): 
-        //   place cursor at end of previous item (or start of list if first item).
-        if isEmpty && !createParagraphForEmpty {
-            // Return-on-empty behavior: cursor goes to end of previous item
-            if entryIdx > 0 {
-                let blockSpan = result.newProjection.blockSpans[blockIndex]
-                if case .list(let newItems, _) = result.newProjection.document.blocks[blockIndex] {
-                    let newEntries = flattenList(newItems)
-                    let prevIdx = min(entryIdx - 1, newEntries.count - 1)
-                    if prevIdx >= 0 {
-                        let prevEntry = newEntries[prevIdx]
-                        result.newCursorPosition = blockSpan.location + prevEntry.startOffset + prevEntry.prefixLength + prevEntry.inlineLength
-                    } else {
-                        result.newCursorPosition = blockSpan.location
-                    }
-                } else {
-                    result.newCursorPosition = blockSpan.location
-                }
-            } else {
-                // First item was removed - cursor at start
-                let blockSpan = result.newProjection.blockSpans[blockIndex]
-                result.newCursorPosition = blockSpan.location
-            }
+        // Cursor goes to the start of the exited paragraph.
+        // Paragraph is always the middle block: [list?, paragraph, list?]
+        let firstIsList: Bool
+        if case .list = newBlocks.first {
+            firstIsList = true
         } else {
-            // Item has content OR delete-at-home on empty: cursor at start of paragraph
-            // Paragraph is always the middle block: [list?, paragraph, list?]
-            let firstIsList: Bool
-            if case .list = newBlocks.first {
-                firstIsList = true
-            } else {
-                firstIsList = false
-            }
-            let paraBlockIdx = blockIndex + (firstIsList ? 1 : 0)
-            if paraBlockIdx < result.newProjection.blockSpans.count {
-                result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location + inlineOffset
-            } else {
-                result.newCursorPosition = result.newProjection.attributed.length
-            }
+            firstIsList = false
+        }
+        let paraBlockIdx = blockIndex + (firstIsList ? 1 : 0)
+        if paraBlockIdx < result.newProjection.blockSpans.count {
+            result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
+        } else {
+            result.newCursorPosition = result.newProjection.attributed.length
         }
 
         return result
