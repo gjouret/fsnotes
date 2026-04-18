@@ -3127,26 +3127,50 @@ public enum EditingOps {
         // Check if the item being exited is empty
         let isEmpty = isInlineEmpty(entry.item.inline)
 
-        // Remove the item from the tree. Any children of the exiting
-        // item are promoted to the same level.
-        let remaining = removeItemAtPath(items, path: entry.path, promoteChildren: true)
-
-        // Build the replacement blocks.
+        // Build the replacement blocks by splitting the list at the exited item's position.
+        // This creates: [items before] + [paragraph?] + [items after]
+        // Paragraph is only created if item has content OR if createParagraphForEmpty is true.
+        
         var newBlocks: [Block] = []
+        
+        // Use removeItemAtPath to keep items before and after in the same list structure
+        // This preserves the list as a single block with blankLineBefore flags
+        let remaining = removeItemAtPath(items, path: entry.path, promoteChildren: true)
+        
+        // Build replacement blocks
         if !remaining.isEmpty {
-            newBlocks.append(.list(items: remaining))
+            // Check if we need to set blankLineBefore on the item after the removed one
+            // to preserve the "gap" where the empty item was
+            var modifiedRemaining = remaining
+            if createParagraphForEmpty && isEmpty {
+                // Find the item that was after the removed one and set blankLineBefore
+                // The removed item was at entry.path[0] (top level)
+                let removedIndex = entry.path[0]
+                if removedIndex < modifiedRemaining.count {
+                    // The item at removedIndex is now what was after the removed item
+                    // (since removeItemAtPath shifts items down)
+                    modifiedRemaining[removedIndex] = ListItem(
+                        indent: modifiedRemaining[removedIndex].indent,
+                        marker: modifiedRemaining[removedIndex].marker,
+                        afterMarker: modifiedRemaining[removedIndex].afterMarker,
+                        checkbox: modifiedRemaining[removedIndex].checkbox,
+                        inline: modifiedRemaining[removedIndex].inline,
+                        children: modifiedRemaining[removedIndex].children,
+                        blankLineBefore: true  // Mark as having a blank line before
+                    )
+                }
+            }
+            newBlocks.append(.list(items: modifiedRemaining))
         }
         
-        // Add a paragraph block if the exited item had content, or if explicitly
-        // requested (e.g., for delete-at-home on empty L1 items).
+        // Add the paragraph only if item has content OR if explicitly requested
+        // (e.g., for delete-at-home on empty L1 items)
         if !isEmpty || createParagraphForEmpty {
             let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
             newBlocks.append(exitedParagraph)
         }
         
-        // Edge case: if the list had only one empty item and createParagraphForEmpty
-        // is false, remaining will be empty and newBlocks will be empty.
-        // Replace with a blank paragraph to avoid empty block array.
+        // Edge case: if newBlocks is empty, add a blank paragraph
         if newBlocks.isEmpty {
             newBlocks.append(.paragraph(inline: []))
         }
@@ -3154,14 +3178,14 @@ public enum EditingOps {
         var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
 
         // Cursor positioning:
-        // - When createParagraphForEmpty is true (delete-at-home on empty L1):
-        //   place cursor at the start of the new empty paragraph.
-        // - When createParagraphForEmpty is false (Return on empty item):
-        //   for empty items, place cursor at the end of the previous item;
-        //   for non-empty items, place cursor at the start of the exited paragraph.
+        // - For non-empty items: place cursor at the start of the exited paragraph.
+        // - For empty items with createParagraphForEmpty=true (delete-at-home): 
+        //   place cursor at start of the new empty paragraph.
+        // - For empty items with createParagraphForEmpty=false (Return key): 
+        //   place cursor at end of previous item (or start of list if first item).
         if isEmpty && !createParagraphForEmpty {
             // Return-on-empty behavior: cursor goes to end of previous item
-            if entryIdx > 0, !remaining.isEmpty {
+            if entryIdx > 0 {
                 let blockSpan = result.newProjection.blockSpans[blockIndex]
                 if case .list(let newItems, _) = result.newProjection.document.blocks[blockIndex] {
                     let newEntries = flattenList(newItems)
@@ -3175,15 +3199,21 @@ public enum EditingOps {
                 } else {
                     result.newCursorPosition = blockSpan.location
                 }
-            } else if remaining.isEmpty {
-                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
             } else {
+                // First item was removed - cursor at start
                 let blockSpan = result.newProjection.blockSpans[blockIndex]
                 result.newCursorPosition = blockSpan.location
             }
         } else {
-            // Delete-at-home on empty or item has content: cursor at start of paragraph
-            let paraBlockIdx = blockIndex + (remaining.isEmpty ? 0 : 1)
+            // Item has content OR delete-at-home on empty: cursor at start of paragraph
+            // Paragraph is always the middle block: [list?, paragraph, list?]
+            let firstIsList: Bool
+            if case .list = newBlocks.first {
+                firstIsList = true
+            } else {
+                firstIsList = false
+            }
+            let paraBlockIdx = blockIndex + (firstIsList ? 1 : 0)
             if paraBlockIdx < result.newProjection.blockSpans.count {
                 result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location + inlineOffset
             } else {
@@ -3314,6 +3344,64 @@ public enum EditingOps {
                 indent: oldItem.indent, marker: oldItem.marker,
                 afterMarker: oldItem.afterMarker, checkbox: oldItem.checkbox,
                 inline: oldItem.inline, children: newChildren
+            )
+            return result
+        }
+    }
+
+    /// Get all list items before the entry at `path`.
+    /// Returns items at the top level only (flattened hierarchy is not preserved).
+    private static func itemsBeforeEntry(items: [ListItem], path: [Int]) -> [ListItem] {
+        guard let first = path.first else { return [] }
+        if path.count == 1 {
+            // Top-level item: return all items before the index
+            return Array(items.prefix(first))
+        } else {
+            // Nested item: recurse into children
+            var result = items
+            let childPath = Array(path.dropFirst())
+            let newChildren = itemsBeforeEntry(items: items[first].children, path: childPath)
+            result[first] = ListItem(
+                indent: items[first].indent, marker: items[first].marker,
+                afterMarker: items[first].afterMarker, checkbox: items[first].checkbox,
+                inline: items[first].inline, children: newChildren
+            )
+            return result
+        }
+    }
+
+    /// Get all list items after the entry at `path`, optionally promoting children.
+    /// Returns items at the top level only.
+    private static func itemsAfterEntry(items: [ListItem], path: [Int], promoteChildren: Bool) -> [ListItem] {
+        guard let first = path.first else { return items }
+        if path.count == 1 {
+            // Top-level item
+            var result: [ListItem] = []
+            let removedItem = items[first]
+            
+            // If promoting children, insert them where the item was
+            if promoteChildren {
+                result.append(contentsOf: removedItem.children)
+            }
+            
+            // Add all items after the removed one
+            if first + 1 < items.count {
+                result.append(contentsOf: items.suffix(from: first + 1))
+            }
+            return result
+        } else {
+            // Nested item: recurse into children
+            var result = items
+            let childPath = Array(path.dropFirst())
+            let newChildren = itemsAfterEntry(
+                items: items[first].children,
+                path: childPath,
+                promoteChildren: promoteChildren
+            )
+            result[first] = ListItem(
+                indent: items[first].indent, marker: items[first].marker,
+                afterMarker: items[first].afterMarker, checkbox: items[first].checkbox,
+                inline: items[first].inline, children: newChildren
             )
             return result
         }
@@ -3803,18 +3891,21 @@ public enum EditingOps {
         )
     }
 
-    /// Convert a paragraph to an unordered list, or a list to paragraphs.
+    /// Toggle a list at the cursor position.
     ///
     /// - When `storageIndex` is in a paragraph: wraps it in a single-item
     ///   unordered list with the given marker (default "-").
-    /// - When `storageIndex` is in a list: unwraps the list, converting
-    ///   each top-level item to a paragraph.
+    /// - When `storageIndex` is in a list: converts ONLY the current item
+    ///   at the cursor position to a paragraph, splitting the list into
+    ///   parts before and after the current item.
+    /// - Multi-selection behavior: handled at the caller level (wraps
+    ///   selected blocks into a single list block).
     public static func toggleList(
         marker: String = "-",
         at storageIndex: Int,
         in projection: DocumentProjection
     ) throws -> EditResult {
-        guard let (blockIndex, _) = projection.blockContaining(storageIndex: storageIndex) else {
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
         }
         let block = projection.document.blocks[blockIndex]
@@ -3835,13 +3926,56 @@ public enum EditingOps {
             return result
 
         case .list(let items, _):
-            // Unwrap: each top-level item becomes a paragraph.
-            let newBlocks = items.map { item -> Block in
-                .paragraph(inline: item.inline)
+            // Find the current item at the cursor position
+            let entries = flattenList(items)
+            guard let (entryIdx, _) = listEntryContaining(
+                entries: entries, offset: offsetInBlock, forInsertion: true
+            ) else {
+                throw EditingError.unsupported(reason: "toggleList: cursor not in list item content")
             }
-            var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
-            result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
-            return result
+            let entry = entries[entryIdx]
+            
+            // Split the list: items before, current item (as paragraph), items after
+            let itemsBefore = itemsBeforeEntry(items: items, path: entry.path)
+            let itemsAfter = itemsAfterEntry(items: items, path: entry.path, promoteChildren: true)
+            
+            // Build the new blocks
+            var newBlocks: [Block] = []
+            
+            // Add list with items before (if any)
+            if !itemsBefore.isEmpty {
+                newBlocks.append(.list(items: itemsBefore))
+            }
+            
+            // Add the current item as a paragraph
+            newBlocks.append(.paragraph(inline: entry.item.inline))
+            
+            // Add list with items after (if any)
+            if !itemsAfter.isEmpty {
+                newBlocks.append(.list(items: itemsAfter))
+            }
+            
+            guard !newBlocks.isEmpty else {
+                throw EditingError.unsupported(reason: "toggleList: no blocks to replace with")
+            }
+            
+            // Replace the list block with the new blocks
+            let result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+            
+            // Cursor goes to the paragraph we just created
+            // Find the paragraph block (it's the one that's not a list)
+            var paraBlockIdx = blockIndex
+            for (i, blk) in result.newProjection.document.blocks.enumerated() {
+                if i >= blockIndex && i < blockIndex + newBlocks.count {
+                    if case .paragraph = blk {
+                        paraBlockIdx = i
+                        break
+                    }
+                }
+            }
+            var newResult = result
+            newResult.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
+            return newResult
 
         case .blankLine:
             // Convert blank line to an empty list item.

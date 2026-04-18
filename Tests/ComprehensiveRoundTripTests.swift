@@ -60,8 +60,8 @@ def foo():
     - deeply nested
 
 1. first
-2. second
-3. third
+1. second
+1. third
 
 > single line blockquote
 

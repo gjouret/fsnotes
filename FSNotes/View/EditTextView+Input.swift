@@ -52,12 +52,39 @@ extension EditTextView {
             if let projection = documentProjection {
                 let cursorPos = selectedRange().location
                 let state = ListEditingFSM.detectState(storageIndex: cursorPos, in: projection)
+                
+                // DEBUG
+                let logPath = "/tmp/fsnotes_tab_debug.log"
+                let debugMsg = "TAB DEBUG: cursorPos=\(cursorPos), state=\(state)\n"
+                try? debugMsg.write(toFile: logPath, atomically: true, encoding: .utf8)
+                
                 if case .listItem = state {
                     let action: ListEditingFSM.Action = NSEvent.modifierFlags.contains(.shift) ? .shiftTab : .tab
                     let transition = ListEditingFSM.transition(state: state, action: action)
+                    
+                    // DEBUG
+                    if let handle = FileHandle(forWritingAtPath: logPath) {
+                        handle.seekToEndOfFile()
+                        handle.write("TAB DEBUG: action=\(action), transition=\(transition)\n".data(using: .utf8)!)
+                        handle.closeFile()
+                    }
+                    
                     if handleListTransition(transition, at: cursorPos) {
+                        // DEBUG
+                        if let handle = FileHandle(forWritingAtPath: logPath) {
+                            handle.seekToEndOfFile()
+                            handle.write("TAB DEBUG: handled successfully\n".data(using: .utf8)!)
+                            handle.closeFile()
+                        }
                         breakUndoCoalescing()
                         return
+                    }
+                    
+                    // DEBUG
+                    if let handle = FileHandle(forWritingAtPath: logPath) {
+                        handle.seekToEndOfFile()
+                        handle.write("TAB DEBUG: handleListTransition returned false\n".data(using: .utf8)!)
+                        handle.closeFile()
                     }
                 }
             }

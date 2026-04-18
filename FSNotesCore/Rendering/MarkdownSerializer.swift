@@ -84,6 +84,11 @@ public enum MarkdownSerializer {
     /// reproduces its original source prefix exactly: indent +
     /// marker + afterMarker + inline content. Children are emitted
     /// on subsequent lines, joined by "\n".
+    /// 
+    /// For ordered lists, always emit "1." as the marker — the renderer
+    /// maintains sequential numbering (1, 2, 3...) based on item position.
+    /// This allows split lists to re-merge naturally when the separator
+    /// is deleted.
     private static func serializeItem(_ item: ListItem) -> String {
         let cbPart: String
         if let cb = item.checkbox {
@@ -91,12 +96,33 @@ public enum MarkdownSerializer {
         } else {
             cbPart = ""
         }
-        let firstLine = item.indent + item.marker + item.afterMarker
+        // Normalize ordered markers to "1." or "1)" (preserve style, normalize number)
+        // This allows split lists to re-merge naturally while preserving user style preference.
+        let normalizedMarker: String
+        if let suffix = orderedMarkerSuffix(item.marker) {
+            normalizedMarker = "1" + suffix
+        } else {
+            normalizedMarker = item.marker
+        }
+        let firstLine = item.indent + normalizedMarker + item.afterMarker
             + cbPart + serializeInlines(item.inline)
         if item.children.isEmpty { return firstLine }
         let childLines = item.children.map { serializeItem($0) }
             .joined(separator: "\n")
         return firstLine + "\n" + childLines
+    }
+    
+    /// Whether a marker is an ordered list marker (e.g. "1.", "2)").
+    /// Returns the marker style suffix ("." or ")") if ordered, nil otherwise.
+    private static func orderedMarkerSuffix(_ marker: String) -> String? {
+        // Ordered markers are digits followed by "." or ")"
+        if marker.hasSuffix(".") && marker.dropLast().allSatisfy({ $0.isNumber }) {
+            return "."
+        }
+        if marker.hasSuffix(")") && marker.dropLast().allSatisfy({ $0.isNumber }) {
+            return ")"
+        }
+        return nil
     }
 
     /// Serialize an inline tree back to markdown source. Re-emits the

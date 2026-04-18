@@ -32,6 +32,20 @@ Each block contains `[Inline]` trees for rich text. Inline nodes: `.text`, `.bol
 
 Wikilinks parse from `[[target]]` or `[[target|display]]` and render as styled clickable text using the `wiki:<target>` URL scheme — the `[[ ]]` brackets never appear in rendered storage. The click handler in the view layer dispatches `wiki:` URLs to the note resolver.
 
+### Blank Lines and Zero-Length Blocks
+
+**Critical**: `Block.blankLine` renders to an empty string (`""`), producing a `blockSpan` with `length == 0`. This has important consequences:
+
+1. **Range overlap checks fail**: The standard overlap test `span.location < rangeEnd && spanEnd > range.location` returns `false` for zero-length spans because `spanEnd == span.location`. `blockIndices(overlapping:)` works around this with a fallback to `blockContaining(storageIndex:)` for zero-length selections.
+
+2. **Cursor position checks fail**: A check like `cursorLoc >= span.location && cursorLoc < span.location + span.length` can never be true for zero-length blocks (since `span.location + 0 == span.location`). Code operating on zero-length blocks must special-case `span.length == 0` and use `span.location` directly.
+
+3. **Blank lines are structural, not visual**: In the rendered output, blank lines exist only as the `"\n"` separator between adjacent blocks. They carry no content of their own. The `DocumentRenderer` uses collapsed paragraph styles (`minimumLineHeight = 0.01`) for separators adjacent to blank lines.
+
+4. **No fallback to source mode**: The block-model and source-mode pipelines are completely separate. When `documentProjection` is non-nil, ALL operations must route through `EditingOps`. Returning `false` from a block-model function does NOT fall back to source mode — it typically results in a no-op or broken state.
+
+5. **Return key creates blank lines**: When Return is pressed at the end of a paragraph, `splitParagraphOnNewline` produces `[paragraph(before), .blankLine]`. The cursor ends up on the blank line, which has zero rendered length. Toolbar operations targeting the cursor must handle this case explicitly.
+
 ### Save Path
 
 WYSIWYG: `Document` → `MarkdownSerializer.serialize()` → `Note.save(markdown:)` (bypasses `NoteSerializer`).
@@ -79,7 +93,7 @@ Per CommonMark 4.2 (ATX): headings are single-line. Opening `#` sequence determi
 | **Toggle list** | Unsupported (heading stays as heading). |
 | **Toggle blockquote** | Unsupported. |
 | **Insert HR** | Insert blankLine + HR after heading. |
-| **Toggle todo** | Heading → todo list item (heading content becomes item). |
+|| **Toggle todo** | Unsupported. |
 
 ### Code Block
 
@@ -102,6 +116,8 @@ Per CommonMark 4.5: fenced code blocks open with `` ` `` or `~` (3+ chars). Cont
 
 Per CommonMark 5.2-5.3: list items start with bullet (`-`, `*`, `+`) or ordered marker (`1.`, `1)`). Continuation lines indented to content column. Blank line between items → loose list. Nested lists require sufficient indentation.
 
+**Ordered List Numbering**: All ordered list items store and serialize with marker `1.` (regardless of their rendered position). The `ListRenderer` maintains a running counter at each nesting level to display sequential numbers (1, 2, 3...). This allows split lists to re-merge naturally when the separating block is deleted — no special merge logic required.
+
 Structural operations route through **ListEditingFSM** (see below).
 
 | Action | Result |
@@ -117,7 +133,7 @@ Structural operations route through **ListEditingFSM** (see below).
 | **Shift-Tab (depth > 0)** | FSM `unindent`: move one level shallower. |
 | **Inline format** | Toggle trait on item's inline content. |
 | **Set heading level** | Unsupported (items stay as items). |
-| **Toggle list** | List → multiple paragraphs (one per top-level item). |
+| **Toggle list** | Cursor in single item (no multi-selection): convert ONLY that item to paragraph, splitting the list. See Multi-Selection FSM for multi-block behavior. |
 | **Toggle blockquote** | Unsupported. |
 | **Insert HR** | Insert HR after list block. |
 | **Toggle todo** | All items have checkbox → unwrap to paragraphs. Otherwise → add `[ ]` to items lacking checkboxes. |
@@ -175,6 +191,22 @@ Per CommonMark 4.1: thematic breaks are `---`, `***`, or `___` (3+ chars, option
 | **Insert HR** | Insert another HR after (with blankLine separator). |
 | **Toggle todo** | Unsupported. |
 
+### HTML Block
+
+Per CommonMark 4.6: HTML blocks begin with specific tags (`<script`, `<pre`, `<style`, HTML comments, etc.) and contain raw HTML until a closing condition. Content is verbatim literal text — no inline parsing. Renders with code font.
+
+| Action | Result |
+|--------|--------|
+| **Return** | Insert literal newline within HTML content. No structural split (unlike code blocks, no keyboard escape). |
+| **Backspace at start** | Delete within HTML content. If content empty and at boundary, merge with previous (falls back to paragraph). |
+| **Tab / Shift-Tab** | Insert literal tab character (like code block). |
+| **Inline format** | Unsupported (HTML blocks are verbatim). |
+| **Set heading level** | Unsupported. |
+| **Toggle list** | Unsupported. |
+| **Toggle blockquote** | Unsupported. |
+| **Insert HR** | Insert HR after HTML block. |
+| **Toggle todo** | Unsupported. |
+
 ### Table
 
 Tables are a GFM extension (not core CommonMark). They render as `InlineTableView` (NSTextAttachment). Cell content is an inline tree — `Block.table` holds `[TableCell]` values where each cell is a `[Inline]` tree, the same type backing `Block.paragraph`. Cell editing routes through the block-model pipeline the same way paragraph editing does.
@@ -196,6 +228,26 @@ Tables are a GFM extension (not core CommonMark). They render as `InlineTableVie
 | **Insert HR** | Insert HR after table. |
 | **Toggle todo** | Unsupported. |
 
+### Multi-Selection
+
+When multiple blocks are selected (spanning a range), operations apply to all selected blocks as a unit. The selection is defined by `blockIndices(overlapping:)` — all blocks touched by the selection range.
+
+| Action | Result |
+|--------|--------|
+| **Return** | Delete selected content; merge first partial block with last partial block (see Cross-Block Merge). |
+| **Backspace** | Same as Return (delete selection, merge boundaries). |
+| **Delete** | Delete selected content without merge (content removed, blocks collapse). |
+| **Tab** | Indent all selected blocks that support indentation (lists indent current items; other blocks no-op). |
+| **Shift-Tab** | Outdent all selected blocks (lists unindent current items; other blocks no-op). |
+| **Inline format** (bold/italic/code/strike) | Toggle trait across entire selection. Preserves block boundaries; each block's inlines are formatted. |
+| **Set heading level** | Convert all selected paragraphs/headings to target level. Non-paragraph/heading blocks unchanged. |
+| **Toggle list** | Convert all selected blocks to a single list with one item per block. Each block's content becomes a list item. |
+| **Toggle blockquote** | Wrap all selected blocks in a single blockquote. Each block becomes a quoted line. |
+| **Insert HR** | Insert HR after the last selected block. |
+| **Toggle todo** | If all selected list items have checkboxes → remove them. Otherwise add `[ ]` to items lacking checkboxes. Non-list blocks converted to todo list items. |
+| **Copy** | Serialize all selected blocks to markdown; push to pasteboard. |
+| **Paste** | Replace selection with parsed markdown document; merge first/last boundaries if partial. |
+
 ## Cross-Block Merge Rules
 
 When backspace crosses a block boundary, `mergeAdjacentBlocks` combines the tail of one block with the head of the next. The result depends on the pair:
@@ -212,6 +264,7 @@ When backspace crosses a block boundary, `mergeAdjacentBlocks` combines the tail
 | blankLine | any | BlankLine removed; adjacent paragraphs merge |
 | any | horizontalRule | HR removed |
 | any | codeBlock | Code block removed (content lost) |
+| any | htmlBlock | HTML block removed (content lost) |
 | any | blockquote | Blockquote removed (first line's inlines appended) |
 
 ## Paste Pipeline

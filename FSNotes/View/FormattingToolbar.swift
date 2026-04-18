@@ -323,12 +323,46 @@ class FormattingToolbar: NSView {
             setButtonState("highlight", active: false)
         }
 
+        // Check block type from projection when in block model mode (WYSIWYG)
+        // This is more reliable than checking raw text prefixes which don't exist
+        // in the rendered output.
+        var isQuote = false
+        var isBulletList = false
+        var isNumberedList = false
+        var isCheckbox = false
+        
+        if let proj = editor.documentProjection,
+           currentCursorBlock >= 0,
+           currentCursorBlock < proj.document.blocks.count {
+            switch proj.document.blocks[currentCursorBlock] {
+            case .blockquote:
+                isQuote = true
+            case .list(let items, _):
+                // Determine list type from the first item's marker
+                if let firstItem = items.first {
+                    let marker = firstItem.marker
+                    if marker == "-" || marker == "*" || marker == "+" {
+                        if firstItem.checkbox != nil {
+                            isCheckbox = true
+                        } else {
+                            isBulletList = true
+                        }
+                    } else if marker.range(of: #"^\d+[.\)]"#, options: .regularExpression) != nil {
+                        isNumberedList = true
+                    }
+                }
+            default:
+                break
+            }
+        }
+        
+        // Fallback to text-based detection for source mode
         let paragraphText = (storage.string as NSString).substring(with: paragraphRange).trimmingCharacters(in: .whitespaces)
-
-        setButtonState("quote", active: paragraphText.hasPrefix(">"))
-        setButtonState("bulletList", active: paragraphText.hasPrefix("- ") || paragraphText.hasPrefix("* ") || paragraphText.hasPrefix("+ "))
-        setButtonState("numberedList", active: paragraphText.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil)
-        setButtonState("checkbox", active: paragraphText.hasPrefix("- [ ]") || paragraphText.hasPrefix("- [x]"))
+        
+        setButtonState("quote", active: isQuote || paragraphText.hasPrefix(">"))
+        setButtonState("bulletList", active: isBulletList || paragraphText.hasPrefix("- ") || paragraphText.hasPrefix("* ") || paragraphText.hasPrefix("+ "))
+        setButtonState("numberedList", active: isNumberedList || paragraphText.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil)
+        setButtonState("checkbox", active: isCheckbox || paragraphText.hasPrefix("- [ ]") || paragraphText.hasPrefix("- [x]"))
     }
 
     /// If a field editor inside an InlineTableView cell is first

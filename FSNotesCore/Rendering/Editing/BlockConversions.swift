@@ -493,18 +493,19 @@ public enum BlockConversions {
         )
     }
 
-    /// Convert a paragraph to an unordered list, or a list to paragraphs.
+    /// Toggle a list at the cursor position.
     ///
     /// - When `storageIndex` is in a paragraph: wraps it in a single-item
     ///   unordered list with the given marker (default "-").
-    /// - When `storageIndex` is in a list: unwraps the list, converting
-    ///   each top-level item to a paragraph.
+    /// - When `storageIndex` is in a list: converts ONLY the current item
+    ///   at the cursor position to a paragraph, splitting the list into
+    ///   parts before and after the current item.
     public static func toggleList(
         marker: String = "-",
         at storageIndex: Int,
         in projection: DocumentProjection
     ) throws -> EditResult {
-        guard let (blockIndex, _) = projection.blockContaining(storageIndex: storageIndex) else {
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
         }
         let block = projection.document.blocks[blockIndex]
@@ -525,13 +526,56 @@ public enum BlockConversions {
             return result
 
         case .list(let items, _):
-            // Unwrap: each top-level item becomes a paragraph.
-            let newBlocks = items.map { item -> Block in
-                .paragraph(inline: item.inline)
+            // Find the current item at the cursor position
+            let entries = flattenList(items)
+            guard let (entryIdx, _) = listEntryContaining(
+                entries: entries, offset: offsetInBlock, forInsertion: true
+            ) else {
+                throw EditingError.unsupported(reason: "toggleList: cursor not in list item content")
             }
-            var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
-            result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
-            return result
+            let entry = entries[entryIdx]
+            
+            // Split the list: items before, current item (as paragraph), items after
+            let itemsBefore = itemsBeforeEntry(items: items, path: entry.path)
+            let itemsAfter = itemsAfterEntry(items: items, path: entry.path, promoteChildren: true)
+            
+            // Build the new blocks
+            var newBlocks: [Block] = []
+            
+            // Add list with items before (if any)
+            if !itemsBefore.isEmpty {
+                newBlocks.append(.list(items: itemsBefore))
+            }
+            
+            // Add the current item as a paragraph
+            newBlocks.append(.paragraph(inline: entry.item.inline))
+            
+            // Add list with items after (if any)
+            if !itemsAfter.isEmpty {
+                newBlocks.append(.list(items: itemsAfter))
+            }
+            
+            guard !newBlocks.isEmpty else {
+                throw EditingError.unsupported(reason: "toggleList: no blocks to replace with")
+            }
+            
+            // Replace the list block with the new blocks
+            let result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+            
+            // Cursor goes to the paragraph we just created
+            // Find the paragraph block (it's the one that's not a list)
+            var paraBlockIdx = blockIndex
+            for (i, blk) in result.newProjection.document.blocks.enumerated() {
+                if i >= blockIndex && i < blockIndex + newBlocks.count {
+                    if case .paragraph = blk {
+                        paraBlockIdx = i
+                        break
+                    }
+                }
+            }
+            var newResult = result
+            newResult.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
+            return newResult
 
         case .blankLine:
             // Convert blank line to an empty list item.
@@ -1026,6 +1070,66 @@ public enum BlockConversions {
             return nil
         }
         return result
+    }
+
+    // MARK: - List helper functions for toggleList
+
+    /// Get all list items before the entry at `path`.
+    /// Returns items at the top level only.
+    private static func itemsBeforeEntry(items: [ListItem], path: [Int]) -> [ListItem] {
+        guard let first = path.first else { return [] }
+        if path.count == 1 {
+            // Top-level item: return all items before the index
+            return Array(items.prefix(first))
+        } else {
+            // Nested item: recurse into children
+            var result = items
+            let childPath = Array(path.dropFirst())
+            let newChildren = itemsBeforeEntry(items: items[first].children, path: childPath)
+            result[first] = ListItem(
+                indent: items[first].indent, marker: items[first].marker,
+                afterMarker: items[first].afterMarker, checkbox: items[first].checkbox,
+                inline: items[first].inline, children: newChildren
+            )
+            return result
+        }
+    }
+
+    /// Get all list items after the entry at `path`, optionally promoting children.
+    /// Returns items at the top level only.
+    private static func itemsAfterEntry(items: [ListItem], path: [Int], promoteChildren: Bool) -> [ListItem] {
+        guard let first = path.first else { return items }
+        if path.count == 1 {
+            // Top-level item
+            var result: [ListItem] = []
+            let removedItem = items[first]
+            
+            // If promoting children, insert them where the item was
+            if promoteChildren {
+                result.append(contentsOf: removedItem.children)
+            }
+            
+            // Add all items after the removed one
+            if first + 1 < items.count {
+                result.append(contentsOf: items.suffix(from: first + 1))
+            }
+            return result
+        } else {
+            // Nested item: recurse into children
+            var result = items
+            let childPath = Array(path.dropFirst())
+            let newChildren = itemsAfterEntry(
+                items: items[first].children,
+                path: childPath,
+                promoteChildren: promoteChildren
+            )
+            result[first] = ListItem(
+                indent: items[first].indent, marker: items[first].marker,
+                afterMarker: items[first].afterMarker, checkbox: items[first].checkbox,
+                inline: items[first].inline, children: newChildren
+            )
+            return result
+        }
     }
 }
 

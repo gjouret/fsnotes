@@ -214,6 +214,27 @@ class BlockModelFormattingTests: XCTestCase {
         assertSpliceInvariant(old: proj, result: result)
     }
 
+    func test_toggleList_multiItemList_onlyCurrentItemConverted() throws {
+        // Test that toggling a list converts ONLY the current item at cursor position
+        // This splits the list into: items before (as list) + current item (as paragraph) + items after (as list)
+        let proj = project("- First item\n- Second item\n- Third item\n")
+        // Find the second item's inline content
+        let entries = EditingOps.flattenListPublic([
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("First item")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("Second item")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("Third item")], children: [])
+        ])
+        // Get the storage index for the second item
+        let span = proj.blockSpans[0]
+        let secondItemOffset = span.location + entries[1].startOffset + entries[1].prefixLength
+        
+        let result = try EditingOps.toggleList(at: secondItemOffset, in: proj)
+        
+        // Result should be: First item as list, Second item as paragraph, Third item as list
+        assertRoundTrip(result, expected: "- First item\nSecond item\n- Third item\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
     func test_toggleList_orderedList() throws {
         let proj = project("Hello world\n")
         let result = try EditingOps.toggleList(marker: "1.", at: 0, in: proj)
