@@ -36,6 +36,66 @@ import AppKit
 import UIKit
 #endif
 
+// MARK: - Architecture Types (A-Grade Migration)
+
+/// Phantom type for compile-time offset safety.
+public struct StorageIndex<T>: Equatable, Comparable, Hashable {
+    private let rawValue: Int
+    public init(_ value: Int) { self.rawValue = value }
+    public var value: Int { rawValue }
+    
+    public static func < (lhs: StorageIndex<T>, rhs: StorageIndex<T>) -> Bool { lhs.rawValue < rhs.rawValue }
+    public static func + (lhs: StorageIndex<T>, rhs: Int) -> StorageIndex<T> { StorageIndex(lhs.rawValue + rhs) }
+    public static func - (lhs: StorageIndex<T>, rhs: Int) -> StorageIndex<T> { StorageIndex(lhs.rawValue - rhs) }
+    public static func distance(from start: StorageIndex<T>, to end: StorageIndex<T>) -> Int { end.rawValue - start.rawValue }
+}
+
+/// Type tags for storage indices.
+public enum OldStorage {}
+public enum NewStorage {}
+
+/// A range in storage with type safety.
+public struct StorageRange<T>: Equatable {
+    public let start: StorageIndex<T>
+    public let end: StorageIndex<T>
+    public init(start: StorageIndex<T>, end: StorageIndex<T>) { self.start = start; self.end = end }
+    public var length: Int { StorageIndex<T>.distance(from: start, to: end) }
+}
+
+/// Unified error type replacing scattered EditingError.
+public enum EditorError: Error, Equatable {
+    case invalidStorageIndex(Int)
+    case invalidBlockIndex(Int)
+    case invalidRange(StorageRange<OldStorage>)
+    case emptySelection
+    case blockNotFound(at: StorageIndex<OldStorage>)
+    case unsupportedBlockType(BlockType)
+    case readOnlyBlock(BlockType)
+    case crossBlockSelection
+    case crossInlineSelection
+    case invalidSelection(String)
+    case operationFailed(String)
+    case serializationFailed
+    case parseFailed(String)
+    case invalidState(String)
+    case transactionFailed(String)
+    
+    public enum BlockType: Equatable {
+        case paragraph, heading, codeBlock, list, blockquote, table, horizontalRule, blankLine, htmlBlock
+    }
+}
+
+// MARK: - Legacy Error Type (kept for backward compatibility during migration)
+/// Errors thrown by editing operations.
+public enum EditingError: Error, Equatable {
+    case invalidSelection
+    case notInsideBlock(storageIndex: Int)
+    case unsupported(reason: String)
+    case crossBlockRange
+    case crossInlineRange
+    case outOfBounds
+}
+
 /// The output of an editing operation.
 public struct EditResult {
     /// The post-edit projection — rendered, block spans, everything.
@@ -58,22 +118,11 @@ public struct EditResult {
     public var newSelectionLength: Int = 0
 }
 
-/// Errors raised by editing operations.
-public enum EditingError: Error, Equatable {
-    /// The storage index lies outside any block (on a separator, or
-    /// past the end of the document).
-    case notInsideBlock(storageIndex: Int)
-    /// The operation is not supported for this block type or
-    /// configuration.
-    case unsupported(reason: String)
-    /// A range-based operation spans more than one block.
-    case crossBlockRange
-    /// A range-based operation spans more than one inline leaf (e.g.
-    /// text→bold→text) within a paragraph.
-    case crossInlineRange
-    /// A delete range would reach beyond the document's rendered length.
-    case outOfBounds
-}
+// NOTE: EditingError is now defined at the top of the file with the
+// new architecture types. This section removed as part of A-grade
+// architecture migration.
+
+// MARK: - Editing Operations
 
 public enum EditingOps {
 
