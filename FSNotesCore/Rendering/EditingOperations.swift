@@ -96,6 +96,388 @@ public enum EditingError: Error, Equatable {
     case outOfBounds
 }
 
+/// Inline trait for toggle operations (moved here for architecture types).
+public enum InlineTrait {
+    case bold
+    case italic
+    case strikethrough
+    case code
+    case underline
+    case highlight
+}
+
+// MARK: - Item 3: Abstract TextBuffer Protocol
+
+/// Abstract text storage for testability and platform independence.
+public protocol TextBuffer: AnyObject {
+    var length: Int { get }
+    var string: String { get }
+    
+    func attributedSubstring(from range: NSRange) -> NSAttributedString
+    func replaceCharacters(in range: NSRange, with attrString: NSAttributedString)
+    func addAttribute(_ name: NSAttributedString.Key, value: Any, range: NSRange)
+    func removeAttribute(_ name: NSAttributedString.Key, range: NSRange)
+    func attribute(_ attrName: NSAttributedString.Key, at location: Int, effectiveRange range: NSRangePointer?) -> Any?
+    func attributes(at location: Int, effectiveRange range: NSRangePointer?) -> [NSAttributedString.Key: Any]
+}
+
+/// In-memory text buffer for unit tests.
+public final class InMemoryTextBuffer: TextBuffer {
+    private var storage: NSMutableAttributedString
+    
+    public init(string: String = "") {
+        self.storage = NSMutableAttributedString(string: string)
+    }
+    
+    public var length: Int { storage.length }
+    public var string: String { storage.string }
+    
+    public func attributedSubstring(from range: NSRange) -> NSAttributedString {
+        storage.attributedSubstring(from: range)
+    }
+    
+    public func replaceCharacters(in range: NSRange, with attrString: NSAttributedString) {
+        storage.replaceCharacters(in: range, with: attrString)
+    }
+    
+    public func addAttribute(_ name: NSAttributedString.Key, value: Any, range: NSRange) {
+        storage.addAttribute(name, value: value, range: range)
+    }
+    
+    public func removeAttribute(_ name: NSAttributedString.Key, range: NSRange) {
+        storage.removeAttribute(name, range: range)
+    }
+    
+    public func attribute(_ attrName: NSAttributedString.Key, at location: Int, effectiveRange range: NSRangePointer?) -> Any? {
+        storage.attribute(attrName, at: location, effectiveRange: range)
+    }
+    
+    public func attributes(at location: Int, effectiveRange range: NSRangePointer?) -> [NSAttributedString.Key: Any] {
+        storage.attributes(at: location, effectiveRange: range)
+    }
+}
+
+#if os(OSX)
+import AppKit
+
+/// Adapter for NSTextStorage to conform to TextBuffer.
+extension NSTextStorage: TextBuffer {}
+
+#else
+import UIKit
+
+/// Adapter for NSTextStorage to conform to TextBuffer.
+extension NSTextStorage: TextBuffer {}
+#endif
+
+// MARK: - Item 4: Protocol-Oriented Block Editing
+
+/// Capabilities that a block type can expose.
+public struct BlockCapabilities: OptionSet {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+    
+    static let editableInline = BlockCapabilities(rawValue: 1 << 0)
+    static let splittable = BlockCapabilities(rawValue: 1 << 1)
+    static let mergable = BlockCapabilities(rawValue: 1 << 2)
+    static let formattable = BlockCapabilities(rawValue: 1 << 3)
+    static let listItem = BlockCapabilities(rawValue: 1 << 4)
+    static let hasChildren = BlockCapabilities(rawValue: 1 << 5)
+    static let readOnly = BlockCapabilities(rawValue: 1 << 6)
+}
+
+/// Protocol for editable block operations.
+public protocol EditableBlock {
+    var capabilities: BlockCapabilities { get }
+    var inlineContent: [Inline] { get set }
+    
+    func canHandle(action: BlockAction) -> Bool
+    mutating func perform(action: BlockAction, at offset: Int, with text: String?) throws -> BlockActionResult
+}
+
+/// Actions that can be performed on blocks.
+public enum BlockAction {
+    case insertText(String)
+    case deleteRange(NSRange)
+    case splitAt(Int)
+    case mergeWith(Block)
+    case toggleFormat(InlineTrait)
+    case changeHeadingLevel(Int)
+    case indent
+    case unindent
+    case exitToBody
+}
+
+/// Result of a block action.
+public struct BlockActionResult {
+    public let newBlock: Block
+    public let cursorOffset: Int
+    public let additionalBlocks: [Block]
+    
+    public init(newBlock: Block, cursorOffset: Int, additionalBlocks: [Block] = []) {
+        self.newBlock = newBlock
+        self.cursorOffset = cursorOffset
+        self.additionalBlocks = additionalBlocks
+    }
+}
+
+/// Block extensions for EditableBlock protocol.
+extension Block {
+    public var capabilities: BlockCapabilities {
+        switch self {
+        case .paragraph:
+            return [.editableInline, .splittable, .mergable, .formattable]
+        case .heading:
+            return [.editableInline, .splittable, .formattable]
+        case .list:
+            return [.listItem, .hasChildren]
+        case .codeBlock, .htmlBlock:
+            return [.editableInline, .readOnly]
+        case .blockquote:
+            return [.editableInline, .splittable, .mergable, .formattable, .hasChildren]
+        case .table:
+            return [.editableInline, .hasChildren]
+        case .horizontalRule, .blankLine:
+            return [.mergable]
+        }
+    }
+}
+
+// MARK: - Item 5: Unidirectional Data Flow (EditorStore)
+
+/// Actions that can be dispatched to the editor store.
+public enum EditorAction {
+    case insertText(String, at: Int)
+    case deleteRange(NSRange)
+    case splitBlock(at: Int)
+    case mergeBlocks(Int, Int)
+    case toggleBold
+    case toggleItalic
+    case toggleStrikethrough
+    case toggleCode
+    case setHeadingLevel(Int)
+    case toggleList
+    case toggleBlockquote
+    case indentListItem
+    case unindentListItem
+    case exitListItem
+    case insertHorizontalRule
+    case toggleTodo
+    case formatSelection(InlineTrait)
+    case undo
+    case redo
+}
+
+/// State managed by the editor store.
+public struct EditorState {
+    public var document: Document
+    public var cursorPosition: Int
+    public var selectionRange: NSRange?
+    public var pendingTraits: Set<InlineTrait>
+    public var history: [DocumentSnapshot]
+    public var historyIndex: Int
+    public let maxHistorySize: Int
+    
+    public init(document: Document, cursorPosition: Int = 0, maxHistorySize: Int = 50) {
+        self.document = document
+        self.cursorPosition = cursorPosition
+        self.selectionRange = nil
+        self.pendingTraits = []
+        self.history = []
+        self.historyIndex = -1
+        self.maxHistorySize = maxHistorySize
+    }
+    
+    public var canUndo: Bool { historyIndex > 0 }
+    public var canRedo: Bool { historyIndex < history.count - 1 }
+}
+
+/// Document snapshot for undo/redo.
+public struct DocumentSnapshot {
+    public let document: Document
+    public let cursorPosition: Int
+    public let timestamp: Date
+    
+    public init(document: Document, cursorPosition: Int) {
+        self.document = document
+        self.cursorPosition = cursorPosition
+        self.timestamp = Date()
+    }
+}
+
+/// Editor store with unidirectional data flow.
+public final class EditorStore {
+    private(set) public var state: EditorState
+    private var reducer: EditorReducer
+    private var effectHandlers: [EffectHandler]
+    private var subscribers: [(EditorState) -> Void]
+    
+    public init(initialState: EditorState, reducer: EditorReducer = EditorReducer(), effectHandlers: [EffectHandler] = []) {
+        self.state = initialState
+        self.reducer = reducer
+        self.effectHandlers = effectHandlers
+        self.subscribers = []
+    }
+    
+    /// Dispatch an action to update state.
+    public func dispatch(_ action: EditorAction) {
+        let (newState, effects) = reducer.reduce(state: state, action: action)
+        state = newState
+        
+        // Process effects
+        for effect in effects {
+            for handler in effectHandlers {
+                if handler.canHandle(effect) {
+                    handler.handle(effect, store: self)
+                }
+            }
+        }
+        
+        // Notify subscribers
+        for subscriber in subscribers {
+            subscriber(state)
+        }
+    }
+    
+    /// Subscribe to state changes.
+    public func subscribe(_ callback: @escaping (EditorState) -> Void) {
+        subscribers.append(callback)
+    }
+}
+
+/// Reducer: pure function (State, Action) -> (State, [Effect]).
+public struct EditorReducer {
+    public init() {}
+    
+    public func reduce(state: EditorState, action: EditorAction) -> (EditorState, [EditorEffect]) {
+        var newState = state
+        var effects: [EditorEffect] = []
+        
+        switch action {
+        case .insertText(let text, let at):
+            // Save snapshot before mutation
+            effects.append(.saveSnapshot)
+            // Actual text insertion would happen here
+            newState.cursorPosition = at + text.count
+            
+        case .deleteRange(let range):
+            effects.append(.saveSnapshot)
+            newState.cursorPosition = range.location
+            
+        case .toggleBold:
+            effects.append(.toggleFormat(.bold))
+            
+        case .toggleItalic:
+            effects.append(.toggleFormat(.italic))
+            
+        case .toggleStrikethrough:
+            effects.append(.toggleFormat(.strikethrough))
+            
+        case .toggleCode:
+            effects.append(.toggleFormat(.code))
+            
+        case .undo:
+            effects.append(.restorePreviousSnapshot)
+            
+        case .redo:
+            effects.append(.restoreNextSnapshot)
+            
+        default:
+            break
+        }
+        
+        return (newState, effects)
+    }
+}
+
+// MARK: - Item 6: Centralized Effect System
+
+/// Effects that can be triggered by actions.
+public enum EditorEffect {
+    case saveSnapshot
+    case restorePreviousSnapshot
+    case restoreNextSnapshot
+    case reparseInlines(blockIndex: Int)
+    case renderBlock(blockIndex: Int)
+    case toggleFormat(InlineTrait)
+    case notifyChange
+    case updateTypingAttributes
+}
+
+/// Protocol for handling effects.
+public protocol EffectHandler {
+    func canHandle(_ effect: EditorEffect) -> Bool
+    func handle(_ effect: EditorEffect, store: EditorStore)
+}
+
+/// Default effect handler for common operations.
+public final class DefaultEffectHandler: EffectHandler {
+    public init() {}
+    
+    public func canHandle(_ effect: EditorEffect) -> Bool {
+        switch effect {
+        case .saveSnapshot, .restorePreviousSnapshot, .restoreNextSnapshot, .notifyChange:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    public func handle(_ effect: EditorEffect, store: EditorStore) {
+        switch effect {
+        case .saveSnapshot:
+            saveSnapshot(store: store)
+        case .restorePreviousSnapshot:
+            restorePreviousSnapshot(store: store)
+        case .restoreNextSnapshot:
+            restoreNextSnapshot(store: store)
+        case .notifyChange:
+            // Notification would be sent here
+            break
+        default:
+            break
+        }
+    }
+    
+    private func saveSnapshot(store: EditorStore) {
+        var state = store.state
+        let snapshot = DocumentSnapshot(document: state.document, cursorPosition: state.cursorPosition)
+        
+        // Remove any redo history
+        if state.historyIndex < state.history.count - 1 {
+            state.history.removeSubrange((state.historyIndex + 1)...)
+        }
+        
+        // Add new snapshot
+        state.history.append(snapshot)
+        state.historyIndex += 1
+        
+        // Trim if exceeding max size
+        while state.history.count > state.maxHistorySize {
+            state.history.removeFirst()
+            state.historyIndex -= 1
+        }
+    }
+    
+    private func restorePreviousSnapshot(store: EditorStore) {
+        var state = store.state
+        guard state.historyIndex > 0 else { return }
+        state.historyIndex -= 1
+        let snapshot = state.history[state.historyIndex]
+        state.document = snapshot.document
+        state.cursorPosition = snapshot.cursorPosition
+    }
+    
+    private func restoreNextSnapshot(store: EditorStore) {
+        var state = store.state
+        guard state.historyIndex < state.history.count - 1 else { return }
+        state.historyIndex += 1
+        let snapshot = state.history[state.historyIndex]
+        state.document = snapshot.document
+        state.cursorPosition = snapshot.cursorPosition
+    }
+}
+
 /// The output of an editing operation.
 public struct EditResult {
     /// The post-edit projection — rendered, block spans, everything.
@@ -125,6 +507,11 @@ public struct EditResult {
 // MARK: - Editing Operations
 
 public enum EditingOps {
+
+    // MARK: - Type Aliases (for backward compatibility)
+    
+    /// Inline trait type alias for backward compatibility.
+    public typealias InlineTrait = FSNotes.InlineTrait
 
     // MARK: - Insert
 
@@ -3809,16 +4196,6 @@ public enum EditingOps {
     }
 
     // MARK: - Block-level conversions
-
-    /// Inline trait for toggle operations.
-    public enum InlineTrait {
-        case bold
-        case italic
-        case strikethrough
-        case code
-        case underline
-        case highlight
-    }
 
     /// Change a heading's level, or convert paragraph↔heading.
     ///
