@@ -116,7 +116,7 @@ public class Remote {
     public func push(local: Branch, remote: Branch? = nil,
                      authentication: AuthenticationHandler? = nil,
                      progress: Progress? = nil) throws {
-   
+        
         let puPointer = UnsafeMutablePointer<git_push_options>.allocate(capacity: 1)
         git_push_init_options(puPointer, UInt32(GIT_PUSH_OPTIONS_VERSION))
 
@@ -125,7 +125,10 @@ public class Remote {
         
         puPointer.deallocate()
         
-        // FIXME Use progress
+        // Set progress callbacks using global tracker
+        if let progress = progress as? GitProgress {
+            AppDelegate.gitProgress = progress
+        }
         
 //        // Set options
 //        var opts = git_push_options()

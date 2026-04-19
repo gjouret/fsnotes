@@ -315,24 +315,19 @@ public enum EditingPrimitives {
             }
             
             // Same attachment count - attachments may have changed state (checked vs unchecked)
-            // We should compare the actual attachment objects to see if they're equal.
-            // For now, be conservative and don't narrow when attachments are present.
-            // TODO: Optimize by comparing attachment equality at each position.
-            let oldHasAttachmentsAtPositions = findAttachmentPositions(in: oldAttributedString, range: oldRange)
-            let newHasAttachmentsAtPositions = findAttachmentPositions(in: newReplacement, range: NSRange(location: 0, length: newReplacement.length))
+            // Compare the actual attachment objects at each position to determine if narrowing is safe.
+            let oldAttachments = extractAttachments(from: oldAttributedString, range: oldRange)
+            let newAttachments = extractAttachments(from: newReplacement, range: NSRange(location: 0, length: newReplacement.length))
             
-            if !oldHasAttachmentsAtPositions.isEmpty || !newHasAttachmentsAtPositions.isEmpty {
-                // Check if attachments are at the same positions with same attributes
-                if oldHasAttachmentsAtPositions != newHasAttachmentsAtPositions {
-                    return EditResult(
-                        newProjection: newProjection,
-                        spliceRange: oldRange,
-                        spliceReplacement: newReplacement
-                    )
-                }
-                // Attachments are at the same positions - but we still need to verify
-                // the attachment objects themselves are equal. For now, be conservative.
+            // If attachments exist and differ, don't narrow - we need full replacement to update attachment state
+            if !attachmentsEqual(oldAttachments, newAttachments) {
+                return EditResult(
+                    newProjection: newProjection,
+                    spliceRange: oldRange,
+                    spliceReplacement: newReplacement
+                )
             }
+            // Attachments are equal - safe to proceed with narrowing
         }
         
         let oldChars = Array(oldStr.unicodeScalars)
@@ -383,13 +378,63 @@ public enum EditingPrimitives {
         for (index, char) in str.enumerated() {
             if char == attachmentChar {
                 // Verify it actually has an attachment attribute
-                let charRange = NSRange(location: index, length: 1)
                 if substring.attribute(.attachment, at: index, effectiveRange: nil) != nil {
                     positions.insert(index)
                 }
             }
         }
         return positions
+    }
+    
+    /// Extract attachments and their positions from an attributed string.
+    /// Returns an array of (position, attachment) tuples for attachment characters.
+    private static func extractAttachments(from attrString: NSAttributedString, range: NSRange) -> [(position: Int, attachment: NSTextAttachment)] {
+        var result: [(Int, NSTextAttachment)] = []
+        let attachmentChar = Character("\u{FFFC}")
+        let substring = attrString.attributedSubstring(from: range)
+        let str = substring.string
+        
+        for (index, char) in str.enumerated() {
+            if char == attachmentChar {
+                if let attachment = substring.attribute(.attachment, at: index, effectiveRange: nil) as? NSTextAttachment {
+                    result.append((index, attachment))
+                }
+            }
+        }
+        return result
+    }
+    
+    /// Compare two arrays of attachments for equality.
+    /// Returns true if both arrays have the same count and attachments at matching positions are equal.
+    private static func attachmentsEqual(_ a: [(position: Int, attachment: NSTextAttachment)], _ b: [(position: Int, attachment: NSTextAttachment)]) -> Bool {
+        guard a.count == b.count else { return false }
+        
+        for i in 0..<a.count {
+            // Positions must match
+            guard a[i].position == b[i].position else { return false }
+            
+            // Attachments must be equal
+            let attA = a[i].attachment
+            let attB = b[i].attachment
+            
+            // Compare by content type and identifier if available
+            // For checkbox attachments, compare their checked state via associated fileType
+            if let fileTypeA = attA.fileType, let fileTypeB = attB.fileType {
+                if fileTypeA != fileTypeB {
+                    return false
+                }
+            }
+            
+            // Compare image data or contents
+            if let dataA = attA.fileWrapper?.regularFileContents,
+               let dataB = attB.fileWrapper?.regularFileContents {
+                if dataA != dataB {
+                    return false
+                }
+            }
+        }
+        
+        return true
     }
 
     /// Merge two adjacent blocks `blocks[i]` and `blocks[i+1]`,

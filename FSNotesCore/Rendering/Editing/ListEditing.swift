@@ -423,5 +423,17 @@ public enum ListEditing {
         }
         return result
     }
+    
+    /// Find the index in a flattened list of entries that corresponds to the given path.
+    /// Returns nil if the path is not found in the flattened list.
+    static func itemIndexInFlattenedList(_ items: [ListItem], path: [Int]) -> Int? {
+        let entries = flattenList(items)
+        for (index, entry) in entries.enumerated() {
+            if entry.path == path {
+                return index
+            }
+        }
+        return nil
+    }
 }
 

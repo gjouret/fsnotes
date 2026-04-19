@@ -190,9 +190,13 @@ public enum EditingOps {
                         return try returnOnEmptyListItem(at: storageIndex, in: projection)
                     }
                 }
-                throw EditingError.unsupported(
-                    reason: "multi-line paste in list not supported"
+                // Multi-line paste into list
+                var result = try pasteIntoList(
+                    items: items, at: offsetInBlock, pastedText: string,
+                    blockIndex: blockIndex, in: projection
                 )
+                result.newCursorPosition = storageIndex + string.count
+                return result
             case .blockquote(let lines):
                 if string == "\n" {
                     let newBlocks = try splitBlockquoteOnNewline(
@@ -213,9 +217,13 @@ public enum EditingOps {
                     }
                     return result
                 }
-                throw EditingError.unsupported(
-                    reason: "multi-line paste in blockquote not supported"
+                // Multi-line paste into blockquote
+                var result = try pasteIntoBlockquote(
+                    lines: lines, at: offsetInBlock, pastedText: string,
+                    blockIndex: blockIndex, in: projection
                 )
+                result.newCursorPosition = storageIndex + string.count
+                return result
             case .htmlBlock:
                 // HTML blocks accept any content verbatim, like code blocks.
                 break
@@ -275,9 +283,13 @@ public enum EditingOps {
                     result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
                     return result
                 }
-                throw EditingError.unsupported(
-                    reason: "multi-line paste in heading not supported"
+                // Multi-line paste into heading: treat like Return + paste remainder into new paragraph
+                var result = try pasteIntoHeading(
+                    level: level, suffix: suffix, at: offsetInBlock, pastedText: string,
+                    blockIndex: blockIndex, in: projection
                 )
+                result.newCursorPosition = storageIndex + string.count
+                return result
                 
             case .blankLine:
                 if string == "\n" {
@@ -1665,6 +1677,265 @@ public enum EditingOps {
         }
 
         return try replaceBlocks(atIndex: blockIndex, with: pastedBlocks, in: projection)
+    }
+    
+    /// Multi-line paste into a list. Splits the current item at the offset,
+    /// inserts the pasted content (first line merged with before, last line
+    /// merged with after), and wraps pasted lines in list items.
+    private static func pasteIntoList(
+        items: [ListItem],
+        at offsetInBlock: Int,
+        pastedText: String,
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        let entries = flattenList(items)
+        guard let (entryIdx, inlineOffset) = listEntryContaining(
+            entries: entries, offset: offsetInBlock, forInsertion: true
+        ) else {
+            throw EditingError.unsupported(reason: "pasteIntoList: offset not in list item")
+        }
+        
+        let entry = entries[entryIdx]
+        let item = entry.item
+        let (before, after) = splitInlines(item.inline, at: inlineOffset)
+        
+        // Parse the pasted text as markdown
+        let pastedDoc = MarkdownParser.parse(pastedText)
+        var pastedBlocks = pastedDoc.blocks
+        
+        // Convert pasted blocks to list items
+        var pastedItems: [ListItem] = []
+        for block in pastedBlocks {
+            switch block {
+            case .paragraph(let inline):
+                pastedItems.append(ListItem(
+                    indent: item.indent,
+                    marker: item.marker,
+                    afterMarker: item.afterMarker,
+                    checkbox: nil,
+                    inline: inline,
+                    children: []
+                ))
+            case .list(let newItems, _):
+                // Flatten nested list into items at current level
+                pastedItems.append(contentsOf: newItems)
+            default:
+                // Other block types become paragraphs
+                let text = MarkdownSerializer.serialize(block: block)
+                pastedItems.append(ListItem(
+                    indent: item.indent,
+                    marker: item.marker,
+                    afterMarker: item.afterMarker,
+                    checkbox: nil,
+                    inline: [.text(text)],
+                    children: []
+                ))
+            }
+        }
+        
+        // Merge before into first pasted item
+        if !before.isEmpty, !pastedItems.isEmpty {
+            pastedItems[0] = ListItem(
+                indent: pastedItems[0].indent,
+                marker: pastedItems[0].marker,
+                afterMarker: pastedItems[0].afterMarker,
+                checkbox: pastedItems[0].checkbox,
+                inline: before + pastedItems[0].inline,
+                children: pastedItems[0].children
+            )
+        } else if !before.isEmpty {
+            pastedItems.insert(ListItem(
+                indent: item.indent,
+                marker: item.marker,
+                afterMarker: item.afterMarker,
+                checkbox: nil,
+                inline: before,
+                children: []
+            ), at: 0)
+        }
+        
+        // Merge after into last pasted item
+        if !after.isEmpty, !pastedItems.isEmpty {
+            let last = pastedItems[pastedItems.count - 1]
+            pastedItems[pastedItems.count - 1] = ListItem(
+                indent: last.indent,
+                marker: last.marker,
+                afterMarker: last.afterMarker,
+                checkbox: last.checkbox,
+                inline: last.inline + after,
+                children: last.children
+            )
+        } else if !after.isEmpty {
+            pastedItems.append(ListItem(
+                indent: item.indent,
+                marker: item.marker,
+                afterMarker: item.afterMarker,
+                checkbox: nil,
+                inline: after,
+                children: []
+            ))
+        }
+        
+        if pastedItems.isEmpty {
+            pastedItems = [ListItem(
+                indent: item.indent,
+                marker: item.marker,
+                afterMarker: item.afterMarker,
+                checkbox: nil,
+                inline: before + after,
+                children: []
+            )]
+        }
+        
+        // Build new list by replacing the current item with pasted items
+        let newItems = replaceItemAtPath(items, path: entry.path, with: pastedItems[0])
+        // Insert remaining pasted items after the first
+        var finalItems = newItems
+        if pastedItems.count > 1 {
+            // Find the index where we need to insert
+            if let insertIdx = itemIndexInFlattenedList(newItems, path: entry.path) {
+                for i in 1..<pastedItems.count {
+                    finalItems.insert(pastedItems[i], at: insertIdx + i)
+                }
+            }
+        }
+        
+        return try replaceBlock(
+            atIndex: blockIndex,
+            with: .list(items: finalItems),
+            in: projection
+        )
+    }
+    
+    /// Multi-line paste into a blockquote. Splits the current line at the offset,
+    /// inserts the pasted content as new blockquote lines.
+    private static func pasteIntoBlockquote(
+        lines: [BlockquoteLine],
+        at offsetInBlock: Int,
+        pastedText: String,
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        let flattened = flattenBlockquote(lines)
+        guard let (lineIdx, inlineOffset) = quoteEntryContaining(
+            entries: flattened, offset: offsetInBlock, forInsertion: true
+        ) else {
+            throw EditingError.unsupported(reason: "pasteIntoBlockquote: offset not in line")
+        }
+        
+        let line = lines[lineIdx]
+        let (before, after) = splitInlines(line.inline, at: inlineOffset)
+        
+        // Parse the pasted text as markdown
+        let pastedDoc = MarkdownParser.parse(pastedText)
+        var pastedBlocks = pastedDoc.blocks
+        
+        // Convert pasted blocks to blockquote lines with same prefix
+        var pastedLines: [BlockquoteLine] = []
+        for block in pastedBlocks {
+            switch block {
+            case .paragraph(let inline):
+                pastedLines.append(BlockquoteLine(prefix: line.prefix, inline: inline))
+            case .blockquote(let newLines):
+                // Flatten nested blockquote
+                pastedLines.append(contentsOf: newLines.map {
+                    BlockquoteLine(prefix: line.prefix + $0.prefix, inline: $0.inline)
+                })
+            default:
+                // Other block types become lines
+                let text = MarkdownSerializer.serialize(block: block)
+                pastedLines.append(BlockquoteLine(prefix: line.prefix, inline: [.text(text)]))
+            }
+        }
+        
+        // Merge before into first pasted line
+        if !before.isEmpty, !pastedLines.isEmpty {
+            pastedLines[0] = BlockquoteLine(
+                prefix: pastedLines[0].prefix,
+                inline: before + pastedLines[0].inline
+            )
+        } else if !before.isEmpty {
+            pastedLines.insert(BlockquoteLine(prefix: line.prefix, inline: before), at: 0)
+        }
+        
+        // Merge after into last pasted line
+        if !after.isEmpty, !pastedLines.isEmpty {
+            let last = pastedLines[pastedLines.count - 1]
+            pastedLines[pastedLines.count - 1] = BlockquoteLine(
+                prefix: last.prefix,
+                inline: last.inline + after
+            )
+        } else if !after.isEmpty {
+            pastedLines.append(BlockquoteLine(prefix: line.prefix, inline: after))
+        }
+        
+        if pastedLines.isEmpty {
+            pastedLines = [BlockquoteLine(prefix: line.prefix, inline: before + after)]
+        }
+        
+        // Build new blockquote by replacing current line with pasted lines
+        var newLines = lines
+        newLines.replaceSubrange(lineIdx...lineIdx, with: pastedLines)
+        
+        return try replaceBlock(
+            atIndex: blockIndex,
+            with: .blockquote(lines: newLines),
+            in: projection
+        )
+    }
+    
+    /// Multi-line paste into a heading. Splits at the offset, converts the heading
+    /// to a paragraph with before+first-pasted-line, then inserts remaining pasted content.
+    private static func pasteIntoHeading(
+        level: Int,
+        suffix: String,
+        at offsetInBlock: Int,
+        pastedText: String,
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        let leading = leadingWhitespaceCount(in: suffix)
+        let suffixOffset = offsetInBlock + leading
+        let beforeText = String(suffix.prefix(suffixOffset))
+        let afterText = String(suffix.dropFirst(suffixOffset))
+        
+        // Parse the pasted text as markdown
+        let pastedDoc = MarkdownParser.parse(pastedText)
+        var pastedBlocks = pastedDoc.blocks
+        
+        // Build new blocks: heading becomes paragraph, then pasted content
+        var newBlocks: [Block] = []
+        
+        // First block: heading text before cursor + first pasted content
+        let beforeInlines = beforeText.isEmpty ? [] : MarkdownParser.parseInlines(beforeText)
+        
+        if !pastedBlocks.isEmpty, case .paragraph(let firstInline) = pastedBlocks[0] {
+            // Merge before text with first pasted paragraph
+            newBlocks.append(.paragraph(inline: beforeInlines + firstInline))
+            pastedBlocks.removeFirst()
+        } else {
+            newBlocks.append(.paragraph(inline: beforeInlines))
+        }
+        
+        // Middle blocks: remaining pasted content
+        newBlocks.append(contentsOf: pastedBlocks)
+        
+        // Last block: merge after text
+        if !afterText.isEmpty {
+            let afterInlines = MarkdownParser.parseInlines(afterText)
+            if let lastIdx = newBlocks.indices.last, case .paragraph(let lastInline) = newBlocks[lastIdx] {
+                newBlocks[lastIdx] = .paragraph(inline: lastInline + afterInlines)
+            } else {
+                newBlocks.append(.paragraph(inline: afterInlines))
+            }
+        }
+        
+        if newBlocks.isEmpty {
+            newBlocks = [.paragraph(inline: [])]
+        }
+        
+        return try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
     }
 
     // MARK: - List newline (Return key)

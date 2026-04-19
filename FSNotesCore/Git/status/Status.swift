@@ -39,7 +39,8 @@ public enum StatusType : UInt32 {
     case wtModified      = 256
     case wtDeleted       = 512
     
-    // TODO: Unknown status
+    // Composite status: worktree deleted + index new (value 512 + 1)
+    // This occurs when a file is both staged as new and deleted from worktree
     case wtDeletedU      = 513
     case wtTypeChange    = 1024
     case wtRenamed       = 2048

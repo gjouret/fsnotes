@@ -179,8 +179,8 @@ class TableRenderController {
     /// — field-editor attribute mutations don't fire
     /// `controlTextDidChange`, so the flush is manual.
     ///
-    /// Caret-only (no selection) is a no-op: there's nothing visible
-    /// to decorate and nothing to serialize.
+    /// Caret-only (no selection): inserts empty format markers and
+    /// positions cursor between them for immediate typing.
     func applyInlineTableCellFormat(_ format: InlineCellFormat) -> Bool {
         guard let textView = textView,
               let fieldEditor = textView.window?.fieldEditor(false, for: nil),
@@ -190,11 +190,10 @@ class TableRenderController {
               let storage = tv.textStorage else { return false }
 
         let sel = fieldEditor.selectedRange
-        guard sel.length > 0 else {
-            // Caret-only formatting not yet supported under the
-            // attribute-toggle model. Bail quietly so the toolbar
-            // click is a no-op instead of producing a broken edit.
-            return true
+        
+        // Caret-only: insert format markers and position cursor between them
+        if sel.length == 0 {
+            return applyCaretOnlyFormatting(format, at: sel.location, in: tv, storage: storage, tableView: tableView, cell: cell)
         }
 
         toggleTraitAttribute(format, on: storage, range: sel, baseCell: cell)
@@ -216,6 +215,45 @@ class TableRenderController {
             at: location,
             inline: inline
         )
+        return true
+    }
+    
+    /// Apply formatting when there's no selection - insert format markers
+    /// and position cursor between them for immediate typing.
+    private func applyCaretOnlyFormatting(
+        _ format: InlineCellFormat,
+        at location: Int,
+        in textView: NSTextView,
+        storage: NSTextStorage,
+        tableView: InlineTableView,
+        cell: NSTextField
+    ) -> Bool {
+        let openMarker = format.open
+        let closeMarker = format.close
+        let fullMarker = openMarker + closeMarker
+        
+        // Insert the markers at caret position
+        let markerAttr = NSAttributedString(string: fullMarker)
+        storage.insert(markerAttr, at: location)
+        
+        // Position cursor between the markers
+        let newCursorPos = location + openMarker.lengthOfBytes(using: .utf8)
+        textView.selectedRange = NSRange(location: newCursorPos, length: 0)
+        
+        // Push the changes through the primitive
+        guard let editTextView = findParentEditTextView(for: self.textView),
+              let cellLocation = tableView.cellLocation(for: cell) else {
+            return true
+        }
+        
+        let attr = NSAttributedString(attributedString: storage)
+        let inline = InlineRenderer.inlineTreeFromAttributedString(attr)
+        _ = editTextView.applyTableCellInlineEdit(
+            from: tableView,
+            at: cellLocation,
+            inline: inline
+        )
+        
         return true
     }
 

@@ -1129,9 +1129,13 @@ public class NotesTextProcessor {
     
     // MARK: Reference links
     
-    /*
-     TODO: we don't know how reference links are formed
-     */
+    // Reference-style links have two parts:
+    // 1. Inline reference: [link text][reference-id] or [link text][] (implicit id = link text)
+    // 2. Reference definition (anywhere in document): [reference-id]: url "optional title"
+    //
+    // The pattern below matches the reference definition line.
+    // Full support requires two-pass parsing (collect defs, then resolve refs) which is
+    // not yet implemented - inline references currently render as plain text.
     
     fileprivate static let referenceLinkPattern = [
         "^\\p{Z}{0,\(_tabWidth - 1)}\\[([^\\[\\]]+)\\]:  # id = $1",
