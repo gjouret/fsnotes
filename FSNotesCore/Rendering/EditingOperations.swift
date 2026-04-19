@@ -1721,8 +1721,8 @@ public enum EditingOps {
                 // Flatten nested list into items at current level
                 pastedItems.append(contentsOf: newItems)
             default:
-                // Other block types become paragraphs
-                let text = MarkdownSerializer.serialize(block: block)
+                // Other block types become paragraphs - extract text content
+                let text = blockRenderedText(block)
                 pastedItems.append(ListItem(
                     indent: item.indent,
                     marker: item.marker,
@@ -1793,7 +1793,7 @@ public enum EditingOps {
         // Insert remaining pasted items after the first
         var finalItems = newItems
         if pastedItems.count > 1 {
-            // Find the index where we need to insert
+            // Find the index where we need to insert using ListEditing helper
             if let insertIdx = itemIndexInFlattenedList(newItems, path: entry.path) {
                 for i in 1..<pastedItems.count {
                     finalItems.insert(pastedItems[i], at: insertIdx + i)
@@ -1843,8 +1843,8 @@ public enum EditingOps {
                     BlockquoteLine(prefix: line.prefix + $0.prefix, inline: $0.inline)
                 })
             default:
-                // Other block types become lines
-                let text = MarkdownSerializer.serialize(block: block)
+                // Other block types become lines - extract text content
+                let text = blockRenderedText(block)
                 pastedLines.append(BlockquoteLine(prefix: line.prefix, inline: [.text(text)]))
             }
         }
@@ -2305,6 +2305,18 @@ public enum EditingOps {
         return entries
     }
 
+    /// Find the index in a flattened list of entries that corresponds to the given path.
+    /// Returns nil if the path is not found in the flattened list.
+    static func itemIndexInFlattenedList(_ items: [ListItem], path: [Int]) -> Int? {
+        let entries = flattenList(items)
+        for (index, entry) in entries.enumerated() {
+            if entry.path == path {
+                return index
+            }
+        }
+        return nil
+    }
+
     /// Mirror of ListRenderer.visualBullet — must stay in sync.
     private static func listVisualBullet(for marker: String, depth: Int = 0) -> String {
         return ListRenderer.visualBullet(for: marker, depth: depth)
@@ -2421,12 +2433,29 @@ public enum EditingOps {
         // Single-item deletion (existing behavior)
         if startEntry == endEntry {
             let entry = entries[startEntry]
+            
+            // Check if the entire item is selected (including prefix and separator)
+            // In this case, remove the entire item
+            let inlineLength = entry.inlineLength
+            if startOff <= 0 && length >= inlineLength + entry.prefixLength {
+                // Remove the entire item
+                var newItems: [ListItem] = []
+                for i in 0..<entries.count {
+                    if i != startEntry {
+                        newItems.append(entries[i].item)
+                    }
+                }
+                return .list(items: newItems)
+            }
+            
             let runs = flatten(entry.item.inline)
             guard let (startRun, startRunOff) = runContainingChar(runs, charIndex: startOff) else {
                 throw EditingError.outOfBounds
             }
             let endOff = startOff + length
-            guard let (endRun, endRunOff) = runContainingChar(runs, charIndex: endOff - 1) else {
+            // Clamp endOff to the inline length to handle edge cases
+            let clampedEndOff = min(endOff, inlineLength)
+            guard let (endRun, endRunOff) = runContainingChar(runs, charIndex: clampedEndOff - 1) else {
                 throw EditingError.outOfBounds
             }
             guard startRun == endRun else { throw EditingError.crossInlineRange }
@@ -3386,17 +3415,15 @@ public enum EditingOps {
         return result
     }
 
-    /// Exit a list item: remove it from the list and convert it to a
-    /// body paragraph. The item is removed from the list, and a new
-    /// paragraph block is inserted after the list. If the item was empty,
-    /// the paragraph will also be empty (providing a clean exit from
-    /// list editing). If this was the only item, the entire list block
-    /// is replaced with the paragraph.
-    /// - Parameter createParagraphForEmpty: Deprecated. Paragraph is always created.
+    /// Exit a list item: remove it from the list and optionally convert it to a
+    /// body paragraph. The item is removed from the list, and if createParagraphForEmpty
+    /// is true, a new paragraph block is inserted after the list.
+    /// - Parameter createParagraphForEmpty: If false and the item is empty, just remove it
+    ///   and put cursor at end of previous item. If true, always create a paragraph.
     public static func exitListItem(
         at storageIndex: Int,
         in projection: DocumentProjection,
-        createParagraphForEmpty: Bool = false
+        createParagraphForEmpty: Bool = true
     ) throws -> EditResult {
         guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
@@ -3414,9 +3441,41 @@ public enum EditingOps {
         }
         let entry = entries[entryIdx]
 
+        // Check if this is an empty item and we should not create a paragraph
+        let isEmpty = entry.item.inline.isEmpty || entry.item.inline == [.text("")]
+        if !createParagraphForEmpty && isEmpty {
+            // Just remove the empty item and put cursor at end of previous item
+            let newItems = removeItemAtPath(items, path: entry.path, promoteChildren: true)
+            
+            if newItems.isEmpty {
+                // List is now empty, replace with blank paragraph
+                var result = try replaceBlocks(atIndex: blockIndex, with: [.paragraph(inline: [])], in: projection)
+                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
+                return result
+            }
+            
+            var result = try replaceBlocks(atIndex: blockIndex, with: [.list(items: newItems)], in: projection)
+            
+            // Cursor goes to end of previous item (if any), or start of list
+            if entryIdx > 0 {
+                let prevEntry = entries[entryIdx - 1]
+                let blockSpan = result.newProjection.blockSpans[blockIndex]
+                let newEntries = flattenList(newItems)
+                // Find the previous item in the new list
+                if let newPrevEntry = newEntries.first(where: { $0.path == prevEntry.path }) {
+                    result.newCursorPosition = blockSpan.location + newPrevEntry.startOffset + newPrevEntry.prefixLength + newPrevEntry.inlineLength
+                } else {
+                    result.newCursorPosition = storageIndex
+                }
+            } else {
+                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
+            }
+            
+            return result
+        }
+
         // Build the replacement blocks by splitting the list at the exited item's position.
         // This creates: [items before] + [paragraph] + [items after]
-        // Paragraph is always created, even for empty items (clean exit from list editing).
         
         var newBlocks: [Block] = []
         
@@ -3472,7 +3531,8 @@ public enum EditingOps {
         case .unindent:
             return try unindentListItem(at: storageIndex, in: projection)
         case .exitToBody:
-            return try exitListItem(at: storageIndex, in: projection)
+            // When exiting an empty item to body, don't create a paragraph - just remove it
+            return try exitListItem(at: storageIndex, in: projection, createParagraphForEmpty: false)
         default:
             // Shouldn't happen, but fall through to regular split.
             throw EditingError.unsupported(reason: "returnOnEmpty: unexpected transition \(transition)")

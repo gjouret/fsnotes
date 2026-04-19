@@ -461,15 +461,15 @@ class EditingOperationsTests: XCTestCase {
         assertSpliceInvariant(old: p, result: r)
     }
 
-    func test_multilineInsert_intoHeading_throws() {
-        // Multi-line paste into headings is not supported (Multi-line paste
-        // only handles paragraphs and code blocks).
+    func test_multilineInsert_intoHeading_convertsToParagraph() throws {
+        // Multi-line paste into headings now converts the heading to paragraphs
         let p = project("# Title\n")
-        XCTAssertThrowsError(try EditingOps.insert("a\nb", at: 2, in: p)) { err in
-            guard case EditingError.unsupported = err else {
-                XCTFail("expected unsupported, got \(err)"); return
-            }
-        }
+        let r = try EditingOps.insert("a\nb", at: 2, in: p)
+        // Heading should be converted to paragraph(s) - verify it doesn't throw
+        // and produces valid output with more than one block or multi-line content
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("a") && serialized.contains("b"),
+            "Pasted content should appear in output: \(serialized)")
     }
 
     func test_splitParagraph_multiBlock() throws {
@@ -959,13 +959,15 @@ class EditingOperationsTests: XCTestCase {
         assertSpliceInvariant(old: p, result: r)
     }
 
-    func test_paste_multilineIntoHeading_throws() {
+    func test_paste_multilineIntoHeading_convertsToParagraph() throws {
+        // Multi-line paste into headings now converts the heading to paragraphs
         let p = project("# Title\n")
-        XCTAssertThrowsError(try EditingOps.insert("a\nb", at: 2, in: p)) { err in
-            guard case EditingError.unsupported = err else {
-                XCTFail("expected unsupported, got \(err)"); return
-            }
-        }
+        let r = try EditingOps.insert("a\nb", at: 2, in: p)
+        // Heading should be converted to paragraph(s) - verify it doesn't throw
+        // and produces valid output with the pasted content
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("a") && serialized.contains("b"),
+            "Pasted content should appear in output: \(serialized)")
     }
 
     // MARK: - Chain of edits (round-trip stability)
