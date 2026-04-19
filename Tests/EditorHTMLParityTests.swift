@@ -1389,4 +1389,77 @@ class EditorHTMLParityTests: XCTestCase {
         assertEditorMatchesMarkdown(editor, "First paragraph\n\n## Second paragraph\n\nThird paragraph")
         assertLiveDocumentRoundTrips(editor)
     }
+
+    // MARK: - Delete Key Selection Tests
+
+    func test_delete_selectedTable_removesBlock() {
+        // User-reported: selecting a table and pressing Delete (Forward Delete)
+        // removed it from WYSIWYG view but the markdown still contained it.
+        // The fix: EditingOps.delete now uses blockIndices(overlapping:) to
+        // detect when an atomic block (table, HR) is fully covered by selection.
+        let editor = makeEditor()
+        fill(editor, "before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nafter")
+
+        // Find the table attachment character (U+FFFC) in storage
+        let s = editor.textStorage?.string ?? ""
+        let nsString = s as NSString
+        let tableRange = nsString.range(of: "\u{FFFC}")
+        guard tableRange.location != NSNotFound else {
+            XCTFail("table attachment character not found in storage")
+            return
+        }
+
+        // Select exactly the table attachment character
+        editor.setSelectedRange(NSRange(location: tableRange.location, length: 1))
+
+        // Call handleEditViaBlockModel directly (simulating Delete key via shouldChangeText)
+        let handled = editor.handleEditViaBlockModel(
+            in: NSRange(location: tableRange.location, length: 1),
+            replacementString: ""
+        )
+        XCTAssertTrue(handled, "block model should handle table deletion")
+
+        // The table should be removed from the document
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let hasTable = doc.blocks.contains { block in
+            if case .table = block { return true } else { return false }
+        }
+        XCTAssertFalse(hasTable, "table should be removed after Delete key on selection")
+
+        // The serialized markdown should not contain table syntax
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertFalse(md.contains("| A | B |"), "serialized markdown should not contain table header")
+        XCTAssertTrue(md.contains("before"), "text before table should be preserved")
+        XCTAssertTrue(md.contains("after"), "text after table should be preserved")
+
+        assertLiveDocumentRoundTrips(editor)
+    }
+
+    func test_delete_selectedListItem_removesContent() {
+        // Selecting text within a list item and deleting should work
+        let editor = makeEditor()
+        fill(editor, "- First\n- Second\n- Third")
+
+        // Find "Second" and select it
+        let s = editor.textStorage?.string as NSString? ?? ""
+        let secondRange = s.range(of: "Second")
+        editor.setSelectedRange(secondRange)
+
+        // Delete the selection via block model
+        let handled = editor.handleEditViaBlockModel(
+            in: secondRange,
+            replacementString: ""
+        )
+        XCTAssertTrue(handled, "block model should handle list item text deletion")
+
+        // "Second" should be removed, but the list item structure should remain
+        let doc = editor.documentProjection?.document ?? Document(blocks: [])
+        let md = MarkdownSerializer.serialize(doc)
+        XCTAssertTrue(md.contains("- First"), "First item preserved; got: \(md)")
+        XCTAssertTrue(md.contains("- Third"), "Third item preserved; got: \(md)")
+        // The middle item should exist but with empty content
+        XCTAssertFalse(md.contains("Second"), "Second text removed; got: \(md)")
+
+        assertLiveDocumentRoundTrips(editor)
+    }
 }

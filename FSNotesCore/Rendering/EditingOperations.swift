@@ -536,11 +536,8 @@ public enum EditingOps {
             throw EditingError.notInsideBlock(storageIndex: endIndex)
         }
         if startBlock != endBlock {
-            // Merge blocks when delete crosses one or more block boundaries.
-            // For a 2-block span this is the common backspace-at-block-start
-            // case. For 3+ blocks (multi-line selection delete), all
-            // intermediate blocks are removed and the surviving tails of
-            // the first and last blocks are merged into a single block.
+            // Multi-block selection: delegate to mergeAdjacentBlocks
+            // which properly handles content truncation and merging
             var result = try mergeAdjacentBlocks(
                 startBlock: startBlock, startOffset: startOffset,
                 endBlock: endBlock, endOffset: endOffset,
@@ -559,18 +556,24 @@ public enum EditingOps {
         // block's span as "remove the block" and replace it with an
         // empty paragraph (which is where the cursor lands after
         // the delete).
-        let blockSpan = projection.blockSpans[startBlock]
-        let coversFullBlock =
-            storageRange.location == blockSpan.location
-            && storageRange.length == blockSpan.length
-        if coversFullBlock && isAtomicAttachmentBlock(oldBlock) {
-            var result = try replaceBlock(
-                atIndex: startBlock,
-                with: .paragraph(inline: []),
-                in: projection
-            )
-            result.newCursorPosition = storageRange.location
-            return result
+        //
+        // Check ALL blocks that overlap the selection to handle
+        // multi-block selections that fully encompass atomic blocks.
+        let overlappingIndices = projection.blockIndices(overlapping: storageRange)
+        if overlappingIndices.count == 1,
+           let onlyBlockIdx = overlappingIndices.first,
+           isAtomicAttachmentBlock(projection.document.blocks[onlyBlockIdx]) {
+            let blockSpan = projection.blockSpans[onlyBlockIdx]
+            // Use generous coverage check - selection must fully cover the block
+            if selectionFullyCoversBlock(blockSpan, in: storageRange) {
+                var result = try replaceBlock(
+                    atIndex: onlyBlockIdx,
+                    with: .paragraph(inline: []),
+                    in: projection
+                )
+                result.newCursorPosition = storageRange.location
+                return result
+            }
         }
 
         let newBlock = try deleteInBlock(oldBlock, from: startOffset, to: endOffset)
@@ -592,6 +595,22 @@ public enum EditingOps {
         case .table, .horizontalRule: return true
         default: return false
         }
+    }
+
+    /// Check if a selection range fully encompasses a block's span.
+    /// Used to detect when an atomic block (table, HR) is fully selected
+    /// for removal, even if the selection isn't an exact match.
+    private static func selectionFullyCoversBlock(
+        _ blockSpan: NSRange,
+        in selectionRange: NSRange
+    ) -> Bool {
+        let blockEnd = blockSpan.location + blockSpan.length
+        let selectionEnd = selectionRange.location + selectionRange.length
+        // Block is fully covered if:
+        // 1. Selection start is at or before block start
+        // 2. Selection end is at or after block end
+        return selectionRange.location <= blockSpan.location
+            && selectionEnd >= blockEnd
     }
 
     // MARK: - Block-level primitive

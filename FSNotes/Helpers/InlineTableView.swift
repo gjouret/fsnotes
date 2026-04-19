@@ -1982,7 +1982,8 @@ class GlassHandleView: NSVisualEffectView {
         blendingMode = .withinWindow
         state = .active
         wantsLayer = true
-        layer?.cornerRadius = 4
+        // Both row and column handles are rectangular (no rounded corners)
+        layer?.cornerRadius = 0
         layer?.masksToBounds = true
         layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
 
