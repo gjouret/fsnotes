@@ -108,9 +108,9 @@ public enum ListFSMOperations {
     /// Exit a list item: remove it from the list and convert it to a
     /// body paragraph. The item is removed from the list, and a new
     /// paragraph block is inserted after the list. If the item was empty,
-    /// the paragraph will also be empty (providing a clean exit from
-    /// list editing). If this was the only item, the entire list block
-    /// is replaced with the paragraph.
+    /// it is simply deleted and the cursor is placed at the end of the
+    /// previous item (or start of list if it was the first item). If this
+    /// was the only item, the entire list block is replaced with a paragraph.
     public static func exitListItem(
         at storageIndex: Int,
         in projection: DocumentProjection
@@ -138,14 +138,34 @@ public enum ListFSMOperations {
         // item are promoted to the same level.
         let remaining = removeItemAtPath(items, path: entry.path, promoteChildren: true)
 
+        // If the item was empty and there are remaining items, just delete it
+        // and place cursor at the end of the previous item.
+        if isEmpty && !remaining.isEmpty {
+            let newBlock = Block.list(items: remaining)
+            var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+            
+            // Cursor goes to the end of the previous item (if there is one)
+            // or the start of the list (if this was the first item)
+            let newEntries = flattenList(remaining)
+            if entryIdx > 0, entryIdx - 1 < newEntries.count {
+                // Place cursor at the end of the previous item's inline content
+                let prevEntry = newEntries[entryIdx - 1]
+                let prevInlineEnd = prevEntry.startOffset + prevEntry.prefixLength + prevEntry.inlineLength
+                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location + prevInlineEnd
+            } else {
+                // First item was deleted - cursor at start of list
+                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
+            }
+            return result
+        }
+
         // Build the replacement blocks.
         var newBlocks: [Block] = []
         if !remaining.isEmpty {
             newBlocks.append(.list(items: remaining))
         }
         
-        // Always create a paragraph block for the exited item.
-        // For empty items, this creates an empty paragraph (clean exit from list editing).
+        // Create a paragraph block for the exited item (only for non-empty items).
         let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
         newBlocks.append(exitedParagraph)
 
@@ -277,7 +297,6 @@ public enum ListFSMOperations {
             guard let newChildren = unindentItemAtPath(oldItem.children, path: Array(path.dropFirst())) else {
                 return nil
             }
-            var result = items
             result[first] = ListItem(
                 indent: oldItem.indent, marker: oldItem.marker,
                 afterMarker: oldItem.afterMarker, checkbox: oldItem.checkbox,
@@ -374,4 +393,3 @@ public enum ListFSMOperations {
         }
     }
 }
-

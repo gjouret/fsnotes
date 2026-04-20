@@ -3859,7 +3859,7 @@ public enum EditingOps {
     public static func exitListItem(
         at storageIndex: Int,
         in projection: DocumentProjection,
-        createParagraphForEmpty: Bool = true
+        createParagraphForEmpty: Bool = false
     ) throws -> EditResult {
         guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
