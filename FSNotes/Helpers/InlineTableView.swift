@@ -143,11 +143,17 @@ class InlineTableView: NSView, NSTextFieldDelegate {
 
     // MARK: - Layout Constants
 
-    /// Minimum cell height: font size + line spacing + vertical padding.
+    /// Minimum cell height: natural one-line rendered height + vertical padding.
+    /// Measured from the actual font via `usesFontLeading` so it matches what
+    /// `wrappedCellHeight` returns for a one-line cell — no fudge factor.
     private var minCellHeight: CGFloat {
-        let fontSize = UserDefaultsManagement.noteFont.pointSize
-        let spacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
-        return ceil(fontSize + spacing + cellPaddingTop + cellPaddingBot + fontSize * 0.4)
+        let font = UserDefaultsManagement.noteFont
+        let natural = ceil(NSAttributedString(string: "X", attributes: [.font: font])
+            .boundingRect(
+                with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            ).height)
+        return natural + cellPaddingTop + cellPaddingBot
     }
     /// Line height derived from the note font + line spacing setting.
     private var lineHeight: CGFloat {
@@ -230,9 +236,15 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         func dataRowHeight(_ row: Int) -> CGFloat {
             if (row + 1) < rHeights.count { return rHeights[row + 1] }
             // Fallback: font-relative minimum
-            let fontSize = UserDefaultsManagement.noteFont.pointSize
+            let font = UserDefaultsManagement.noteFont
+            let natural = ceil(NSAttributedString(string: "X", attributes: [.font: font])
+                .boundingRect(
+                    with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading]
+                ).height)
             let spacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
-            return ceil(fontSize + spacing + fontSize * 0.4 + 4)
+            let vPad = max(2, ceil(spacing * 0.75))
+            return natural + vPad * 2
         }
     }
 
@@ -579,6 +591,12 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             return
         }
 
+        // Row/column highlight is redundant while the user is editing a
+        // cell — the field editor already shows a focus border. Keeping
+        // it on also produces a visible flicker because every keystroke
+        // clears and rebuilds the highlight view.
+        let showHighlight = (focusState == .hovered)
+
         let scrollOffset = scrollView.contentView.bounds.origin.x
 
         // -- Column handle --
@@ -616,7 +634,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             activeColumnHandle?.alphaValue = 1.0
 
             // Column highlight
-            updateColumnHighlight(col: col, layout: L, scrollOffset: scrollOffset)
+            if showHighlight {
+                updateColumnHighlight(col: col, layout: L, scrollOffset: scrollOffset)
+            } else {
+                columnHighlightView?.isHidden = true
+            }
         } else {
             activeColumnHandle?.isHidden = true
             columnHighlightView?.isHidden = true
@@ -658,7 +680,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             activeRowHandle?.alphaValue = 1.0
 
             // Row highlight
-            updateRowHighlight(row: row, layout: L)
+            if showHighlight {
+                updateRowHighlight(row: row, layout: L)
+            } else {
+                rowHighlightView?.isHidden = true
+            }
         } else {
             activeRowHandle?.isHidden = true
             rowHighlightView?.isHidden = true
@@ -698,17 +724,18 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         for i in 0..<row { rowY -= L.rHeights[i] }
         let rowH = L.rHeights[row]
 
-        // RC6: Highlight should start at the grid edge (after the left
-        // handle margin) and span only the grid width — not the handle
-        // bar. Previously it started at x=0 and included leftMargin,
-        // creating a 1-2px offset and bleeding into the handle area.
-        // Cap width to remaining visible scrollView width so the
-        // highlight doesn't extend past the table.
-        let availableGridWidth = max(0, scrollView.frame.width - L.leftMargin)
-        let highlightWidth = min(L.gridWidth, availableGridWidth)
+        // Highlight spans only the visible grid (sum of column widths).
+        // Account for horizontal scroll so it stays aligned when the
+        // table is scrolled sideways, and clip at the scrollView's
+        // right edge so it never extends past the visible table area.
+        let scrollOffset = scrollView.contentView.bounds.origin.x
+        let rightEdge = scrollView.frame.origin.x + scrollView.frame.width
+        let startX = L.leftMargin - scrollOffset
+        let rawWidth = min(L.gridWidth, rightEdge - startX)
+        let highlightWidth = max(0, rawWidth)
 
         let highlightFrame = NSRect(
-            x: L.leftMargin,
+            x: startX,
             y: rowY - rowH,
             width: highlightWidth,
             height: rowH
@@ -849,7 +876,10 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
-        return max(minCellHeight, ceil(boundingRect.height) + cellPaddingTop + cellPaddingBot + CGFloat(UserDefaultsManagement.editorLineSpacing))
+        // `usesFontLeading` already accounts for line spacing, so adding
+        // `editorLineSpacing` here double-counts and makes single-line
+        // cells taller than multi-line extrapolation.
+        return max(minCellHeight, ceil(boundingRect.height) + cellPaddingTop + cellPaddingBot)
     }
 
     /// Total grid height from row heights.
@@ -1550,9 +1580,41 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         )
     }
 
-    func controlTextDidChange(_ obj: Notification) {
-        clearHoverHandles()
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        guard let cell = obj.object as? NSTextField else { return }
+        let (row, col) = decodeTag(cell.tag)
 
+        // Trailing whitespace is visually swallowed when an NSTextField
+        // is right- or center-aligned: the field editor's typographic
+        // bounds exclude trailing space, so typing Space at end-of-
+        // content leaves the caret parked over the last glyph until
+        // the next non-space character is typed. Force `.left` on the
+        // cell for the duration of the edit so the user sees each
+        // space as it lands. `controlTextDidEndEditing` below re-
+        // renders the cell from its inline tree with the stored
+        // alignment applied via paragraph style.
+        cell.alignment = .left
+
+        hoveredRow = row
+        hoveredColumn = col
+        // Tear the handles down and let updateHoverHandles rebuild them
+        // at the new position. Just updating `frame` on the existing
+        // NSVisualEffectView leaves stale visual state (the glass
+        // backing doesn't always re-composite on a bare frame change),
+        // so keyboard Tab navigation left the handles sitting at the
+        // previously-hovered cell's position.
+        activeColumnHandle?.removeFromSuperview()
+        activeColumnHandle = nil
+        activeRowHandle?.removeFromSuperview()
+        activeRowHandle = nil
+        columnHighlightView?.removeFromSuperview()
+        columnHighlightView = nil
+        rowHighlightView?.removeFromSuperview()
+        rowHighlightView = nil
+        updateHoverHandles(layout: computeLayout())
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
         // `NSControl.textDidChangeNotification` delivers the
         // NSTextField (the NSControl) as `obj.object`, NOT the field
         // editor NSTextView. Query the window for the field editor.
@@ -1575,6 +1637,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             attr = NSAttributedString(string: fieldEditor.string)
         }
         let inline = InlineRenderer.inlineTreeFromAttributedString(attr)
+
         _ = editor.applyTableCellInlineEdit(
             from: self, at: location, inline: inline
         )
@@ -1655,6 +1718,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                     // Focus first cell of new row
                     if let newCell = cellAt(row: rows.count, col: 0) {
                         window?.makeFirstResponder(newCell)
+                        scrollCellIntoView(newCell)
                     }
                     return true
                 }
@@ -1690,6 +1754,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let (row, col) = decodeTag(cell.tag)
         if let next = cellAt(row: row, col: col + 1) ?? cellAt(row: row + 1, col: 0) {
             window?.makeFirstResponder(next)
+            scrollCellIntoView(next)
         }
     }
 
@@ -1698,6 +1763,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let (row, col) = decodeTag(cell.tag)
         if let prev = cellAt(row: row, col: col - 1) ?? cellAt(row: row - 1, col: headers.count - 1) {
             window?.makeFirstResponder(prev)
+            scrollCellIntoView(prev)
         }
     }
 
@@ -1706,6 +1772,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
         let (row, col) = decodeTag(cell.tag)
         if let below = cellAt(row: row + 1, col: col) {
             window?.makeFirstResponder(below)
+            scrollCellIntoView(below)
         } else {
             // At bottom — add new row
             rows.append(Array(repeating: TableCell([]), count: headers.count))
@@ -1713,7 +1780,36 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             notifyChanged()
             if let newCell = cellAt(row: row + 1, col: col) {
                 window?.makeFirstResponder(newCell)
+                scrollCellIntoView(newCell)
             }
+        }
+    }
+
+    /// Scroll the parent `EditTextView` so that the given cell's frame
+    /// is visible. The cell lives inside this widget (which is itself
+    /// an `NSTextAttachment` in the parent text view), so we convert
+    /// the cell's frame into the text view's coordinate space and ask
+    /// the enclosing scroll view to bring it into view.
+    ///
+    /// Without this, pressing Tab/Return at the end of a table that
+    /// extends below the visible area keeps moving the field editor
+    /// off-screen with no scroll follow-up.
+    func scrollCellIntoView(_ cell: NSView) {
+        guard let textView = findParentEditTextView() else { return }
+        // The attachment layout isn't guaranteed to be current when a
+        // new row was just appended — defer so NSLayoutManager has a
+        // chance to pick up the new intrinsicContentSize first.
+        DispatchQueue.main.async { [weak cell, weak textView] in
+            guard let cell = cell, let textView = textView else { return }
+            let rectInTextView = cell.convert(cell.bounds, to: textView)
+            // No-op when the cell is already fully on screen. Without
+            // this guard, every keystroke (including Space, which
+            // doesn't grow the cell) triggers a scroll nudge because
+            // `scrollToVisible` scrolls to include a padded rect even
+            // when the cell itself is visible.
+            let visible = textView.visibleRect
+            if visible.contains(rectInTextView) { return }
+            textView.scrollToVisible(rectInTextView)
         }
     }
 
@@ -1746,13 +1842,31 @@ class InlineTableView: NSView, NSTextFieldDelegate {
                   let cell = attachment.attachmentCell as? InlineTableAttachmentCell,
                   cell.inlineTableView === self else { return }
 
-            // Update attachment bounds to match new intrinsic size
+            // Only invalidate when the intrinsic size actually changed.
             let newSize = self.intrinsicContentSize
+            if attachment.bounds.size == newSize { stop.pointee = true; return }
             attachment.bounds = NSRect(origin: .zero, size: newSize)
-
-            // Invalidate layout at the attachment position
+            // ROOT CAUSE of the "Space-scrolls-note" bug: calling
+            // `invalidateDisplay(forCharacterRange:)` on our attachment
+            // range forwards to NSTextView's
+            // `setNeedsDisplayInRect:avoidAdditionalLayout:`. Despite
+            // the `avoidAdditionalLayout` hint, AppKit's
+            // `_ensureLayoutCompleteForVisibleRect` kicks in,
+            // `_resizeTextViewForTextContainer` fires, and it calls
+            // `scrollRangeToVisible` on the parent EditTextView with
+            // the table's character range — producing a viewport jump
+            // on every keystroke that changes the attachment size.
+            // The same call also re-queries `cellSize()` and copies the
+            // cell's `attributedStringValue` back into the live field
+            // editor on columns where the cell's column width didn't
+            // grow, which masks newly-typed trailing whitespace until
+            // the next non-space character widens the column.
+            //
+            // `invalidateLayout(forCharacterRange:)` alone is enough
+            // to propagate the new attachment size — AppKit will
+            // redraw the attachment in its next layout pass without
+            // the display-invalidation side-effect.
             layoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
-            layoutManager.invalidateDisplay(forCharacterRange: range)
             stop.pointee = true
         }
     }
@@ -1784,6 +1898,14 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     private func transitionFocusState(from: TableFocusState, to: TableFocusState) {
         let showHandles = (to == .hovered || to == .editing)
         let wasShowingHandles = (from == .hovered || from == .editing)
+
+        // Entering edit mode: hide the row/column tint. The cell's own
+        // focus ring already tells the user which cell is active, and
+        // the tint flickers on every keystroke otherwise.
+        if to == .editing {
+            columnHighlightView?.isHidden = true
+            rowHighlightView?.isHidden = true
+        }
 
         if showHandles != wasShowingHandles {
             // Margins are always reserved, so no invalidateAttachmentLayout() needed.

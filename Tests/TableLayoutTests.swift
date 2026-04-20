@@ -91,23 +91,45 @@ class TableLayoutTests: XCTestCase {
         let table = makeTable(headers: ["Header"], rows: [["Data"]])
         let layout = table.computeLayout()
 
-        let fontSize = UserDefaultsManagement.noteFont.pointSize
-        let spacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
-        let vPad = max(2, ceil(spacing * 0.75))
-        let expectedMinCellHeight = ceil(fontSize + spacing + vPad * 2 + fontSize * 0.4)
-        XCTAssertGreaterThanOrEqual(layout.headerHeight, expectedMinCellHeight) // minCellHeight (font + spacing relative)
+        // Row height for single-line cell should equal the rendered
+        // boundingRect.height + top + bottom padding. No additional
+        // fudge (no `fontSize * 0.4`, no extra editorLineSpacing on
+        // top of `usesFontLeading` which already accounts for leading).
+        let font = UserDefaultsManagement.noteFont
+        let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        let attrs: [NSAttributedString.Key: Any] = [.font: bold]
+        let rendered = NSAttributedString(string: "Header", attributes: attrs)
+        let natural = ceil(rendered.boundingRect(
+            with: NSSize(width: layout.colWidths[0] - 8,
+                         height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height)
+        let vPad = max(2, ceil(CGFloat(UserDefaultsManagement.editorLineSpacing) * 0.75))
+        let expected = natural + vPad * 2
+        XCTAssertEqual(layout.headerHeight, expected,
+                       "Single-line row height must be tight: boundingRect + top + bottom padding, no fudge")
     }
 
-    func test_multiLineCell_increasesHeight() {
-        let table = makeTable(headers: ["H"], rows: [["Line1<br>Line2<br>Line3"]])
-        let layout = table.computeLayout()
+    func test_rowHeight_scalesLinearlyWithLines() {
+        // The incremental height of each added line should equal the
+        // natural per-line height (no extra fudge baked into the single-
+        // line baseline). If minCellHeight is inflated with fontSize*0.4
+        // or if wrappedCellHeight double-counts editorLineSpacing, the
+        // delta between 1-line and 2-line rows drifts from the true
+        // per-line height and the single-line row looks oversized.
+        let t1 = makeTable(headers: ["H"], rows: [["One"]])
+        let t2 = makeTable(headers: ["H"], rows: [["One<br>Two"]])
+        let h1 = t1.computeLayout().dataRowHeight(0)
+        let h2 = t2.computeLayout().dataRowHeight(0)
 
-        let rowH = layout.dataRowHeight(0)
-        let fs = UserDefaultsManagement.noteFont.pointSize
-        let sp = CGFloat(UserDefaultsManagement.editorLineSpacing)
-        let vp = max(2, ceil(sp * 0.75))
-        let minH = ceil(fs + sp + vp * 2 + fs * 0.4)
-        XCTAssertGreaterThan(rowH, minH) // Should be taller than minCellHeight
+        let font = UserDefaultsManagement.noteFont
+        let line = NSAttributedString(string: "One", attributes: [.font: font])
+            .boundingRect(with: NSSize(width: 10_000, height: CGFloat.greatestFiniteMagnitude),
+                          options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+        let perLine = ceil(line)
+
+        XCTAssertEqual(h2 - h1, perLine, accuracy: 1.0,
+                       "Adding a line must add exactly one line-height; no fudge on the 1-line baseline")
     }
 
     // MARK: - Consistency
