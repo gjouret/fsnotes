@@ -95,8 +95,10 @@ public enum TableTextRenderer {
         attachment.bounds = CGRect(x: 0, y: 0, width: 400, height: 100)
 
         let result = NSMutableAttributedString(attachment: attachment)
-        result.addAttribute(.font, value: bodyFont,
-                            range: NSRange(location: 0, length: result.length))
+        let range = NSRange(location: 0, length: result.length)
+        result.addAttribute(.font, value: bodyFont, range: range)
+        result.addAttribute(.renderedBlockType, value: RenderedBlockType.table.rawValue, range: range)
+        result.addAttribute(.renderedBlockOriginalMarkdown, value: rawMarkdown, range: range)
         return result
     }
 }
