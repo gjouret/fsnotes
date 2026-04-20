@@ -1991,7 +1991,20 @@ extension EditTextView {
         let lo = max(0, firstIdx - 1)
         let hi = min(spans.count - 1, firstIdx + 1)
         let startLoc = spans[lo].location
-        let endLoc = min(storageLength, NSMaxRange(spans[hi]))
+        // Extend through the inter-block separator following `hi` (if any).
+        // Separators are single "\n" chars OUTSIDE block spans but carry
+        // the preceding block's paragraph style. When a structural edit
+        // (e.g. heading Enter → [heading, paragraph]) shifts a separator
+        // into a new role — e.g. the "\n" previously serving as the
+        // heading→paragraph separator now serving as the new-paragraph→
+        // next-paragraph separator — the character position is reused,
+        // but its paragraph style must be rewritten from the new
+        // projection. Without including this char, the stale style
+        // persists and layout metrics (line height, paragraphSpacing)
+        // diverge from the projection for one or more lines below the
+        // edit. End-inclusive: +1 if `hi` is not the last block.
+        let sepTail = (hi < spans.count - 1) ? 1 : 0
+        let endLoc = min(storageLength, NSMaxRange(spans[hi]) + sepTail)
         guard endLoc > startLoc else {
             return NSRange(location: 0, length: storageLength)
         }
