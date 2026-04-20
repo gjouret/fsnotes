@@ -498,10 +498,34 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         guard let editor = vcEditor,
               let storage = editor.textStorage else { return }
 
+        let isWYSIWYG = NotesTextProcessor.hideSyntax
         let savedRange = editor.selectedRange()
+        
+        // Map cursor position from current mode to the target mode
+        let mappedRange: NSRange
+        if isWYSIWYG, let projection = editor.documentProjection {
+            // WYSIWYG → Source: map rendered position to markdown source position
+            let sourcePos = mapWYSIWYGPositionToSource(savedRange.location, in: projection)
+            let sourceEnd = mapWYSIWYGPositionToSource(savedRange.upperBound, in: projection)
+            mappedRange = NSRange(location: sourcePos, length: sourceEnd - sourcePos)
+        } else if !isWYSIWYG, let note = editor.note {
+            // Source → WYSIWYG: map markdown position to rendered position
+            let md = storage.string
+            let doc = MarkdownParser.parse(md)
+            let projection = DocumentProjection(
+                document: doc,
+                bodyFont: UserDefaultsManagement.noteFont,
+                codeFont: UserDefaultsManagement.codeFont,
+                note: note
+            )
+            let renderedPos = mapSourcePositionToWYSIWYG(savedRange.location, in: projection, markdown: md)
+            let renderedEnd = mapSourcePositionToWYSIWYG(savedRange.upperBound, in: projection, markdown: md)
+            mappedRange = NSRange(location: renderedPos, length: renderedEnd - renderedPos)
+        } else {
+            mappedRange = savedRange
+        }
 
         // Toggle WYSIWYG mode
-        let isWYSIWYG = NotesTextProcessor.hideSyntax
         NotesTextProcessor.hideSyntax = !isWYSIWYG
         UserDefaultsManagement.wysiwygMode = NotesTextProcessor.hideSyntax
 
@@ -532,13 +556,274 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         // Show/hide formatting toolbar
         formattingToolbar?.isHidden = !NotesTextProcessor.hideSyntax
 
-        // Restore cursor
-        if savedRange.upperBound <= storage.length {
-            editor.setSelectedRange(savedRange)
-        }
+        // Restore cursor at mapped position
+        let targetLength = storage.length
+        let clampedLocation = min(mappedRange.location, targetLength)
+        let clampedEnd = min(mappedRange.upperBound, targetLength)
+        let clampedRange = NSRange(location: clampedLocation, length: max(0, clampedEnd - clampedLocation))
+        editor.setSelectedRange(clampedRange)
 
         editor.needsDisplay = true
         vcEditor?.userActivity?.needsSave = true
+    }
+    
+    /// Map a WYSIWYG storage position to the corresponding markdown source position.
+    /// This traverses the document blocks, accumulating source lengths until we find
+    /// the block containing the storage position, then adds the offset within that block.
+    private func mapWYSIWYGPositionToSource(_ storageIndex: Int, in projection: DocumentProjection) -> Int {
+        guard let (blockIdx, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
+            return storageIndex
+        }
+        
+        let doc = projection.document
+        var sourcePos = 0
+        
+        // Accumulate source length of all preceding blocks
+        for i in 0..<blockIdx {
+            sourcePos += sourceLength(of: doc.blocks[i])
+            sourcePos += 1  // Inter-block separator (newline)
+        }
+        
+        // Add the offset within the current block's content
+        let block = doc.blocks[blockIdx]
+        let prefixLen = sourcePrefixLength(of: block)
+        
+        // For lists, we need to find which item the cursor is in
+        if case .list(let items, _) = block {
+            let (itemOffset, prefixInItem) = findListItemOffset(items: items, storageOffset: offsetInBlock)
+            return sourcePos + itemOffset + prefixInItem
+        }
+        
+        let contentOffset = min(offsetInBlock, contentLength(of: block))
+        return sourcePos + prefixLen + contentOffset
+    }
+    
+    /// Find which list item contains the given storage offset and return
+    /// the accumulated source offset up to that item plus its prefix.
+    /// This accounts for NSTextAttachment characters (U+FFFC) used for bullets.
+    private func findListItemOffset(items: [ListItem], storageOffset: Int) -> (sourceOffset: Int, prefixLength: Int) {
+        var currentStorageOffset = 0
+        var sourceOffset = 0
+        
+        for (idx, item) in items.enumerated() {
+            let itemContentLen = inlineTextLength(item.inline)
+            // In rendered storage, each item has: 1 attachment char + content + newline
+            let itemStorageLen = 1 + itemContentLen  // +1 for attachment
+            let marker = normalizeListMarker(item.marker)
+            let cbText = item.checkbox?.text.count ?? 0
+            let cbAfter = item.checkbox?.afterText.count ?? 0
+            let itemPrefixLen = item.indent.count + marker.count + item.afterMarker.count + cbText + cbAfter
+            
+            // Check if cursor is in this item (including the attachment)
+            if storageOffset <= currentStorageOffset + itemStorageLen || idx == items.count - 1 {
+                // Calculate offset within the item
+                let offsetInItem = max(0, min(storageOffset - currentStorageOffset - 1, itemContentLen))  // -1 to skip attachment
+                return (sourceOffset + itemPrefixLen + offsetInItem, 0)
+            }
+            
+            // Move to next item (skip attachment + content + newline)
+            currentStorageOffset += itemStorageLen + 1  // +1 for newline
+            sourceOffset += itemPrefixLen + itemContentLen
+            
+            // Add separator between items
+            if idx < items.count - 1 {
+                sourceOffset += item.blankLineBefore ? 2 : 1  // "\n" or "\n\n"
+            }
+        }
+        
+        return (sourceOffset, 0)
+    }
+    
+    /// Map a markdown source position to the corresponding WYSIWYG storage position.
+    /// This walks through blocks, accumulating source lengths to find which block
+    /// contains the source position, then calculates the corresponding storage position.
+    private func mapSourcePositionToWYSIWYG(_ sourceIndex: Int, in projection: DocumentProjection, markdown: String) -> Int {
+        let doc = projection.document
+        var currentSourcePos = 0
+        
+        for (i, block) in doc.blocks.enumerated() {
+            let blockSourceLength = sourceLength(of: block)
+            let blockEnd = currentSourcePos + blockSourceLength
+            
+            if sourceIndex < blockEnd || i == doc.blocks.count - 1 {
+                // This block contains the source position
+                let prefixLen = sourcePrefixLength(of: block)
+                let offsetInBlock = sourceIndex - currentSourcePos
+                
+                // For lists, find which item the position is in
+                if case .list(let items, _) = block {
+                    let renderedOffset = findRenderedOffsetInList(items: items, sourceOffset: offsetInBlock)
+                    let span = projection.blockSpans[min(i, projection.blockSpans.count - 1)]
+                    return span.location + min(renderedOffset, span.length)
+                }
+                
+                let offsetInSource = max(0, min(offsetInBlock - prefixLen, contentLength(of: block)))
+                
+                // Get the rendered span for this block
+                let span = projection.blockSpans[min(i, projection.blockSpans.count - 1)]
+                let renderedOffset = min(offsetInSource, span.length)
+                return span.location + renderedOffset
+            }
+            
+            currentSourcePos += blockSourceLength + 1  // +1 for inter-block newline
+        }
+        
+        return projection.attributed.length
+    }
+    
+    /// Find the rendered offset within a list given a source offset.
+    /// Accounts for list item prefixes, separators, and NSTextAttachment characters.
+    private func findRenderedOffsetInList(items: [ListItem], sourceOffset: Int) -> Int {
+        var currentSourceOffset = 0
+        var renderedOffset = 0
+        
+        for (idx, item) in items.enumerated() {
+            let marker = normalizeListMarker(item.marker)
+            let cbText = item.checkbox?.text.count ?? 0
+            let cbAfter = item.checkbox?.afterText.count ?? 0
+            let itemPrefixLen = item.indent.count + marker.count + item.afterMarker.count + cbText + cbAfter
+            let itemContentLen = inlineTextLength(item.inline)
+            let itemSourceLen = itemPrefixLen + itemContentLen
+            
+            // Check if position is in this item's prefix
+            if sourceOffset < currentSourceOffset + itemPrefixLen {
+                // Cursor is in the prefix area (marker), map to start of item content in rendered
+                return renderedOffset + 1  // +1 to position after the attachment char
+            }
+            
+            // Check if position is in this item's content
+            if sourceOffset <= currentSourceOffset + itemSourceLen || idx == items.count - 1 {
+                let offsetInContent = max(0, min(sourceOffset - currentSourceOffset - itemPrefixLen, itemContentLen))
+                // In rendered: attachment (1) + offsetInContent
+                return renderedOffset + 1 + offsetInContent
+            }
+            
+            // Move to next item
+            currentSourceOffset += itemSourceLen
+            renderedOffset += 1 + itemContentLen  // +1 for attachment
+            
+            // Add separator between items
+            if idx < items.count - 1 {
+                currentSourceOffset += item.blankLineBefore ? 2 : 1  // "\n" or "\n\n"
+                renderedOffset += 1  // newline in rendered
+            }
+        }
+        
+        return renderedOffset
+    }
+    
+    /// Calculate the source (markdown) length of a block.
+    private func sourceLength(of block: Block) -> Int {
+        // Use MarkdownSerializer to get accurate source length
+        let serialized = MarkdownSerializer.serialize(Document(blocks: [block], trailingNewline: false))
+        return serialized.count
+    }
+    
+    /// Calculate the rendered content length of a block (without syntax markers).
+    private func contentLength(of block: Block) -> Int {
+        switch block {
+        case .paragraph(let inline):
+            return inlineTextLength(inline)
+        case .heading(_, let suffix):
+            // suffix includes leading space, so we trim it for content length
+            // But if suffix is empty or just whitespace, content length is 0
+            let trimmed = suffix.trimmingCharacters(in: .whitespaces)
+            return trimmed.count
+        case .list(let items, _):
+            // Each item has: 1 attachment char + content + 1 newline (except last)
+            let contentLen = items.reduce(0) { total, item in
+                total + 1 + inlineTextLength(item.inline)  // +1 for attachment
+            }
+            // Add newlines between items
+            return contentLen + max(0, items.count - 1)
+        case .blockquote(let lines):
+            return lines.reduce(0) { total, line in
+                total + inlineTextLength(line.inline)
+            }
+        case .codeBlock(_, let content, _):
+            return content.count
+        case .horizontalRule:
+            return 0
+        case .blankLine:
+            return 0
+        case .htmlBlock(let raw):
+            return raw.count
+        case .table(let header, _, let rows, _):
+            let headerLength = header.reduce(0) { total, cell in
+                total + inlineTextLength(cell.inline)
+            }
+            return rows.reduce(headerLength) { total, row in
+                total + row.reduce(0) { cellTotal, cell in
+                    cellTotal + inlineTextLength(cell.inline)
+                }
+            }
+        }
+    }
+    
+    /// Calculate the length of inline content when rendered (without markers).
+    private func inlineTextLength(_ inline: [Inline]) -> Int {
+        return inline.reduce(0) { total, element in
+            switch element {
+            case .text(let str):
+                return total + str.count
+            case .bold(let inner, _), .italic(let inner, _), .strikethrough(let inner),
+                 .underline(let inner), .highlight(let inner):
+                return total + inlineTextLength(inner)
+            case .code(let str):
+                return total + str.count
+            case .link(text: let text, _):
+                return total + inlineTextLength(text)
+            case .wikilink(target: _, display: let display):
+                return total + (display?.count ?? 0)
+            case .image, .lineBreak, .rawHTML, .entity, .escapedChar,
+                 .autolink, .math, .displayMath:
+                return total
+            }
+        }
+    }
+    
+    /// Calculate the source prefix length (syntax markers) for a block.
+    private func sourcePrefixLength(of block: Block) -> Int {
+        switch block {
+        case .heading(let level, let suffix):
+            // "###" or "### " - the suffix includes leading space if present
+            // If suffix is empty or doesn't start with space, just return level
+            if suffix.isEmpty {
+                return level
+            }
+            return level + suffix.prefix(1).count  // Only count leading space in suffix
+        case .list(let items, _):
+            if let first = items.first {
+                let marker = normalizeListMarker(first.marker)
+                let cbPart = first.checkbox?.text.count ?? 0
+                let cbAfter = first.checkbox?.afterText.count ?? 0
+                return first.indent.count + marker.count + first.afterMarker.count + cbPart + cbAfter
+            }
+            return 0
+        case .blockquote:
+            return 2  // "> "
+        case .codeBlock(let lang, _, let fence):
+            let fenceStr = String(repeating: fence.character == .backtick ? "`" : "~", count: fence.length)
+            let langPart = lang ?? ""
+            return fenceStr.count + langPart.count + 1  // +1 for newline after opening fence
+        case .horizontalRule(let char, let length):
+            return length  // "---", "***", etc.
+        case .blankLine:
+            return 0
+        case .paragraph, .htmlBlock, .table:
+            return 0
+        }
+    }
+    
+    /// Normalize list marker like "2." to "1." for length calculation
+    /// since the serializer normalizes ordered list markers.
+    private func normalizeListMarker(_ marker: String) -> String {
+        // Check if it's an ordered marker (ends with . or ))
+        if marker.hasSuffix(".") || marker.hasSuffix(")") {
+            let suffix = String(marker.last!)
+            return "1" + suffix
+        }
+        return marker
     }
     
     @IBAction func toggleMathJax(_ sender: NSMenuItem) {
