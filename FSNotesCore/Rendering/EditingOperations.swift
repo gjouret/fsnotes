@@ -3915,19 +3915,24 @@ public enum EditingOps {
         
         var newBlocks: [Block] = []
         
-        // Use removeItemAtPath to keep items before and after in the same list structure
-        // This preserves the list as a single block with blankLineBefore flags
-        let remaining = removeItemAtPath(items, path: entry.path, promoteChildren: true)
+        // Split the list into before/after at the exited item
+        let itemsBefore = itemsBeforeEntry(items: items, path: entry.path)
+        let itemsAfter = itemsAfterEntry(items: items, path: entry.path, promoteChildren: true)
         
-        // Build replacement blocks
-        if !remaining.isEmpty {
-            newBlocks.append(.list(items: remaining))
+        // Add list with items before (if any)
+        if !itemsBefore.isEmpty {
+            newBlocks.append(.list(items: itemsBefore))
         }
         
         // Always create a paragraph block for the exited item.
         // For empty items, this creates an empty paragraph (clean exit from list editing).
         let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
         newBlocks.append(exitedParagraph)
+        
+        // Add list with items after (if any)
+        if !itemsAfter.isEmpty {
+            newBlocks.append(.list(items: itemsAfter))
+        }
         
         // Edge case: if newBlocks is empty, add a blank paragraph
         if newBlocks.isEmpty {
@@ -3937,14 +3942,16 @@ public enum EditingOps {
         var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
 
         // Cursor goes to the start of the exited paragraph.
-        // Paragraph is always the middle block: [list?, paragraph, list?]
-        let firstIsList: Bool
-        if case .list = newBlocks.first {
-            firstIsList = true
-        } else {
-            firstIsList = false
+        // The paragraph is the first (and only) non-list block in newBlocks
+        var paraBlockIdx = blockIndex
+        for (i, blk) in result.newProjection.document.blocks.enumerated() {
+            if i >= blockIndex && i < blockIndex + newBlocks.count {
+                if case .paragraph = blk {
+                    paraBlockIdx = i
+                    break
+                }
+            }
         }
-        let paraBlockIdx = blockIndex + (firstIsList ? 1 : 0)
         if paraBlockIdx < result.newProjection.blockSpans.count {
             result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
         } else {
