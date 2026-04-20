@@ -138,34 +138,14 @@ public enum ListFSMOperations {
         // item are promoted to the same level.
         let remaining = removeItemAtPath(items, path: entry.path, promoteChildren: true)
 
-        // If the item was empty and there are remaining items, just delete it
-        // and place cursor at the end of the previous item.
-        if isEmpty && !remaining.isEmpty {
-            let newBlock = Block.list(items: remaining)
-            var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
-            
-            // Cursor goes to the end of the previous item (if there is one)
-            // or the start of the list (if this was the first item)
-            let newEntries = flattenList(remaining)
-            if entryIdx > 0, entryIdx - 1 < newEntries.count {
-                // Place cursor at the end of the previous item's inline content
-                let prevEntry = newEntries[entryIdx - 1]
-                let prevInlineEnd = prevEntry.startOffset + prevEntry.prefixLength + prevEntry.inlineLength
-                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location + prevInlineEnd
-            } else {
-                // First item was deleted - cursor at start of list
-                result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
-            }
-            return result
-        }
-
         // Build the replacement blocks.
         var newBlocks: [Block] = []
         if !remaining.isEmpty {
             newBlocks.append(.list(items: remaining))
         }
         
-        // Create a paragraph block for the exited item (only for non-empty items).
+        // Always create a paragraph block for the exited item.
+        // For empty items, this creates an empty paragraph (clean exit from list editing).
         let exitedParagraph: Block = .paragraph(inline: entry.item.inline)
         newBlocks.append(exitedParagraph)
 

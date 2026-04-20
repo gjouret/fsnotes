@@ -301,7 +301,7 @@ The InlineTableView cautionary tale described in the top section of this file ha
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **strange-varahamihira** (877 symbols, 866 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **fsnotes** (1122 symbols, 1107 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -317,7 +317,7 @@ This project is indexed by GitNexus as **strange-varahamihira** (877 symbols, 86
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/strange-varahamihira/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/fsnotes/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -356,10 +356,10 @@ This project is indexed by GitNexus as **strange-varahamihira** (877 symbols, 86
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/strange-varahamihira/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/strange-varahamihira/clusters` | All functional areas |
-| `gitnexus://repo/strange-varahamihira/processes` | All execution flows |
-| `gitnexus://repo/strange-varahamihira/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/fsnotes/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/fsnotes/clusters` | All functional areas |
+| `gitnexus://repo/fsnotes/processes` | All execution flows |
+| `gitnexus://repo/fsnotes/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 
