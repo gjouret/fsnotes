@@ -414,10 +414,9 @@ class TableRenderController {
     // MARK: - Helpers
 
     func getTableMaxWidth() -> CGFloat {
-        if let editorWidth = textView?.enclosingScrollView?.contentView.bounds.width {
-            return editorWidth - 40
-        }
-        return 400
+        guard let tv = textView, let tc = tv.textContainer else { return 400 }
+        let pad = tc.lineFragmentPadding
+        return max(100, tc.size.width - 2 * pad)
     }
 
     /// Called when the editor/window is resized. Updates each live
