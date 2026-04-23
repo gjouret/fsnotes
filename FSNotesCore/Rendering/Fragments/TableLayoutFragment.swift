@@ -68,6 +68,48 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// `InlineTableView.drawGridLines` (white=0.95).
     public static let zebraFillColor = NSColor(calibratedWhite: 0.95, alpha: 1.0)
 
+    // MARK: - Hover state (2e-T2-g)
+    //
+    // External view code (the `TableHandleOverlay`) updates this when
+    // the mouse enters / leaves the fragment's handle strips. The draw
+    // path reads it to decide whether to paint the handle chrome at all
+    // — in the unhovered state, the strips are entirely invisible so a
+    // steady-state table looks identical to the pre-T2-g read-only
+    // render.
+    //
+    // We do NOT invalidate layout on hover changes — the fragment's
+    // frame already includes the handle strip reservation (see
+    // `layoutFragmentFrame`), so only a redraw is needed. Callers call
+    // `setHoverState(_:)` which marks the rendering surface dirty via
+    // the layout manager's `invalidateRenderingForTextRange(for:)`.
+
+    /// Hover / focus state. `none` is the default — no handles visible.
+    /// `column(col)` highlights the top handle-strip slice for the
+    /// given column (0-indexed). `row(row)` highlights the left handle-
+    /// strip slice for the given row (row=0 → header, row>=1 → body).
+    public enum HoverState: Equatable {
+        case none
+        case column(Int)
+        case row(Int)
+    }
+
+    private var hoverState: HoverState = .none
+
+    /// Update the hover state. Returns `true` if the state actually
+    /// changed (the caller should then mark the hosting text view's
+    /// rendering dirty). The fragment itself does NOT invalidate layout
+    /// — `layoutFragmentFrame` is independent of hover state, so only
+    /// a redraw is needed; that's the overlay's responsibility.
+    @discardableResult
+    public func setHoverState(_ newValue: HoverState) -> Bool {
+        guard hoverState != newValue else { return false }
+        hoverState = newValue
+        return true
+    }
+
+    /// Current hover state. Exposed for tests + the overlay.
+    public var currentHoverState: HoverState { hoverState }
+
     // MARK: - Geometry cache
     //
     // `TableGeometry.compute(...)` walks every cell's attributed string
@@ -172,10 +214,11 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
 
     // MARK: - Geometry overrides
 
-    /// Height = total row-height sum from `TableGeometry`; width = full
-    /// text container width. Without this override TK2 measures the
-    /// separator-encoded backing string as a single line fragment — the
-    /// table would render one-line-tall and clip.
+    /// Height = `handleBarHeight` (top strip reserved for column hover
+    /// handles, T2-g) + total row-height sum from `TableGeometry`;
+    /// width = full text container width. Without this override TK2
+    /// measures the separator-encoded backing string as a single line
+    /// fragment — the table would render one-line-tall and clip.
     ///
     /// `super.layoutFragmentFrame.origin` is preserved so TK2 stacks the
     /// fragment vertically in the same slot it would have for the
@@ -189,11 +232,12 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             containerWidth: width,
             font: bodyFont
         )
+        let total = TableGeometry.handleBarHeight + g.totalHeight
         return CGRect(
             x: base.origin.x,
             y: base.origin.y,
             width: width,
-            height: max(base.height, g.totalHeight)
+            height: max(base.height, total)
         )
     }
 
@@ -248,11 +292,13 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         // container's left edge is at `point.x - frame.origin.x`; offset
         // further by `handleBarWidth` so the grid starts at the same
         // x-offset the widget uses. The grid's top edge sits at
-        // `point.y`; every row is stacked downward from there (TK2 uses
-        // flipped y-down coordinates inside `draw(at:in:)`).
+        // `point.y + handleBarHeight` — the top strip is reserved for
+        // column drag handles (T2-g). Every row is stacked downward
+        // from there (TK2 uses flipped y-down coordinates inside
+        // `draw(at:in:)`).
         let containerOriginX = point.x - frame.origin.x
         let gridLeft = containerOriginX + TableGeometry.handleBarWidth
-        let gridTop = point.y
+        let gridTop = point.y + TableGeometry.handleBarHeight
         let gridWidth = g.columnWidths.reduce(0, +)
         let gridHeight = g.totalHeight
 
@@ -286,6 +332,169 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             gridWidth: gridWidth,
             gridHeight: gridHeight
         )
+        // Hover-driven handle chrome. In the default (`.none`) state
+        // this is a no-op — a steady-state table looks identical to
+        // the pre-T2-g render.
+        drawHoverHandles(
+            context: context,
+            columnWidths: g.columnWidths,
+            rowHeights: g.rowHeights,
+            gridLeft: gridLeft,
+            gridTop: gridTop,
+            gridWidth: gridWidth,
+            gridHeight: gridHeight,
+            containerOriginX: containerOriginX,
+            topStripY: point.y
+        )
+    }
+
+    // MARK: - Hover handle chrome (T2-g.1)
+
+    /// Paint the hover-state column/row handle chip when `hoverState`
+    /// is non-`.none`. `.none` draws nothing so the handle strips stay
+    /// invisible until the overlay reports a hover.
+    ///
+    /// Column handle: a thin colored pill at the top of the hovered
+    /// column, inside the top `handleBarHeight` strip.
+    /// Row handle: a thin colored pill on the left of the hovered
+    /// row, inside the left `handleBarWidth` strip.
+    private func drawHoverHandles(
+        context: CGContext,
+        columnWidths: [CGFloat],
+        rowHeights: [CGFloat],
+        gridLeft: CGFloat,
+        gridTop: CGFloat,
+        gridWidth: CGFloat,
+        gridHeight: CGFloat,
+        containerOriginX: CGFloat,
+        topStripY: CGFloat
+    ) {
+        let fill = Theme.shared.chrome.tableHandle
+            .resolvedForCurrentAppearance(fallback: NSColor(white: 0.5, alpha: 0.8))
+
+        switch hoverState {
+        case .none:
+            return
+
+        case .column(let col):
+            guard col >= 0, col < columnWidths.count else { return }
+            var x = gridLeft
+            for i in 0..<col {
+                x += columnWidths[i]
+            }
+            let width = columnWidths[col]
+            // Center a 2/3-width pill inside the column's top strip.
+            let pillInset: CGFloat = max(2, width * 0.16)
+            let pillRect = CGRect(
+                x: x + pillInset,
+                y: topStripY + 2,
+                width: max(0, width - 2 * pillInset),
+                height: TableGeometry.handleBarHeight - 4
+            )
+            context.saveGState()
+            context.setFillColor(fill.cgColor)
+            let radius = min(pillRect.height / 2, 4)
+            let path = CGPath(
+                roundedRect: pillRect,
+                cornerWidth: radius, cornerHeight: radius,
+                transform: nil
+            )
+            context.addPath(path)
+            context.fillPath()
+            context.restoreGState()
+
+        case .row(let row):
+            guard row >= 0, row < rowHeights.count else { return }
+            var y = gridTop
+            for i in 0..<row {
+                y += rowHeights[i]
+            }
+            let height = rowHeights[row]
+            let pillInset: CGFloat = max(2, height * 0.16)
+            let pillRect = CGRect(
+                x: containerOriginX + 2,
+                y: y + pillInset,
+                width: TableGeometry.handleBarWidth - 4,
+                height: max(0, height - 2 * pillInset)
+            )
+            context.saveGState()
+            context.setFillColor(fill.cgColor)
+            let radius = min(pillRect.width / 2, 4)
+            let path = CGPath(
+                roundedRect: pillRect,
+                cornerWidth: radius, cornerHeight: radius,
+                transform: nil
+            )
+            context.addPath(path)
+            context.fillPath()
+            context.restoreGState()
+        }
+    }
+
+    // MARK: - Geometry helpers for the overlay (T2-g)
+    //
+    // The `TableHandleOverlay` needs to translate mouse locations
+    // (text-view coordinate space) into (row, col) hits on the table's
+    // handle strips. These helpers keep the math in one place so the
+    // overlay doesn't re-derive column-x boundaries or row-y boundaries.
+
+    /// Column (0-indexed) whose top-strip contains `localX` — a point
+    /// in the fragment's rendering-surface coordinate space
+    /// (i.e. `0` = fragment left edge). Returns `nil` if `localX` is
+    /// outside the grid's horizontal extent.
+    ///
+    /// The fragment origin isn't known here — callers subtract the
+    /// fragment's `layoutFragmentFrame.origin.x` before calling.
+    public func columnAt(localX: CGFloat) -> Int? {
+        guard let element = tableElement,
+              case .table(_, _, _, _) = element.block else { return nil }
+        let g = geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+        var x = TableGeometry.handleBarWidth
+        for (idx, w) in g.columnWidths.enumerated() {
+            if localX >= x, localX < x + w {
+                return idx
+            }
+            x += w
+        }
+        return nil
+    }
+
+    /// Row (0 = header, 1..N = body) whose left-strip contains
+    /// `localY` — a point in the fragment's rendering-surface
+    /// coordinate space where `0` is the fragment's top. Returns `nil`
+    /// if `localY` is outside the grid's vertical extent.
+    public func rowAt(localY: CGFloat) -> Int? {
+        guard let element = tableElement,
+              case .table(_, _, _, _) = element.block else { return nil }
+        let g = geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+        var y = TableGeometry.handleBarHeight
+        for (idx, h) in g.rowHeights.enumerated() {
+            if localY >= y, localY < y + h {
+                return idx
+            }
+            y += h
+        }
+        return nil
+    }
+
+    /// `true` if `localY` falls inside the fragment's top handle
+    /// strip (0 ≤ localY < handleBarHeight).
+    public func isInTopHandleStrip(localY: CGFloat) -> Bool {
+        return localY >= 0 && localY < TableGeometry.handleBarHeight
+    }
+
+    /// `true` if `localX` falls inside the fragment's left handle
+    /// strip (0 ≤ localX < handleBarWidth).
+    public func isInLeftHandleStrip(localX: CGFloat) -> Bool {
+        return localX >= 0 && localX < TableGeometry.handleBarWidth
     }
 
     // MARK: - Row fills (header + zebra body shading)

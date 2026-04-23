@@ -428,6 +428,12 @@ public struct ThemeChrome: Codable, Equatable {
     /// so existing themes that don't set it still load cleanly.
     public var codeBlockEditToggle: ThemeCodeBlockEditToggle
 
+    /// Table hover-handle color (Phase 2e T2-g). Fill used for the
+    /// top-gutter column handles and left-gutter row handles drawn by
+    /// `TableLayoutFragment` / `TableHandleOverlay`. Defaulted so
+    /// existing themes that don't set it still load cleanly.
+    public var tableHandle: ThemeColor
+
     public init(
         kbdCornerRadius: CGFloat = 3.0,
         kbdBorderWidth: CGFloat = 1.0,
@@ -443,7 +449,8 @@ public struct ThemeChrome: Codable, Equatable {
         hrThickness: CGFloat = 4.0,
         headingBorderThickness: CGFloat = 0.5,
         headingBorderOffsetBelowText: CGFloat = 1.0,
-        codeBlockEditToggle: ThemeCodeBlockEditToggle = .default
+        codeBlockEditToggle: ThemeCodeBlockEditToggle = .default,
+        tableHandle: ThemeColor = ThemeColor(hex: "#BBBBBBCC")
     ) {
         self.kbdCornerRadius = kbdCornerRadius
         self.kbdBorderWidth = kbdBorderWidth
@@ -460,10 +467,11 @@ public struct ThemeChrome: Codable, Equatable {
         self.headingBorderThickness = headingBorderThickness
         self.headingBorderOffsetBelowText = headingBorderOffsetBelowText
         self.codeBlockEditToggle = codeBlockEditToggle
+        self.tableHandle = tableHandle
     }
 
-    // MARK: Codable — tolerate missing `codeBlockEditToggle` for
-    // themes predating Slice 3.
+    // MARK: Codable — tolerate missing `codeBlockEditToggle` /
+    // `tableHandle` for themes predating the respective slices.
 
     private enum CodingKeys: String, CodingKey {
         case kbdCornerRadius, kbdBorderWidth,
@@ -471,7 +479,7 @@ public struct ThemeChrome: Codable, Equatable {
              codeBlockCornerRadius, codeBlockHorizontalBleed, codeBlockBorderWidth,
              blockquoteBarWidth, blockquoteBarSpacing, blockquoteBarInitialOffset,
              hrThickness, headingBorderThickness, headingBorderOffsetBelowText,
-             codeBlockEditToggle
+             codeBlockEditToggle, tableHandle
     }
 
     public init(from decoder: Decoder) throws {
@@ -507,6 +515,8 @@ public struct ThemeChrome: Codable, Equatable {
             CGFloat.self, forKey: .headingBorderOffsetBelowText) ?? def.headingBorderOffsetBelowText
         self.codeBlockEditToggle = try c.decodeIfPresent(
             ThemeCodeBlockEditToggle.self, forKey: .codeBlockEditToggle) ?? def.codeBlockEditToggle
+        self.tableHandle = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .tableHandle) ?? def.tableHandle
     }
 
     public static let `default` = ThemeChrome()

@@ -92,6 +92,12 @@ public enum TableGeometry {
     /// x-offset the widget uses, preserving visual parity.
     public static let handleBarWidth: CGFloat = 11
 
+    /// Top margin reserved for column drag handles. Mirrors
+    /// `InlineTableView.handleBarHeight`. Public as of 2e-T2-g so
+    /// `TableLayoutFragment` and the `TableHandleOverlay` agree on the
+    /// strip height above the header row where column handles sit.
+    public static let handleBarHeight: CGFloat = 11
+
     // MARK: - Rendered cell text
     //
     // Mirrors `InlineTableView.renderedCellText` — runs the cell's

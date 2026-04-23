@@ -114,6 +114,7 @@
             "foreground": { "asset": "secondaryLabel" },
             "backgroundHover": "#00000014",
             "backgroundActive": "#00000028"
-        }
+        },
+        "tableHandle": "#BBBBBBCC"
     }
 }

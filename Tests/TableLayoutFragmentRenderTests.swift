@@ -80,7 +80,7 @@ final class TableLayoutFragmentRenderTests: XCTestCase {
     /// container's usable width.
     func test_T2c_fragmentFrame_matchesTableGeometry() throws {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         let markdown = """
         | Name | City | Role |
@@ -124,10 +124,13 @@ final class TableLayoutFragmentRenderTests: XCTestCase {
         )
 
         let frame = fragment.layoutFragmentFrame
+        // T2-g: fragment frame adds `handleBarHeight` above the grid
+        // to reserve space for the column hover handles.
+        let expectedHeight = TableGeometry.handleBarHeight + expected.totalHeight
         XCTAssertEqual(
-            frame.height, expected.totalHeight, accuracy: 0.5,
-            "Fragment height must equal TableGeometry.totalHeight " +
-            "(got \(frame.height), expected \(expected.totalHeight))"
+            frame.height, expectedHeight, accuracy: 0.5,
+            "Fragment height must equal handleBarHeight + TableGeometry.totalHeight " +
+            "(got \(frame.height), expected \(expectedHeight))"
         )
         XCTAssertEqual(
             frame.width, containerWidth, accuracy: 0.5,
@@ -146,7 +149,7 @@ final class TableLayoutFragmentRenderTests: XCTestCase {
     /// and this test catches it before the user does.
     func test_T2c_rowCount_matchesTableGeometry() throws {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         // (columns, bodyRows) shapes: 1x5, 4x1, 3x2, the standard 2x3.
         // Each is an independent harness instance so the fragment cache

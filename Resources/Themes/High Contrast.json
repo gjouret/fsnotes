@@ -115,6 +115,7 @@
             "foreground": { "light": "#000000", "dark": "#FFFFFF" },
             "backgroundHover": "#00000030",
             "backgroundActive": "#00000060"
-        }
+        },
+        "tableHandle": { "light": "#000000FF", "dark": "#FFFFFFFF" }
     }
 }

@@ -7849,4 +7849,286 @@ public enum EditingOps {
         return positions
     }
 
+    // MARK: - Table structural editing (Phase 2e-T2-g)
+    //
+    // Five pure primitives for the structural operations exposed by the
+    // T2-g hover-handle context menu:
+    //   * insertTableRow     (body row before / after existing body row)
+    //   * insertTableColumn  (before / after existing column)
+    //   * deleteTableRow     (body row only — header is structural)
+    //   * deleteTableColumn  (fails on single-column tables)
+    //   * setTableColumnAlignment
+    //
+    // All operate on value-typed `Block.table` and route through
+    // `replaceBlock`. `raw` is recomputed canonically via
+    // `rebuildTableRaw` so the serializer sees the edit immediately
+    // (matches the pattern shipped in `replaceTableCellInline`).
+    //
+    // Rule 3 posture: no widget / view state involved. Tests drive these
+    // primitives directly against a `DocumentProjection` built from a
+    // parsed table block and assert on the returned `Document`.
+
+    /// Insert a new (empty) body row at position `at` (0-indexed among
+    /// body rows). `at == 0` inserts as the first body row (just below
+    /// the header); `at == existingRows.count` appends at the end.
+    ///
+    /// The new row has `header.count` empty cells; alignments are
+    /// unchanged. Throws `.unsupported` if the block is not a table and
+    /// `.outOfBounds` if `at` is out of `0...rows.count`.
+    public static func insertTableRow(
+        blockIndex: Int,
+        at position: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, _) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "insertTableRow: block \(blockIndex) is not a table"
+            )
+        }
+        guard position >= 0, position <= rows.count else {
+            throw EditingError.outOfBounds
+        }
+        var newRows = rows
+        let newRow = Array(repeating: TableCell([]), count: header.count)
+        newRows.insert(newRow, at: position)
+        let newRaw = rebuildTableRaw(
+            header: header, alignments: alignments, rows: newRows
+        )
+        let newBlock: Block = .table(
+            header: header, alignments: alignments,
+            rows: newRows, raw: newRaw
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Insert a new (empty) column at position `at` (0-indexed among
+    /// columns). `at == 0` prepends as the first column; `at ==
+    /// header.count` appends at the end.
+    ///
+    /// The new column's alignment is `alignment` (default `.none`). All
+    /// existing data rows grow by one empty cell at the same position.
+    public static func insertTableColumn(
+        blockIndex: Int,
+        at position: Int,
+        alignment: TableAlignment = .none,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, _) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "insertTableColumn: block \(blockIndex) is not a table"
+            )
+        }
+        guard position >= 0, position <= header.count else {
+            throw EditingError.outOfBounds
+        }
+        var newHeader = header
+        newHeader.insert(TableCell([]), at: position)
+        var newAlignments = alignments
+        // Pad alignments to header.count first (defensive — parser is
+        // supposed to keep them aligned but test fixtures sometimes skip
+        // the separator row).
+        while newAlignments.count < header.count {
+            newAlignments.append(.none)
+        }
+        newAlignments.insert(alignment, at: position)
+        var newRows = rows
+        for i in 0..<newRows.count {
+            let insertAt = min(position, newRows[i].count)
+            newRows[i].insert(TableCell([]), at: insertAt)
+        }
+        let newRaw = rebuildTableRaw(
+            header: newHeader, alignments: newAlignments, rows: newRows
+        )
+        let newBlock: Block = .table(
+            header: newHeader, alignments: newAlignments,
+            rows: newRows, raw: newRaw
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Delete the body row at position `at` (0-indexed among body rows).
+    /// The header row is structural and cannot be deleted via this path
+    /// — delete the whole table block instead.
+    ///
+    /// Throws `.outOfBounds` if `at` is out of range, or if the table
+    /// has only one body row (deleting the last body row would leave a
+    /// header-only table; matching `InlineTableView` behaviour we
+    /// preserve at least one body row; callers that want to delete the
+    /// whole table should delete the block).
+    public static func deleteTableRow(
+        blockIndex: Int,
+        at position: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, _) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "deleteTableRow: block \(blockIndex) is not a table"
+            )
+        }
+        guard rows.count > 1 else {
+            throw EditingError.outOfBounds
+        }
+        guard position >= 0, position < rows.count else {
+            throw EditingError.outOfBounds
+        }
+        var newRows = rows
+        newRows.remove(at: position)
+        let newRaw = rebuildTableRaw(
+            header: header, alignments: alignments, rows: newRows
+        )
+        let newBlock: Block = .table(
+            header: header, alignments: alignments,
+            rows: newRows, raw: newRaw
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Delete the column at position `at` (0-indexed among columns).
+    /// Removes the cell at that position from the header row and every
+    /// body row, and drops the corresponding alignment.
+    ///
+    /// Throws `.outOfBounds` if `at` is out of range, or if the table
+    /// has only one column.
+    public static func deleteTableColumn(
+        blockIndex: Int,
+        at position: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, _) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "deleteTableColumn: block \(blockIndex) is not a table"
+            )
+        }
+        guard header.count > 1 else {
+            throw EditingError.outOfBounds
+        }
+        guard position >= 0, position < header.count else {
+            throw EditingError.outOfBounds
+        }
+        var newHeader = header
+        newHeader.remove(at: position)
+        var newAlignments = alignments
+        if position < newAlignments.count {
+            newAlignments.remove(at: position)
+        }
+        var newRows = rows
+        for i in 0..<newRows.count {
+            if position < newRows[i].count {
+                newRows[i].remove(at: position)
+            }
+        }
+        let newRaw = rebuildTableRaw(
+            header: newHeader, alignments: newAlignments, rows: newRows
+        )
+        let newBlock: Block = .table(
+            header: newHeader, alignments: newAlignments,
+            rows: newRows, raw: newRaw
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Set column `col`'s alignment to `alignment`. Structural shape is
+    /// preserved; only the `alignments` field of the table block
+    /// changes. `raw` is rebuilt so the serialized separator row
+    /// reflects the new alignment marker (`---`, `:---`, `---:`,
+    /// `:---:`).
+    public static func setTableColumnAlignment(
+        blockIndex: Int,
+        col: Int,
+        alignment: TableAlignment,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, _) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "setTableColumnAlignment: block \(blockIndex) is not a table"
+            )
+        }
+        guard col >= 0, col < header.count else {
+            throw EditingError.outOfBounds
+        }
+        var newAlignments = alignments
+        while newAlignments.count < header.count {
+            newAlignments.append(.none)
+        }
+        newAlignments[col] = alignment
+        let newRaw = rebuildTableRaw(
+            header: header, alignments: newAlignments, rows: rows
+        )
+        let newBlock: Block = .table(
+            header: header, alignments: newAlignments,
+            rows: rows, raw: newRaw
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
 }

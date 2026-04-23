@@ -371,4 +371,39 @@ extension ViewController {
             aiChatPanel = panel
         }
     }
+
+    // MARK: - Table handle overlay (Phase 2e-T2-g)
+    //
+    // The overlay hangs off the ViewController via an associated object
+    // — `EditTextView+BlockModel.swift` is off-limits under the T2-g
+    // scope rules, and the overlay itself needs a stable owner so it
+    // can observe scroll / text-change notifications across the life
+    // of the editor. Lazy instantiation: the first call constructs the
+    // overlay AND kicks a reposition so the handle views exist before
+    // the first hover.
+    //
+    // Production wiring: call `tableHandleOverlay.reposition()` after a
+    // note is filled into the editor. Tests construct the overlay
+    // directly (bypassing this accessor) so they don't need the full
+    // ViewController hierarchy.
+
+    private struct TableHandleOverlayKeys {
+        static var overlay = "TableHandleOverlay.overlayKey"
+    }
+
+    public var tableHandleOverlay: TableHandleOverlay {
+        if let existing = objc_getAssociatedObject(
+            self, &TableHandleOverlayKeys.overlay
+        ) as? TableHandleOverlay {
+            return existing
+        }
+        let overlay = TableHandleOverlay(editor: editor)
+        objc_setAssociatedObject(
+            self,
+            &TableHandleOverlayKeys.overlay,
+            overlay,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        return overlay
+    }
 }
