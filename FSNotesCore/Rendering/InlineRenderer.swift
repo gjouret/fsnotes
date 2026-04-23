@@ -36,12 +36,21 @@ public enum InlineRenderer {
     ///   `theme.typography.kbdFontSizeMultiplier`, and
     ///   `theme.colors.highlightBackground`. Defaults to `Theme.shared`
     ///   so existing callers stay source-compatible.
+    /// - Parameter editingCodeBlocks: signature-consistency parameter
+    ///   for the Code-Block Edit Toggle feature. Inline rendering is
+    ///   a no-op with respect to this set (inline `.code` spans are
+    ///   not part of the edit-toggle surface — only fenced block-level
+    ///   code is). Threaded here so Phase 7.3+ can add inline-level
+    ///   consumers without breaking callers. Defaults to empty so
+    ///   existing call sites stay source-compatible.
     public static func render(
         _ inlines: [Inline],
         baseAttributes: [NSAttributedString.Key: Any],
         note: Note? = nil,
-        theme: Theme = .shared
+        theme: Theme = .shared,
+        editingCodeBlocks: Set<BlockRef> = []
     ) -> NSAttributedString {
+        _ = editingCodeBlocks  // intentionally unused — no-op at inline level
         let out = NSMutableAttributedString()
         for inline in inlines {
             out.append(render(inline, baseAttributes: baseAttributes, note: note, theme: theme))

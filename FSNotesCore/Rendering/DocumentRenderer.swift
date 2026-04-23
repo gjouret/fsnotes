@@ -100,12 +100,21 @@ public enum DocumentRenderer {
     ///   - theme: the active theme. Defaults to `Theme.shared` so
     ///     existing callers don't need updating. Renderer-level tests
     ///     pass a custom theme to assert theme-driven values.
+    ///   - editingCodeBlocks: the set of `BlockRef`s whose code blocks
+    ///     should render in EDITING form — raw fenced source in plain
+    ///     code font, no syntax highlighting, no mermaid/math
+    ///     attachment. Blocks not in the set render in today's DEFAULT
+    ///     form (syntax-highlighted or bitmap-rendered). Default empty
+    ///     set preserves the byte-for-byte existing behaviour so every
+    ///     existing caller stays unchanged. See
+    ///     `CODEBLOCK_EDIT_TOGGLE_PLAN.md` slice 1.
     public static func render(
         _ document: Document,
         bodyFont: PlatformFont,
         codeFont: PlatformFont,
         note: Note? = nil,
-        theme: Theme = .shared
+        theme: Theme = .shared,
+        editingCodeBlocks: Set<BlockRef> = []
     ) -> RenderedDocument {
         let out = NSMutableAttributedString()
         var spans: [NSRange] = []
@@ -120,7 +129,14 @@ public enum DocumentRenderer {
 
         for (i, block) in document.blocks.enumerated() {
             let start = out.length
-            let blockRendered = renderBlock(block, bodyFont: bodyFont, codeFont: codeFont, note: note, theme: theme)
+            let blockRendered = renderBlock(
+                block,
+                bodyFont: bodyFont,
+                codeFont: codeFont,
+                note: note,
+                theme: theme,
+                editingCodeBlocks: editingCodeBlocks
+            )
             out.append(blockRendered)
             let end = out.length
             let blockRange = NSRange(location: start, length: end - start)
@@ -155,7 +171,7 @@ public enum DocumentRenderer {
                 // subclass (see `BlockModelElements.swift`). Tables
                 // are intentionally omitted here — they still flow
                 // through the NSTextAttachment path until Phase 2e.
-                if let kind = blockModelKind(for: block) {
+                if let kind = blockModelKind(for: block, editingCodeBlocks: editingCodeBlocks) {
                     // Phase 2d: upgrade `.paragraph` to `.paragraphWithKbd`
                     // when the rendered paragraph contains any `.kbdTag`
                     // runs. `InlineRenderer` emits `.kbdTag = true` on
@@ -528,15 +544,27 @@ public enum DocumentRenderer {
         bodyFont: PlatformFont,
         codeFont: PlatformFont,
         note: Note? = nil,
-        theme: Theme = .shared
+        theme: Theme = .shared,
+        editingCodeBlocks: Set<BlockRef> = []
     ) -> NSAttributedString {
         switch block {
         case .paragraph(let inline):
             return ParagraphRenderer.render(inline: inline, bodyFont: bodyFont, note: note, theme: theme)
         case .heading(let level, let suffix):
             return HeadingRenderer.render(level: level, suffix: suffix, bodyFont: bodyFont, theme: theme)
-        case .codeBlock(let language, let content, _):
-            return CodeBlockRenderer.render(language: language, content: content, codeFont: codeFont)
+        case .codeBlock(let language, let content, let fence):
+            // Code-Block Edit Toggle (slice 1): when this block's ref
+            // is in `editingCodeBlocks`, emit the RAW fenced source as
+            // plain code font. Otherwise today's syntax-highlighted /
+            // attachment behaviour is preserved.
+            let editingForm = editingCodeBlocks.contains(BlockRef(block))
+            return CodeBlockRenderer.render(
+                language: language,
+                content: content,
+                codeFont: codeFont,
+                fence: fence,
+                editingForm: editingForm
+            )
         case .list(let items, _):
             return ListRenderer.render(items: items, bodyFont: bodyFont, note: note, theme: theme)
         case .blockquote(let lines):
@@ -603,7 +631,10 @@ public enum DocumentRenderer {
     /// path (tables — Phase 2e) or render to zero content (blank lines).
     /// `htmlBlock` is grouped with `codeBlock` because both render via
     /// the code-block renderer and layout identically.
-    fileprivate static func blockModelKind(for block: Block) -> BlockModelKind? {
+    fileprivate static func blockModelKind(
+        for block: Block,
+        editingCodeBlocks: Set<BlockRef> = []
+    ) -> BlockModelKind? {
         switch block {
         case .paragraph(let inline):
             // A paragraph whose sole inline is `.displayMath` is
@@ -620,6 +651,15 @@ public enum DocumentRenderer {
         case .list: return .list
         case .blockquote: return .blockquote
         case .codeBlock(let language, _, _):
+            // Code-Block Edit Toggle (slice 1): when this block is in
+            // editing form, downgrade mermaid/math → regular .codeBlock
+            // so `CodeBlockLayoutFragment` (not `MermaidLayoutFragment`
+            // / `MathLayoutFragment`) handles display. This is the
+            // entire mermaid/math editing-form routing — no attachment
+            // mutation, no fragment branching.
+            if editingCodeBlocks.contains(BlockRef(block)) {
+                return .codeBlock
+            }
             switch language?.lowercased() {
             case "mermaid": return .mermaid
             case "math", "latex": return .math

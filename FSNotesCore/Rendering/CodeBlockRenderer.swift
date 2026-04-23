@@ -30,12 +30,73 @@ public enum CodeBlockRenderer {
     ///     If nil or unrecognized, content is emitted as plain code-font text.
     ///   - content: raw code content (no fences, no trailing newline).
     ///   - codeFont: the monospace font to use for code text.
-    /// - Returns: An attributed string containing ONLY `content` (no fences).
+    ///   - fence: fence style used for editing-form emission. Controls
+    ///     the fence character (backtick vs. tilde), fence length, and
+    ///     the original info string. Only consumed when
+    ///     `editingForm == true`. When nil AND `editingForm == true`,
+    ///     falls back to a canonical 3-backtick fence with the given
+    ///     `language` as info string. Default-form rendering ignores
+    ///     this parameter (no fences are emitted).
+    ///   - editingForm: when `true`, emit the block in RAW editable
+    ///     form — fence-open line + content + fence-close line, all
+    ///     in plain themed code font with NO syntax highlighting and
+    ///     NO attachment. This is the Code-Block Edit Toggle path
+    ///     (slice 1). Mermaid/math/latex blocks also fall through to
+    ///     the plain fenced-text path in editing form — the
+    ///     `BlockSourceTextAttachment` branch is NOT taken. Default
+    ///     `false` preserves today's byte-for-byte behaviour for every
+    ///     existing caller.
+    /// - Returns: An attributed string. In default form: contains ONLY
+    ///   `content` (no fences). In editing form: contains the full
+    ///   fenced source text as plain monospaced code.
     public static func render(
         language: String?,
         content: String,
-        codeFont: PlatformFont
+        codeFont: PlatformFont,
+        fence: FenceStyle? = nil,
+        editingForm: Bool = false
     ) -> NSAttributedString {
+        // Edit-toggle path (Code-Block Edit Toggle slice 1+): emit the
+        // block's canonical fenced markdown form as plain monospaced
+        // text. Mermaid/math/latex fall through here too — the
+        // BlockSourceTextAttachment branch is skipped so the block
+        // shows editable source instead of a rendered bitmap.
+        //
+        // The surrounding DocumentRenderer.blockModelKind downgrade
+        // also routes these blocks through CodeBlockLayoutFragment
+        // (not MermaidLayoutFragment), so the display is visually a
+        // regular code block for the duration of the edit.
+        if editingForm {
+            let effectiveFence = fence ?? FenceStyle.canonical(language: language)
+            let fenceChar: Character = effectiveFence.character == .backtick ? "`" : "~"
+            let fenceString = String(repeating: String(fenceChar), count: effectiveFence.length)
+            let openLine = fenceString + effectiveFence.infoRaw
+            // When the fence carries no explicit info string (e.g.
+            // synthesized from a language-only block), fall back to
+            // `language`. `FenceStyle.canonical(language:)` already
+            // bakes the language into `infoRaw`, so this branch only
+            // fires when a caller passed a bespoke `FenceStyle` with
+            // empty `infoRaw`.
+            let openLineWithLang: String
+            if effectiveFence.infoRaw.isEmpty, let lang = language, !lang.isEmpty {
+                openLineWithLang = fenceString + lang
+            } else {
+                openLineWithLang = openLine
+            }
+            let body: String
+            if content.isEmpty {
+                body = openLineWithLang + "\n" + fenceString
+            } else {
+                body = openLineWithLang + "\n" + content + "\n" + fenceString
+            }
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: codeFont,
+                .foregroundColor: PlatformColor.label
+            ]
+            return NSAttributedString(string: body, attributes: attrs)
+        }
+
+
         // Architectural invariant: the rendered string must contain ONLY
         // the raw code content. It MUST NOT contain fence characters.
         // Downstream tests (NoMarkdownSyntaxInStorage) verify this.

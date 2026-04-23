@@ -153,6 +153,20 @@ public enum DocumentEditApplier {
     ///   - note: optional `Note` threaded through `DocumentRenderer`
     ///     for relative-path resolution. Pass the same value that
     ///     produced the prior render.
+    ///   - priorEditingBlocks: Code-Block Edit Toggle (slice 1) —
+    ///     the set of `BlockRef`s that were in EDITING form in the
+    ///     prior render. Pass the same set the caller used on the
+    ///     previous `applyDocumentEdit` / initial `fillViaBlockModel`
+    ///     call (or `[]` if none). Default `[]` keeps existing
+    ///     callers source-compatible.
+    ///   - newEditingBlocks: the set of `BlockRef`s that should be in
+    ///     EDITING form in the NEW render. When `priorDoc == newDoc`
+    ///     and `priorEditingBlocks != newEditingBlocks`, the toggled
+    ///     blocks' rendered bytes differ between prior and new renders,
+    ///     so the existing LCS diff naturally picks them up as
+    ///     `.modified` and replaces just their spans — no separate
+    ///     toggle-write path. Default `[]` keeps existing callers
+    ///     source-compatible.
     /// - Returns: a summary of the operation for test assertions and
     ///   logging.
     @discardableResult
@@ -162,9 +176,30 @@ public enum DocumentEditApplier {
         contentStorage: NSTextContentStorage,
         bodyFont: PlatformFont,
         codeFont: PlatformFont,
-        note: Note? = nil
+        note: Note? = nil,
+        priorEditingBlocks: Set<BlockRef> = [],
+        newEditingBlocks: Set<BlockRef> = []
     ) -> ApplyReport {
-        let plan = diffDocuments(priorDoc: priorDoc, newDoc: newDoc)
+        var plan = diffDocuments(priorDoc: priorDoc, newDoc: newDoc)
+
+        // Code-Block Edit Toggle (slice 1): the LCS diff compares
+        // `Block` values only; it has no view into the editing-form
+        // state. When a block is `.unchanged` on both sides (same
+        // `Block` value, same index) but its membership in the
+        // editing set CHANGED across the two renders, the rendered
+        // bytes still differ. Promote those entries to `.modified`
+        // so the applier re-renders just their spans. This is the
+        // single source of truth for "toggle a block's edit form"
+        // — there is no separate toggle-write path.
+        if priorEditingBlocks != newEditingBlocks {
+            plan = promoteToggledBlocksToModified(
+                plan: plan,
+                priorDoc: priorDoc,
+                newDoc: newDoc,
+                priorEditingBlocks: priorEditingBlocks,
+                newEditingBlocks: newEditingBlocks
+            )
+        }
 
         // Fast path: identical documents — no transaction, no log.
         if plan.touchedPriorIndices.isEmpty && plan.touchedNewIndices.isEmpty {
@@ -188,10 +223,18 @@ public enum DocumentEditApplier {
         // the caller held the render invariant when they last called
         // `applyDocumentEdit` or the initial `fillViaBlockModel`).
         let priorRendered = DocumentRenderer.render(
-            priorDoc, bodyFont: bodyFont, codeFont: codeFont, note: note
+            priorDoc,
+            bodyFont: bodyFont,
+            codeFont: codeFont,
+            note: note,
+            editingCodeBlocks: priorEditingBlocks
         )
         let newRendered = DocumentRenderer.render(
-            newDoc, bodyFont: bodyFont, codeFont: codeFont, note: note
+            newDoc,
+            bodyFont: bodyFont,
+            codeFont: codeFont,
+            note: note,
+            editingCodeBlocks: newEditingBlocks
         )
 
         // Minimal affected range: from the first changed prior block's
@@ -373,6 +416,69 @@ public enum DocumentEditApplier {
     }
 
     // MARK: - Diff helpers
+
+    /// Code-Block Edit Toggle (slice 1): promote `.unchanged` entries
+    /// whose block is present on only one side of the editing set
+    /// from `.unchanged` to `.modified`. Rebuild `touchedPriorIndices`
+    /// / `touchedNewIndices` accordingly. Called when
+    /// `priorEditingBlocks != newEditingBlocks` so the applier
+    /// re-renders just the toggled blocks' spans.
+    ///
+    /// A `.unchanged(priorIdx, newIdx)` entry is toggled when:
+    /// - the prior block is in `priorEditingBlocks` and the new block
+    ///   is NOT in `newEditingBlocks` (editing → rendered), OR
+    /// - the prior block is NOT in `priorEditingBlocks` and the new
+    ///   block IS in `newEditingBlocks` (rendered → editing).
+    ///
+    /// When both sides are in the set (or both sides out), the
+    /// rendered bytes are byte-identical so no promotion is needed.
+    private static func promoteToggledBlocksToModified(
+        plan: EditPlan,
+        priorDoc: Document,
+        newDoc: Document,
+        priorEditingBlocks: Set<BlockRef>,
+        newEditingBlocks: Set<BlockRef>
+    ) -> EditPlan {
+        var changed: [BlockChange] = []
+        changed.reserveCapacity(plan.changes.count)
+        for c in plan.changes {
+            if case .unchanged(let p, let n) = c,
+               p >= 0, p < priorDoc.blocks.count,
+               n >= 0, n < newDoc.blocks.count {
+                let priorBlock = priorDoc.blocks[p]
+                let newBlock = newDoc.blocks[n]
+                let priorRef = BlockRef(priorBlock)
+                let newRef = BlockRef(newBlock)
+                let priorInSet = priorEditingBlocks.contains(priorRef)
+                let newInSet = newEditingBlocks.contains(newRef)
+                if priorInSet != newInSet {
+                    changed.append(.modified(priorIdx: p, newIdx: n))
+                    continue
+                }
+            }
+            changed.append(c)
+        }
+
+        let touchedPrior = changed.compactMap { c -> Int? in
+            switch c {
+            case .modified(let p, _): return p
+            case .deleted(let p):     return p
+            default:                  return nil
+            }
+        }
+        let touchedNew = changed.compactMap { c -> Int? in
+            switch c {
+            case .modified(_, let n): return n
+            case .inserted(let n):    return n
+            default:                  return nil
+            }
+        }
+        return EditPlan(
+            changes: changed,
+            touchedPriorIndices: touchedPrior,
+            touchedNewIndices: touchedNew
+        )
+    }
 
     /// Fold adjacent `(delete priorIdx, insert newIdx)` or
     /// `(insert newIdx, delete priorIdx)` pairs of the SAME block

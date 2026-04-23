@@ -26,6 +26,14 @@ public enum MarkdownSerializer {
         return document.trailingNewline ? joined + "\n" : joined
     }
 
+    /// Serialize a single `Block` to its canonical markdown form
+    /// (no trailing newline). Exposed publicly so `BlockRef` can
+    /// content-hash individual blocks without reaching into
+    /// `serialize(_:)`'s join/trailing-newline logic.
+    public static func serializeBlock(_ block: Block) -> String {
+        return serialize(block: block)
+    }
+
     private static func serialize(block: Block) -> String {
         switch block {
         case .codeBlock(_, let content, let fence):
