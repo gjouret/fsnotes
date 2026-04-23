@@ -195,10 +195,51 @@ public class TableAttachmentViewProvider: NSTextAttachmentViewProvider {
 
 public enum TableTextRenderer {
 
-    /// Render a table as a single attachment character.
-    /// The attachment stores the parsed data; the app target
-    /// configures the visual cell after fillViaBlockModel.
+    /// Render a table to an attributed string.
+    ///
+    /// - When `FeatureFlag.nativeTableElements == false` (default):
+    ///   emits a single `U+FFFC` character backed by a
+    ///   `TableBlockAttachment`. The app target configures the visual
+    ///   cell (`InlineTableView`) after `fillViaBlockModel`.
+    /// - When `FeatureFlag.nativeTableElements == true` (2e-T2-b):
+    ///   emits a flat, separator-encoded string of each cell's
+    ///   inline-rendered attributed text. Header cells come first
+    ///   (cells joined by U+001F), then U+001E, then body rows (cells
+    ///   joined by U+001F, rows joined by U+001E). The range is
+    ///   tagged with `.blockModelKind = .table`; header-cell subranges
+    ///   additionally carry `.tableHeader = true`. The TK2 content-
+    ///   storage delegate picks up the tag and vends a `TableElement`.
     public static func render(
+        header: [TableCell],
+        rows: [[TableCell]],
+        alignments: [TableAlignment],
+        rawMarkdown: String,
+        bodyFont: PlatformFont
+    ) -> NSAttributedString {
+        if FeatureFlag.nativeTableElements {
+            return renderNative(
+                header: header,
+                rows: rows,
+                alignments: alignments,
+                rawMarkdown: rawMarkdown,
+                bodyFont: bodyFont
+            )
+        }
+        return renderAttachment(
+            header: header,
+            rows: rows,
+            alignments: alignments,
+            rawMarkdown: rawMarkdown,
+            bodyFont: bodyFont
+        )
+    }
+
+    // MARK: - Legacy attachment path (flag off, default)
+
+    /// Legacy attachment path. Emits one `U+FFFC` character backed by
+    /// a `TableBlockAttachment` holding the parsed cells. Untouched
+    /// from pre-2e-T2-b behaviour.
+    private static func renderAttachment(
         header: [TableCell],
         rows: [[TableCell]],
         alignments: [TableAlignment],
@@ -223,4 +264,147 @@ public enum TableTextRenderer {
         result.addAttribute(.renderedBlockOriginalMarkdown, value: rawMarkdown, range: range)
         return result
     }
+
+    // MARK: - Native element path (flag on, 2e-T2-b)
+
+    /// Native-element path. Cells are rendered through the same
+    /// `InlineRenderer` paragraphs use; the per-cell attributed
+    /// strings are concatenated with U+001F between cells in a row
+    /// and U+001E between rows. The result carries
+    /// `.blockModelKind = .table` so the TK2 content-storage delegate
+    /// (see `BlockModelContentStorageDelegate`) vends a `TableElement`,
+    /// which is then routed to `TableLayoutFragment` by the layout-
+    /// manager delegate.
+    ///
+    /// The separator characters themselves are rendered with `bodyFont`
+    /// so they contribute zero visual kerning damage if any downstream
+    /// path paints them (2e-T2-c's `TableLayoutFragment.draw` suppresses
+    /// `super.draw` precisely to keep them invisible). They appear in
+    /// `.string` — that is the whole point: `NSTextFinder` can now see
+    /// "Alice"/"Bob" across cells.
+    ///
+    /// Invariant: the emitted storage contains ZERO `U+FFFC` characters.
+    /// A test-time grep asserts this.
+    #if os(OSX)
+    private static func renderNative(
+        header: [TableCell],
+        rows: [[TableCell]],
+        alignments: [TableAlignment],
+        rawMarkdown: String,
+        bodyFont: PlatformFont
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+
+        let baseAttrs: [NSAttributedString.Key: Any] = [
+            .font: bodyFont,
+            .foregroundColor: NSColor.labelColor
+        ]
+        let separatorAttrs: [NSAttributedString.Key: Any] = [
+            .font: bodyFont,
+            .foregroundColor: NSColor.labelColor
+        ]
+        let cellSep = NSAttributedString(
+            string: TableElement.cellSeparatorString,
+            attributes: separatorAttrs
+        )
+        let rowSep = NSAttributedString(
+            string: TableElement.rowSeparatorString,
+            attributes: separatorAttrs
+        )
+
+        // Header row first.
+        appendRow(
+            to: result,
+            cells: header,
+            baseAttrs: baseAttrs,
+            cellSeparator: cellSep,
+            isHeader: true
+        )
+        // Header → body boundary. Always emit a U+001E, even if there
+        // are zero body rows, so the decode path sees an explicit
+        // "header done" marker and downstream cell-locator math can
+        // index from a stable offset.
+        result.append(rowSep)
+
+        // Body rows, row-separated. No trailing separator after the
+        // last body row — the element range ends cleanly on cell text.
+        for (rowIdx, row) in rows.enumerated() {
+            appendRow(
+                to: result,
+                cells: row,
+                baseAttrs: baseAttrs,
+                cellSeparator: cellSep,
+                isHeader: false
+            )
+            if rowIdx < rows.count - 1 {
+                result.append(rowSep)
+            }
+        }
+
+        // Tag the entire range with `.blockModelKind = .table` so the
+        // content-storage delegate returns a `TableElement`. Also keep
+        // the legacy `.renderedBlockType`/`renderedBlockOriginalMarkdown`
+        // tags so any code that already introspects for tables (save
+        // path, export path, etc.) keeps working during the transition.
+        let fullRange = NSRange(location: 0, length: result.length)
+        if fullRange.length > 0 {
+            result.addAttribute(.blockModelKind, value: BlockModelKind.table.rawValue, range: fullRange)
+            result.addAttribute(.renderedBlockType, value: RenderedBlockType.table.rawValue, range: fullRange)
+            result.addAttribute(.renderedBlockOriginalMarkdown, value: rawMarkdown, range: fullRange)
+        }
+
+        return result
+    }
+    #else
+    private static func renderNative(
+        header: [TableCell],
+        rows: [[TableCell]],
+        alignments: [TableAlignment],
+        rawMarkdown: String,
+        bodyFont: PlatformFont
+    ) -> NSAttributedString {
+        // iOS currently retains the attachment path. The native-element
+        // migration is macOS-first; the iOS build stays on the legacy
+        // renderer regardless of the flag.
+        return renderAttachment(
+            header: header,
+            rows: rows,
+            alignments: alignments,
+            rawMarkdown: rawMarkdown,
+            bodyFont: bodyFont
+        )
+    }
+    #endif
+
+    #if os(OSX)
+    /// Append a single table row to `result`: cells are rendered via
+    /// `InlineRenderer.render(...)` and joined by `cellSeparator`.
+    /// Header cells additionally get `.tableHeader = true` tagged on
+    /// their rendered-text range (not on the separator).
+    private static func appendRow(
+        to result: NSMutableAttributedString,
+        cells: [TableCell],
+        baseAttrs: [NSAttributedString.Key: Any],
+        cellSeparator: NSAttributedString,
+        isHeader: Bool
+    ) {
+        for (cellIdx, cell) in cells.enumerated() {
+            let rendered = InlineRenderer.render(
+                cell.inline,
+                baseAttributes: baseAttrs,
+                note: nil,
+                theme: .shared
+            )
+            let start = result.length
+            result.append(rendered)
+            let cellRange = NSRange(location: start, length: result.length - start)
+            if isHeader, cellRange.length > 0 {
+                result.addAttribute(.tableHeader, value: true, range: cellRange)
+            }
+            if cellIdx < cells.count - 1 {
+                result.append(cellSeparator)
+            }
+        }
+    }
+    #endif
 }

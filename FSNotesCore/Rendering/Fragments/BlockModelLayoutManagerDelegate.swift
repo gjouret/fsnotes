@@ -104,6 +104,19 @@ public final class BlockModelLayoutManagerDelegate: NSObject, NSTextLayoutManage
             )
         }
 
+        // Phase 2e-T2-b: native-cell-text table element. Dispatched to
+        // `TableLayoutFragment` so 2e-T2-c has a hook for grid rendering.
+        // The fragment is stubbed today (overrides defer to `super`),
+        // so flipping `FeatureFlag.nativeTableElements = true` today
+        // paints the separator-encoded text as a single flowed line
+        // until 2e-T2-c replaces the draw path.
+        if textElement is TableElement {
+            return TableLayoutFragment(
+                textElement: textElement,
+                range: textElement.elementRange
+            )
+        }
+
         // Paragraph containing kbd tags: custom fragment draws a
         // rounded "keyboard key" box behind each `.kbdTag` run, then
         // delegates to super for the text. All other paragraphs fall

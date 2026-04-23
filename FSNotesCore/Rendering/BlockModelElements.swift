@@ -88,6 +88,11 @@ public final class FoldedElement: BlockModelElement {
 /// subclass. Called by the content-storage delegate with the
 /// attributed string for the paragraph range; returns an initialised
 /// element pointing at the same storage.
+///
+/// `.table` is intentionally NOT handled here — it produces a
+/// `TableElement` (not a `BlockModelElement`), so the content-storage
+/// delegate constructs it directly in the `.table` branch and only
+/// falls through to this factory for the paragraph-shaped kinds.
 public enum BlockModelElementFactory {
     public static func element(
         for kind: BlockModelKind,
@@ -104,6 +109,13 @@ public enum BlockModelElementFactory {
         case .mermaid: return MermaidElement(attributedString: attributedString)
         case .math: return MathElement(attributedString: attributedString)
         case .displayMath: return DisplayMathElement(attributedString: attributedString)
+        case .table:
+            // Not produced by this factory — see the content-storage
+            // delegate's `.table` branch. Return a generic paragraph
+            // element as a safe fall-through so the exhaustive switch
+            // stays compile-checked without forcing a `TableElement`
+            // cast path at every callsite.
+            return ParagraphElement(attributedString: attributedString)
         }
     }
 }
@@ -115,11 +127,18 @@ public enum BlockModelElementFactory {
 /// substitution hook; Phase 2c will override layout-fragment selection
 /// on the subclass to take over block visuals.
 ///
-/// If the paragraph carries no `.blockModelKind` attribute (tables still
-/// flow through attachments; untagged ranges during edit reconciliation)
-/// the delegate returns `nil` so `NSTextContentStorage` falls back to
-/// its default `NSTextParagraph`. This keeps TK2 happy during the edit
-/// windows when storage is mid-splice.
+/// If the paragraph carries no `.blockModelKind` attribute (legacy
+/// table attachment path when `FeatureFlag.nativeTableElements == false`;
+/// untagged ranges during edit reconciliation) the delegate returns
+/// `nil` so `NSTextContentStorage` falls back to its default
+/// `NSTextParagraph`. This keeps TK2 happy during the edit windows when
+/// storage is mid-splice.
+///
+/// Phase 2e-T2-b: when `.blockModelKind == .table`, the delegate returns
+/// a `TableElement`. The element carries the paragraph's attributed
+/// substring (the flat, separator-encoded cell text emitted by
+/// `TableTextRenderer`); 2e-T2-c will stand up cell-grid parsing from
+/// this storage inside `TableLayoutFragment.draw`.
 public final class BlockModelContentStorageDelegate: NSObject, NSTextContentStorageDelegate {
     public override init() {
         super.init()
@@ -173,9 +192,69 @@ public final class BlockModelContentStorageDelegate: NSObject, NSTextContentStor
         }
 
         let substring = storage.attributedSubstring(from: clamped)
+
+        // Phase 2e-T2-b: native-element table path. The paragraph's
+        // attributed substring is the separator-encoded cell text from
+        // `TableTextRenderer.renderNative(...)`. We wrap it in a
+        // `TableElement`. The element's `block` payload is not yet
+        // reachable here — the storage carries the separator-encoded
+        // string but not the original `Block.table` value. 2e-T2-c
+        // will extend the delegate to recover the block (either by
+        // re-decoding the flat string or by caching the projection
+        // block-map); for 2e-T2-b the `TableElement.init(block:...)`
+        // guard only accepts a `.table` block, so we synthesize a
+        // minimal placeholder from the decoded separator structure.
+        if kind == .table {
+            let placeholderBlock = synthesizePlaceholderTableBlock(
+                from: substring.string
+            )
+            if let element = TableElement(
+                block: placeholderBlock,
+                attributedString: substring
+            ) {
+                return element
+            }
+            // Fall through to the factory path on the (unreachable)
+            // construction failure — `.table` block satisfies the
+            // guard by construction.
+        }
+
         return BlockModelElementFactory.element(
             for: kind,
             attributedString: substring
+        )
+    }
+
+    /// Reconstruct a minimal `Block.table` from the flat separator-
+    /// encoded cell text carried on the storage range. The header and
+    /// body cells are recovered via `TableElement.decodeFlatText`; each
+    /// cell's inline tree is parsed from its raw substring so the
+    /// payload round-trips through `MarkdownParser.parseInlines` —
+    /// matching the parser-side construction path.
+    ///
+    /// Alignments default to `.none` per column (width inferred from
+    /// the header row); `raw` is left empty. 2e-T2-c will replace
+    /// this with a direct lookup against the `DocumentProjection`
+    /// block-span map, which preserves the authoritative alignments
+    /// and canonical raw string — but the placeholder is enough for
+    /// the 2e-T2-b dispatch wire-up.
+    private func synthesizePlaceholderTableBlock(
+        from flat: String
+    ) -> Block {
+        let decoded = TableElement.decodeFlatText(flat)
+        let headerCells = decoded.header.map { TableCell.parsing($0) }
+        let bodyCells: [[TableCell]] = decoded.body.map { row in
+            row.map { TableCell.parsing($0) }
+        }
+        let alignments: [TableAlignment] = Array(
+            repeating: .none,
+            count: headerCells.count
+        )
+        return .table(
+            header: headerCells,
+            alignments: alignments,
+            rows: bodyCells,
+            raw: ""
         )
     }
 }

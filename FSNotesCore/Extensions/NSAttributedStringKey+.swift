@@ -63,9 +63,13 @@ public extension NSAttributedString.Key {
 /// right `NSTextParagraph` subclass per block, which in turn lets
 /// Phase 2c's layout fragments route their drawing.
 ///
-/// `table` is intentionally absent — tables still render through the
-/// `NSTextAttachment` path until Phase 2e. Mermaid and math are
-/// distinct kinds (not just code blocks with a language marker)
+/// `table` was added in Phase 2e-T2-b for the native-cell table
+/// path. Tables still render through the `NSTextAttachment` widget
+/// path when `FeatureFlag.nativeTableElements == false` (the default);
+/// when the flag is `true`, `TableTextRenderer` emits a flat,
+/// separator-encoded attributed string tagged with this kind, and the
+/// TK2 content-storage delegate returns a `TableElement`. Mermaid and
+/// math are distinct kinds (not just code blocks with a language marker)
 /// because their Phase 2c layout fragments reserve bitmap space and
 /// draw a rendered image over the source text, which the plain
 /// code-block fragment doesn't do.
@@ -85,4 +89,19 @@ public enum BlockModelKind: String {
     /// this kind; they fall through to `.paragraph` and the display
     /// math stays on the inline attachment path.
     case displayMath
+    /// Phase 2e-T2-b: block-model table rendered as a single flat
+    /// attributed string of cell text joined by U+001F / U+001E
+    /// separators. Only emitted when `FeatureFlag.nativeTableElements`
+    /// is `true` — otherwise tables keep flowing through the
+    /// NSTextAttachment widget path (no `.blockModelKind` tag).
+    case table
+}
+
+/// Phase 2e-T2-b: tags header-row cells inside a `.table`-kinded
+/// range so `TableLayoutFragment` can style them differently (bold /
+/// separator line) without having to peek at the `TableElement.block`
+/// payload on every draw call. Value: `Bool` (`true` on header-cell
+/// ranges, attribute absent elsewhere).
+public extension NSAttributedString.Key {
+    static let tableHeader = NSAttributedString.Key(rawValue: "es.fsnot.table.header")
 }
