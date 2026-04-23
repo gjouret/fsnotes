@@ -237,7 +237,7 @@ public enum EditingPrimitives {
             // Same kind only if same level — different levels get
             // different paragraph styles.
             return la == lb
-        case (.table(let ha, _, let ra, _), .table(let hb, _, let rb, _)):
+        case (.table(let ha, _, let ra, _, _), .table(let hb, _, let rb, _, _)):
             // Same kind only if the grid shape is unchanged. Shape
             // changes (row/column added or removed) take the slow path
             // so the attachment can be rebuilt from scratch. Cell
@@ -1036,7 +1036,7 @@ public enum EditingPrimitives {
             return lines.map { inlinesToText($0.inline) }.joined(separator: "\n")
         case .horizontalRule: return ""
         case .blankLine: return ""
-        case .table(_, _, _, let raw): return raw
+        case .table(_, _, _, _, let raw): return raw
         }
     }
 

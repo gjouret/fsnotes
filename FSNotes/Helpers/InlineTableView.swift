@@ -332,7 +332,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     /// clipboard paste (which hasn't been migrated yet) but new call
     /// sites should use this one.
     func configure(withBlock block: Block) {
-        guard case .table(let header, let blockAlignments, let bodyRows, _) = block else {
+        guard case .table(let header, let blockAlignments, let bodyRows, _, _) = block else {
             return
         }
         self.currentBlock = block
@@ -368,13 +368,13 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     /// response to a cell edit, and this method never writes back into
     /// the document — it is a one-way projection renderer.
     func applyBlockUpdate(_ newBlock: Block) {
-        guard case .table(let newHeader, let newAlignments, let newRows, _) = newBlock else {
+        guard case .table(let newHeader, let newAlignments, let newRows, _, _) = newBlock else {
             return
         }
 
         // First-time update (or `currentBlock` was nil): treat as a
         // full configure.
-        guard case .table(let oldHeader, _, let oldRows, _)? = currentBlock else {
+        guard case .table(let oldHeader, _, let oldRows, _, _)? = currentBlock else {
             configure(withBlock: newBlock)
             return
         }
@@ -494,6 +494,7 @@ class InlineTableView: NSView, NSTextFieldDelegate {
             header: headers,
             alignments: blockAlignments,
             rows: rows,
+            columnWidths: nil,
             raw: raw
         )
     }

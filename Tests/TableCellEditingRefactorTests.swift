@@ -113,7 +113,7 @@ class TableCellEditingRefactorTests: XCTestCase {
         let parsed = MarkdownParser.parse(md)
 
         // Sanity: the parse produced the shape we expect.
-        guard case .table(_, _, let rows, _) = parsed.blocks[0] else {
+        guard case .table(_, _, let rows, _, _) = parsed.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
         XCTAssertEqual(rows.count, 2, "expected two data rows")
@@ -201,7 +201,7 @@ class TableCellEditingRefactorTests: XCTestCase {
 
         let roundTripped = MarkdownParser.parse(MarkdownSerializer.serialize(edited))
 
-        guard case .table(_, _, let rows, _) = roundTripped.blocks[0] else {
+        guard case .table(_, _, let rows, _, _) = roundTripped.blocks[0] else {
             XCTFail("round-tripped block 0 is not a table"); return
         }
         XCTAssertEqual(
@@ -243,7 +243,7 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .body(row: 1, col: 2),
             newSourceText: "**c2**", in: proj
         )
-        guard case .table(_, _, let rows, let raw) =
+        guard case .table(_, _, let rows, _, let raw) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
@@ -258,7 +258,7 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .header(col: 0),
             newSourceText: "*A*", in: proj
         )
-        guard case .table(let header, _, _, let raw) =
+        guard case .table(let header, _, _, _, let raw) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
@@ -353,7 +353,7 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .body(row: 0, col: 1),
             newSourceText: "__B1__", in: proj
         )
-        guard case .table(let header, _, let rows, _) =
+        guard case .table(let header, _, let rows, _, _) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
@@ -408,7 +408,7 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .body(row: 0, col: 1),
             newSourceText: "**b1**", in: proj
         )
-        guard case .table(_, let alignments, _, let raw) =
+        guard case .table(_, let alignments, _, _, let raw) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
@@ -453,7 +453,7 @@ class TableCellEditingRefactorTests: XCTestCase {
             newSourceText: "**x1**", in: proj
         )
         let outBlocks = result.newProjection.document.blocks
-        guard case .table(_, _, _, let raw0) = outBlocks[0] else {
+        guard case .table(_, _, _, _, let raw0) = outBlocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
         // The first table was not touched — its raw must be byte-equal

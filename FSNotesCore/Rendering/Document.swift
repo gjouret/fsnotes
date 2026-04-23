@@ -229,7 +229,7 @@ public enum Block: Equatable {
     /// `parseInlineMarkdown` in `InlineTableView` that used to
     /// re-implement inline parsing has been replaced with the real
     /// `InlineRenderer`.
-    case table(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], raw: String)
+    case table(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], columnWidths: [CGFloat]?, raw: String)
 
     /// A literal blank line separating blocks.
     case blankLine

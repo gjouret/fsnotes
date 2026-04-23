@@ -246,7 +246,7 @@ public final class TableElement: NSTextParagraph {
     /// consistent because `cellLocation(forOffset: offset(for: …))`
     /// round-trips by construction (see tests).
     public func offset(forCellAt position: (row: Int, col: Int)) -> Int? {
-        guard case .table(let header, _, let rows, _) = block else {
+        guard case .table(let header, _, let rows, _, _) = block else {
             return nil
         }
         let columns = header.count

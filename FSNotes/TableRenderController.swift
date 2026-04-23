@@ -61,6 +61,7 @@ class TableRenderController {
                 header: tableAtt.header,
                 alignments: tableAtt.alignments,
                 rows: tableAtt.rows,
+                columnWidths: nil,
                 raw: tableAtt.rawMarkdown
             )
 

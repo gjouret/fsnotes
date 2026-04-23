@@ -65,7 +65,7 @@ public enum DocumentHTMLRenderer {
             out += raw
             if !raw.hasSuffix("\n") { out += "\n" }
 
-        case .table(let header, let alignments, let rows, _):
+        case .table(let header, let alignments, let rows, _, _):
             renderTable(header: header, alignments: alignments, rows: rows,
                         indent: indent, into: &out)
 

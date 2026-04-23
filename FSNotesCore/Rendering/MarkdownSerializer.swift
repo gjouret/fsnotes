@@ -21,9 +21,27 @@ public enum MarkdownSerializer {
         // We join with "\n" to insert the separator between blocks.
         // A trailing blankLine block becomes an empty string, and the
         // join places a "\n" before it, producing the final newline.
-        let parts = document.blocks.map { serialize(block: $0) }
+        //
+        // T2-g.4: a `.table` block with non-nil `columnWidths` emits an
+        // additional sentinel line immediately before the table. That
+        // line is part of the table's metadata (not a separate block).
+        var parts: [String] = []
+        parts.reserveCapacity(document.blocks.count)
+        for block in document.blocks {
+            if case .table(_, _, _, let widths, _) = block, let widths = widths {
+                parts.append(columnWidthsComment(widths))
+            }
+            parts.append(serialize(block: block))
+        }
         let joined = parts.joined(separator: "\n")
         return document.trailingNewline ? joined + "\n" : joined
+    }
+
+    /// Canonical T2-g.4 persisted-widths sentinel:
+    /// `<!-- fsnotes-col-widths: [100.5, 200, 150.25] -->`.
+    internal static func columnWidthsComment(_ widths: [CGFloat]) -> String {
+        let parts = widths.map { String(format: "%g", Double($0)) }
+        return "<!-- fsnotes-col-widths: [" + parts.joined(separator: ", ") + "] -->"
     }
 
     /// Serialize a single `Block` to its canonical markdown form
@@ -79,8 +97,10 @@ public enum MarkdownSerializer {
         case .htmlBlock(let raw):
             return raw
 
-        case .table(_, _, _, let raw):
+        case .table(_, _, _, _, let raw):
             // Round-trip: emit the exact source text that was parsed.
+            // The `columnWidths` sentinel (if any) is emitted by the
+            // top-level `serialize(_:)` as a line above this body.
             return raw
 
         case .blankLine:

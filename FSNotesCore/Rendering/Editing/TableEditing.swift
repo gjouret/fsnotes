@@ -108,7 +108,7 @@ public enum TableEditing {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, _) =
+        guard case .table(let header, let alignments, let rows, let widths, _) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "replaceTableCellInline: block \(blockIndex) is not a table"
@@ -147,7 +147,7 @@ public enum TableEditing {
         //    cell typing.
         let newBlock: Block = .table(
             header: newHeader, alignments: alignments,
-            rows: newRows, raw: newRaw
+            rows: newRows, columnWidths: widths, raw: newRaw
         )
         return try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection

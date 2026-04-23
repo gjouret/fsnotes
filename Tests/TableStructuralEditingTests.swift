@@ -43,7 +43,7 @@ final class TableStructuralEditingTests: XCTestCase {
         at blockIndex: Int = 0
     ) -> (header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], raw: String)? {
         guard blockIndex < projection.document.blocks.count,
-              case .table(let h, let a, let r, let raw) = projection.document.blocks[blockIndex]
+              case .table(let h, let a, let r, _, let raw) = projection.document.blocks[blockIndex]
         else { return nil }
         return (h, a, r, raw)
     }
@@ -401,6 +401,41 @@ final class TableStructuralEditingTests: XCTestCase {
     }
 
     // MARK: - Contract
+
+    // MARK: - T2-g.4 regression: insert-column + widths interaction
+
+    func test_T2g4_insertTableColumn_preservesExistingWidths_orResetsToNil() throws {
+        // Contract pinned in `EditingOps.insertTableColumn`: inserting
+        // a column resets `columnWidths` to nil (the new column has no
+        // authoritative width; arbitrarily picking one would distort
+        // the layout).
+        let p = projectTable(Self.markdown3x2)
+        // Seed persisted widths.
+        let set = try EditingOps.setTableColumnWidths(
+            blockIndex: 0, widths: [100, 120, 140], in: p
+        )
+        guard case .table(_, _, _, let seeded, _) =
+                set.newProjection.document.blocks[0] else {
+            XCTFail("Block 0 must be a table after setTableColumnWidths")
+            return
+        }
+        XCTAssertEqual(seeded, [100, 120, 140])
+
+        // Insert a column — widths must reset to nil.
+        let afterInsert = try EditingOps.insertTableColumn(
+            blockIndex: 0, at: 1, alignment: .none,
+            in: set.newProjection
+        )
+        guard case .table(_, _, _, let afterW, _) =
+                afterInsert.newProjection.document.blocks[0] else {
+            XCTFail("Block 0 must still be a table after insertTableColumn")
+            return
+        }
+        XCTAssertNil(
+            afterW,
+            "insertTableColumn must reset persisted widths to nil"
+        )
+    }
 
     func test_allPrimitives_declareReplaceBlockAction() throws {
         let p = projectTable(Self.markdown3x2)

@@ -285,7 +285,7 @@ enum Invariants {
                 continue
             }
             guard case .table(let beforeHeader, let beforeAlignments,
-                              let beforeRows, _) = beforeBlocks[bi] else {
+                              let beforeRows, _, _) = beforeBlocks[bi] else {
                 XCTFail(
                     "replaceTableCell(\(bi), \(r), \(c)): before block at \(bi) is not a .table",
                     file: file, line: line
@@ -293,7 +293,7 @@ enum Invariants {
                 continue
             }
             guard case .table(let afterHeader, let afterAlignments,
-                              let afterRows, _) = afterBlocks[bi] else {
+                              let afterRows, _, _) = afterBlocks[bi] else {
                 XCTFail(
                     "replaceTableCell(\(bi), \(r), \(c)): after block at \(bi) is not a .table",
                     file: file, line: line

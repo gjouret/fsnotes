@@ -451,6 +451,19 @@ final class TableHandleOverlay {
         }
     }
 
+    /// T2-g.4: persist the column widths produced by a live drag-resize.
+    /// Routed through `EditingOps.setTableColumnWidths` so undo / splice
+    /// math stay consistent with the other structural primitives.
+    func applySetColumnWidths(blockIndex: Int, widths: [CGFloat]) {
+        applyEdit(blockIndex: blockIndex, actionName: "Resize Table Column") { projection in
+            try EditingOps.setTableColumnWidths(
+                blockIndex: blockIndex,
+                widths: widths,
+                in: projection
+            )
+        }
+    }
+
     // MARK: - Edit application
 
     /// Run a pure primitive on the editor's current projection and
@@ -490,7 +503,7 @@ final class TableHandleOverlay {
         guard let editor = editor,
               let projection = editor.documentProjection,
               blockIndex < projection.document.blocks.count,
-              case .table(let h, let a, let r, _) =
+              case .table(let h, let a, let r, _, _) =
                 projection.document.blocks[blockIndex]
         else { return nil }
         return (h, a, r)

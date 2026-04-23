@@ -110,7 +110,7 @@ struct CommonMarkHTMLRenderer {
         case .htmlBlock(let raw):
             return raw + "\n"
 
-        case .table(let header, let alignments, let rows, _):
+        case .table(let header, let alignments, let rows, _, _):
             return renderTable(header: header, alignments: alignments, rows: rows)
 
         case .blankLine:

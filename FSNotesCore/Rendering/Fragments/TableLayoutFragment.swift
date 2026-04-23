@@ -138,7 +138,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         containerWidth: CGFloat,
         font: NSFont
     ) -> TableGeometry.Result {
-        guard case .table(let header, let alignments, let rows, _) = block else {
+        guard case .table(let header, let alignments, let rows, let widths, _) = block else {
             return TableGeometry.Result(
                 columnWidths: [], rowHeights: [], totalHeight: 0
             )
@@ -151,6 +151,12 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         }
         for a in alignments {
             hasher.combine(String(describing: a))
+        }
+        // T2-g.4: persisted widths are part of the cache key — a
+        // drag-resize invalidates the cache.
+        if let widths = widths {
+            hasher.combine("W")
+            for w in widths { hasher.combine(w) }
         }
         let key = GeometryKey(
             containerWidth: containerWidth,
@@ -165,7 +171,8 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             rows: rows,
             alignments: alignments,
             containerWidth: containerWidth,
-            font: font
+            font: font,
+            columnWidthsOverride: widths
         )
         cachedGeometry = result
         cachedGeometryKey = key
@@ -267,7 +274,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// text with embedded control characters.
     public override func draw(at point: CGPoint, in context: CGContext) {
         guard let element = tableElement,
-              case .table(let header, let alignments, let rows, _) = element.block,
+              case .table(let header, let alignments, let rows, _, _) = element.block,
               header.count > 0 else {
             return
         }
@@ -345,6 +352,11 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             gridHeight: gridHeight,
             containerOriginX: containerOriginX,
             topStripY: point.y
+        )
+        // T2-g.4 live drag-resize preview line. No-op when no preview
+        // is set (the steady state).
+        drawResizePreview(
+            at: point, in: context, fragmentHeight: frame.height
         )
     }
 
@@ -447,7 +459,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// fragment's `layoutFragmentFrame.origin.x` before calling.
     public func columnAt(localX: CGFloat) -> Int? {
         guard let element = tableElement,
-              case .table(_, _, _, _) = element.block else { return nil }
+              case .table(_, _, _, _, _) = element.block else { return nil }
         let g = geometry(
             block: element.block,
             containerWidth: containerWidth,
@@ -469,7 +481,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// if `localY` is outside the grid's vertical extent.
     public func rowAt(localY: CGFloat) -> Int? {
         guard let element = tableElement,
-              case .table(_, _, _, _) = element.block else { return nil }
+              case .table(_, _, _, _, _) = element.block else { return nil }
         let g = geometry(
             block: element.block,
             containerWidth: containerWidth,
@@ -495,6 +507,104 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// strip (0 ≤ localX < handleBarWidth).
     public func isInLeftHandleStrip(localX: CGFloat) -> Bool {
         return localX >= 0 && localX < TableGeometry.handleBarWidth
+    }
+
+    // MARK: - T2-g.4 drag-resize helpers
+
+    /// Hit-test slop (in points) around a column boundary that counts
+    /// as "on the boundary" for drag-resize hit-testing.
+    public static let resizeHitSlop: CGFloat = 4.0
+
+    /// Return the interior column index `col` (0-indexed) whose right
+    /// edge is within `resizeHitSlop` of `localX`. Returns `nil` for
+    /// the last column's right edge (dragging past the right margin is
+    /// out of scope) and for single-column tables.
+    public func columnBoundaryAt(localX: CGFloat) -> Int? {
+        guard let element = tableElement,
+              case .table(let header, _, _, _, _) = element.block,
+              header.count > 1 else { return nil }
+        let g = geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+        var x = TableGeometry.handleBarWidth
+        for i in 0..<(g.columnWidths.count - 1) {
+            x += g.columnWidths[i]
+            if abs(localX - x) <= Self.resizeHitSlop {
+                return i
+            }
+        }
+        return nil
+    }
+
+    /// The X coordinate of the left edge of column `col` (in
+    /// rendering-surface local coordinates), or `nil` for out-of-range.
+    public func columnLeftEdge(_ col: Int) -> CGFloat? {
+        guard let element = tableElement,
+              case .table = element.block else { return nil }
+        let g = geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+        guard col >= 0, col <= g.columnWidths.count else { return nil }
+        var x = TableGeometry.handleBarWidth
+        for i in 0..<col { x += g.columnWidths[i] }
+        return x
+    }
+
+    /// Current (cached/measured) column widths — either the persisted
+    /// override or the content-based measurement. Used as the baseline
+    /// for computing new widths from a drag delta.
+    public func currentColumnWidths() -> [CGFloat] {
+        guard let element = tableElement,
+              case .table = element.block else { return [] }
+        return geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        ).columnWidths
+    }
+
+    // MARK: - Live resize preview
+
+    /// Transient preview state. `nil` means no preview. When set, a
+    /// vertical line is painted at `previewX` (local coordinates).
+    private var resizePreviewLocalX: CGFloat?
+
+    /// Set or clear the drag-resize preview X. Returns `true` if the
+    /// value changed (so the caller can mark the host view dirty).
+    @discardableResult
+    public func setResizePreview(localX: CGFloat?) -> Bool {
+        guard resizePreviewLocalX != localX else { return false }
+        resizePreviewLocalX = localX
+        return true
+    }
+
+    /// Paint the resize-preview line if one is set. Called at the end
+    /// of `draw(at:in:)` so the line sits on top of grid strokes.
+    public func drawResizePreview(
+        at point: CGPoint,
+        in context: CGContext,
+        fragmentHeight: CGFloat
+    ) {
+        guard let localX = resizePreviewLocalX else { return }
+        let frame = layoutFragmentFrame
+        let containerOriginX = point.x - frame.origin.x
+        let x = containerOriginX + localX
+        // T2-g.4: live-preview line color resolves from the theme,
+        // with a system-blue fallback if the theme predates this field.
+        let fallback = NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 1.0)
+        let strokeColor = Theme.shared.chrome.tableResizePreview
+            .resolvedForCurrentAppearance(fallback: fallback)
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setStrokeColor(strokeColor.cgColor)
+        context.setLineWidth(1.0)
+        context.move(to: CGPoint(x: x + 0.5, y: point.y))
+        context.addLine(to: CGPoint(x: x + 0.5, y: point.y + fragmentHeight))
+        context.strokePath()
     }
 
     // MARK: - Row fills (header + zebra body shading)

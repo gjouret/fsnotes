@@ -377,6 +377,7 @@ extension EditTextView {
                 header: [empty, empty],
                 alignments: [.none, .none],
                 rows: [[empty, empty]],
+                columnWidths: nil,
                 raw: tableMarkdown
             )
             var newDoc = projection.document

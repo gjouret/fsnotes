@@ -345,7 +345,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // Carry original markdown for table blocks so renderTables()
         // can parse the pipe-delimited source (the rendered storage
         // uses spaces/box-drawing, not pipes).
-        if case .table(_, _, _, let raw) = block {
+        if case .table(_, _, _, _, let raw) = block {
             mb.rawMarkdown = raw
         }
         return mb

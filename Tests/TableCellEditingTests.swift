@@ -119,7 +119,7 @@ final class TableCellEditingTests: XCTestCase {
     ) -> (header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]])? {
         guard let doc = harness.document,
               index < doc.blocks.count,
-              case .table(let h, let a, let r, _) = doc.blocks[index] else {
+              case .table(let h, let a, let r, _, _) = doc.blocks[index] else {
             return nil
         }
         return (h, a, r)
@@ -380,7 +380,7 @@ final class TableCellEditingTests: XCTestCase {
             options: [.ensuresLayout]
         ) { fragment in
             if let el = fragment.textElement as? TableElement,
-               case .table(_, let aligns, _, _) = el.block {
+               case .table(_, let aligns, _, _, _) = el.block {
                 fragmentAlignments = aligns
                 return false
             }

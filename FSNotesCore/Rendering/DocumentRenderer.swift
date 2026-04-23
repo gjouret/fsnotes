@@ -574,7 +574,7 @@ public enum DocumentRenderer {
         case .htmlBlock(let raw):
             // Render HTML blocks as plain text with code font.
             return CodeBlockRenderer.render(language: nil, content: raw, codeFont: codeFont)
-        case .table(let header, let alignments, let rows, let raw):
+        case .table(let header, let alignments, let rows, _, let raw):
             return TableTextRenderer.render(header: header, rows: rows, alignments: alignments, rawMarkdown: raw, bodyFont: bodyFont)
         case .blankLine:
             // A blank line has no rendered content — it is represented

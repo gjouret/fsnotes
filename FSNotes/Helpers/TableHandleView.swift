@@ -155,23 +155,113 @@ final class TableHandleView: NSView {
         return super.menu(for: event)
     }
 
-    // MARK: - T2-g.3 drag-resize entry point (deferred)
+    // MARK: - T2-g.4 drag-resize
 
-    /// Left-mouse-down on a column-boundary handle would initiate a
-    /// drag-resize interaction. The live preview + persistence of
-    /// resized column widths is held for the T2-g.4 follow-up review:
-    /// width overrides need a backing field on `Block.table` (or a
-    /// side table on `TableElement`) before the drag can commit
-    /// anywhere durable. The entry point is wired so the mouse event
-    /// is owned by this view (rather than the text view); the loop
-    /// itself is stubbed.
-    ///
-    /// See the T2-g report: "T2-g.3 deferred — drag-resize live
-    /// preview + persistence held for review."
+    /// Drag-in-progress state. Captured on mouseDown hitting a column
+    /// boundary, updated in-place during mouseDragged events, flushed
+    /// on mouseUp via `EditingOps.setTableColumnWidths`.
+    private struct DragState {
+        let col: Int            // boundary col (left of the boundary)
+        let startMouseX: CGFloat
+        /// Column widths at drag start. `col` and `col + 1` are the
+        /// two adjacent columns the delta is split between.
+        let startWidths: [CGFloat]
+    }
+    private var dragState: DragState?
+
+    /// Minimum column width while dragging. Slightly more conservative
+    /// than `TableGeometry.minColumnWidth` (80) to leave headroom.
+    private static let minDragColumnWidth: CGFloat = 40
+
     override func mouseDown(with event: NSEvent) {
-        // For now, let mouseDown fall through to super so selection
-        // extension / start-click behaviour stays intact on the edges
-        // of the handle strip. The live drag is a follow-up.
-        super.mouseDown(with: event)
+        guard let fragment = fragment else {
+            super.mouseDown(with: event)
+            return
+        }
+        let pt = convert(event.locationInWindow, from: nil)
+        // Only initiate drag-resize if the click is on a column
+        // boundary in the top-handle strip.
+        guard fragment.isInTopHandleStrip(localY: pt.y),
+              let col = fragment.columnBoundaryAt(localX: pt.x) else {
+            super.mouseDown(with: event)
+            return
+        }
+        // Capture baseline widths for the drag math.
+        let widths = fragment.currentColumnWidths()
+        guard col >= 0, col + 1 < widths.count else {
+            super.mouseDown(with: event)
+            return
+        }
+        dragState = DragState(
+            col: col,
+            startMouseX: pt.x,
+            startWidths: widths
+        )
+        // Initial preview line at current boundary.
+        if let edgeLeft = fragment.columnLeftEdge(col + 1) {
+            _ = fragment.setResizePreview(localX: edgeLeft)
+            needsDisplay = true
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let fragment = fragment, let state = dragState else {
+            super.mouseDragged(with: event)
+            return
+        }
+        let pt = convert(event.locationInWindow, from: nil)
+        let delta = pt.x - state.startMouseX
+        let newWidths = applyDragDelta(
+            to: state.startWidths, col: state.col, delta: delta
+        )
+        // Preview line sits at the new boundary between col and col+1.
+        let sumUpToBoundary = TableGeometry.handleBarWidth
+            + newWidths.prefix(state.col + 1).reduce(0, +)
+        _ = fragment.setResizePreview(localX: sumUpToBoundary)
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let fragment = fragment, let state = dragState else {
+            super.mouseUp(with: event)
+            return
+        }
+        dragState = nil
+        _ = fragment.setResizePreview(localX: nil)
+        needsDisplay = true
+
+        let pt = convert(event.locationInWindow, from: nil)
+        let delta = pt.x - state.startMouseX
+        let newWidths = applyDragDelta(
+            to: state.startWidths, col: state.col, delta: delta
+        )
+        // Persist via the pure primitive.
+        overlay?.applySetColumnWidths(blockIndex: blockIndex, widths: newWidths)
+    }
+
+    /// Split `delta` between column `col` and column `col + 1`, clamped
+    /// by `minDragColumnWidth` on both sides. `col + 1` shrinks by the
+    /// same amount `col` grows — a traditional spreadsheet drag feel.
+    private func applyDragDelta(
+        to startWidths: [CGFloat], col: Int, delta: CGFloat
+    ) -> [CGFloat] {
+        var widths = startWidths
+        guard col >= 0, col + 1 < widths.count else { return widths }
+        let minW = Self.minDragColumnWidth
+        var newLeft = widths[col] + delta
+        var newRight = widths[col + 1] - delta
+        // Clamp against minimum, trading from the other column.
+        if newLeft < minW {
+            newRight += (newLeft - minW)
+            newLeft = minW
+        }
+        if newRight < minW {
+            newLeft += (newRight - minW)
+            newRight = minW
+        }
+        // Final floor — if both were already at min, both stay at min.
+        widths[col] = max(minW, newLeft)
+        widths[col + 1] = max(minW, newRight)
+        return widths
     }
 }

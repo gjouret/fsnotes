@@ -250,7 +250,7 @@ extension EditTextView {
         from ctx: TableCursorContext,
         offset delta: Int
     ) -> Bool {
-        guard case .table(let header, _, let rows, _) = ctx.element.block
+        guard case .table(let header, _, let rows, _, _) = ctx.element.block
         else { return false }
 
         let cols = header.count
@@ -284,7 +284,7 @@ extension EditTextView {
         from ctx: TableCursorContext,
         direction: Int
     ) -> Bool {
-        guard case .table(let header, _, let rows, _) = ctx.element.block
+        guard case .table(let header, _, let rows, _, _) = ctx.element.block
         else { return false }
 
         let cellStart = ctx.element.offset(
@@ -348,7 +348,7 @@ extension EditTextView {
         from ctx: TableCursorContext,
         direction: Int
     ) -> Bool {
-        guard case .table(let header, _, let rows, _) = ctx.element.block
+        guard case .table(let header, _, let rows, _, _) = ctx.element.block
         else { return false }
 
         let totalRows = 1 + rows.count
@@ -399,7 +399,7 @@ extension EditTextView {
         row: Int,
         col: Int
     ) -> Int {
-        guard case .table(let header, _, let rows, _) = element.block
+        guard case .table(let header, _, let rows, _, _) = element.block
         else { return 0 }
 
         // The stored `rawText` on a TableCell under the native path is

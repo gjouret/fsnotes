@@ -1845,7 +1845,7 @@ public enum EditingOps {
             // Same kind only if same level — different levels get
             // different paragraph styles.
             return la == lb
-        case (.table(let ha, _, let ra, _), .table(let hb, _, let rb, _)):
+        case (.table(let ha, _, let ra, _, _), .table(let hb, _, let rb, _, _)):
             // Same kind only if the grid shape is unchanged. Shape
             // changes (row/column added or removed) take the slow path
             // so the attachment can be rebuilt from scratch. Cell
@@ -2660,7 +2660,7 @@ public enum EditingOps {
             return lines.map { inlinesToText($0.inline) }.joined(separator: "\n")
         case .horizontalRule: return ""
         case .blankLine: return ""
-        case .table(_, _, _, let raw): return raw
+        case .table(_, _, _, _, let raw): return raw
         }
     }
 
@@ -7700,7 +7700,7 @@ public enum EditingOps {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, _) =
+        guard case .table(let header, let alignments, let rows, let widths, _) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "replaceTableCellInline: block \(blockIndex) is not a table"
@@ -7739,7 +7739,7 @@ public enum EditingOps {
         //    cell typing.
         let newBlock: Block = .table(
             header: newHeader, alignments: alignments,
-            rows: newRows, raw: newRaw
+            rows: newRows, columnWidths: widths, raw: newRaw
         )
         var result = try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection
@@ -7884,7 +7884,7 @@ public enum EditingOps {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, _) =
+        guard case .table(let header, let alignments, let rows, let widths, _) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "insertTableRow: block \(blockIndex) is not a table"
@@ -7899,9 +7899,10 @@ public enum EditingOps {
         let newRaw = rebuildTableRaw(
             header: header, alignments: alignments, rows: newRows
         )
+        // T2-g.4: column count unchanged — preserve persisted widths.
         let newBlock: Block = .table(
             header: header, alignments: alignments,
-            rows: newRows, raw: newRaw
+            rows: newRows, columnWidths: widths, raw: newRaw
         )
         var result = try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection
@@ -7931,7 +7932,7 @@ public enum EditingOps {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, _) =
+        guard case .table(let header, let alignments, let rows, _, _) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "insertTableColumn: block \(blockIndex) is not a table"
@@ -7958,9 +7959,13 @@ public enum EditingOps {
         let newRaw = rebuildTableRaw(
             header: newHeader, alignments: newAlignments, rows: newRows
         )
+        // T2-g.4 contract: inserting a column resets `columnWidths` to
+        // nil. The new column has no authoritative width; the table
+        // falls back to content-based auto-measurement until the user
+        // drag-resizes again.
         let newBlock: Block = .table(
             header: newHeader, alignments: newAlignments,
-            rows: newRows, raw: newRaw
+            rows: newRows, columnWidths: nil, raw: newRaw
         )
         var result = try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection
@@ -7992,7 +7997,7 @@ public enum EditingOps {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, _) =
+        guard case .table(let header, let alignments, let rows, let widths, _) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "deleteTableRow: block \(blockIndex) is not a table"
@@ -8009,9 +8014,10 @@ public enum EditingOps {
         let newRaw = rebuildTableRaw(
             header: header, alignments: alignments, rows: newRows
         )
+        // T2-g.4: column count unchanged — preserve persisted widths.
         let newBlock: Block = .table(
             header: header, alignments: alignments,
-            rows: newRows, raw: newRaw
+            rows: newRows, columnWidths: widths, raw: newRaw
         )
         var result = try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection
@@ -8040,7 +8046,7 @@ public enum EditingOps {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, _) =
+        guard case .table(let header, let alignments, let rows, let widths, _) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "deleteTableColumn: block \(blockIndex) is not a table"
@@ -8064,12 +8070,20 @@ public enum EditingOps {
                 newRows[i].remove(at: position)
             }
         }
+        // T2-g.4: if persisted widths exist, drop the deleted column's
+        // width entry. If shape mismatch would result, fall back to nil.
+        var newWidths: [CGFloat]? = nil
+        if let widths = widths, position < widths.count, widths.count == header.count {
+            var nw = widths
+            nw.remove(at: position)
+            newWidths = nw
+        }
         let newRaw = rebuildTableRaw(
             header: newHeader, alignments: newAlignments, rows: newRows
         )
         let newBlock: Block = .table(
             header: newHeader, alignments: newAlignments,
-            rows: newRows, raw: newRaw
+            rows: newRows, columnWidths: newWidths, raw: newRaw
         )
         var result = try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection
@@ -8098,7 +8112,7 @@ public enum EditingOps {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, _) =
+        guard case .table(let header, let alignments, let rows, let widths, _) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "setTableColumnAlignment: block \(blockIndex) is not a table"
@@ -8117,7 +8131,92 @@ public enum EditingOps {
         )
         let newBlock: Block = .table(
             header: header, alignments: newAlignments,
-            rows: rows, raw: newRaw
+            rows: rows, columnWidths: widths, raw: newRaw
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    // MARK: - T2-g.4 persisted column widths
+
+    /// Set the authoritative column widths for the table at
+    /// `blockIndex`. Each entry must be > 0; the array length must
+    /// equal the table's column count.
+    ///
+    /// Contract:
+    ///  - Throws `EditingError.outOfBounds` if `blockIndex` is out of
+    ///    range, `widths.count` does not equal the table's column
+    ///    count, or any width is ≤ 0 / not finite.
+    ///  - Throws `EditingError.unsupported` if the block at
+    ///    `blockIndex` is not a table.
+    ///  - Declares `.replaceBlock(at: blockIndex)` on the returned
+    ///    `EditResult`. Structural shape (header / rows / alignments /
+    ///    raw) is preserved verbatim.
+    public static func setTableColumnWidths(
+        blockIndex: Int,
+        widths: [CGFloat],
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, _, let raw) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "setTableColumnWidths: block \(blockIndex) is not a table"
+            )
+        }
+        guard widths.count == header.count else {
+            throw EditingError.outOfBounds
+        }
+        guard widths.allSatisfy({ $0 > 0 && $0.isFinite }) else {
+            throw EditingError.outOfBounds
+        }
+        let newBlock: Block = .table(
+            header: header, alignments: alignments,
+            rows: rows, columnWidths: widths, raw: raw
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Clear the persisted widths override — restores content-based
+    /// auto-measurement. Structural shape preserved. Same throw
+    /// contract as `setTableColumnWidths`.
+    public static func clearTableColumnWidths(
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, _, let raw) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "clearTableColumnWidths: block \(blockIndex) is not a table"
+            )
+        }
+        let newBlock: Block = .table(
+            header: header, alignments: alignments,
+            rows: rows, columnWidths: nil, raw: raw
         )
         var result = try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection

@@ -748,7 +748,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             return 0
         case .htmlBlock(let raw):
             return raw.count
-        case .table(let header, _, let rows, _):
+        case .table(let header, _, let rows, _, _):
             let headerLength = header.reduce(0) { total, cell in
                 total + inlineTextLength(cell.inline)
             }

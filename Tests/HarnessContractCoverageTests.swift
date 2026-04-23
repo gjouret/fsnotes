@@ -145,7 +145,7 @@ final class HarnessContractCoverageTests: XCTestCase {
         )
 
         // Post-condition on the updated cell's inline tree.
-        if case .table(_, _, let rows, _) = result.newProjection.document.blocks[tableIdx] {
+        if case .table(_, _, let rows, _, _) = result.newProjection.document.blocks[tableIdx] {
             XCTAssertEqual(rows[0][1].inline, newInline)
         } else {
             XCTFail("Table slot must still be a .table after cell edit")

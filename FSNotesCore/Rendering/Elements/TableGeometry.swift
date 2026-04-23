@@ -341,18 +341,28 @@ public enum TableGeometry {
         rows: [[TableCell]],
         alignments: [TableAlignment],
         containerWidth: CGFloat,
-        font: NSFont
+        font: NSFont,
+        columnWidthsOverride: [CGFloat]? = nil
     ) -> Result {
         let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         let nsAlignments = alignments.map { nsAlignment(for: $0) }
-        let colWidths = contentBasedColumnWidths(
-            header: header,
-            rows: rows,
-            alignments: nsAlignments,
-            font: font,
-            boldFont: boldFont,
-            containerWidth: containerWidth
-        )
+        // T2-g.4: authoritative widths override content measurement
+        // when well-shaped; otherwise fall back to content-based widths.
+        let colWidths: [CGFloat]
+        if let override = columnWidthsOverride,
+           override.count == header.count,
+           override.allSatisfy({ $0 > 0 }) {
+            colWidths = override
+        } else {
+            colWidths = contentBasedColumnWidths(
+                header: header,
+                rows: rows,
+                alignments: nsAlignments,
+                font: font,
+                boldFont: boldFont,
+                containerWidth: containerWidth
+            )
+        }
         let rHeights = rowHeights(
             header: header,
             rows: rows,

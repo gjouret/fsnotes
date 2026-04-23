@@ -344,7 +344,73 @@ public enum MarkdownParser {
         }
 
         flushRawBuffer()
+
+        // T2-g.4: attach persisted column widths to tables preceded by
+        // our `<!-- fsnotes-col-widths: [...] -->` sentinel comment.
+        blocks = attachPersistedColumnWidths(blocks)
+
         return Document(blocks: blocks, trailingNewline: markdown.hasSuffix("\n"), refDefs: refDefs)
+    }
+
+    // MARK: - T2-g.4 column-widths sidecar
+
+    /// Scan the parsed block sequence and apply any
+    /// `<!-- fsnotes-col-widths: [...] -->` sentinels that sit
+    /// immediately before a `.table` block. The sentinel is stripped
+    /// from the output; the following table gains the decoded
+    /// `columnWidths`. Malformed sentinels are left as regular
+    /// htmlBlocks so no markdown is lost.
+    private static func attachPersistedColumnWidths(_ blocks: [Block]) -> [Block] {
+        var out: [Block] = []
+        out.reserveCapacity(blocks.count)
+        var i = 0
+        while i < blocks.count {
+            let block = blocks[i]
+            if case .htmlBlock(let raw) = block,
+               let widths = parseColumnWidthsComment(raw),
+               i + 1 < blocks.count,
+               case .table(let header, let alignments, let rows, _, let tableRaw) = blocks[i + 1],
+               widths.count == alignments.count,
+               widths.allSatisfy({ $0 > 0 }) {
+                out.append(.table(
+                    header: header,
+                    alignments: alignments,
+                    rows: rows,
+                    columnWidths: widths,
+                    raw: tableRaw
+                ))
+                i += 2
+                continue
+            }
+            out.append(block)
+            i += 1
+        }
+        return out
+    }
+
+    /// Decode a raw htmlBlock string as the T2-g.4 widths sentinel.
+    private static func parseColumnWidthsComment(_ raw: String) -> [CGFloat]? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "<!-- fsnotes-col-widths: "
+        let suffix = " -->"
+        guard trimmed.hasPrefix(prefix), trimmed.hasSuffix(suffix) else {
+            return nil
+        }
+        let body = String(trimmed.dropFirst(prefix.count).dropLast(suffix.count))
+        let inner = body.trimmingCharacters(in: .whitespaces)
+        guard inner.hasPrefix("["), inner.hasSuffix("]") else { return nil }
+        let contents = inner.dropFirst().dropLast()
+        let parts = contents
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        if parts.isEmpty { return nil }
+        var widths: [CGFloat] = []
+        widths.reserveCapacity(parts.count)
+        for p in parts {
+            guard let d = Double(p), d > 0, d.isFinite else { return nil }
+            widths.append(CGFloat(d))
+        }
+        return widths
     }
 
     // MARK: - Fence detection
@@ -2161,7 +2227,7 @@ public enum MarkdownParser {
                 }
                 let raw = rawLines.joined(separator: "\n")
                 return TableDetection(
-                    block: .table(header: headerCells, alignments: alignments, rows: dataRows, raw: raw),
+                    block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil, raw: raw),
                     nextIndex: j,
                     headerFromBuffer: false
                 )
@@ -2200,7 +2266,7 @@ public enum MarkdownParser {
             }
             let raw = rawLines.joined(separator: "\n")
             return TableDetection(
-                block: .table(header: headerCells, alignments: alignments, rows: dataRows, raw: raw),
+                block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil, raw: raw),
                 nextIndex: j,
                 headerFromBuffer: true
             )
