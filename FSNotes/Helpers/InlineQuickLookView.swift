@@ -358,7 +358,14 @@ enum QuickLookAttachmentProcessor {
             if let path = path { replacement.addAttribute(.attachmentPath, value: path, range: repRange) }
             if let title = title { replacement.addAttribute(.attachmentTitle, value: title, range: repRange) }
 
-            textStorage.replaceCharacters(in: range, with: replacement)
+            // Phase 5a: async QuickLook attachment hydration — same
+            // U+FFFC-for-U+FFFC class-upgrade swap as the PDF /
+            // inline-math paths.
+            // TODO: move to an attribute-only swap so storage chars
+            // stay put.
+            StorageWriteGuard.performingLegacyStorageWrite {
+                textStorage.replaceCharacters(in: range, with: replacement)
+            }
         }
     }
 }

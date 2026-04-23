@@ -888,7 +888,10 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         let seedRange = NSRange(location: 0, length: seed.length)
         seed.addAttribute(.attachmentUrl, value: url, range: seedRange)
         seed.addAttribute(.attachmentPath, value: url.lastPathComponent, range: seedRange)
-        storage.setAttributedString(seed)
+        // Phase 5a: test seed is a full-doc reset — fill semantics.
+        StorageWriteGuard.performingFill {
+            storage.setAttributedString(seed)
+        }
     }
 
     /// Enumerate `.attachment` attributes in storage and return the first
@@ -1141,7 +1144,11 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
                 note: note
             )
             harness.editor.textStorageProcessor?.isRendering = true
-            storage.setAttributedString(proj.attributed)
+            // Phase 5a: whole-doc re-seed from a freshly-rendered
+            // projection is fill semantics.
+            StorageWriteGuard.performingFill {
+                storage.setAttributedString(proj.attributed)
+            }
             harness.editor.textStorageProcessor?.isRendering = false
             harness.editor.documentProjection = proj
         }

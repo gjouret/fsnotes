@@ -375,9 +375,21 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     if safeRange.length > 0 {
                         let originalAttrs = attrSource.attributedSubstring(from: safeRange)
                         isRendering = true
-                        textStorage.beginEditing()
-                        textStorage.replaceCharacters(in: safeRange, with: originalAttrs)
-                        textStorage.endEditing()
+                        // Phase 5a: fold unfold re-splices attributes-
+                        // equivalent characters to clear the collapsed
+                        // foreground override. This is not an
+                        // `EditContract`-style edit (`Document` hasn't
+                        // changed — only presentation state), so it
+                        // can't route through `applyDocumentEdit`.
+                        // TODO: route through a dedicated
+                        // "apply-attribute-only-diff" primitive once
+                        // one exists; until then this is the legal
+                        // escape hatch.
+                        StorageWriteGuard.performingLegacyStorageWrite {
+                            textStorage.beginEditing()
+                            textStorage.replaceCharacters(in: safeRange, with: originalAttrs)
+                            textStorage.endEditing()
+                        }
                         isRendering = false
                     }
                 }
@@ -560,6 +572,41 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         didProcessEditing editedMask: NSTextStorageEditActions,
         range editedRange: NSRange,
         changeInLength delta: Int) {
+
+        #if DEBUG
+        // Phase 5a single-write-path enforcement.
+        //
+        // Design intent: every character mutation of the editor's
+        // content storage in block-model WYSIWYG mode should route
+        // through exactly one of the three authorized scopes
+        // (`applyDocumentEdit`, `fill`, or the explicitly-flagged
+        // legacy escape hatch). If the assertion below fires, a
+        // call site is mutating storage outside those scopes — which
+        // is the class of bug 5a exists to prevent (Phase 3
+        // `applyDocumentEdit` being bypassed by direct storage
+        // writes, leaving `Document ↔ NSTextContentStorage` out of
+        // sync).
+        //
+        // Source-mode is out of scope: while `sourceRendererActive`
+        // is true, `NSTextContentStorage` IS the source of truth and
+        // user keystrokes mutate it directly (AppKit's default text
+        // handling). The 5a contract applies only to WYSIWYG
+        // (`blockModelActive && !sourceRendererActive`).
+        //
+        // Release builds compile this entire block out.
+        if editedMask.contains(.editedCharacters) &&
+           blockModelActive &&
+           !sourceRendererActive &&
+           !StorageWriteGuard.isAnyAuthorized {
+            assertionFailure("""
+                Phase 5a violation: NSTextContentStorage character mutation \
+                happened in block-model WYSIWYG mode outside an authorized \
+                scope. Route through DocumentEditApplier.applyDocumentEdit, \
+                or wrap in StorageWriteGuard.performingFill / \
+                performingLegacyStorageWrite if genuinely legacy.
+                """)
+        }
+        #endif
 
         guard editedMask != .editedAttributes else { return }
         process(textStorage: textStorage, range: editedRange, changeInLength: delta)

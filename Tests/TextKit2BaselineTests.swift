@@ -79,9 +79,16 @@ final class TextKit2BaselineTests: XCTestCase {
         guard let storage = harness.editor.textStorage else {
             return XCTFail("no textStorage")
         }
-        storage.beginEditing()
-        storage.replaceCharacters(in: NSRange(location: 5, length: 0), with: "X")
-        storage.endEditing()
+        // Phase 5a: this test intentionally performs a direct storage
+        // mutation to verify TK2 infrastructure invariants. Under the
+        // 5a single-write-path contract, direct writes in block-model
+        // WYSIWYG mode trip a debug assertion — wrap in the legacy
+        // escape hatch to signal the bypass is test-level by design.
+        StorageWriteGuard.performingLegacyStorageWrite {
+            storage.beginEditing()
+            storage.replaceCharacters(in: NSRange(location: 5, length: 0), with: "X")
+            storage.endEditing()
+        }
 
         XCTAssertNotNil(
             harness.editor.textLayoutManager,

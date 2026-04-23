@@ -75,8 +75,30 @@ extension EditTextView {
         )
 
         guard let storage = textStorage else { return }
-        let fullRange = NSRange(location: 0, length: storage.length)
-        storage.replaceCharacters(in: fullRange, with: newProjection.attributed)
+
+        // Phase 5a: route through the single WYSIWYG write primitive.
+        // We have both prior (`projection.document`) and new
+        // (`newDoc`) documents — `applyDocumentEdit` computes the
+        // minimal block-bounded splice and wraps it in the authorized
+        // `performingApplyDocumentEdit` scope. On TK1 (no
+        // `NSTextContentStorage`), fall back to a direct write wrapped
+        // in `performingFill` — the fallback is whole-doc anyway.
+        if let tlm = self.textLayoutManager,
+           let contentStorage = tlm.textContentManager as? NSTextContentStorage {
+            _ = DocumentEditApplier.applyDocumentEdit(
+                priorDoc: projection.document,
+                newDoc: newDoc,
+                contentStorage: contentStorage,
+                bodyFont: projection.bodyFont,
+                codeFont: projection.codeFont,
+                note: projection.note
+            )
+        } else {
+            let fullRange = NSRange(location: 0, length: storage.length)
+            StorageWriteGuard.performingFill {
+                storage.replaceCharacters(in: fullRange, with: newProjection.attributed)
+            }
+        }
         // Phase 4.6: setter auto-syncs `processor.blocks`.
         documentProjection = newProjection
 

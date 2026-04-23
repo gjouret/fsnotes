@@ -599,12 +599,19 @@ extension EditTextView {
                 note: self.note
             )
         } else {
-            storage.beginEditing()
-            storage.replaceCharacters(
-                in: result.spliceRange,
-                with: result.spliceReplacement
-            )
-            storage.endEditing()
+            // Phase 5a: TK1 splice fallback. Same logical scope as
+            // `applyDocumentEdit` — an `EditingOps`-driven mutation
+            // with prior/new projections. Mark as the canonical
+            // document-edit scope so the debug assertion treats this
+            // authorized.
+            StorageWriteGuard.performingApplyDocumentEdit {
+                storage.beginEditing()
+                storage.replaceCharacters(
+                    in: result.spliceRange,
+                    with: result.spliceReplacement
+                )
+                storage.endEditing()
+            }
         }
         umSplice?.enableUndoRegistration()
 
@@ -884,9 +891,23 @@ extension EditTextView {
         let umRestore = self.undoManager ?? editorViewController?.editorUndoManager
         umRestore?.disableUndoRegistration()
         textStorageProcessor?.isRendering = true
-        storage.beginEditing()
-        storage.setAttributedString(projection.attributed)
-        storage.endEditing()
+        // Phase 5a: undo/redo restores a snapshot via a full
+        // `setAttributedString` — it's not a fill (the editor has been
+        // open, state exists) nor an `applyDocumentEdit` splice (we're
+        // swapping wholesale to a prior projection). Flag as legacy
+        // until Phase 5f routes undo/redo through an inverse
+        // `EditContract` via `applyDocumentEdit`.
+        // TODO(Phase 5f): replace with
+        //   DocumentEditApplier.applyDocumentEdit(
+        //     priorDoc: currentProjection.document,
+        //     newDoc: projection.document,
+        //     …)
+        //   once the undo journal emits inverse contracts.
+        StorageWriteGuard.performingLegacyStorageWrite {
+            storage.beginEditing()
+            storage.setAttributedString(projection.attributed)
+            storage.endEditing()
+        }
         textStorageProcessor?.isRendering = false
         umRestore?.enableUndoRegistration()
 
@@ -2618,9 +2639,22 @@ extension EditTextView {
                     ], range: NSRange(location: 0, length: attachmentString.length))
 
                     self.textStorageProcessor?.isRendering = true
-                    storage.beginEditing()
-                    storage.replaceCharacters(in: range, with: attachmentString)
-                    storage.endEditing()
+                    // Phase 5a: async inline-math attachment hydration
+                    // swaps source characters for a rendered image
+                    // attachment. This runs post-render on the main
+                    // thread, outside any `EditingOps` call, so it
+                    // can't route through `applyDocumentEdit`
+                    // (the `Document` projection already reflects the
+                    // source markdown). Flag as legacy.
+                    // TODO: make the attachment hydration a pure
+                    // attribute-only pass (the U+FFFC character is
+                    // already in storage from the initial render)
+                    // so storage characters never change.
+                    StorageWriteGuard.performingLegacyStorageWrite {
+                        storage.beginEditing()
+                        storage.replaceCharacters(in: range, with: attachmentString)
+                        storage.endEditing()
+                    }
                     self.textStorageProcessor?.isRendering = false
 
                     // Invalidate layout only for the replaced range;
@@ -2818,9 +2852,19 @@ extension EditTextView {
                     ], range: NSRange(location: 0, length: attachmentString.length))
 
                     self.textStorageProcessor?.isRendering = true
-                    storage.beginEditing()
-                    storage.replaceCharacters(in: range, with: attachmentString)
-                    storage.endEditing()
+                    // Phase 5a: async display-math / mermaid attachment
+                    // hydration — same story as inline math above.
+                    // Post-render swap of source characters for an
+                    // image attachment; not routable through
+                    // `applyDocumentEdit`.
+                    // TODO: collapse into an attribute-only pass when
+                    // the renderer emits the attachment character up
+                    // front.
+                    StorageWriteGuard.performingLegacyStorageWrite {
+                        storage.beginEditing()
+                        storage.replaceCharacters(in: range, with: attachmentString)
+                        storage.endEditing()
+                    }
                     self.textStorageProcessor?.isRendering = false
 
                     // Layout invalidation — narrow to the replaced range.

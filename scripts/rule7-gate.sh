@@ -58,6 +58,16 @@ EXCLUDED_FILES=(
     "FSNotesCore/ImagesProcessor.swift"
 )
 
+# Phase 5a: files allowed to call `performEditingTransaction` directly.
+# `DocumentEditApplier` is the single canonical WYSIWYG storage-write
+# primitive; every other `performEditingTransaction` caller should route
+# through it or wrap in a `StorageWriteGuard.performing*` scope.
+#
+# This list is consulted by the `bypassStorageWrite` pattern below.
+PHASE5A_ALLOWED_CALLERS=(
+    "FSNotesCore/Rendering/DocumentEditApplier.swift"
+)
+
 # --------------------------------------------------------------------------
 # Pattern definitions
 # --------------------------------------------------------------------------
@@ -137,6 +147,15 @@ add_pattern "literalParaSpacing"  'paragraphSpacing[[:space:]]*=[[:space:]]*[0-9
 # allowing leading whitespace) are filtered in the scanner below.
 add_pattern "hexColorLiteral"     '#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?'                                          "FSNotesCore/Rendering/Fragments FSNotesCore/Rendering/Elements"
 
+# --- Phase 5a: single-write-path enforcement ---
+# `NSTextContentStorage.performEditingTransaction` is the TK2 primitive
+# that batches character replacements + delegate callbacks. Only
+# `DocumentEditApplier.applyDocumentEdit` should call it directly; any
+# other call site indicates storage being mutated outside the Phase 3
+# element-level edit primitive. Exempt callers are whitelisted via
+# `PHASE5A_ALLOWED_CALLERS`.
+add_pattern "bypassStorageWrite"  'performEditingTransaction'                                                 ""
+
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
@@ -208,6 +227,27 @@ mark_seen() {
     esac
 }
 
+# Per-pattern file whitelist. Currently only `bypassStorageWrite` uses it:
+# the Phase 5a invariant that `performEditingTransaction` lives exclusively
+# in `DocumentEditApplier.swift`.
+is_pattern_whitelisted() {
+    local label="$1"
+    local file="$2"
+    case "$label" in
+        bypassStorageWrite)
+            for allowed in "${PHASE5A_ALLOWED_CALLERS[@]}"; do
+                if [[ "$file" == "$allowed" ]]; then
+                    return 0
+                fi
+            done
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 for i in "${!PATTERN_LABELS[@]}"; do
     label="${PATTERN_LABELS[$i]}"
     regex="${PATTERN_REGEXES[$i]}"
@@ -216,6 +256,9 @@ for i in "${!PATTERN_LABELS[@]}"; do
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
         if is_excluded "$file"; then
+            continue
+        fi
+        if is_pattern_whitelisted "$label" "$file"; then
             continue
         fi
         mark_seen "$file"
