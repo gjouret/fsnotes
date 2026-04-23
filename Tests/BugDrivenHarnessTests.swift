@@ -30,19 +30,15 @@ final class BugDrivenHarnessTests: XCTestCase {
     /// construction — table cell text is now real content in
     /// NSTextContentStorage. NSTextFinder walks it natively."
     ///
-    /// Today the table widget renders cell text inside an
-    /// NSTextAttachment (`InlineTableView`). Cell text is therefore
-    /// NOT a character run in the backing NSTextStorage — instead the
-    /// storage contains U+FFFC at the table location. Consequently
-    /// `NSTextFinderClient.string` (which NSTextView forwards from
-    /// `textStorage.string`) does not contain the searchable cell
-    /// content, and Cmd+F cannot find text that lives inside a table.
-    ///
-    /// This test asserts the user-visible expectation: searchable text
-    /// for an editor whose content is a markdown table MUST contain
-    /// the cell strings. On current code this FAILS by construction —
-    /// the storage contains U+FFFC where the table lives. After the
-    /// Phase 2 TextKit 2 + T2 table migration the test flips to PASS.
+    /// **Phase 2e-T2-f (2026-04-23):** `FeatureFlag.nativeTableElements`
+    /// default flipped to `true`. Cell text is emitted directly into
+    /// `NSTextContentStorage` as a flat, separator-encoded string
+    /// (`TableTextRenderer.renderNative`), so
+    /// `NSTextFinderClient.string` (which `NSTextView` forwards from
+    /// `textStorage.string`) now contains "findmeinside". This test
+    /// has flipped from FAIL to PASS — the "expected failure" marker
+    /// in the assertion message is retained as a historical note
+    /// until T2-h deletes the legacy path.
     func test_bug60_findAcrossTableCells() throws {
         let markdown = """
         | Name | Note |
@@ -66,10 +62,8 @@ final class BugDrivenHarnessTests: XCTestCase {
         XCTAssertTrue(
             searchable.contains("findmeinside"),
             "Bug #60: table cell text must appear in the searchable string " +
-            "so Cmd+F can find it. Today cell text is rendered inside an " +
-            "NSTextAttachment and is not part of textStorage; this test " +
-            "is expected to FAIL until the TextKit 2 + T2 table migration " +
-            "(Phase 2)."
+            "so Cmd+F can find it. As of Phase 2e-T2-f this passes by " +
+            "construction via the native TableElement path."
         )
     }
 

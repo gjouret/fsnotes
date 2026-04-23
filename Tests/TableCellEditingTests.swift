@@ -106,7 +106,9 @@ final class TableCellEditingTests: XCTestCase {
     }
 
     private func restoreFlag() {
-        FeatureFlag.nativeTableElements = false
+        // Phase 2e-T2-f: default is now `true`. Restore to the new
+        // default.
+        FeatureFlag.nativeTableElements = true
     }
 
     /// Extract the `Block.table` at the given index from the harness's
@@ -399,14 +401,16 @@ final class TableCellEditingTests: XCTestCase {
 
     // MARK: - 7. Flag-off: no TableElement, no tableAuthoritativeBlock
 
-    /// Invariant: with the flag OFF (default), storage must contain
-    /// zero `.tableAuthoritativeBlock` attributes and no
-    /// `TableElement` fragments. Confirms T2-e changes are entirely
-    /// flag-gated — the widget path remains byte-identical.
+    /// Invariant: with the flag OFF (legacy path, retained for A/B
+    /// coverage until T2-h), storage must contain zero
+    /// `.tableAuthoritativeBlock` attributes and no `TableElement`
+    /// fragments. Confirms T2-e changes are entirely flag-gated — the
+    /// widget path remains byte-identical under flag-off.
     func test_T2e_flagOff_noAuthoritativeBlockAttribute() throws {
         FeatureFlag.nativeTableElements = false
-        // Ensure flag stays off even if a prior test set it.
-        defer { FeatureFlag.nativeTableElements = false }
+        // Phase 2e-T2-f: default is now `true`. Restore to default on
+        // exit so subsequent tests see the new shipping behaviour.
+        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.markdown2x2)
         defer { harness.teardown() }

@@ -1454,6 +1454,15 @@ class EditorHTMLParityTests: XCTestCase {
         // removed it from WYSIWYG view but the markdown still contained it.
         // The fix: EditingOps.delete now uses blockIndices(overlapping:) to
         // detect when an atomic block (table, HR) is fully covered by selection.
+        //
+        // Phase 2e-T2-f: this test pins the legacy attachment path
+        // because it locates the table via U+FFFC — the native path
+        // (flag ON default) renders cell text as live content, so
+        // U+FFFC is not present. A native-path equivalent lives as
+        // `test_phase2eT2f_deleteSelectedTable_nativePath` below.
+        FeatureFlag.nativeTableElements = false
+        defer { FeatureFlag.nativeTableElements = true }
+
         let editor = makeEditor()
         fill(editor, "before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nafter")
 

@@ -42,7 +42,7 @@ final class TableNavigationTests: XCTestCase {
         bodyRows: Int
     ) -> TableElement {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         let header = (0..<cols).map { TableCell.parsing("H\($0)") }
         let rows: [[TableCell]] = (0..<bodyRows).map { r in
@@ -260,7 +260,9 @@ final class TableNavigationTests: XCTestCase {
     }
 
     private func restoreFlag() {
-        FeatureFlag.nativeTableElements = false
+        // Phase 2e-T2-f: default is now `true`. Restore to the new
+        // default so tests don't leak flag state.
+        FeatureFlag.nativeTableElements = true
     }
 
     // MARK: - 4. Tab moves to next cell

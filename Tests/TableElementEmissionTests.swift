@@ -46,14 +46,14 @@ final class TableElementEmissionTests: XCTestCase {
     | Bob   | plain |
     """
 
-    // MARK: - Flag OFF (default, legacy attachment path)
+    // MARK: - Flag OFF (legacy attachment path, retained for A/B)
 
     func test_phase2eT2b_flagOff_emitsAttachment() throws {
-        // Default behaviour — no flag flip, no restore.
-        XCTAssertFalse(
-            FeatureFlag.nativeTableElements,
-            "Default must stay OFF; prod never flips it."
-        )
+        // Phase 2e-T2-f flipped the default to `true`; this test pins
+        // the legacy path explicitly so the attachment emission contract
+        // stays regression-covered until T2-h deletes the legacy path.
+        FeatureFlag.nativeTableElements = false
+        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -92,7 +92,7 @@ final class TableElementEmissionTests: XCTestCase {
     /// order.
     func test_phase2eT2b_flagOn_emitsFlatCellText() throws {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -146,7 +146,7 @@ final class TableElementEmissionTests: XCTestCase {
     /// `.blockModelKind = .table` range.
     func test_phase2eT2b_flagOn_tableRangeContainsNoObjectReplacement() throws {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -179,7 +179,7 @@ final class TableElementEmissionTests: XCTestCase {
     /// the flag flip is what enables NSTextFinder to see across cells.
     func test_phase2eT2b_flagOn_bug60_findAcrossTableCells() throws {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -197,7 +197,7 @@ final class TableElementEmissionTests: XCTestCase {
     /// `.blockModelKind = .table.rawValue`.
     func test_phase2eT2b_flagOn_blockModelKindIsTable() throws {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -232,7 +232,7 @@ final class TableElementEmissionTests: XCTestCase {
     /// pattern.
     func test_phase2eT2b_flagOn_delegateReturnsTableElement() throws {
         FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = false }
+        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
