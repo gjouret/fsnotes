@@ -18,6 +18,13 @@
 //  codepath branches on their value. The assertion is gated on
 //  `#if DEBUG` and never fires in Release.
 //
+//  Thread model: all wrappers are main-thread only; the flags are
+//  non-atomic by design. The editor write path is main-thread only, so
+//  there's no contention to protect against. A future background
+//  hydration site must marshal its storage mutation back onto the main
+//  thread before entering a `performing*` scope — do not make these
+//  flags atomic instead.
+//
 //  Scope roles:
 //    • `applyDocumentEditInFlight` — the Phase 3
 //      `DocumentEditApplier.applyDocumentEdit` primitive. This is the

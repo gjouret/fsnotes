@@ -598,12 +598,18 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
            blockModelActive &&
            !sourceRendererActive &&
            !StorageWriteGuard.isAnyAuthorized {
+            let symbols = Thread.callStackSymbols.prefix(12).joined(separator: "\n  ")
             assertionFailure("""
                 Phase 5a violation: NSTextContentStorage character mutation \
                 happened in block-model WYSIWYG mode outside an authorized \
                 scope. Route through DocumentEditApplier.applyDocumentEdit, \
                 or wrap in StorageWriteGuard.performingFill / \
                 performingLegacyStorageWrite if genuinely legacy.
+                editedRange=\(editedRange) \
+                editedMask=\(editedMask.rawValue) \
+                delta=\(delta)
+                Call stack (top 12):
+                  \(symbols)
                 """)
         }
         #endif
