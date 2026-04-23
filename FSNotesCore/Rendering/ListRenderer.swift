@@ -248,6 +248,19 @@ public enum ListRenderer {
         }
         return marker
     }
+
+    #if os(OSX)
+    // Sized blank NSImage used as `NSTextAttachment.image` to suppress
+    // AppKit's generic document-icon glyph during the window between
+    // TK2's first layout pass and the attachment view provider's
+    // loadView completing.
+    static func transparentPlaceholder(size: CGSize) -> NSImage {
+        let image = NSImage(size: size)
+        image.lockFocus()
+        image.unlockFocus()
+        return image
+    }
+    #endif
 }
 
 // MARK: - Bullet Attachment
@@ -468,6 +481,9 @@ public enum BulletAttachment {
             x: 0, y: -abs(font.descender),
             width: cellWidth, height: cellHeight
         )
+        #if os(OSX)
+        attachment.image = ListRenderer.transparentPlaceholder(size: attachment.bounds.size)
+        #endif
         let result = NSMutableAttributedString(attachment: attachment)
         result.addAttribute(.font, value: font, range: NSRange(location: 0, length: result.length))
         return result
@@ -632,6 +648,9 @@ public enum CheckboxAttachment {
             x: 0, y: -abs(font.descender),
             width: cellWidth, height: cellHeight
         )
+        #if os(OSX)
+        attachment.image = ListRenderer.transparentPlaceholder(size: attachment.bounds.size)
+        #endif
         let result = NSMutableAttributedString(attachment: attachment)
         result.addAttribute(.font, value: font, range: NSRange(location: 0, length: result.length))
         return result

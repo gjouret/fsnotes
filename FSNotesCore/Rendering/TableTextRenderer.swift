@@ -257,6 +257,14 @@ public enum TableTextRenderer {
         // attachment character occupies space.
         attachment.bounds = CGRect(x: 0, y: 0, width: 400, height: 100)
 
+        #if os(OSX)
+        // Transparent placeholder image suppresses AppKit's generic
+        // document-icon glyph during the ~500ms window between storage
+        // setAttributedString and the async renderTables pass installing
+        // the live InlineTableView.
+        attachment.image = ListRenderer.transparentPlaceholder(size: attachment.bounds.size)
+        #endif
+
         let result = NSMutableAttributedString(attachment: attachment)
         let range = NSRange(location: 0, length: result.length)
         result.addAttribute(.font, value: bodyFont, range: range)
@@ -346,11 +354,29 @@ public enum TableTextRenderer {
         // the legacy `.renderedBlockType`/`renderedBlockOriginalMarkdown`
         // tags so any code that already introspects for tables (save
         // path, export path, etc.) keeps working during the transition.
+        //
+        // 2e-T2-e: also tag the authoritative `Block.table` value on the
+        // same range. The content-storage delegate reads this back so
+        // the `TableElement` it vends has accurate alignments /
+        // structural fields (vs. the placeholder decoded from the flat
+        // string, which has no alignment information). Absence is
+        // tolerated — the placeholder path remains the fallback.
         let fullRange = NSRange(location: 0, length: result.length)
         if fullRange.length > 0 {
             result.addAttribute(.blockModelKind, value: BlockModelKind.table.rawValue, range: fullRange)
             result.addAttribute(.renderedBlockType, value: RenderedBlockType.table.rawValue, range: fullRange)
             result.addAttribute(.renderedBlockOriginalMarkdown, value: rawMarkdown, range: fullRange)
+            let authBlock: Block = .table(
+                header: header,
+                alignments: alignments,
+                rows: rows,
+                raw: rawMarkdown
+            )
+            result.addAttribute(
+                .tableAuthoritativeBlock,
+                value: TableAuthoritativeBlockBox(authBlock),
+                range: fullRange
+            )
         }
 
         return result
