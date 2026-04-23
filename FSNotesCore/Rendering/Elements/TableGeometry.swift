@@ -52,18 +52,24 @@ public enum TableGeometry {
 
     /// Horizontal cell padding, derived from `marginSize`. Matches
     /// `InlineTableView.cellPaddingH`.
-    private static func cellPaddingH() -> CGFloat {
+    ///
+    /// Public as of 2e-T2-c so `TableLayoutFragment.draw(at:in:)` can
+    /// inset per-cell rects by the same horizontal padding that
+    /// `wrappedCellHeight` used during measurement. Keeping the source
+    /// of truth in one place prevents measure/draw drift.
+    public static func cellPaddingH() -> CGFloat {
         return max(3, ceil(CGFloat(UserDefaultsManagement.marginSize) * 0.2))
     }
 
     /// Vertical cell padding (top), derived from `editorLineSpacing`.
-    /// Matches `InlineTableView.cellPaddingTop`.
-    private static func cellPaddingTop() -> CGFloat {
+    /// Matches `InlineTableView.cellPaddingTop`. Public for 2e-T2-c.
+    public static func cellPaddingTop() -> CGFloat {
         return max(2, ceil(CGFloat(UserDefaultsManagement.editorLineSpacing) * 0.75))
     }
 
-    /// Vertical cell padding (bottom). Matches `InlineTableView.cellPaddingBot`.
-    private static func cellPaddingBot() -> CGFloat {
+    /// Vertical cell padding (bottom). Matches
+    /// `InlineTableView.cellPaddingBot`. Public for 2e-T2-c.
+    public static func cellPaddingBot() -> CGFloat {
         return max(2, ceil(CGFloat(UserDefaultsManagement.editorLineSpacing) * 0.75))
     }
 
@@ -75,11 +81,16 @@ public enum TableGeometry {
 
     /// The `focusRingPadding` constant from `InlineTableView`. Used by
     /// the width-auto-wrap path to compute available column space.
-    private static let focusRingPadding: CGFloat = 8
+    /// Public for 2e-T2-c: `TableLayoutFragment` adds the same padding
+    /// to its rendering-surface width so grid strokes at the right edge
+    /// don't get clipped.
+    public static let focusRingPadding: CGFloat = 8
 
     /// Left margin reserved for drag handles. Matches
-    /// `InlineTableView.currentLeftMargin` (= `handleBarWidth`).
-    private static let handleBarWidth: CGFloat = 11
+    /// `InlineTableView.currentLeftMargin` (= `handleBarWidth`). Public
+    /// for 2e-T2-c so the fragment draws the grid starting at the same
+    /// x-offset the widget uses, preserving visual parity.
+    public static let handleBarWidth: CGFloat = 11
 
     // MARK: - Rendered cell text
     //
@@ -149,7 +160,12 @@ public enum TableGeometry {
 
     /// Block-model `TableAlignment` → AppKit `NSTextAlignment`.
     /// Mirrors `InlineTableView.nsAlignment(for:)`.
-    private static func nsAlignment(for a: TableAlignment) -> NSTextAlignment {
+    ///
+    /// Public as of 2e-T2-c so `TableLayoutFragment` can use the same
+    /// alignment-mapping function when it renders per-cell text. Keeping
+    /// the mapping in one place prevents drift between geometry
+    /// measurement and the draw path.
+    public static func nsAlignment(for a: TableAlignment) -> NSTextAlignment {
         switch a {
         case .left, .none: return .left
         case .center: return .center
