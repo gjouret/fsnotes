@@ -55,4 +55,13 @@ public enum FeatureFlag {
     /// Tests that pin legacy (attachment-path) behaviour explicitly set
     /// this to `false` in `setUp` and restore it in `tearDown`.
     public static var nativeTableElements: Bool = true
+
+    // MARK: - Phase 4.1 anchor: SourceRenderer v2 (do not reorder)
+
+    /// Phase 4.1 (dormant): when true, source mode uses the new
+    /// `SourceRenderer` path (Document → marker-preserving attributed
+    /// string → `SourceLayoutFragment`) instead of the TK1-shaped
+    /// `NotesTextProcessor.highlight` path. Default false until Phase 4.4
+    /// flips source mode to the new renderer as its live path.
+    public static var useSourceRendererV2: Bool = false
 }

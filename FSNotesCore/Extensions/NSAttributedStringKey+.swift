@@ -55,6 +55,16 @@ public extension NSAttributedString.Key {
     /// H1/H2 bottom hairline. Value: `Int` (1-indexed, matches
     /// `Block.heading(level:suffix:)`).
     static let headingLevel = NSAttributedString.Key(rawValue: "es.fsnot.heading.level")
+
+    /// Phase 4.1: tags a character range as a markdown marker (e.g. the
+    /// leading `#` of a heading, the `**` around emphasis, the fence
+    /// characters of a code block). `SourceLayoutFragment` reads this to
+    /// paint marker runs in a distinct foreground color without mutating
+    /// the attributed string's `.foregroundColor` attribute.
+    ///
+    /// Value is a singleton marker (e.g. `NSNull()`); presence of the
+    /// attribute matters, not its value.
+    static let markerRange = NSAttributedString.Key(rawValue: "es.fsnot.source.marker")
 }
 
 /// Phase 2b: enumeration of block-model block types carried on
@@ -95,6 +105,16 @@ public enum BlockModelKind: String {
     /// is `true` — otherwise tables keep flowing through the
     /// NSTextAttachment widget path (no `.blockModelKind` tag).
     case table
+
+    /// Phase 4.1 (dormant): paragraph-shaped range rendered by
+    /// `SourceRenderer` — carries visible markdown markers
+    /// (`#`, `**`, fences, `>`, `---`, etc.) tagged with
+    /// `.markerRange` and otherwise appears as a plain paragraph.
+    /// No live dispatch route exists until Phase 4.4 flips source mode
+    /// onto the new renderer; the content-storage delegate falls
+    /// through to `ParagraphElement` for this kind today so a stray
+    /// tagged range cannot crash TK2.
+    case sourceMarkdown
 }
 
 /// Phase 2e-T2-b: tags header-row cells inside a `.table`-kinded

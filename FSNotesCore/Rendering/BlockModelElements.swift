@@ -116,6 +116,15 @@ public enum BlockModelElementFactory {
             // stays compile-checked without forcing a `TableElement`
             // cast path at every callsite.
             return ParagraphElement(attributedString: attributedString)
+        case .sourceMarkdown:
+            // Phase 4.1 (dormant): no live dispatch path produces this
+            // kind yet — `FeatureFlag.useSourceRendererV2` is false and
+            // no renderer emits `.sourceMarkdown` tags in Batch N+2.
+            // Fall through to `ParagraphElement` so a stray tagged range
+            // (e.g. a test flipping the flag on a live editor) cannot
+            // crash TK2. Phase 4.4 replaces this with a dedicated
+            // `SourceMarkdownElement` that routes to `SourceLayoutFragment`.
+            return ParagraphElement(attributedString: attributedString)
         }
     }
 }
@@ -270,6 +279,7 @@ public final class BlockModelContentStorageDelegate: NSObject, NSTextContentStor
             header: headerCells,
             alignments: alignments,
             rows: bodyCells,
+            columnWidths: nil,
             raw: ""
         )
     }
