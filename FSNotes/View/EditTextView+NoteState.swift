@@ -232,6 +232,7 @@ extension EditTextView {
         // storage-clearing below from seeing stale block-model state.
         documentProjection = nil
         textStorageProcessor?.blockModelActive = false
+        textStorageProcessor?.sourceRendererActive = false
         textStorageProcessor?.blocks = []
 
         if !note.isLoaded {
@@ -296,10 +297,18 @@ extension EditTextView {
             removeAllInlinePDFViews()
             removeAllInlineQuickLookViews()
 
-            // Block-model renderer: parses markdown → Document → rendered
-            // attributed string. Falls back to source-mode pipeline if needed.
+            // Block-model renderer (WYSIWYG): parses markdown → Document →
+            // rendered attributed string. Phase 4.4 adds the source-mode
+            // fallback (`fillViaSourceRenderer`) which renders through
+            // `SourceRenderer` so markers are visible + colored via
+            // `SourceLayoutFragment`. The old
+            // `storage.setAttributedString(note.content)` path is kept
+            // as a safety fallback for the edge case where both the
+            // block-model and source-mode renderers decline.
             if !fillViaBlockModel(note: note) {
-                storage.setAttributedString(content)
+                if !fillViaSourceRenderer(note: note) {
+                    storage.setAttributedString(content)
+                }
             }
         } else {
             // Unreachable today: `NoteType` has exactly one case

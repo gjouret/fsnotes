@@ -18,14 +18,11 @@ import Foundation
 ///
 /// All flags default to the shipped/live behaviour. Tests assign the
 /// flag to `true` inside `setUp` and restore it in `tearDown`.
+///
+/// Phase 4.4 (2026-04-23) deleted `useSourceRendererV2` — source mode
+/// now unconditionally uses `SourceRenderer` + `SourceLayoutFragment`.
+/// The namespace is retained as the anchor for future flags; remove
+/// when the next flag lands.
 public enum FeatureFlag {
-
-    // MARK: - Phase 4.1 anchor: SourceRenderer v2 (do not reorder)
-
-    /// Phase 4.1 (dormant): when true, source mode uses the new
-    /// `SourceRenderer` path (Document → marker-preserving attributed
-    /// string → `SourceLayoutFragment`) instead of the TK1-shaped
-    /// `NotesTextProcessor.highlight` path. Default false until Phase 4.4
-    /// flips source mode to the new renderer as its live path.
-    public static var useSourceRendererV2: Bool = false
+    // No active flags. Phase 4.4 retired `useSourceRendererV2`.
 }

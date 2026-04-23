@@ -139,6 +139,16 @@ public final class BlockModelLayoutManagerDelegate: NSObject, NSTextLayoutManage
             )
         }
 
+        // Phase 4.4 — source-mode paragraphs emitted by `SourceRenderer`.
+        // `SourceLayoutFragment` paints `.markerRange` runs in the
+        // theme's sourceMarker color on top of the default text draw.
+        if textElement is SourceMarkdownElement {
+            return SourceLayoutFragment(
+                textElement: textElement,
+                range: textElement.elementRange
+            )
+        }
+
         // Other block types (paragraph, list item) currently render via
         // the default fragment. List-item bullets / checkboxes are baked
         // into storage as NSTextAttachments so they draw via the

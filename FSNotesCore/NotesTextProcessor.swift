@@ -1543,7 +1543,7 @@ public class NotesTextProcessor {
         return Array(repeating: text, count: count).reduce("", +)
     }
 
-    fileprivate static func getHeaderFont(level: Int, baseFont: PlatformFont, baseFontSize: CGFloat) -> PlatformFont {
+    public static func getHeaderFont(level: Int, baseFont: PlatformFont, baseFontSize: CGFloat) -> PlatformFont {
         let headerSize: CGFloat
         
         switch level {

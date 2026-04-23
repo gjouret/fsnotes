@@ -376,6 +376,63 @@ extension EditTextView {
         return true
     }
 
+    // MARK: - Source-mode rendering (Phase 4.4)
+
+    /// Parse the note's markdown → Document → `SourceRenderer.render(...)`
+    /// and set it on `textStorage`. Used for the source-mode view
+    /// (hideSyntax == false) — the user sees the raw markdown with
+    /// visible markers, and `SourceLayoutFragment` paints those markers
+    /// in the theme's marker color.
+    ///
+    /// Returns true on success, false if the caller should fall back to
+    /// the pre-4.4 `storage.setAttributedString(note.content)` path.
+    /// Prerequisites: `self.note` must be set and `textStorage` must
+    /// exist. This path runs ONLY when `hideSyntax == false` (source
+    /// mode); WYSIWYG continues through `fillViaBlockModel`.
+    func fillViaSourceRenderer(note: Note) -> Bool {
+        guard note.isMarkdown(),
+              let storage = textStorage else {
+            return false
+        }
+
+        // Read the raw markdown from disk — `note.content.string` is
+        // unreliable here for the same reason `fillViaBlockModel` reads
+        // from disk: `loadAttachments()` replaces `![alt](path)` with
+        // U+FFFC attachment characters, which we don't want in the
+        // source-mode view.
+        let markdown: String
+        if let fileURL = note.getContentFileURL(),
+           let rawMarkdown = try? String(contentsOf: fileURL, encoding: .utf8) {
+            markdown = rawMarkdown
+        } else {
+            markdown = note.content.string
+        }
+        let document = MarkdownParser.parse(markdown)
+        note.cachedDocument = document
+
+        let rendered = SourceRenderer.render(
+            document,
+            bodyFont: UserDefaultsManagement.noteFont,
+            codeFont: UserDefaultsManagement.codeFont
+        )
+
+        // Set the rendered attributed string. Gate the source-mode
+        // pipeline (`TextStorageProcessor.process`) off for this paint
+        // so the legacy highlight path doesn't clobber our markers.
+        textStorageProcessor?.isRendering = true
+        storage.setAttributedString(rendered)
+        textStorageProcessor?.isRendering = false
+
+        textStorageProcessor?.sourceRendererActive = true
+        // WYSIWYG projection is not active — the source-mode view has
+        // no block-model projection (edits flow into storage directly
+        // and textDidChange re-parses / re-renders).
+        documentProjection = nil
+        textStorageProcessor?.blockModelActive = false
+
+        return true
+    }
+
     // MARK: - Undo support
 
     /// Apply an EditResult to textStorage, update the projection, set

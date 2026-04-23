@@ -105,6 +105,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// kern, and clear-foreground to storage that has no markdown markers.
     public var blockModelActive = false
 
+    /// Phase 4.4 — when true, `SourceRenderer` owns source-mode rendering.
+    /// Storage is already tagged with `.markerRange` runs and appropriate
+    /// fonts by `SourceRenderer.render`; `process()` must not run the
+    /// legacy `highlightMarkdown` path (which would strip markers and
+    /// re-apply conflicting attributes). This flag mirrors
+    /// `blockModelActive` for the source-mode view.
+    public var sourceRendererActive = false
+
     // MARK: - Source-Mode Block Array
 
     /// Source-mode block array used by fold/unfold and the source-mode
@@ -423,13 +431,24 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                         isRendering = false
                     }
                 }
+            } else if sourceRendererActive {
+                // Phase 4.4: source-mode path uses `SourceRenderer`.
+                // Re-parse the full markdown from storage, re-render,
+                // and copy attributes onto the unfolded range so markers
+                // reclaim their tag + coloring.
+                reapplySourceRendererAttributes(
+                    textStorage: textStorage,
+                    range: foldRange
+                )
             } else {
-                // Legacy path: re-highlight the unfolded range to restore colors
+                // Legacy safety fallback — retained for the rare path
+                // where source-mode fill hasn't activated SourceRenderer
+                // yet (e.g. early boot). Applies only plain paragraph
+                // style + body font, mirroring what SourceRenderer would
+                // have tagged had it run. No markdown syntax coloring —
+                // that's the `SourceRenderer` path's job.
                 let paragraphRange = (textStorage.string as NSString).paragraphRange(for: foldRange)
-                NotesTextProcessor.highlightMarkdown(
-                    attributedString: textStorage,
-                    paragraphRange: paragraphRange,
-                    codeBlockRanges: codeBlockRanges)
+                textStorage.updateParagraphStyle(range: paragraphRange)
             }
             editor?.needsDisplay = true
         } else {
@@ -607,12 +626,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     }
 #endif
 
-    /// Legacy rendering pipeline. Runs ONLY when blockModelActive==false
-    /// and nonMarkdownActive==false (markdown source mode). When
-    /// blockModelActive==true, rendering is handled by DocumentRenderer +
-    /// EditingOps. When nonMarkdownActive==true, `NonMarkdownRenderer`
-    /// rendered the initial paint and no post-processing is needed —
-    /// plain text stays plain.
+    /// Rendering pipeline. Runs ONLY when the block-model pipeline is
+    /// not driving this edit. When `blockModelActive==true`,
+    /// rendering is handled by `DocumentRenderer` + `EditingOps`.
+    /// When `sourceRendererActive==true` (Phase 4.4), source-mode
+    /// marker coloring is handled by re-rendering via `SourceRenderer`
+    /// and copying attributes onto the edited range — the legacy
+    /// `NotesTextProcessor.highlightMarkdown` path has been retired.
     private func process(textStorage: NSTextStorage, range editedRange: NSRange, changeInLength delta: Int) {
         guard let note = editor?.note, textStorage.length > 0 else { return }
         guard !isRendering else { return }
@@ -651,12 +671,25 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
         for range in renderRanges.markdownRanges {
             let safe = safeRange(range, in: textStorage)
-            NotesTextProcessor.resetFont(attributedString: textStorage, paragraphRange: safe)
-            NotesTextProcessor.highlightMarkdown(
-                attributedString: textStorage,
-                paragraphRange: safe,
-                codeBlockRanges: currentCodeRanges
-            )
+            if sourceRendererActive {
+                // Phase 4.4 — re-render the affected paragraph(s) via
+                // `SourceRenderer` and copy attributes onto the live
+                // storage so markers reclaim their `.markerRange` tag
+                // and the body font after typing.
+                reapplySourceRendererAttributes(
+                    textStorage: textStorage,
+                    range: safe
+                )
+            } else {
+                // Fallback: no active renderer for this paragraph yet.
+                // Preserves the pre-4.4 behaviour for edge-case fills
+                // where source-mode activation raced with the first
+                // edit.
+                NotesTextProcessor.resetFont(
+                    attributedString: textStorage,
+                    paragraphRange: safe
+                )
+            }
         }
 
         for range in renderRanges.codeRanges {
@@ -671,6 +704,78 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 .getHighlighter()
                 .highlight(in: textStorage, fullRange: range, contentRange: contentRange)
         }
+    }
+
+    /// Phase 4.4 — source-mode incremental attribute refresh.
+    ///
+    /// Parse the full markdown from `textStorage`, re-render via
+    /// `SourceRenderer`, and copy the resulting attributes onto the
+    /// storage range that intersects `range`. Characters are NOT
+    /// replaced (that would invalidate cursor/selection); only the
+    /// attribute runs are rewritten.
+    ///
+    /// This function is safe to call when the parsed-and-re-rendered
+    /// string has the same length as `textStorage.string`. When the
+    /// lengths differ (extremely rare — happens only when the user
+    /// types content that canonicalises to different source text, e.g.
+    /// inside a table), we fall back to re-applying base attributes on
+    /// the affected range only, so the user does not see a character
+    /// splice mid-typing.
+    internal func reapplySourceRendererAttributes(
+        textStorage: NSTextStorage,
+        range: NSRange
+    ) {
+        guard sourceRendererActive else { return }
+        let storageLength = textStorage.length
+        guard storageLength > 0 else { return }
+        let clampedLocation = max(0, min(range.location, storageLength))
+        let clampedLength = max(0, min(range.length, storageLength - clampedLocation))
+        let safe = NSRange(location: clampedLocation, length: clampedLength)
+        guard safe.length > 0 else { return }
+
+        let markdown = textStorage.string
+        let document = MarkdownParser.parse(markdown)
+        let rendered = SourceRenderer.render(
+            document,
+            bodyFont: UserDefaultsManagement.noteFont,
+            codeFont: UserDefaultsManagement.codeFont
+        )
+        // Full-document length match: copy attributes verbatim onto the
+        // affected range. This is the fast path and covers every edit
+        // that doesn't cross a table's canonical-rebuild boundary.
+        if rendered.length == storageLength {
+            let priorIsRendering = isRendering
+            isRendering = true
+            textStorage.beginEditing()
+            // Clear marker tags on the affected range so stale tags from
+            // the previous render don't linger past content that is no
+            // longer a marker (e.g. user deleted the closing `**`).
+            textStorage.removeAttribute(.markerRange, range: safe)
+            textStorage.removeAttribute(.foregroundColor, range: safe)
+            textStorage.removeAttribute(.kern, range: safe)
+            // Copy attributes run by run from the rendered string onto
+            // the matching storage range.
+            rendered.enumerateAttributes(in: safe, options: []) { attrs, subrange, _ in
+                textStorage.setAttributes(attrs, range: subrange)
+            }
+            textStorage.endEditing()
+            isRendering = priorIsRendering
+            return
+        }
+
+        // Fallback: the render produced a different length (a table
+        // canonicalised, likely). Leave the typed text alone; just
+        // reset to body font so the user sees readable text. A full
+        // re-fill on the next blur/save will reconcile.
+        let priorIsRendering = isRendering
+        isRendering = true
+        textStorage.beginEditing()
+        textStorage.setAttributes(
+            [.font: UserDefaultsManagement.noteFont],
+            range: safe
+        )
+        textStorage.endEditing()
+        isRendering = priorIsRendering
     }
 
     /// Populate the block model from the current text storage.

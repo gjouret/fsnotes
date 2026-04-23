@@ -77,14 +77,11 @@ final class Phase41SourceRendererTests: XCTestCase {
         return true
     }
 
-    // MARK: - Feature flag default
-
-    func test_phase41_featureFlag_defaultsOff() {
-        XCTAssertFalse(
-            FeatureFlag.useSourceRendererV2,
-            "4.1 is dormant — the flag must default to false until 4.4 flips it."
-        )
-    }
+    // MARK: - Feature flag default — retired
+    //
+    // Phase 4.4 deleted `FeatureFlag.useSourceRendererV2`; source mode
+    // unconditionally uses `SourceRenderer`. The 4.1 dormant-flag test
+    // is no longer meaningful and has been removed.
 
     // MARK: - Heading
 
@@ -237,11 +234,9 @@ final class Phase41SourceRendererTests: XCTestCase {
         )
     }
 
-    // MARK: - Unsupported block kinds (skeleton placeholder)
+    // MARK: - List rendering (Phase 4.4)
 
-    func test_phase41_unsupportedBlockKind_rendersPlaceholder() {
-        // Build a trivial list — content doesn't matter, only that the
-        // dispatch branch hits the placeholder.
+    func test_phase44_list_rendersMarkerTaggedBullets() {
         let item = ListItem(
             indent: "",
             marker: "-",
@@ -257,20 +252,20 @@ final class Phase41SourceRendererTests: XCTestCase {
         let out = SourceRenderer.render(
             doc, bodyFont: bodyFont, codeFont: codeFont
         )
-        XCTAssertTrue(
-            out.string.contains("4.1-skeleton"),
-            "Unsupported block types must render the visible skeleton placeholder. Got: \(out.string)"
+        XCTAssertEqual(
+            out.string,
+            "- one",
+            "List source output must reproduce the dash marker + space + content."
         )
+        // "- " at indices 0..<2, all marker.
         XCTAssertTrue(
-            out.string.contains("list"),
-            "Placeholder must identify the block kind (got: \(out.string))"
+            isAllMarker(out, range: NSRange(location: 0, length: 2)),
+            "List marker `- ` must be tagged as marker."
         )
+        // "one" at indices 2..<5, content.
         XCTAssertTrue(
-            isAllMarker(
-                out,
-                range: NSRange(location: 0, length: out.length)
-            ),
-            "Placeholder: whole string must be tagged as marker so a dogfood run surfaces the gap on-screen."
+            isNoMarker(out, range: NSRange(location: 2, length: 3)),
+            "List content must NOT be tagged as marker."
         )
     }
 

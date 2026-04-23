@@ -534,8 +534,11 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
 
         // Clear block-model state — fill() will re-activate it if switching
         // to WYSIWYG mode, or leave it cleared for source mode.
+        // Phase 4.4: also clear sourceRendererActive so the next fill()
+        // runs through the fresh source / WYSIWYG chooser logic.
         editor.documentProjection = nil
         editor.textStorageProcessor?.blockModelActive = false
+        editor.textStorageProcessor?.sourceRendererActive = false
 
         // Re-fill the note from disk content. This is the single path for
         // both directions:

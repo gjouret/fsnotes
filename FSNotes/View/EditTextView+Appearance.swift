@@ -142,16 +142,14 @@ extension EditTextView {
 
         NotesTextProcessor.hl = nil
 
-        guard let note = self.note else { return }
+        guard let _ = self.note else { return }
 
-        // Block-model path: the renderer will re-highlight from the
-        // Document model when refillEditArea re-renders. Skip the
-        // source-mode highlight call — it would apply syntax colors to
-        // note.content (raw markdown) that the block-model pipeline
-        // doesn't use.
-        if documentProjection == nil {
-            NotesTextProcessor.highlight(attributedString: note.content)
-        }
+        // Phase 4.4: both WYSIWYG (block-model) and source-mode
+        // (SourceRenderer) re-render from the Document via
+        // `refillEditArea(force: true)` below. The legacy
+        // `NotesTextProcessor.highlight(attributedString: note.content)`
+        // call was retired in 4.4 — it applied TK1-shaped attributes to
+        // `note.content` that neither renderer reads from.
 
         viewDelegate?.refillEditArea(force: true)
     }

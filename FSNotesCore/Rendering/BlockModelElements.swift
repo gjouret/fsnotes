@@ -84,6 +84,16 @@ public final class FoldedElement: BlockModelElement {
     public override var blockKind: BlockModelKind { .paragraph }
 }
 
+/// Phase 4.4 — paragraph element emitted for `SourceRenderer` output.
+/// Dispatched by the content-storage delegate whenever a paragraph
+/// range carries `.blockModelKind = .sourceMarkdown`. The layout-manager
+/// delegate routes this to `SourceLayoutFragment`, which paints
+/// `.markerRange` runs in the theme's `sourceMarker` color on top of
+/// the default text draw.
+public final class SourceMarkdownElement: BlockModelElement {
+    public override var blockKind: BlockModelKind { .sourceMarkdown }
+}
+
 /// Maps a `BlockModelKind` to the matching `BlockModelElement`
 /// subclass. Called by the content-storage delegate with the
 /// attributed string for the paragraph range; returns an initialised
@@ -117,14 +127,11 @@ public enum BlockModelElementFactory {
             // cast path at every callsite.
             return ParagraphElement(attributedString: attributedString)
         case .sourceMarkdown:
-            // Phase 4.1 (dormant): no live dispatch path produces this
-            // kind yet — `FeatureFlag.useSourceRendererV2` is false and
-            // no renderer emits `.sourceMarkdown` tags in Batch N+2.
-            // Fall through to `ParagraphElement` so a stray tagged range
-            // (e.g. a test flipping the flag on a live editor) cannot
-            // crash TK2. Phase 4.4 replaces this with a dedicated
-            // `SourceMarkdownElement` that routes to `SourceLayoutFragment`.
-            return ParagraphElement(attributedString: attributedString)
+            // Phase 4.4 — live dispatch. `SourceRenderer.render` tags
+            // every rendered paragraph with this kind; the layout-manager
+            // delegate routes `SourceMarkdownElement` to
+            // `SourceLayoutFragment` for marker-colour overpaint.
+            return SourceMarkdownElement(attributedString: attributedString)
         }
     }
 }

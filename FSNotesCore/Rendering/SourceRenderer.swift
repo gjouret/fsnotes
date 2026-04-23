@@ -26,7 +26,7 @@
 //  deletes the `NotesTextProcessor.highlight*` path, and makes this
 //  renderer the live source-mode path.
 //
-//  Block coverage (skeleton):
+//  Block coverage (Phase 4.4 — complete):
 //    * `.paragraph` — inline content with inline markers
 //      (`**bold**`, `_italic_`, `` `code` ``, etc.) re-injected around
 //      the `InlineRenderer` output and tagged.
@@ -36,10 +36,16 @@
 //    * `.blockquote(lines:)` — `> ` prefix per line tagged; inline
 //      content rendered with inline markers re-injected.
 //    * `.horizontalRule` — whole `---` line tagged as marker.
-//
-//  Remaining block kinds (`.list`, `.table`, `.htmlBlock`, `.blankLine`)
-//  fall through to a visible placeholder marker so a dogfood run with
-//  the flag on surfaces the gap immediately. Phase 4.4 adds them.
+//    * `.list(items:, loose:)` — each item's indent + marker + optional
+//      checkbox tagged; inline content re-injected; nested children
+//      recurse with deeper indentation preserved.
+//    * `.table(header:, alignments:, rows:, columnWidths:)` — pipes
+//      and alignment-row markers (`:---:`) tagged; cell inline content
+//      re-injected between tags.
+//    * `.htmlBlock(raw:)` — whole raw HTML content tagged as marker
+//      (source mode shows raw HTML, not rendered).
+//    * `.blankLine` — emits empty string; block-join layer supplies
+//      the separator newlines.
 //
 //  Rule 7 conscience:
 //    * No marker-hiding via zero-size fonts or `.clear` foreground.
@@ -80,7 +86,7 @@ public enum SourceRenderer {
         codeFont: PlatformFont,
         theme: Theme = .shared
     ) -> NSAttributedString {
-        _ = theme  // reserved for Phase 4.4 wire-up
+        _ = theme  // reserved for richer per-block theming
         let out = NSMutableAttributedString()
         for (index, block) in document.blocks.enumerated() {
             if index > 0 {
@@ -92,6 +98,38 @@ public enum SourceRenderer {
                 )
             }
             out.append(render(block: block, bodyFont: bodyFont, codeFont: codeFont))
+        }
+
+        // Preserve the document's trailing newline for byte-exact
+        // round-trip with the source string. Without this, re-rendering
+        // a document whose source ends with "\n" produces a shorter
+        // attributed string and `reapplySourceRendererAttributes`
+        // would mis-align with live storage.
+        if document.trailingNewline {
+            out.append(
+                NSAttributedString(
+                    string: "\n",
+                    attributes: [.font: bodyFont]
+                )
+            )
+        }
+
+        // Phase 4.4: tag the full rendered range with
+        // `.blockModelKind = .sourceMarkdown` so the TK2 content-storage
+        // delegate dispatches every paragraph to `SourceMarkdownElement`
+        // → `SourceLayoutFragment` (marker-colour overpaint). Tables
+        // / code blocks / mermaid / math in SOURCE mode stay as
+        // plain-paragraph source text — the user is looking at raw
+        // markdown, not the rendered widget. This differs from
+        // `DocumentRenderer` which emits per-block kinds (`.heading`,
+        // `.codeBlock`, `.table`, etc.) for WYSIWYG block dispatch.
+        let fullRange = NSRange(location: 0, length: out.length)
+        if fullRange.length > 0 {
+            out.addAttribute(
+                .blockModelKind,
+                value: BlockModelKind.sourceMarkdown.rawValue,
+                range: fullRange
+            )
         }
         return out
     }
@@ -110,7 +148,18 @@ public enum SourceRenderer {
         case .heading(let level, let suffix):
             let out = NSMutableAttributedString()
             let prefix = String(repeating: "#", count: level)
-            out.append(markerString(prefix, font: bodyFont))
+            // Heading body font: scaled + bold per level. Source mode
+            // shows the raw markdown but still renders with the header
+            // font so the heading visually stands out. The prefix
+            // marker and its trailing space carry the SAME header font
+            // so the `#` characters don't look shrunken next to the
+            // heading content.
+            let headerFont = NotesTextProcessor.getHeaderFont(
+                level: level,
+                baseFont: bodyFont,
+                baseFontSize: bodyFont.pointSize
+            )
+            out.append(markerString(prefix, font: headerFont))
             // The parser preserves the heading suffix verbatim,
             // including the leading space. The space itself is part of
             // the ATX-heading marker surface, but it's also the
@@ -119,7 +168,7 @@ public enum SourceRenderer {
             // content. If suffix is empty (e.g. "###" with nothing
             // after), there is no leading space to tag.
             if suffix.hasPrefix(" ") {
-                out.append(markerString(" ", font: bodyFont))
+                out.append(markerString(" ", font: headerFont))
                 let rest = String(suffix.dropFirst())
                 // Heading content may carry inline markers
                 // (`# **bold**`) — re-inject them.
@@ -127,7 +176,7 @@ public enum SourceRenderer {
                 out.append(
                     reinjectInlineMarkers(
                         inlineContent,
-                        baseAttrs: [.font: bodyFont]
+                        baseAttrs: [.font: headerFont]
                     )
                 )
             } else {
@@ -136,7 +185,7 @@ public enum SourceRenderer {
                 out.append(
                     reinjectInlineMarkers(
                         inlineContent,
-                        baseAttrs: [.font: bodyFont]
+                        baseAttrs: [.font: headerFont]
                     )
                 )
             }
@@ -215,24 +264,217 @@ public enum SourceRenderer {
                 attributes: [.font: bodyFont]
             )
 
-        case .list, .table, .htmlBlock:
-            // Phase 4.1 skeleton — not yet implemented. Emit a visible
-            // placeholder tagged fully as a marker so a dogfood run
-            // with `FeatureFlag.useSourceRendererV2 = true` surfaces
-            // the gap on-screen instead of silently dropping content.
-            // Phase 4.4 adds full coverage.
-            let kind: String
-            switch block {
-            case .list: kind = "list"
-            case .table: kind = "table"
-            case .htmlBlock: kind = "htmlBlock"
-            default: kind = "unknown"
+        case .list(let items, _):
+            return renderList(items: items, bodyFont: bodyFont)
+
+        case .table(let header, let alignments, let rows, _):
+            return renderTable(
+                header: header,
+                alignments: alignments,
+                rows: rows,
+                bodyFont: bodyFont
+            )
+
+        case .htmlBlock(let raw):
+            // Source mode shows raw HTML. Tag the entire raw content
+            // as marker — every character is syntax surface from the
+            // user's point of view.
+            return markerString(raw, font: bodyFont)
+        }
+    }
+
+    // MARK: - List rendering
+
+    /// Render a list as source text. Each item emits its exact source
+    /// prefix (`indent` + `marker` + `afterMarker` + optional checkbox)
+    /// tagged as marker, followed by the item's inline content with
+    /// inline markers re-injected, followed by any nested children on
+    /// subsequent lines.
+    private static func renderList(
+        items: [ListItem],
+        bodyFont: PlatformFont
+    ) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        for (idx, item) in items.enumerated() {
+            if idx > 0 {
+                // Per-item `blankLineBefore` drives tight/loose spacing
+                // in the source — mirror the serializer's logic so
+                // source-mode output round-trips byte-identically with
+                // `MarkdownSerializer.serialize`.
+                let sep = item.blankLineBefore ? "\n\n" : "\n"
+                out.append(
+                    NSAttributedString(
+                        string: sep,
+                        attributes: [.font: bodyFont]
+                    )
+                )
             }
-            return markerString(
-                "⟨4.1-skeleton: unsupported block type \(kind)⟩",
-                font: bodyFont
+            out.append(renderListItem(item, bodyFont: bodyFont))
+        }
+        return out
+    }
+
+    private static func renderListItem(
+        _ item: ListItem,
+        bodyFont: PlatformFont
+    ) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+
+        // Leading indent — whitespace only, safe to emit as a plain
+        // (non-marker) run. It's the marker that carries the syntax;
+        // indentation is layout.
+        if !item.indent.isEmpty {
+            out.append(
+                NSAttributedString(
+                    string: item.indent,
+                    attributes: [.font: bodyFont]
+                )
             )
         }
+
+        // Marker + separator whitespace (e.g. "- ", "1. ") — marker.
+        out.append(markerString(item.marker + item.afterMarker, font: bodyFont))
+
+        // Optional checkbox (e.g. "[ ] ", "[x] ") — marker.
+        if let cb = item.checkbox {
+            out.append(markerString(cb.text + cb.afterText, font: bodyFont))
+        }
+
+        // Item inline content.
+        out.append(
+            reinjectInlineMarkers(
+                item.inline,
+                baseAttrs: [.font: bodyFont]
+            )
+        )
+
+        // Nested children on subsequent lines, separator "\n" per child
+        // (children use their own `blankLineBefore` at the child-list
+        // level, but at the item level we mirror the serializer which
+        // joins children with "\n").
+        if !item.children.isEmpty {
+            for child in item.children {
+                out.append(
+                    NSAttributedString(
+                        string: "\n",
+                        attributes: [.font: bodyFont]
+                    )
+                )
+                out.append(renderListItem(child, bodyFont: bodyFont))
+            }
+        }
+        return out
+    }
+
+    // MARK: - Table rendering
+
+    /// Render a table as canonical pipe-delimited source text. Pipes
+    /// and alignment-row separators are tagged as marker; cell inline
+    /// content between pipes is re-rendered via `reinjectInlineMarkers`
+    /// so inline formatting markers (`**bold**`, `*italic*`, etc.)
+    /// inside cells also appear tagged.
+    ///
+    /// The output matches `EditingOps.rebuildTableRaw` byte-for-byte
+    /// modulo the embedded inline markers (which the raw serializer
+    /// emits as plain text): each cell is padded with a single space
+    /// on each side of its inline content, separated by `|`, with the
+    /// canonical alignment row between header and body.
+    private static func renderTable(
+        header: [TableCell],
+        alignments: [TableAlignment],
+        rows: [[TableCell]],
+        bodyFont: PlatformFont
+    ) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let headerColCount = header.count
+
+        // Render a single row matching `rebuildTableRaw.renderRow`:
+        //   "|" + cells.joined(separator: "|") + "|"
+        // where each cell is padded with a leading + trailing space
+        // around its inline content. Pipes are marker-tagged; cell
+        // content is re-injected via the inline helper so inline
+        // formatting markers inside cells also appear tagged.
+        func appendRow(_ cells: [TableCell]) {
+            if cells.isEmpty {
+                out.append(markerString("|", font: bodyFont))
+                return
+            }
+            out.append(markerString("|", font: bodyFont))
+            for cell in cells {
+                out.append(
+                    NSAttributedString(
+                        string: " ",
+                        attributes: [.font: bodyFont]
+                    )
+                )
+                out.append(
+                    reinjectInlineMarkers(
+                        cell.inline,
+                        baseAttrs: [.font: bodyFont]
+                    )
+                )
+                out.append(
+                    NSAttributedString(
+                        string: " ",
+                        attributes: [.font: bodyFont]
+                    )
+                )
+                out.append(markerString("|", font: bodyFont))
+            }
+        }
+
+        // Header row.
+        appendRow(header)
+        out.append(
+            NSAttributedString(
+                string: "\n",
+                attributes: [.font: bodyFont]
+            )
+        )
+
+        // Alignment row: whole line is marker syntax. Matches the
+        // exact shape `rebuildTableRaw.renderSeparator` produces
+        // (`---`, `:---`, `---:`, `:---:` per column, `|`-separated).
+        var effective = alignments
+        while effective.count < headerColCount { effective.append(.none) }
+        if effective.count > headerColCount {
+            effective = Array(effective.prefix(headerColCount))
+        }
+        let separatorCells = effective.map { alignment -> String in
+            switch alignment {
+            case .none:   return "---"
+            case .left:   return ":---"
+            case .right:  return "---:"
+            case .center: return ":---:"
+            }
+        }
+        let separatorRow: String
+        if separatorCells.isEmpty {
+            separatorRow = "|"
+        } else {
+            separatorRow = "|" + separatorCells.joined(separator: "|") + "|"
+        }
+        out.append(markerString(separatorRow, font: bodyFont))
+
+        // Body rows. `rebuildTableRaw` pads/truncates each row to the
+        // header's column count — mirror that for byte-exact match.
+        for row in rows {
+            out.append(
+                NSAttributedString(
+                    string: "\n",
+                    attributes: [.font: bodyFont]
+                )
+            )
+            var padded = row
+            while padded.count < headerColCount {
+                padded.append(TableCell([]))
+            }
+            if padded.count > headerColCount {
+                padded = Array(padded.prefix(headerColCount))
+            }
+            appendRow(padded)
+        }
+        return out
     }
 
     // MARK: - Inline marker re-injection

@@ -102,13 +102,12 @@ extension EditorViewController {
 
         _ = note.reload()
 
-        // Block-model path: refillEditArea (inside reloadAllOpenedWindows)
-        // re-renders from the Document model. Legacy highlight is only
-        // needed when the editor is in markdown source mode.
-        if vc.editor.documentProjection == nil {
-            NotesTextProcessor.highlight(attributedString: note.content)
-        }
-
+        // Phase 4.4: both WYSIWYG (block-model) and source-mode
+        // (SourceRenderer) paths re-render from the Document via the
+        // refill that happens inside `reloadAllOpenedWindows`. The
+        // legacy `NotesTextProcessor.highlight(note.content)` call was
+        // retired in 4.4 — it wrote TK1-shaped attributes onto
+        // `note.content`, which neither renderer reads from.
         reloadAllOpenedWindows(note: note)
         
         ViewController.shared()?.notesTableView.reloadRow(note: note)

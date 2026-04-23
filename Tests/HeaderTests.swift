@@ -132,20 +132,15 @@ class HeaderTests: XCTestCase {
                                  "H\(i+1) size (\(sizes[i])) must be > H\(i+2) size (\(sizes[i+1]))")
         }
 
-        // BUG (documented): the ATX regex `^(\#{1,6}\ )` captures the trailing
-        // space in the marks range, so `headerLevel = headerMarksRange.length`
-        // is off by one. H1 gets level=2 (ratio 1.7), H6 gets level=7
-        // (default, ratio 1.0). The ratios applied are SHIFTED:
-        //     [1.7, 1.4, 1.2, 1.1, 1.05, 1.0] instead of
-        //     [2.0, 1.7, 1.4, 1.2, 1.1, 1.05]
-        // When the bug is fixed (by setting `headerLevel = headerMarksRange.length - 1`
-        // or by excluding the space from capture group 1), this assertion must flip.
-        let base = sizes[5] / 1.0  // H6 is currently at ratio 1.0 (default)
-        let buggyRatios: [CGFloat] = [1.7, 1.4, 1.2, 1.1, 1.05, 1.0]
-        for (i, ratio) in buggyRatios.enumerated() {
+        // Phase 4.4: the legacy ATX-regex off-by-one was fixed when
+        // SourceRenderer replaced the legacy highlight path. Heading
+        // levels map directly to `getHeaderFont(level:)` ratios.
+        let base = UserDefaultsManagement.noteFont.pointSize
+        let expectedRatios: [CGFloat] = [2.0, 1.7, 1.4, 1.2, 1.1, 1.05]
+        for (i, ratio) in expectedRatios.enumerated() {
             let expected = base * ratio
             XCTAssertEqual(sizes[i], expected, accuracy: 0.02,
-                           "H\(i+1) currently uses ratio \(ratio) (BUG: should be one level deeper)")
+                           "H\(i+1) should use ratio \(ratio) per getHeaderFont(level:)")
         }
     }
 
@@ -245,8 +240,14 @@ class HeaderTests: XCTestCase {
     private func runFullPipeline(_ editor: EditTextView) {
         guard let storage = editor.textStorage, let note = editor.note else { return }
         note.content = NSMutableAttributedString(attributedString: storage)
+        // Phase 4.4: activate the SourceRenderer path — process() will
+        // re-render via `reapplySourceRendererAttributes` on the edit
+        // notification below, applying header fonts + marker tags. The
+        // legacy `highlightMarkdown` path this test used to exercise
+        // has been retired.
+        editor.textStorageProcessor?.sourceRendererActive = true
         storage.beginEditing()
-        storage.edited(.editedAttributes, range: NSRange(location: 0, length: storage.length), changeInLength: 0)
+        storage.edited(.editedCharacters, range: NSRange(location: 0, length: storage.length), changeInLength: 0)
         storage.endEditing()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
     }
