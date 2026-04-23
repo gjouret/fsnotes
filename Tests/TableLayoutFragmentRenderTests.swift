@@ -9,8 +9,9 @@
 //
 //  Snapshot / pixel-level tests are NOT in scope for this slice — drawing
 //  correctness is verified against the deployed app. The tests here are
-//  pure-function contract checks exercised via the `EditorHarness` with
-//  `FeatureFlag.nativeTableElements = true` (the slice's dogfood gate).
+//  pure-function contract checks exercised via the `EditorHarness`.
+//  (Phase 2e T2-h deleted `FeatureFlag.nativeTableElements`; the native
+//  TableElement path is now the only path.)
 //
 //  What these tests lock in:
 //    1. `layoutFragmentFrame.height` equals `TableGeometry.compute(...).totalHeight`
