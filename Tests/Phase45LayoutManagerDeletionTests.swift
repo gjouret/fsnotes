@@ -158,17 +158,29 @@ final class Phase45LayoutManagerDeletionTests: XCTestCase {
 
         var sawHeadingFont = false
         var sawCodeFont = false
+        let bodyFamily = UserDefaultsManagement.noteFont.familyName?.lowercased() ?? ""
+        let codeFamily = UserDefaultsManagement.codeFont.familyName?.lowercased() ?? ""
         storage.enumerateAttribute(.font, in: full, options: []) { value, _, _ in
             guard let font = value as? NSFont else { return }
             let bodySize = UserDefaultsManagement.noteFont.pointSize
             if font.pointSize > bodySize + 2 {
                 sawHeadingFont = true
             }
-            if let familyName = font.familyName,
-               familyName.lowercased().contains("mono") ||
-               familyName.lowercased().contains("menlo") ||
-               familyName.lowercased().contains("courier") {
-                sawCodeFont = true
+            // A run is a "code run" if its family name matches the configured
+            // code font family (Theme.shared.codeFontName, default "Source Code
+            // Pro") OR any conventional monospaced family. Matching the actual
+            // configured family is the authoritative check post–Phase 7.5.c,
+            // which routed UD.codeFont through Theme; the fallback keyword
+            // list catches non-default code-font choices.
+            if let familyName = font.familyName?.lowercased() {
+                if !codeFamily.isEmpty && familyName == codeFamily && familyName != bodyFamily {
+                    sawCodeFont = true
+                } else if familyName.contains("mono") ||
+                          familyName.contains("menlo") ||
+                          familyName.contains("courier") ||
+                          familyName.contains("source code") {
+                    sawCodeFont = true
+                }
             }
         }
         XCTAssertTrue(
