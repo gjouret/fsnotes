@@ -73,25 +73,22 @@ extension EditTextView {
         skipLoadSelectedRange = true
         super.mouseDown(with: event)
 
-        // Source mode only: skip past clear-color hidden syntax characters.
-        // In WYSIWYG mode (block model active), there are no clear-color
-        // characters — the block model renders without markdown markers.
-        if NotesTextProcessor.hideSyntax,
-           textStorageProcessor?.blockModelActive != true,
-           let storage = textStorage {
-            var loc = selectedRange().location
-            while loc < storage.length {
-                let color = storage.attribute(.foregroundColor, at: loc, effectiveRange: nil) as? NSColor
-                if color == NSColor.clear {
-                    loc += 1
-                } else {
-                    break
-                }
-            }
-            if loc != selectedRange().location {
-                setSelectedRange(NSRange(location: loc, length: 0))
-            }
-        }
+        // Phase 4.8: legacy clear-color-marker skip removed. Before 4.4,
+        // source-mode rendered markdown markers via `NotesTextProcessor
+        // .highlightMarkdown`, which hid syntax characters by setting
+        // `.foregroundColor = NSColor.clear` and compressing them with
+        // negative kern. A click could land inside that invisible run
+        // and we'd have to walk forward to the next visible glyph.
+        //
+        // Post-4.4 the only two live renderers are `DocumentRenderer`
+        // (WYSIWYG — markers are not in storage at all) and
+        // `SourceRenderer` (source mode — markers are in storage tagged
+        // with `.markerRange` and painted in `ThemeChrome.sourceMarker`,
+        // fully visible and click-addressable). Clear-color foreground
+        // now appears only on `.foldedContent` runs, which are not
+        // click-addressable (the fold layout fragment takes them out of
+        // the layout path). The walk-past-clear-color fixup therefore
+        // has no work to do under either pipeline.
 
         saveSelectedRange()
 
