@@ -334,7 +334,10 @@ class PreferencesEditorViewController: NSViewController {
             if let note = editor.note, let evc = editor.editorViewController {
                 // Skip source-mode highlight when block model is active —
                 // refillEditArea() re-renders from the Document model.
-                if editor.documentProjection == nil {
+                // Phase 4.3 — also skip for non-markdown notes (`.txt` /
+                // `.rtf`), which render via `NonMarkdownRenderer` and
+                // must not touch `NotesTextProcessor.highlight`.
+                if editor.documentProjection == nil, note.isMarkdown() {
                     NotesTextProcessor.highlight(attributedString: note.content)
                 }
                 evc.disablePreview()

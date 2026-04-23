@@ -104,8 +104,11 @@ extension EditorViewController {
 
         // Block-model path: refillEditArea (inside reloadAllOpenedWindows)
         // re-renders from the Document model. Legacy highlight is only
-        // needed when the editor is in source mode.
-        if vc.editor.documentProjection == nil {
+        // needed when the editor is in markdown source mode.
+        // Phase 4.3 — non-markdown notes (`.txt` / `.rtf`) render via
+        // `NonMarkdownRenderer` and have no markdown structure to
+        // highlight.
+        if vc.editor.documentProjection == nil, note.isMarkdown() {
             NotesTextProcessor.highlight(attributedString: note.content)
         }
 
