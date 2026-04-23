@@ -10,7 +10,17 @@
 import XCTest
 @testable import FSNotes
 
+/// Phase 4.5: TK1 `LayoutManager` subclass deleted. These pixel-level
+/// snapshot tests exercised the TK1 `LayoutManager.drawBackground`
+/// fold-gate + custom drawing helpers, none of which exist anymore —
+/// TK2 folding rides `SourceLayoutFragment` / `FoldedElement`. The
+/// class is retained as a skipped placeholder so the test bundle
+/// keeps compiling; a TK2 snapshot suite is a later slice.
 class FoldSnapshotTests: XCTestCase {
+
+    override func setUpWithError() throws {
+        throw XCTSkip("Phase 4.5: TK1 LayoutManager drawing deleted; TK2 snapshot suite pending.")
+    }
 
     private let renderSize = NSSize(width: 600, height: 400)
 
@@ -31,40 +41,13 @@ class FoldSnapshotTests: XCTestCase {
         }
     }
 
-    /// Create a fully configured editor, load markdown, and return it ready for rendering.
+    /// Phase 4.5 stub — the real harness wired a TK1 LayoutManager
+    /// subclass that no longer exists. Every test in this file is
+    /// skipped via `setUpWithError`, so this stub just returns a bare
+    /// EditTextView to keep the file compiling.
     private func makeEditor(markdown: String) -> EditTextView {
-        let frame = NSRect(origin: .zero, size: renderSize)
-        let textView = EditTextView(frame: frame)
-        let storage = NSTextStorage()
-        let lm = LayoutManager()
-        let tc = NSTextContainer(size: renderSize)
-        tc.widthTracksTextView = true
-        storage.addLayoutManager(lm)
-        lm.addTextContainer(tc)
-        textView.textContainer = tc
-        textView.minSize = renderSize
-        textView.maxSize = NSSize(width: renderSize.width, height: 1e7)
-
-        let processor = TextStorageProcessor()
-        processor.editorDelegate = textView
-        storage.delegate = processor
-        textView.textStorageProcessor = processor
-        lm.processor = processor
-        lm.delegate = lm
-
-        // Load content
-        storage.setAttributedString(NSAttributedString(string: markdown))
-        processor.blocks = MarkdownBlockParser.parse(string: markdown as NSString)
-
-        // Force layout
-        lm.ensureLayout(for: tc)
-
-        // Put in off-screen window so drawing works
-        let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
-        window.contentView = textView
-        window.orderBack(nil)
-
-        return textView
+        _ = markdown
+        return EditTextView(frame: NSRect(origin: .zero, size: renderSize))
     }
 
     /// Capture the editor's rendered content as a bitmap.

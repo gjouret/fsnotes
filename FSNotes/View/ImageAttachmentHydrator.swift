@@ -276,20 +276,11 @@ enum ImageAttachmentHydrator {
         textStorage: NSTextStorage,
         editor: EditTextView
     ) {
-        if let tk1Manager = editor.layoutManagerIfTK1,
-           let container = editor.textContainer {
-            let cell = FSNTextAttachmentCell(textContainer: container, image: image)
-            cell.image?.size = loadedSize
-            attachment.image = nil
-            attachment.attachmentCell = cell
-            attachment.bounds = NSRect(x: 0, y: 0, width: loadedSize.width, height: loadedSize.height)
-
-            textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
-            tk1Manager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
-            return
-        }
-
-        // TK2 path.
+        // Phase 4.5: TK1 branch (`FSNTextAttachmentCell` +
+        // `NSLayoutManager.invalidateLayout`) removed with the custom
+        // layout-manager subclass. The app is TK2-only; hand the loaded
+        // image to the NSTextAttachment and invalidate via
+        // `NSTextLayoutManager`.
         image.size = loadedSize
         attachment.attachmentCell = nil
         attachment.image = image

@@ -45,11 +45,10 @@ final class PDFExporterMeasurementTests: XCTestCase {
             "TK2 precondition: editor.textLayoutManager must be non-nil" +
             " for this test to exercise the TK2 used-rect path."
         )
-        XCTAssertNil(
-            harness.editor.layoutManagerIfTK1,
-            "TK2 precondition: layoutManagerIfTK1 must be nil so we're" +
-            " actually on the TK2 branch of measureUsedRect."
-        )
+        // Phase 4.5: `layoutManagerIfTK1` property deleted. The TK1
+        // branch of `measureUsedRect` is gone, so being on TK2 is
+        // guaranteed by construction — no TK1 accessor to assert
+        // against.
 
         guard let container = harness.editor.textContainer else {
             return XCTFail("editor has no textContainer")

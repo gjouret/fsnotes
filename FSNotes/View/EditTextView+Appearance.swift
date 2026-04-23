@@ -12,31 +12,10 @@ extension EditTextView {
         var newRect = rect
         newRect.size.width = caretWidth
 
-        // Phase 2a: caret-height tweak uses the TK1 custom layout
-        // manager. On TK2 we fall back to the default caret rect.
-        if let textStorage = self.textStorage,
-           let layoutManager = self.layoutManagerIfTK1 as? LayoutManager {
-            let insertionPoint = self.selectedRange().location
-
-            if insertionPoint == textStorage.length, insertionPoint > 0 {
-                let lastIndex = insertionPoint - 1
-                let attributes = textStorage.attributes(at: lastIndex, effectiveRange: nil)
-
-                let isNewline: Bool = {
-                    let ns = textStorage.string as NSString
-                    return ns.character(at: lastIndex) == 0x0A
-                }()
-
-                let fontToUse: NSFont
-                if !isNewline, let font = attributes[.font] as? NSFont {
-                    fontToUse = font
-                } else {
-                    fontToUse = UserDefaultsManagement.noteFont
-                }
-
-                newRect.size.height = layoutManager.lineHeight(for: fontToUse)
-            }
-        }
+        // Phase 4.5: TK1 caret-height tweak (which queried
+        // `LayoutManager.lineHeight(for:)`) removed with the custom
+        // layout-manager subclass. Under TK2 the default caret rect
+        // already tracks the last glyph's font/line height.
 
         let caretColor = NSColor(red: 0.47, green: 0.53, blue: 0.69, alpha: 1.0)
         super.drawInsertionPoint(in: newRect, color: caretColor, turnedOn: flag)
@@ -165,16 +144,12 @@ extension EditTextView {
     /// container width changes — `TableLayoutFragment` re-computes
     /// column widths on each layout.
     public func reflowAttachmentsForWidthChange() {
-        // Phase 2a TK2-safety (2026-04-22): bare `layoutManager` was an
-        // implicit `self.layoutManager` read. On a TK2-wired NSTextView
-        // that accessor lazy-instantiates a TK1 NSLayoutManager and
-        // permanently nils `textLayoutManager`. Route through
-        // `layoutManagerIfTK1` so the TK1 invalidation is a no-op
-        // under TK2.
-        if let storage = textStorage, let lm = layoutManagerIfTK1 {
-            let fullRange = NSRange(location: 0, length: storage.length)
-            lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
-        }
+        // Phase 4.5: TK1 `NSLayoutManager.invalidateLayout` path removed
+        // with the custom layout-manager subclass. Under TK2, layout
+        // fragments (including `CenteredImageCell` / `TableLayoutFragment`)
+        // re-compute on the next pass when the container width changes.
+        // A redisplay is enough to flush cached draw output.
+        needsDisplay = true
     }
 
     public func getInsetWidth() -> CGFloat {

@@ -50,11 +50,9 @@ class PDFExporter: NSObject {
         textView: EditTextView,
         textContainer: NSTextContainer
     ) -> NSRect {
-        if let layoutManager = textView.layoutManagerIfTK1 {
-            layoutManager.ensureLayout(for: textContainer)
-            return layoutManager.usedRect(for: textContainer)
-        }
-
+        // Phase 4.5: TK1 `NSLayoutManager.usedRect(for:)` path removed
+        // with the custom layout-manager subclass. The app is TK2-only.
+        _ = textContainer
         if let tlm = textView.textLayoutManager {
             return measureUsedRectTK2(tlm: tlm)
         }

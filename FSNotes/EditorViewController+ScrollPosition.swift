@@ -25,11 +25,10 @@ extension EditorViewController {
     }
     
     func restoreScrollPosition() {
-        // Phase 2a: TK1-only scroll-position restoration via glyph math.
-        // Phase 2f.4: TK2 restoration via `NSTextLayoutFragment` frame
-        // lookup against `NSTextContentStorage.location(_:offsetBy:)`,
-        // plus the y-offset *within* the saved fragment so mid-fragment
-        // restores don't snap to the fragment origin.
+        // Phase 4.5: TK1 glyph-math restoration removed with the custom
+        // layout-manager subclass. Under TK2 we resolve the layout
+        // fragment containing the saved character offset and add the
+        // saved y-offset within the fragment.
         guard let textView = vcEditor,
               let charIndex = textView.note?.scrollPosition
         else {
@@ -38,24 +37,7 @@ extension EditorViewController {
         }
 
         let savedYOffset = textView.note?.scrollOffset ?? 0
-
-        if let layoutManager = textView.layoutManagerIfTK1,
-           let textContainer = textView.textContainer {
-            layoutManager.ensureLayout(for: textContainer)
-
-            let glyphIndex = layoutManager.glyphIndexForCharacter(at: charIndex)
-            let rect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1),
-                                                  in: textContainer)
-
-            // Preserve sub-glyph y-offset so wrapped-paragraph scrolls
-            // don't snap to the paragraph's first glyph — parity with the
-            // TK2 branch and with the iOS restore path.
-            textView.scroll(NSPoint(x: rect.origin.x, y: rect.origin.y + savedYOffset))
-        } else {
-            // TK2 branch — use the layout fragment containing the saved
-            // character offset, plus the saved y-offset within it.
-            scrollToCharOffsetTK2(charIndex, yOffsetWithinFragment: savedYOffset)
-        }
+        scrollToCharOffsetTK2(charIndex, yOffsetWithinFragment: savedYOffset)
 
         textView.isScrollPositionSaverLocked = false
     }
@@ -65,27 +47,11 @@ extension EditorViewController {
 
         guard let textView = vcEditor, !textView.isScrollPositionSaverLocked else { return }
 
-        if let layoutManager = textView.layoutManagerIfTK1,
-           let textContainer = textView.textContainer {
-            // Phase 2a: TK1 glyph math.
-            let visibleRect = textView.enclosingScrollView!.contentView.bounds
-            let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect,
-                                                       in: textContainer)
-            let charIndex = layoutManager.characterIndexForGlyph(at: glyphRange.location)
-            let glyphRect = layoutManager.boundingRect(
-                forGlyphRange: NSRange(location: glyphRange.location, length: 1),
-                in: textContainer
-            )
-
-            textView.note?.scrollPosition = charIndex
-            // Record how far past the glyph origin the clip top actually
-            // sits so restore can reproduce it exactly — mirrors the iOS
-            // path (see FSNotes iOS/EditorViewController.swift:1597-1598).
-            textView.note?.scrollOffset = visibleRect.origin.y - glyphRect.minY
-        } else if let saved = scrollPositionTK2() {
-            // Phase 2f.4: TK2 branch — resolve the fragment at the top of
-            // the visible area, record its element's character offset and
-            // the sub-fragment y offset.
+        // Phase 4.5: TK1 glyph-math scroll recording removed with the
+        // custom layout-manager subclass. TK2 path resolves the fragment
+        // at the top of the visible area and records its element's
+        // character offset + the sub-fragment y offset.
+        if let saved = scrollPositionTK2() {
             textView.note?.scrollPosition = saved.charOffset
             textView.note?.scrollOffset = saved.yOffsetWithinFragment
         }

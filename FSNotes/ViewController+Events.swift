@@ -302,16 +302,14 @@ extension ViewController {
 
             editor.note?.setSelectedRange(range: textView.selectedRange())
 
-            // Phase 2a: TK1-only — the custom LayoutManager subclass is
-            // not wired on TK2 yet, so skip gutter cursor tracking there.
-            if let editView = textView as? EditTextView,
-               let layoutManager = editView.layoutManagerIfTK1 as? LayoutManager {
-                let oldCursor = layoutManager.cursorCharIndex
-                let newCursor = textView.selectedRange().location
-                layoutManager.cursorCharIndex = newCursor
-                if oldCursor != newCursor {
-                    textView.needsDisplay = true
-                }
+            // Phase 4.5: TK1 `cursorCharIndex` gutter tracking removed with
+            // the custom layout-manager subclass. The TK2 gutter
+            // (`drawIconsTK2`) reads the current cursor from
+            // `textView.selectedRange()` on each draw; a redisplay on
+            // selection change is enough to refresh H-badges / fold
+            // carets when the cursor leaves/enters a heading line.
+            if let editView = textView as? EditTextView {
+                editView.needsDisplay = true
             }
         }
 

@@ -109,15 +109,19 @@ Here is a paragraph with **bold**, *italic*, `code`, and a [link](https://exampl
 // MARK: - NSTextView Renderer
 
 private class TextViewRenderer {
-    /// Render markdown through FSNotes' NotesTextProcessor and LayoutManager,
-    /// capturing the result as an NSImage.
+    /// Render markdown through FSNotes' NotesTextProcessor and a base
+    /// NSLayoutManager, capturing the result as an NSImage.
+    ///
+    /// Phase 4.5: previously used the custom `LayoutManager` subclass
+    /// (bullets, HR lines, kbd boxes via `drawBackground`). Those
+    /// visuals now live in TK2 layout fragments, so this comparison
+    /// renderer falls back to the base `NSLayoutManager`; the image
+    /// will lack those embellishments.
     func render(markdown: String) -> NSImage? {
         // Set up NSTextStorage with the markdown content
         let textStorage = NSTextStorage(string: markdown)
 
-        // Create the custom LayoutManager (same as FSNotes uses)
-        let layoutManager = LayoutManager()
-        layoutManager.delegate = layoutManager
+        let layoutManager = NSLayoutManager()
         textStorage.addLayoutManager(layoutManager)
 
         // Create a text container matching our render width

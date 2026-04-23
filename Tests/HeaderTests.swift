@@ -216,7 +216,11 @@ class HeaderTests: XCTestCase {
     private func makeFullPipelineEditor() -> EditTextView {
         let frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         let container = NSTextContainer(size: frame.size)
-        let layoutManager = LayoutManager()
+        // Phase 4.5: TK1 `LayoutManager` subclass deleted. Use the base
+        // `NSLayoutManager` — the subclass's measurement helpers aren't
+        // needed for the `runFullPipeline` SourceRenderer path this
+        // test exercises.
+        let layoutManager = NSLayoutManager()
         layoutManager.addTextContainer(container)
         let storage = NSTextStorage()
         storage.addLayoutManager(layoutManager)

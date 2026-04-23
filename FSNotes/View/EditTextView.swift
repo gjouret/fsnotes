@@ -55,9 +55,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             storage.updateParagraphStyle(range: range)
         }
 
-        // Phase 2a: use TK1-safe accessor (reading .layoutManager on
-        // a TK2 view silently tears down the TK2 wiring).
-        layoutManagerIfTK1?.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        // Phase 4.5: TK1 invalidateLayout call removed with the custom
+        // layout-manager subclass. The app is TK2-only post-4.4; this line
+        // was always a no-op. Source-mode re-layout rides
+        // `refillEditArea(force:)` via `SourceRenderer`.
     }
 
     /// Phase 2f.1 — TK2 layout invalidation for a character range.
@@ -181,54 +182,25 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// descent + leading below the glyph, which would draw the
     /// selection ring's bottom edge under the image.
     public func imageAttachmentRect(forRange range: NSRange) -> NSRect? {
-        // Phase 2a: TK1-only glyph query. Returns nil under TK2 —
-        // callers (image selection handle drawing) tolerate nil and
-        // fall through to no-op. TK2 image hit-test lands in 2c/2d.
-        guard let lm = layoutManagerIfTK1,
-              let tc = textContainer,
-              let storage = textStorage,
-              range.location < storage.length,
-              let attachment = storage.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment
-        else { return nil }
-        let imageBounds = attachment.bounds
-        guard imageBounds.width > 0, imageBounds.height > 0 else { return nil }
-
-        // Force layout through the attachment glyph before querying.
-        // A freshly-spliced attachment may not have had its glyph
-        // position computed yet; without this, boundingRect returns
-        // stale/zero values.
-        lm.ensureLayout(forCharacterRange: range)
-
-        let glyphRange = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        guard glyphRange.length > 0 else { return nil }
-        let glyphIndex = glyphRange.location
-
-        let drawingRect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
-        let fragment = lm.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
-        let glyphLoc = lm.location(forGlyphAt: glyphIndex)
-        let baselineY = fragment.origin.y + glyphLoc.y
-
-        let left = drawingRect.origin.x + imageBounds.origin.x
-        let top  = baselineY - imageBounds.height - imageBounds.origin.y
-
-        var rect = NSRect(x: left, y: top, width: imageBounds.width, height: imageBounds.height)
-        rect.origin.x += textContainerOrigin.x
-        rect.origin.y += textContainerOrigin.y
-        return rect
+        // Phase 4.5: TK1 glyph-query path removed with the custom
+        // layout-manager subclass. Under TK2 the equivalent hit-test
+        // lives on the image element's NSTextLayoutFragment — this
+        // getter returns nil and callers (image selection handle
+        // drawing) fall through to no-op.
+        _ = range
+        return nil
     }
 
     /// Invalidate the display rectangle around an image attachment's
     /// bounding rect, expanded by the handle half-size so stale corner
     /// handles get repainted cleanly.
     private func invalidateImageSelectionHandles(for range: NSRange) {
-        // Phase 2a: TK1-only. TK2 image selection handling is a 2c/2d item.
-        guard let lm = layoutManagerIfTK1, let tc = textContainer else { return }
-        let glyphRange = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        var rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
-        rect.origin.x += textContainerOrigin.x
-        rect.origin.y += textContainerOrigin.y
-        // Pad for handle size (6pt handle + 2pt ring slack).
-        setNeedsDisplay(rect.insetBy(dx: -12, dy: -12))
+        // Phase 4.5: TK1 glyph-rect query was removed with the custom
+        // layout-manager subclass. TK2 handle invalidation rides the
+        // image element's NSTextLayoutFragment. For now, request a
+        // best-effort full-view redisplay.
+        _ = range
+        needsDisplay = true
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -283,102 +255,12 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             gutterController.drawIcons(in: dirtyRect)
         }
 
-        guard UserDefaultsManagement.inlineTags else { return }
-
-        if #available(OSX 10.16, *) {
-            // Phase 2a: inline-tag chip drawing is TK1-only. Under TK2 the
-            // draw() path skips chip rendering entirely — the tags still
-            // render as inline attributed text (foreground color + font),
-            // just without the rounded chip background. Full TK2 inline
-            // chip drawing will be reinstated in 2c/2d via a custom
-            // NSTextLayoutFragment / NSTextViewportLayoutController hook.
-            guard let textStorage = self.textStorage,
-                  let layoutManager = self.layoutManagerIfTK1
-            else { return }
-
-            let fullRange = NSRange(location: 0, length: textStorage.length)
-
-            attributedString().enumerateAttributes(in: fullRange, options: .reverse) { attributes, range, _ in
-                guard range.location >= 0,
-                      range.location + range.length <= textStorage.length else { return }
-                
-                guard attributes.index(forKey: .tag) != nil,
-                      let font = attributes[.font] as? NSFont
-                else { return }
-
-                let tag = attributedString().attributedSubstring(from: range).string
-                let tagAttributes = attributedString().attributes(at: range.location, effectiveRange: nil)
-
-                let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-                
-                let ascent = font.ascender
-                let descent = abs(font.descender)
-                let fontHeight = ascent + descent
-
-                layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { rect, usedRect, textContainer, lineGlyphRange, stop in
-
-                    let intersectionRange = NSIntersectionRange(glyphRange, lineGlyphRange)
-                    guard intersectionRange.length > 0 else { return }
-                    
-                    var fragmentRect = layoutManager.boundingRect(forGlyphRange: intersectionRange, in: textContainer)
-                    
-                    fragmentRect.origin.x += self.textContainerOrigin.x
-                    fragmentRect.origin.y += self.textContainerOrigin.y
-                    fragmentRect = self.convertToLayer(fragmentRect)
-                    fragmentRect = fragmentRect.integral
-
-                    let verticalInset = max(0, (fragmentRect.height - fontHeight) / 2)
-                    var tagRect = NSRect(
-                        x: fragmentRect.minX,
-                        y: fragmentRect.minY + verticalInset,
-                        width: fragmentRect.width - 3,
-                        height: fontHeight
-                    )
-
-                    let oneCharSize = ("A" as NSString).size(withAttributes: tagAttributes)
-                    tagRect.size.width += oneCharSize.width * 0.25
-                    tagRect = tagRect.integral
-
-                    NSGraphicsContext.saveGraphicsState()
-                    let path = NSBezierPath(roundedRect: tagRect, xRadius: 3, yRadius: 3)
-                    NSColor.tagColor.setFill()
-                    path.fill()
-
-                    let fragmentCharRange = layoutManager.characterRange(forGlyphRange: intersectionRange, actualGlyphRange: nil)
-                    let fragmentText = (tag as NSString).substring(with: NSRange(
-                        location: fragmentCharRange.location - range.location,
-                        length: fragmentCharRange.length
-                    ))
-
-                    var drawAttrs = tagAttributes
-                    drawAttrs[.font] = font
-                    drawAttrs[.foregroundColor] = NSColor.white
-                    drawAttrs.removeValue(forKey: .link)
-                    drawAttrs.removeValue(forKey: .baselineOffset)
-
-                    let baselineOrigin = NSPoint(x: tagRect.minX, y: tagRect.minY + descent - 3)
-
-                    (fragmentText as NSString).draw(at: baselineOrigin, withAttributes: drawAttrs)
-
-                    NSGraphicsContext.restoreGraphicsState()
-                }
-            }
-        }
-    }
-
-    /// Phase 2a: Safe accessor for the TextKit 1 `NSLayoutManager`. Returns
-    /// `nil` when the view is wired to TextKit 2 (i.e. `textLayoutManager`
-    /// is non-nil). Reading `NSTextView.layoutManager` directly on a
-    /// TK2 view lazily instantiates a TK1 compatibility shim, which
-    /// PERMANENTLY tears down `textLayoutManager` with no way to recover.
-    /// Every call site that needs `NSLayoutManager` in order to use a
-    /// TK1-only API must go through this accessor and treat `nil` as
-    /// "we are on TK2 — skip the TK1 codepath". This property is the
-    /// only place `self.layoutManager` may legitimately be read inside
-    /// the app. Grep for `self.layoutManager` / `layoutManager?.` to
-    /// audit new uses.
-    var layoutManagerIfTK1: NSLayoutManager? {
-        return textLayoutManager == nil ? layoutManager : nil
+        // Phase 4.5: TK1 inline-tag chip drawing removed with the custom
+        // layout-manager subclass (it used `enumerateLineFragments` +
+        // `boundingRect`). Under TK2 tags still render as inline
+        // attributed text (tag color + font); the rounded chip
+        // background will be reinstated via a custom
+        // `NSTextLayoutFragment` hook in a later slice.
     }
 
     /// Phase 2a: build a text container pre-bound to an
@@ -561,18 +443,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         textContainerInset.height = 10
         isEditable = false
 
-        let isOpenedWindow = window?.contentViewController as? NoteViewController != nil
-
-        // Phase 2a: TK1-only knobs. TK2's NSTextLayoutManager manages its
-        // own viewport-based layout and doesn't expose these. The TK2
-        // equivalents live on `textLayoutManager` directly; for now we
-        // accept default TK2 behaviour in those paths.
-        layoutManagerIfTK1?.allowsNonContiguousLayout =
-            isOpenedWindow
-                ? false
-                : UserDefaultsManagement.nonContiguousLayout
-
-        layoutManagerIfTK1?.defaultAttachmentScaling = .scaleProportionallyDown
+        // Phase 4.5: TK1-only knobs (`allowsNonContiguousLayout`,
+        // `defaultAttachmentScaling`) removed with the custom
+        // layout-manager subclass. TK2's `NSTextLayoutManager` manages
+        // its own viewport-based layout and attachment scaling; for now
+        // we accept the default TK2 behaviour.
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
@@ -582,18 +457,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     }
 
     public func invalidateLayout() {
-        // Phase 2a: route through the TK1-safe accessor. Previously this
-        // read `textStorage.layoutManagers.first`, which under TK2 is
-        // empty (no TK1 NSLayoutManager attached) — safe, but relying on
-        // that empty-collection quirk was fragile. TK2 viewport layout
-        // invalidation is an NSTextViewportLayoutController concern and
-        // lands in 2c.
-        guard let lm = layoutManagerIfTK1,
-              let length = self.textStorage?.length else { return }
-        lm.invalidateLayout(
-            forCharacterRange: NSRange(location: 0, length: length),
-            actualCharacterRange: nil
-        )
+        // Phase 4.5: TK1 `NSLayoutManager.invalidateLayout` call removed
+        // with the custom layout-manager subclass. Under TK2 the
+        // `NSTextLayoutManager` viewport controller invalidates lazily;
+        // callers that need a document-wide refresh should use
+        // `invalidateTextKit2Layout(forCharacterRange:)` with the full
+        // range (or set `needsDisplay = true` for a draw-only refresh).
+        needsDisplay = true
     }
 
     private var lastLayoutWidth: CGFloat = 0
@@ -607,20 +477,15 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         lastLayoutWidth = newSize.width
     }
 
-    /// Force NSLayoutManager to re-query cellFrame(for:...) on rendered block
+    /// Force the layout stack to re-query cellFrame(for:...) on rendered block
     /// attachments (mermaid/math images) after a width change so they can shrink/grow.
     private func invalidateRenderedBlockAttachmentLayout() {
-        // Phase 2a: rendered block attachment layout invalidation is
-        // TK1-only. TK2 attachment re-layout on width change lands in
-        // 2d with the NSTextLayoutFragment override path.
-        guard let storage = textStorage, let lm = layoutManagerIfTK1 else { return }
-        let full = NSRange(location: 0, length: storage.length)
-        storage.enumerateAttribute(.attachment, in: full, options: []) { value, range, _ in
-            guard value is NSTextAttachment else { return }
-            if storage.attribute(.renderedBlockSource, at: range.location, effectiveRange: nil) != nil {
-                lm.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
-            }
-        }
+        // Phase 4.5: TK1 `invalidateLayout` path removed with the custom
+        // layout-manager subclass. Under TK2 the rendered-block
+        // `NSTextLayoutFragment` subclasses re-layout themselves on
+        // each pass when the container width changes; this hook remains
+        // as a no-op anchor so future TK2-specific invalidation can
+        // slot in.
     }
 
     func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, sharingServicesForItems items: [Any], proposedSharingServices proposedServices: [NSSharingService]) -> [NSSharingService] {
@@ -773,13 +638,11 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
            let fe = window.fieldEditor(false, for: nil) as? NSTextView,
            fe !== self,
            fe.delegate is NSTextField {
-            // Phase 2a: diagnostic-only; under TK2 this simply logs .zero.
-            let rect = layoutManagerIfTK1?.boundingRect(
-                forGlyphRange: layoutManagerIfTK1?.glyphRange(
-                    forCharacterRange: range, actualCharacterRange: nil
-                ) ?? NSRange(location: 0, length: 0),
-                in: textContainer!
-            ) ?? .zero
+            // Phase 4.5: TK1 glyph-rect readout removed with the custom
+            // layout-manager subclass. Under TK2 diagnostic glyph math
+            // would need an `NSTextLayoutFragment` lookup; for now the
+            // log just records the logical range + visible rect.
+            let rect: NSRect = .zero
             let visible = visibleRect
             let logDir = URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("log")

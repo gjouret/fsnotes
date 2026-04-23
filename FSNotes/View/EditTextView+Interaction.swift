@@ -172,54 +172,11 @@ extension EditTextView {
             y: point.y - textContainerInset.height
         )
 
-        // Phase 2a: TK1-only cursor hit-testing. The TK2 equivalent is
-        // `NSTextLayoutManager.textLayoutFragment(for:)` — see
-        // `characterIndexTK2(at:)` below for the TK2 fallback branch.
-        if let container = self.textContainer,
-           let manager = self.layoutManagerIfTK1,
-           let textStorage = self.textStorage {
-            let index = manager.characterIndex(for: properPoint, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
-
-            guard index < textStorage.length else { return }
-
-            let glyphRect = manager.boundingRect(forGlyphRange: NSRange(location: index, length: 1), in: container)
-
-            if glyphRect.contains(properPoint), self.isTodo(index) || self.hasAttachment(at: index) {
-                NSCursor.pointingHand.set()
-                return
-            }
-
-            if glyphRect.contains(properPoint),
-               let link = textStorage.attribute(.link, at: index, effectiveRange: nil) {
-                if textStorage.attribute(.tag, at: index, effectiveRange: nil) != nil {
-                    NSCursor.pointingHand.set()
-                    return
-                }
-
-                if NotesTextProcessor.hideSyntax {
-                    NSCursor.pointingHand.set()
-                    return
-                }
-
-                if link as? URL != nil {
-                    if UserDefaultsManagement.clickableLinks
-                        || event.modifierFlags.contains(.command)
-                        || event.modifierFlags.contains(.shift) {
-                        NSCursor.pointingHand.set()
-                        return
-                    }
-
-                    NSCursor.iBeam.set()
-                    return
-                }
-            }
-
-            super.mouseMoved(with: event)
-            return
-        }
-
-        // Phase 2f.3: TK2 fallback — use NSTextLayoutManager to
-        // resolve the point to a character index, then read the
+        // Phase 4.5: TK1 cursor hit-testing removed with the custom
+        // layout-manager subclass. TK2 path below uses
+        // `NSTextLayoutManager.textLayoutFragment(for:)` via
+        // `characterIndexTK2(at:)` to resolve the point to a character,
+        // then reads the
         // `.link` / `.tag` / checkbox attributes off the text storage
         // just like the TK1 branch above. Glyph-rect containment
         // checks are skipped because TK2 doesn't expose a glyph bbox
@@ -268,12 +225,13 @@ extension EditTextView {
     /// `NSLayoutManager.characterIndex(for:in:fractionOfDistanceBetweenInsertionPoints:)`.
     ///
     /// Resolves a point in text-container coordinates to a character
-    /// offset into `textStorage`. Returns `nil` when the view is not
-    /// on TK2, when no layout fragment exists at that y-band, or
-    /// when the point falls between line fragments.
+    /// offset into `textStorage`. Returns `nil` when no layout fragment
+    /// exists at that y-band, or when the point falls between line
+    /// fragments.
     ///
-    /// Under TK1 the caller should go through the `layoutManagerIfTK1`
-    /// path — this helper is the TK2 fallback only.
+    /// Post-4.5 this is the only hit-test path — the TK1
+    /// NSLayoutManager.characterIndex path was removed with the custom
+    /// layout-manager subclass.
     func characterIndexTK2(at point: NSPoint) -> Int? {
         guard let tlm = self.textLayoutManager,
               let fragment = tlm.textLayoutFragment(for: point) else {
@@ -309,45 +267,9 @@ extension EditTextView {
     private func updateCursorForMouse(at event: NSEvent) {
         let pointInView = self.convert(event.locationInWindow, from: nil)
 
-        // Phase 2a: TK1 link-hover cursor detection.
-        if let container = self.textContainer,
-           let manager = self.layoutManagerIfTK1,
-           let textStorage = self.textStorage {
-            let pointInContainer = NSPoint(
-                x: pointInView.x - textContainerInset.width,
-                y: (self.bounds.size.height - pointInView.y) - textContainerInset.height
-            )
-
-            let index = manager.characterIndex(
-                for: pointInContainer,
-                in: container,
-                fractionOfDistanceBetweenInsertionPoints: nil
-            )
-
-            guard index < textStorage.length else {
-                NSCursor.iBeam.set()
-                return
-            }
-
-            if let link = textStorage.attribute(.link, at: index, effectiveRange: nil) {
-                if textStorage.attribute(.tag, at: index, effectiveRange: nil) != nil {
-                    NSCursor.pointingHand.set()
-                } else if link as? URL != nil {
-                    if UserDefaultsManagement.clickableLinks
-                        || NSEvent.modifierFlags.contains(.command)
-                        || NSEvent.modifierFlags.contains(.shift) {
-                        NSCursor.pointingHand.set()
-                    } else {
-                        NSCursor.iBeam.set()
-                    }
-                }
-            } else {
-                NSCursor.iBeam.set()
-            }
-            return
-        }
-
-        // Phase 2f.3: TK2 fallback — resolve via NSTextLayoutManager.
+        // Phase 4.5: TK1 link-hover cursor detection removed with the
+        // custom layout-manager subclass. TK2 path resolves via
+        // NSTextLayoutManager.
         // `characterIndexTK2` expects a point in text-container coords
         // (NOT flipped), matching the `mouseMoved` entry point above.
         guard let textStorage = self.textStorage else { return }
@@ -445,15 +367,14 @@ extension EditTextView {
     }
 
     private func handleRenderedBlockClick(_ event: NSEvent) -> Bool {
-        // Phase 2a: rendered-block click hit-testing is TK1-only. Block
-        // attachments don't render under TK2 yet (accepted 2a regression).
-        guard let storage = textStorage,
-              let container = self.textContainer,
-              let manager = self.layoutManagerIfTK1 else { return false }
+        // Phase 4.5: TK1 glyph hit-test removed with the custom
+        // layout-manager subclass. TK2 path resolves via
+        // `characterIndexTK2(at:)`.
+        guard let storage = textStorage else { return false }
 
         let point = self.convert(event.locationInWindow, from: nil)
         let properPoint = NSPoint(x: point.x - textContainerInset.width, y: point.y)
-        let index = manager.characterIndex(for: properPoint, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+        guard let index = characterIndexTK2(at: properPoint) else { return false }
 
         guard index < storage.length else { return false }
 
@@ -513,15 +434,14 @@ extension EditTextView {
     }
 
     private func handleTodo(_ event: NSEvent) -> Bool {
-        guard let container = self.textContainer,
-              let manager = self.layoutManagerIfTK1 else { return false }
-
+        // Phase 4.5: TK1 glyph hit-test removed with the custom
+        // layout-manager subclass. TK2 path uses `characterIndexTK2`,
+        // which only resolves when the point is inside a line fragment —
+        // so the explicit glyph-rect containment check is no longer
+        // needed (the fragment lookup already guarantees it).
         let point = self.convert(event.locationInWindow, from: nil)
         let properPoint = NSPoint(x: point.x - textContainerInset.width, y: point.y)
-        let index = manager.characterIndex(for: properPoint, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
-        let glyphRect = manager.boundingRect(forGlyphRange: NSRange(location: index, length: 1), in: container)
-
-        guard glyphRect.contains(properPoint) else { return false }
+        guard let index = characterIndexTK2(at: properPoint) else { return false }
 
         if isTodo(index) {
             // Block-model path: toggle via EditingOps.
@@ -546,19 +466,17 @@ extension EditTextView {
     }
 
     private func handleClick(_ event: NSEvent) {
-        // Phase 2a: click hit-testing uses TK1 API. The basic text
-        // caret positioning is handled by NSTextView's default mouse
-        // handling under TK2 — this function only runs for specialized
-        // hit-testing (attachments, todos, links) which is TK1-only.
-        guard let container = self.textContainer,
-              let manager = self.layoutManagerIfTK1 else { return }
-
+        // Phase 4.5: TK1 click hit-testing removed with the custom
+        // layout-manager subclass. TK2 path uses `characterIndexTK2`,
+        // which only returns a valid index when the click is inside a
+        // line fragment — `hitInsideAttachment` is derived from whether
+        // the resolved character carries an `.attachment` attribute.
         let point = self.convert(event.locationInWindow, from: nil)
         let properPoint = NSPoint(x: point.x - textContainerInset.width, y: point.y)
-        let index = manager.characterIndex(for: properPoint, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
-        let glyphRect = manager.boundingRect(forGlyphRange: NSRange(location: index, length: 1), in: container)
+        guard let index = characterIndexTK2(at: properPoint) else { return }
 
-        let hitInsideAttachment = glyphRect.contains(properPoint)
+        let hitInsideAttachment = hasAttachment(at: index) ||
+            (textStorage?.attribute(.attachment, at: index, effectiveRange: nil) as? NSTextAttachment) != nil
 
         // Image attachment: single click selects, double click opens.
         // The selection is ephemeral view state — nothing is written to
@@ -680,86 +598,17 @@ extension EditTextView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let drag = currentImageDrag else {
+        guard currentImageDrag != nil else {
             super.mouseDragged(with: event)
             return
         }
-        // Phase 2a TK2-safety (2026-04-22): bare `layoutManager` was an
-        // implicit `self.layoutManager` read that silently downgrades
-        // TK2 → TK1 on TK2-wired views (see `reflowAttachmentsForWidthChange`
-        // for the full rationale). Route through `layoutManagerIfTK1`
-        // so a TK2 view short-circuits the TK1 glyph-invalidation dance
-        // below. Image resize drag is TK1-only today — TK2 needs a
-        // separate invalidation path using NSTextLayoutManager APIs,
-        // and landing that is a later phase. Until then, under TK2 the
-        // drag bails out here and the user's mouse movement has no
-        // visual effect.
-        guard let storage = textStorage,
-              drag.range.location < storage.length,
-              let attachment = storage.attribute(.attachment, at: drag.range.location, effectiveRange: nil) as? NSTextAttachment,
-              let lm = layoutManagerIfTK1
-        else { return }
-
-        let point = convert(event.locationInWindow, from: nil)
-        let dx = point.x - drag.startMouse.x
-
-        // Compute proposed new width from the corner the user
-        // grabbed. Aspect is locked — height is always derived from
-        // width. Only corner handles exist (no edge midpoints).
-        var newWidth: CGFloat
-        switch drag.handle {
-        case .topLeft, .bottomLeft:
-            // Left corners: drag left → grow.
-            newWidth = drag.startBounds.width - dx
-        case .topRight, .bottomRight:
-            // Right corners: drag right → grow.
-            newWidth = drag.startBounds.width + dx
-        }
-
-        // Clamp: minimum 20pt so handles remain grabbable; maximum
-        // container width so the image never overflows the text column.
-        let maxWidth = imageContainerMaxWidth()
-        newWidth = max(20, min(maxWidth, newWidth))
-        let newHeight = newWidth * drag.aspect
-
-        // Live visual update. No EditingOps call — this runs dozens
-        // of times per drag and we don't want to rebuild the Document
-        // on every mouse move. The projection is updated once on
-        // mouseUp. Two things MUST change for a live resize:
-        //   1. attachment.bounds — controls the draw rect.
-        //   2. cell.image.size — controls cellSize(), which
-        //      NSLayoutManager queries to place the glyph in its
-        //      line fragment. Updating bounds alone leaves the cell
-        //      reporting the ORIGINAL size, so the layout slot stays
-        //      full-size and the selection ring (which asks
-        //      NSLayoutManager for the glyph rect) draws at the old
-        //      size while the image shrinks inside it.
-        let newSize = NSSize(width: newWidth, height: newHeight)
-        attachment.bounds = NSRect(origin: .zero, size: newSize)
-        if let cell = attachment.attachmentCell as? FSNTextAttachmentCell,
-           let image = cell.image {
-            image.size = newSize
-        }
-        storage.edited(.editedAttributes, range: drag.range, changeInLength: 0)
-
-        // Full invalidation from the attachment forward — mirrors the
-        // pattern in applyEditResultWithUndo. Narrower ranges leave
-        // NSLayoutManager's line-fragment glyph-position cache intact,
-        // so the centered image doesn't actually re-center on each
-        // drag tick. We invalidate glyphs, then layout, then force
-        // re-layout and re-display.
-        let start = drag.range.location
-        let affectedRange = NSRange(location: start, length: max(0, storage.length - start))
-        lm.invalidateGlyphs(
-            forCharacterRange: affectedRange,
-            changeInLength: 0,
-            actualCharacterRange: nil
-        )
-        lm.invalidateLayout(forCharacterRange: affectedRange, actualCharacterRange: nil)
-        lm.ensureLayout(forCharacterRange: affectedRange)
-        let glyphRange = lm.glyphRange(forCharacterRange: affectedRange, actualCharacterRange: nil)
-        lm.invalidateDisplay(forGlyphRange: glyphRange)
-        needsDisplay = true
+        // Phase 4.5: TK1 live-resize invalidation dance (invalidateGlyphs /
+        // invalidateLayout / invalidateDisplay on `NSLayoutManager`)
+        // removed with the custom layout-manager subclass. Live image
+        // resize mid-drag requires a TK2-native `NSTextLayoutManager`
+        // invalidation path; the drag state is still tracked so
+        // `mouseUp` can commit the final width, but there is no visual
+        // update while the user drags.
     }
 
     override func mouseUp(with event: NSEvent) {

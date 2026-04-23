@@ -310,13 +310,15 @@ class PreferencesEditorViewController: NSViewController {
 
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
-            if let evc = editor.editorViewController {
+            if editor.editorViewController != nil {
                 NotesTextProcessor.resetCaches()
 
-                if let lm = evc.vcEditor?.layoutManager as? LayoutManager {
-                    lm.lineHeightMultiple = CGFloat(UserDefaultsManagement.lineHeightMultiple)
-                    lm.refreshLayoutSoftly()
-                }
+                // Phase 4.5: TK1 `LayoutManager.lineHeightMultiple` +
+                // `refreshLayoutSoftly` path removed with the custom
+                // subclass. Under TK2, line-height changes flow through
+                // the renderer (Theme / DocumentRenderer); a full refill
+                // applies them.
+                editor.editorViewController?.refillEditArea(force: true)
             }
         }
     }

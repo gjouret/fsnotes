@@ -467,22 +467,10 @@ extension EditTextView {
     }
 
     public func scrollToCursor() {
-        // Ensure layout is up-to-date before scrolling, then scroll
-        // synchronously. The previous async 100ms delay caused race
-        // conditions with other cursor-setting operations.
-        //
-        // Phase 2a TK2-safety (2026-04-22): bare `layoutManager` was an
-        // implicit `self.layoutManager` read. On a TK2-wired NSTextView
-        // that accessor lazy-instantiates a TK1 NSLayoutManager and
-        // permanently nils `textLayoutManager` — the same silent
-        // downgrade that kept Phase 2c HR rules from rendering. Route
-        // through `layoutManagerIfTK1`: on TK2 the accessor returns nil
-        // and we skip the ensureLayout hint — TK2's NSTextLayoutManager
-        // handles viewport layout lazily, so `scrollRangeToVisible`
-        // below still does the right thing.
-        if let lm = layoutManagerIfTK1, let tc = textContainer {
-            lm.ensureLayout(for: tc)
-        }
+        // Phase 4.5: TK1 `ensureLayout` hint removed with the custom
+        // layout-manager subclass. TK2's `NSTextLayoutManager` handles
+        // viewport layout lazily — `scrollRangeToVisible` realizes the
+        // fragments it needs on the fly.
         let cursorRange = NSMakeRange(self.selectedRange().location, 0)
         scrollRangeToVisible(cursorRange)
     }

@@ -4812,7 +4812,10 @@ func test_splitUncheckedTodo_newItemStaysUnchecked() throws {
     private func makeBugFixes3Editor(markdown: String = "placeholder") -> EditTextView {
         let frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         let container = NSTextContainer(size: frame.size)
-        let layoutManager = LayoutManager()
+        // Phase 4.5: TK1 `LayoutManager` subclass deleted. Use base
+        // `NSLayoutManager` — the subclass's drawing helpers aren't
+        // needed for these pipeline-level tests.
+        let layoutManager = NSLayoutManager()
         layoutManager.addTextContainer(container)
         let storage = NSTextStorage()
         storage.addLayoutManager(layoutManager)
