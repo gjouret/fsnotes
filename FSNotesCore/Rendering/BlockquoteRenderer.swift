@@ -23,20 +23,25 @@ import UIKit
 
 public enum BlockquoteRenderer {
 
-    /// Must match BlockquoteBorderDrawer's barSpacing (10pt per bar).
-    /// Offset = initial padding (2pt before first bar) + depth * barSpacing + gap after last bar.
-    private static let barInitialOffset: CGFloat = 2
-    private static let barSpacing: CGFloat = 10
-    private static let barWidth: CGFloat = 4
-    private static let gapAfterBars: CGFloat = 4
-
     /// Compute the left indentation needed to clear the vertical bars
-    /// drawn by BlockquoteBorderDrawer for a given nesting depth.
-    private static func leftIndent(for level: Int) -> CGFloat {
+    /// drawn by `BlockquoteLayoutFragment` / `BlockquoteBorderDrawer`
+    /// for a given nesting depth.
+    ///
+    /// Phase 7.3: bar geometry reads from `theme.chrome.*` (same fields
+    /// consumed by `BlockquoteLayoutFragment`). Default-theme values
+    /// match the pre-theme hardcoded constants byte-for-byte, so
+    /// `theme: .shared` is a visual no-op. `blockquoteGapAfterBars` is
+    /// a flat field on `BlockStyleTheme` (not migrated to nested chrome
+    /// in 7.1) — consumed directly here.
+    private static func leftIndent(for level: Int, theme: Theme) -> CGFloat {
+        guard level > 0 else { return 0 }
         // Bars are drawn at: baseX + i*barSpacing, for i in 0..<level.
         // Rightmost bar right edge = barInitialOffset + (level-1)*barSpacing + barWidth.
         // Add a gap so text doesn't touch the last bar.
-        guard level > 0 else { return 0 }
+        let barInitialOffset = theme.chrome.blockquoteBarInitialOffset
+        let barSpacing = theme.chrome.blockquoteBarSpacing
+        let barWidth = theme.chrome.blockquoteBarWidth
+        let gapAfterBars = theme.blockquoteGapAfterBars
         return barInitialOffset + CGFloat(level - 1) * barSpacing + barWidth + gapAfterBars
     }
 
@@ -64,7 +69,7 @@ public enum BlockquoteRenderer {
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
                 out.addAttribute(.blockquote, value: qLine.level, range: lineRange)
 
-                let indent = leftIndent(for: qLine.level)
+                let indent = leftIndent(for: qLine.level, theme: theme)
                 let paraStyle = NSMutableParagraphStyle()
                 paraStyle.headIndent = indent
                 paraStyle.firstLineHeadIndent = indent

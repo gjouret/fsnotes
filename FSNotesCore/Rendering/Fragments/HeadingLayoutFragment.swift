@@ -22,20 +22,37 @@ import AppKit
 
 public final class HeadingLayoutFragment: NSTextLayoutFragment {
 
-    // MARK: - Drawing constants (must match LayoutManager.drawHeaderBottomBorders)
+    // MARK: - Drawing constants (phase 7.3 — read from Theme.shared)
+    //
+    // These are static computed properties so existing external
+    // references (`HeadingLayoutFragment.borderColor`) and the live
+    // drawing path both read the same theme-backed values. The
+    // `ThemeColors.headingBorder` / `ThemeChrome.headingBorder*` default
+    // values in `ThemeSchema.swift` match the pre-theme hardcoded
+    // constants byte-for-byte so default-theme rendering is a visual
+    // no-op.
 
-    /// Hairline color — #eeeeee. Matches TK1 exactly.
-    public static let borderColor = NSColor(
-        red: 0.933, green: 0.933, blue: 0.933, alpha: 1.0
-    )
+    /// Hairline color. Default theme = `#EEEEEE` (RGB 0.933 × 3),
+    /// matching the pre-theme TK1 hardcoded `drawHeaderBottomBorders`
+    /// value exactly.
+    public static var borderColor: NSColor {
+        Theme.shared.colors.headingBorder.resolvedForCurrentAppearance(
+            fallback: NSColor(red: 0.933, green: 0.933, blue: 0.933, alpha: 1.0)
+        )
+    }
 
-    /// Stroke thickness in points. Matches TK1's 0.5pt hairline
-    /// (CSS `1px` on Retina).
-    public static let borderThickness: CGFloat = 0.5
+    /// Stroke thickness in points. Default theme value = 0.5pt hairline
+    /// (CSS `1px` on Retina) — matches pre-theme TK1 behaviour.
+    public static var borderThickness: CGFloat {
+        Theme.shared.chrome.headingBorderThickness
+    }
 
     /// Gap between the last line of heading text and the hairline.
-    /// Matches TK1's `+ 1` below `usedRect.maxY`.
-    public static let borderOffsetBelowText: CGFloat = 1.0
+    /// Default theme value = 1.0pt, matching TK1's `+ 1` below
+    /// `usedRect.maxY`.
+    public static var borderOffsetBelowText: CGFloat {
+        Theme.shared.chrome.headingBorderOffsetBelowText
+    }
 
     // MARK: - Heading level lookup
 

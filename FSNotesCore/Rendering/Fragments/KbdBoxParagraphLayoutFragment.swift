@@ -37,35 +37,69 @@ import AppKit
 
 public final class KbdBoxParagraphLayoutFragment: NSTextLayoutFragment {
 
-    // MARK: - Drawing constants (match KbdBoxDrawer)
+    // MARK: - Drawing constants (phase 7.3 — read from Theme.shared)
+    //
+    // Static computed properties so external references keep working;
+    // the live drawing path uses the same theme-backed values. Default-
+    // theme values in `ThemeSchema.swift` match the pre-theme TK1
+    // `KbdBoxDrawer` byte-for-byte:
+    //   fillColor   = `#FCFCFC` (0.988 × 3)
+    //   strokeColor = `#CCCCCC` (0.8 × 3)
+    //   shadowColor = `#BBBBBB` (0.733 × 3)
+    //   cornerRadius = 3, borderWidth = 1
+    //   horizontalPadding = 2, verticalPaddingTop/Bottom = 1
+    //
+    // `KbdBoxDrawer.draw` expands the glyph bounds by `height + 2`,
+    // which is `verticalPaddingTop + verticalPaddingBottom = 1 + 1 = 2`.
+    // Both paddings are intentionally 1.0; the 7.2 agent's note about
+    // 0.0 vs 1.0 is resolved here — TK1 uses symmetric 1pt padding.
 
-    public static let cornerRadius: CGFloat = 3.0
-    public static let borderWidth: CGFloat = 1.0
+    public static var cornerRadius: CGFloat {
+        Theme.shared.chrome.kbdCornerRadius
+    }
+    public static var borderWidth: CGFloat {
+        Theme.shared.chrome.kbdBorderWidth
+    }
 
-    /// Fill color of the key face. Matches `KbdBoxDrawer`'s
-    /// `0.988 / 0.988 / 0.988` white.
-    public static let fillColor = NSColor(
-        red: 0.988, green: 0.988, blue: 0.988, alpha: 1.0
-    )
-    /// 1pt stroke around the whole box.
-    public static let strokeColor = NSColor(
-        red: 0.8, green: 0.8, blue: 0.8, alpha: 1.0
-    )
+    /// Fill color of the key face. Default theme = `#FCFCFC`
+    /// (RGB 0.988 × 3), matching `KbdBoxDrawer`.
+    public static var fillColor: NSColor {
+        Theme.shared.colors.kbdFill.resolvedForCurrentAppearance(
+            fallback: NSColor(red: 0.988, green: 0.988, blue: 0.988, alpha: 1.0)
+        )
+    }
+    /// 1pt stroke around the whole box. Default theme = `#CCCCCC`
+    /// (RGB 0.8 × 3).
+    public static var strokeColor: NSColor {
+        Theme.shared.colors.kbdStroke.resolvedForCurrentAppearance(
+            fallback: NSColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1.0)
+        )
+    }
     /// Bottom shadow line — drawn inside the box 1pt above maxY to
-    /// simulate the key's bottom bevel.
-    public static let shadowColor = NSColor(
-        red: 0.733, green: 0.733, blue: 0.733, alpha: 1.0
-    )
+    /// simulate the key's bottom bevel. Default theme = `#BBBBBB`
+    /// (RGB 0.733 × 3).
+    public static var shadowColor: NSColor {
+        Theme.shared.colors.kbdShadow.resolvedForCurrentAppearance(
+            fallback: NSColor(red: 0.733, green: 0.733, blue: 0.733, alpha: 1.0)
+        )
+    }
 
     /// Horizontal padding applied to each side of the glyph bounds.
-    /// Matches `KbdBoxDrawer.draw`'s `rect.minX - 2` / `width + 4`.
-    public static let horizontalPadding: CGFloat = 2.0
+    /// Default theme = 2.0pt, matching `KbdBoxDrawer.draw`'s
+    /// `rect.minX - 2` / `width + 4`.
+    public static var horizontalPadding: CGFloat {
+        Theme.shared.chrome.kbdHorizontalPadding
+    }
 
-    /// Vertical padding applied to top (1pt) and bottom (1pt extra)
-    /// of the glyph bounds, for a total vertical expansion of 2pt
-    /// (`height + 2`). Matches `KbdBoxDrawer.draw`.
-    public static let verticalPaddingTop: CGFloat = 1.0
-    public static let verticalPaddingBottom: CGFloat = 1.0
+    /// Vertical padding applied to top (1pt) and bottom (1pt) of the
+    /// glyph bounds, for a total vertical expansion of 2pt (`height + 2`
+    /// in `KbdBoxDrawer.draw`).
+    public static var verticalPaddingTop: CGFloat {
+        Theme.shared.chrome.kbdVerticalPaddingTop
+    }
+    public static var verticalPaddingBottom: CGFloat {
+        Theme.shared.chrome.kbdVerticalPaddingBottom
+    }
 
     // MARK: - Rendering surface
     //

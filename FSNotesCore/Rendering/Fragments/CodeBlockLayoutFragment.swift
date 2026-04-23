@@ -51,18 +51,40 @@ import AppKit
 
 public final class CodeBlockLayoutFragment: NSTextLayoutFragment {
 
-    // MARK: - Drawing constants (must match LayoutManager.drawCodeBlockBackground)
+    // MARK: - Drawing constants (phase 7.3 — read from Theme.shared)
+    //
+    // Static computed properties so external references (including
+    // `Tests/TextKit2FragmentDispatchTests.swift` which asserts on
+    // `horizontalBleed`) keep working. Default-theme values in
+    // `ThemeSchema.swift` match the pre-theme TK1
+    // `LayoutManager.drawCodeBlockBackground` constants byte-for-byte:
+    // cornerRadius = 5, horizontalBleed = 5, borderWidth = 1.
+    //
+    // Border COLOR remains `NSColor.lightGray` (a dynamic system color
+    // that adapts to dark mode). The theme schema has `codeBlockBorder`
+    // but its current default (`#D3D3D3`) doesn't match `NSColor.lightGray`
+    // byte-for-byte, so routing the border color through the theme in
+    // slice 7.3 would be a visual change — deferred to a later slice
+    // that explicitly reconciles the default.
 
-    /// Corner radius of the rounded rectangle. Matches TK1.
-    public static let cornerRadius: CGFloat = 5.0
+    /// Corner radius of the rounded rectangle. Default theme = 5.0pt.
+    public static var cornerRadius: CGFloat {
+        Theme.shared.chrome.codeBlockCornerRadius
+    }
 
     /// Horizontal bleed on either side of the text container's
     /// content edge so the background reaches slightly beyond the
-    /// normal text inset. Matches TK1's `horizontalPadding`.
-    public static let horizontalBleed: CGFloat = 5.0
+    /// normal text inset. Default theme = 5.0pt, matching TK1's
+    /// `horizontalPadding`.
+    public static var horizontalBleed: CGFloat {
+        Theme.shared.chrome.codeBlockHorizontalBleed
+    }
 
-    /// Border width of the 1pt stroke around the rect. Matches TK1.
-    public static let borderWidth: CGFloat = 1.0
+    /// Border width of the 1pt stroke around the rect. Default
+    /// theme = 1.0pt.
+    public static var borderWidth: CGFloat {
+        Theme.shared.chrome.codeBlockBorderWidth
+    }
 
     // MARK: - Block-run position
     //
@@ -411,13 +433,19 @@ public final class CodeBlockLayoutFragment: NSTextLayoutFragment {
         }
     }
 
-    /// Pull the active syntax-highlight theme's background color the
-    /// same way `LayoutManager.drawCodeBlockBackground` does, so TK1
-    /// source mode and TK2 block-model mode paint an identical rect.
-    /// `NotesTextProcessor.getHighlighter()` reads the current theme
-    /// (honoring dark/light appearance), so this color is appearance-
-    /// aware without any explicit mode check here.
+    /// Phase 7.3: honor the active theme's `codeBlockBackground` override
+    /// if set; otherwise fall back to the syntax-highlight theme's own
+    /// background color (matching `LayoutManager.drawCodeBlockBackground`
+    /// so TK1 source mode and TK2 block-model mode paint an identical
+    /// rect). `NotesTextProcessor.getHighlighter()` reads the current
+    /// theme (honoring dark/light appearance), so the fallback is
+    /// appearance-aware without any explicit mode check here. The theme
+    /// override is appearance-aware via `resolvedForCurrentAppearance`.
     private static func backgroundFillColor() -> NSColor {
-        NotesTextProcessor.getHighlighter().options.style.backgroundColor
+        if let override = Theme.shared.colors.codeBlockBackground {
+            let syntax = NotesTextProcessor.getHighlighter().options.style.backgroundColor
+            return override.resolvedForCurrentAppearance(fallback: syntax)
+        }
+        return NotesTextProcessor.getHighlighter().options.style.backgroundColor
     }
 }

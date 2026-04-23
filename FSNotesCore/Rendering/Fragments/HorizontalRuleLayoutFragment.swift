@@ -24,15 +24,25 @@ import AppKit
 
 public final class HorizontalRuleLayoutFragment: NSTextLayoutFragment {
 
-    /// Rule fill color — matches the existing `HorizontalRuleDrawer` so
-    /// the TK2 visual is identical to the TK1 visual that ships today
-    /// in source-mode and in block-model-mode-on-TK1 builds.
-    public static let ruleColor = NSColor(
-        red: 0.906, green: 0.906, blue: 0.906, alpha: 1.0
-    )
+    // MARK: - Drawing constants (phase 7.3 — read from Theme.shared)
+    //
+    // Static computed properties so external references keep working.
+    // Default-theme values in `ThemeSchema.swift` match the pre-theme
+    // TK1 `HorizontalRuleDrawer` byte-for-byte:
+    // `hrLine` = `#E7E7E7` (RGB 0.906 × 3), `hrThickness` = 4.0pt.
 
-    /// Thickness of the drawn rule in points. Matches TK1.
-    public static let ruleThickness: CGFloat = 4.0
+    /// Rule fill color. Default theme = `#E7E7E7` (RGB 0.906 × 3) —
+    /// identical to the TK1 `HorizontalRuleDrawer`.
+    public static var ruleColor: NSColor {
+        Theme.shared.colors.hrLine.resolvedForCurrentAppearance(
+            fallback: NSColor(red: 0.906, green: 0.906, blue: 0.906, alpha: 1.0)
+        )
+    }
+
+    /// Thickness of the drawn rule in points. Default theme = 4.0pt.
+    public static var ruleThickness: CGFloat {
+        Theme.shared.chrome.hrThickness
+    }
 
     // MARK: - Rendering surface
 

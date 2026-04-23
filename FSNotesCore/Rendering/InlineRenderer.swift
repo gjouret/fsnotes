@@ -617,10 +617,20 @@ public enum InlineRenderer {
     }
 
     /// The highlight background color emitted by `render(.highlight)`.
-    /// Single source of truth — also consumed by the table cell
-    /// formatting toolbar path in `TableRenderController` and by
+    ///
+    /// Phase 7.3: reconciled with `theme.colors.highlightBackground` so
+    /// there's one source of truth. This computed property resolves from
+    /// the active theme under the current appearance; the
+    /// `#FFE60080` default in `ThemeColors.highlightBackground` matches
+    /// the pre-theme constant within the 0.02-per-component tolerance
+    /// used by `colorsApproximatelyEqual`. Still consumed by the table
+    /// cell formatting toolbar path in `TableRenderController` and by
     /// `isHighlightColor` below.
-    public static let highlightColor = PlatformColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)
+    public static var highlightColor: PlatformColor {
+        Theme.shared.colors.highlightBackground.resolvedForCurrentAppearance(
+            fallback: PlatformColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)
+        )
+    }
 
     /// True iff `a` and `b` are the same color within a 0.02-per-
     /// component tolerance. The tolerance absorbs the small RGBA

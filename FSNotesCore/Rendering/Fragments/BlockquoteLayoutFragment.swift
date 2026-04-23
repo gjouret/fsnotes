@@ -27,25 +27,41 @@ import AppKit
 
 public final class BlockquoteLayoutFragment: NSTextLayoutFragment {
 
-    // MARK: - Drawing constants (must match BlockquoteBorderDrawer + BlockquoteRenderer)
+    // MARK: - Drawing constants (phase 7.3 — read from Theme.shared)
+    //
+    // These are static computed properties so any remaining external
+    // references keep working; the live drawing path uses the same
+    // theme-backed values. Default-theme values in `ThemeSchema.swift`
+    // match the pre-theme TK1 `BlockquoteBorderDrawer` constants
+    // byte-for-byte (bar color 0.867×3 = `#DDDDDD`, width 4, spacing 10,
+    // initial offset 2).
 
-    /// Gray bar fill color — identical to the TK1 `BlockquoteBorderDrawer`
-    /// so switching between TK1 and TK2 produces no visual difference.
-    public static let barColor = NSColor(
-        red: 0.867, green: 0.867, blue: 0.867, alpha: 1.0
-    )
+    /// Gray bar fill color. Default theme = `#DDDDDD` (RGB 0.867 × 3),
+    /// identical to the TK1 `BlockquoteBorderDrawer`.
+    public static var barColor: NSColor {
+        Theme.shared.colors.blockquoteBar.resolvedForCurrentAppearance(
+            fallback: NSColor(red: 0.867, green: 0.867, blue: 0.867, alpha: 1.0)
+        )
+    }
 
-    /// Width of each individual bar in points. Matches TK1.
-    public static let barWidth: CGFloat = 4
+    /// Width of each individual bar in points. Default theme = 4pt.
+    public static var barWidth: CGFloat {
+        Theme.shared.chrome.blockquoteBarWidth
+    }
 
     /// Horizontal distance between successive bars for nested quotes.
-    /// Matches `BlockquoteBorderDrawer.barSpacing` AND the identical
-    /// constant in `BlockquoteRenderer` (used to compute `headIndent`).
-    public static let barSpacing: CGFloat = 10
+    /// Default theme = 10pt. Must match the spacing
+    /// `BlockquoteRenderer` uses when computing `headIndent`.
+    public static var barSpacing: CGFloat {
+        Theme.shared.chrome.blockquoteBarSpacing
+    }
 
     /// Offset from the container's padding edge to the first bar's left
-    /// edge. Matches TK1 (`+ 2` in `BlockquoteBorderDrawer`).
-    public static let barInitialOffset: CGFloat = 2
+    /// edge. Default theme = 2pt, matching TK1 (`+ 2` in
+    /// `BlockquoteBorderDrawer`).
+    public static var barInitialOffset: CGFloat {
+        Theme.shared.chrome.blockquoteBarInitialOffset
+    }
 
     // MARK: - Depth lookup
 

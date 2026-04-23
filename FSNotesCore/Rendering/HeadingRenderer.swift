@@ -52,7 +52,7 @@ public enum HeadingRenderer {
             displayed = displayed.dropFirst()
         }
 
-        let font = headingFont(level: level, bodyFont: bodyFont)
+        let font = headingFont(level: level, bodyFont: bodyFont, theme: theme)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: PlatformColor.label
@@ -66,19 +66,19 @@ public enum HeadingRenderer {
 
     /// Heading font: derive a bold heading-scaled font from the body
     /// font. Levels 1–6 map to progressively smaller sizes.
-    /// Scale factors match the source-mode renderer (NotesTextProcessor)
-    /// so headings look identical in WYSIWYG and markdown modes.
-    private static func headingFont(level: Int, bodyFont: PlatformFont) -> PlatformFont {
+    ///
+    /// Phase 7.3: scale factors come from `theme.headingFontScale(for:)`
+    /// instead of a hardcoded switch. Default-theme values
+    /// (`[2.0, 1.7, 1.4, 1.2, 1.1, 1.05]`) match the pre-theme constants
+    /// byte-for-byte — source-mode `NotesTextProcessor` still uses its
+    /// own hardcoded copy (that pipeline dies in Phase 4, per REFACTOR_PLAN).
+    private static func headingFont(
+        level: Int,
+        bodyFont: PlatformFont,
+        theme: Theme = .shared
+    ) -> PlatformFont {
         let baseSize = bodyFont.pointSize
-        let scale: CGFloat
-        switch level {
-        case 1: scale = 2.0
-        case 2: scale = 1.7
-        case 3: scale = 1.4
-        case 4: scale = 1.2
-        case 5: scale = 1.1
-        default: scale = 1.05  // H6: slightly larger than body
-        }
+        let scale = theme.headingFontScale(for: level)
         let size = baseSize * scale
         #if os(OSX)
         let descriptor = bodyFont.fontDescriptor.withSymbolicTraits(.bold)

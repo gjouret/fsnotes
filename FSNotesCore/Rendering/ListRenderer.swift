@@ -42,24 +42,31 @@ public enum ListRenderer {
     //   numberDraw  — how large ordered markers (1. 2.) render
     //
     // Checkboxes use SF Symbols and scale via checkboxDraw.
+    //
+    // Phase 7.3: values now read from `Theme.shared` instead of being
+    // file-local constants. Default-theme values in `BlockStyleTheme.default`
+    // match the pre-theme hardcoded constants byte-for-byte.
 
-    /// Nesting indent as a multiple of bodyFont.pointSize.
-    static let indentScale: CGFloat = 1.8
+    /// Nesting indent as a multiple of bodyFont.pointSize. Default = 1.8.
+    static var indentScale: CGFloat { Theme.shared.listIndentScale }
 
-    /// Cell width as a multiple of bodyFont.pointSize.
+    /// Cell width as a multiple of bodyFont.pointSize. Default = 2.0.
     /// The gap between glyph and text = cellScale - visual glyph width.
-    static let cellScale: CGFloat = 2.0
+    static var cellScale: CGFloat { Theme.shared.listCellScale }
 
     /// Bullet shape diameter as a fraction of bodyFont.capHeight.
-    /// Shapes are drawn directly via Core Graphics — no font metrics.
-    static let bulletSizeScale: CGFloat = 0.7
+    /// Default = 0.7. Shapes are drawn directly via Core Graphics — no
+    /// font metrics.
+    static var bulletSizeScale: CGFloat { Theme.shared.listBulletSizeScale }
 
-    /// Font size for ordered markers (1., 2.) as multiple of bodyFont.pointSize.
-    /// Numbers fill their em-square, so 1× body size looks natural.
-    static let numberDrawScale: CGFloat = 1.0
+    /// Font size for ordered markers (1., 2.) as multiple of
+    /// bodyFont.pointSize. Default = 1.0. Numbers fill their em-square,
+    /// so 1× body size looks natural.
+    static var numberDrawScale: CGFloat { Theme.shared.listNumberDrawScale }
 
-    /// SF Symbol point size for checkboxes as multiple of bodyFont.pointSize.
-    static let checkboxDrawScale: CGFloat = 1.2
+    /// SF Symbol point size for checkboxes as multiple of
+    /// bodyFont.pointSize. Default = 1.2.
+    static var checkboxDrawScale: CGFloat { Theme.shared.listCheckboxDrawScale }
 
     /// Natural line height for `font` as the TK1 typesetter actually
     /// produces it for a line containing a single body-font glyph.
