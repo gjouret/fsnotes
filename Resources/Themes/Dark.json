@@ -1,0 +1,120 @@
+{
+    "comment": "FSNotes++ Dark theme. Bundled with the app as of Phase 7.4. Tuned for dark backgrounds: light foregrounds, softened heading borders, slightly darker code-block chrome, cooler link/highlight accents. Schema matches default-theme.json exactly.",
+
+    "noteFontName": null,
+    "noteFontSize": 14,
+    "codeFontName": "Source Code Pro",
+    "codeFontSize": 14,
+
+    "editorLineSpacing": 4,
+    "lineWidth": 1000,
+    "marginSize": 20,
+    "imagesWidth": 450,
+
+    "headingFontScales": [2.0, 1.7, 1.4, 1.2, 1.1, 1.05],
+    "headingSpacingBefore": [1.2, 1.0, 0.9, 0.8, 0.7, 0.6],
+    "headingSpacingAfter": [0.67, 0.5, 0.4, 0.35, 0.3, 0.25],
+
+    "paragraphSpacing": 12,
+
+    "codeBlockLineSpacing": 0,
+    "codeBlockParagraphSpacing": 16,
+    "codeBlockSpacingBefore": 0,
+
+    "listIndentScale": 1.8,
+    "listCellScale": 2.0,
+    "listBulletSizeScale": 0.7,
+    "listNumberDrawScale": 1.0,
+    "listCheckboxDrawScale": 1.2,
+    "listBulletStrokeInset": 0.5,
+    "listBulletStrokeWidth": 1.0,
+    "listBlockSpacing": 16,
+
+    "blockquoteBarInitialOffset": 2,
+    "blockquoteBarSpacing": 10,
+    "blockquoteBarWidth": 4,
+    "blockquoteGapAfterBars": 4,
+    "blockquoteBlockSpacing": 16,
+
+    "tablePlaceholderWidth": 400,
+    "tablePlaceholderHeight": 100,
+    "tableBlockSpacing": 16,
+
+    "hrBlockSpacing": 16,
+
+    "htmlBlockLineSpacing": 0,
+    "htmlBlockParagraphSpacing": 16,
+    "htmlBlockSpacingBefore": 0,
+
+    "highlightColor": {
+        "red": 1.0,
+        "green": 0.85,
+        "blue": 0.2,
+        "alpha": 0.4
+    },
+
+    "blankLineMinHeight": 0.01,
+    "blankLineMaxHeight": 0.01,
+
+    "typography": {
+        "bodyFontName": null,
+        "bodyFontSize": 14,
+        "codeFontName": "Source Code Pro",
+        "codeFontSize": 14,
+        "kbdFontSizeMultiplier": 0.85,
+        "subSuperFontSizeMultiplier": 0.75,
+        "inlineCodeSizeMultiplier": 1.0,
+        "boldMarker": "**",
+        "italicMarker": "*"
+    },
+
+    "spacing": {
+        "lineHeightMultiple": 1.0,
+        "paragraphSpacingMultiplier": 0.85,
+        "structuralBlockSpacingMultiplier": 1.1,
+        "paragraphSpacing": 12,
+        "textContainerInsetHeight": 10,
+        "textContainerInsetWidth": 0,
+        "lineFragmentPadding": 10
+    },
+
+    "colors": {
+        "link":                 { "light": "#4DA3FF", "dark": "#4DA3FF" },
+        "inlineCodeBackground": { "light": "#2C2C2EFF", "dark": "#2C2C2EFF" },
+        "highlightBackground":  "#FFD70066",
+        "blockquoteBar":        "#4A4A4A",
+        "codeBlockBackground":  { "light": "#171717", "dark": "#171717" },
+        "codeBlockBorder":      "#2E2E2E",
+        "kbdFill":              "#2A2A2A",
+        "kbdStroke":            "#4A4A4A",
+        "kbdShadow":            "#1A1A1A",
+        "kbdForeground":        "#E5E5E5",
+        "hrLine":               "#3A3A3A",
+        "headingBorder":        "#333333"
+    },
+
+    "chrome": {
+        "kbdCornerRadius": 3.0,
+        "kbdBorderWidth": 1.0,
+        "kbdHorizontalPadding": 2.0,
+        "kbdVerticalPaddingTop": 1.0,
+        "kbdVerticalPaddingBottom": 1.0,
+        "codeBlockCornerRadius": 5.0,
+        "codeBlockHorizontalBleed": 5.0,
+        "codeBlockBorderWidth": 1.0,
+        "blockquoteBarWidth": 4,
+        "blockquoteBarSpacing": 10,
+        "blockquoteBarInitialOffset": 2,
+        "hrThickness": 4.0,
+        "headingBorderThickness": 0.5,
+        "headingBorderOffsetBelowText": 1.0,
+        "codeBlockEditToggle": {
+            "cornerRadius": 5,
+            "horizontalPadding": 4,
+            "verticalPadding": 2,
+            "foreground": { "light": "#AAAAAA", "dark": "#AAAAAA" },
+            "backgroundHover": "#FFFFFF14",
+            "backgroundActive": "#FFFFFF28"
+        }
+    }
+}
