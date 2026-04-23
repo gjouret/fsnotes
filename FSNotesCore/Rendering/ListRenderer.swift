@@ -254,10 +254,33 @@ public enum ListRenderer {
     // AppKit's generic document-icon glyph during the window between
     // TK2's first layout pass and the attachment view provider's
     // loadView completing.
+    //
+    // Memoized by size: a 500-bullet note with one bullet size would
+    // otherwise allocate 500 images + 500 `lockFocus`/`unlockFocus`
+    // pairs per render. In practice there are typically only a handful
+    // of distinct sizes across a render (bullet cell, checkbox cell,
+    // table default) so the cache hit rate is very high.
+    //
+    // `NSCache` is thread-safe; the helper is called on the main
+    // thread during rendering today but we don't rely on that.
+    private static let placeholderCache: NSCache<NSValue, NSImage> = {
+        let cache = NSCache<NSValue, NSImage>()
+        // 64 distinct sizes is far above the realistic working set but
+        // well below anything that would matter for memory. NSImage
+        // backing a 0×0-to-tens-of-points placeholder is tiny.
+        cache.countLimit = 64
+        return cache
+    }()
+
     static func transparentPlaceholder(size: CGSize) -> NSImage {
+        let key = NSValue(size: size)
+        if let cached = placeholderCache.object(forKey: key) {
+            return cached
+        }
         let image = NSImage(size: size)
         image.lockFocus()
         image.unlockFocus()
+        placeholderCache.setObject(image, forKey: key)
         return image
     }
     #endif

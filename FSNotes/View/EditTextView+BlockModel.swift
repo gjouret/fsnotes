@@ -1759,19 +1759,18 @@ extension EditTextView {
         // first-class content, deleting at their start does NOT merge
         // into the previous cell (that would lose the structural cell
         // boundary). Mirrors the widget path.
-        if replacement.isEmpty && range.length > 0 &&
-            range.location == cellStorageStart && editEnd == cellStorageStart {
-            // This shape is impossible (length > 0 but end == start) —
-            // keep for symmetry with the semantic check below.
-            return true
-        }
-        if replacement.isEmpty && range.length == 1 &&
-            range.location == cellStorageStart - 1 + 1 /* start of cell */ {
-            // Unreachable — the `range.location < cellStorageStart`
-            // check above already excluded this; leaving the branch as
-            // a reader cue.
-            return true
-        }
+        //
+        // The two dead branches that used to live here (empty-range-at-
+        // cell-start; length-1-delete-at-cell-start) have been removed.
+        // Both are unreachable given the earlier `range.location <
+        // cellStorageStart` guard. If the upstream shape of `range`
+        // ever changes and this code gets wired up again as reachable,
+        // `assertionFailure` in a debug build will catch it loudly.
+        assert(
+            !(replacement.isEmpty && range.length > 0 &&
+              range.location == cellStorageStart && editEnd == cellStorageStart),
+            "cell-start empty-replacement with length > 0 — unreachable given the escape-cell guards above; audit the precondition"
+        )
         // Backspace that deletes a character strictly inside the cell:
         // allow through. Backspace at cell-start is represented by
         // range.location == cellStorageStart - 1 with length 1, which

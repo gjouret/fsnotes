@@ -362,7 +362,12 @@ class PreferencesEditorViewController: NSViewController {
     }
 
     private func restart() {
-        let url = URL(fileURLWithPath: Bundle.main.resourcePath!)
+        guard let resourcePath = Bundle.main.resourcePath else {
+            // No resourcePath means the app bundle is malformed — fall
+            // back to just terminating; the user can relaunch manually.
+            exit(0)
+        }
+        let url = URL(fileURLWithPath: resourcePath)
         let path = url.deletingLastPathComponent().deletingLastPathComponent().absoluteString
         let task = Process()
         task.launchPath = "/usr/bin/open"
@@ -522,19 +527,36 @@ class PreferencesEditorViewController: NSViewController {
     // file + post `didChangeNotification`). Errors are logged by the
     // save helper and swallowed here — the UI never blocks on a disk
     // failure (e.g. permissions).
+    //
+    // Continuous `NSSlider` IBActions (`lineSpacing`, `marginSize`,
+    // `lineWidth`, `imagesWidth`) tick at ~60Hz during a drag; writing
+    // the full Theme JSON on every tick is wasteful. Route through the
+    // debounced helper so the disk write is coalesced to one after
+    // 150ms of quiescence. `didChangeNotification` still fires per-tick
+    // from inside the helper so live-preview observers keep updating.
     private func persistActiveTheme() {
-        _ = Theme.saveActiveTheme()
+        Theme.saveActiveThemeDebounced()
     }
     
+    // UI-only preview label font size — NOT a rendering value. The
+    // preview label in the Editor preferences pane displays the selected
+    // family name at a fixed size so typography stays readable regardless
+    // of the user's configured body font. Phase 7.5.d's grep gate
+    // whitelists this one named constant.
+    private static let previewFontSize: CGFloat = 13
+
     private func setCodeFontPreview() {
         let familyName = UserDefaultsManagement.codeFont.familyName ?? "Source Code Pro"
 
-        codeFontPreview.font = NSFont(name: familyName, size: 13)
+        codeFontPreview.font = NSFont(name: familyName, size: Self.previewFontSize)
         codeFontPreview.stringValue = "\(familyName) \(UserDefaultsManagement.codeFont.pointSize)pt"
     }
 
     private func setNoteFontPreview() {
-        noteFontPreview.font = NSFont(name: UserDefaultsManagement.noteFont.fontName, size: 13)
+        noteFontPreview.font = NSFont(
+            name: UserDefaultsManagement.noteFont.fontName,
+            size: Self.previewFontSize
+        )
 
         if let familyName = UserDefaultsManagement.noteFont.familyName {
             noteFontPreview.stringValue = "\(familyName) \(UserDefaultsManagement.noteFont.pointSize)pt"

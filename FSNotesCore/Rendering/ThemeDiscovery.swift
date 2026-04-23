@@ -90,9 +90,14 @@ extension BlockStyleTheme {
     /// file so user themes get their own flat directory that the user
     /// can open in Finder.
     public static func defaultUserThemesDirectory() -> URL {
+        // `.applicationSupportDirectory` is guaranteed to resolve on
+        // macOS, but guard anyway — if the system ever hands back an
+        // empty array (sandbox misconfiguration in a test host, say),
+        // fall back to the temp directory so theme I/O still works
+        // rather than trapping.
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!
+        ).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return support
             .appendingPathComponent("FSNotes++")
             .appendingPathComponent("Themes")
@@ -342,6 +347,25 @@ extension BlockStyleTheme {
     ) -> URL? {
         let dir = userThemesDirectory ?? defaultUserThemesDirectory()
         let name = activeThemeName(preferredName: preferredName)
+
+        // Path-traversal guard: `name` originates from
+        // `UserDefaultsManagement.currentThemeName` (or a caller-supplied
+        // override). A hand-edited plist could set it to something like
+        // `"../../../etc/pwned"` which, passed straight into
+        // `appendingPathComponent`, would let the write escape the
+        // user-themes directory. Reject any name containing path
+        // separators, parent-directory references, or empty strings —
+        // zero-cost hardening, doesn't change behaviour for well-formed
+        // names.
+        guard !name.contains("/"),
+              !name.contains("\\"),
+              !name.contains(".."),
+              !name.isEmpty
+        else {
+            themeLog("Rejecting save of active theme: invalid name '\(name)'")
+            return nil
+        }
+
         let url = dir.appendingPathComponent("\(name).json")
 
         // Pull both flat + nested and encode them together so the
@@ -377,5 +401,122 @@ extension BlockStyleTheme {
             name: BlockStyleTheme.didChangeNotification, object: nil
         )
         return url
+    }
+
+    // MARK: - Phase 7.5.a: Debounced save helper
+    //
+    // Continuous `NSSlider` IBActions (`lineSpacing`, `marginSize`,
+    // `lineWidth`, `imagesWidth`) fire ~60×/sec during a drag. Each
+    // tick currently calls `persistActiveTheme()` → `saveActiveTheme()`
+    // which serializes the full Theme JSON and writes it atomically.
+    // That's a ~60×/sec disk write during a drag — wasteful and a
+    // hazard for SSD write-amplification on long drags.
+    //
+    // This helper coalesces writes: the actual `saveActiveTheme()`
+    // call is deferred by `debounceInterval` seconds, with each new
+    // call resetting the timer. Live-preview semantics are unchanged
+    // because `Theme.shared` mutation stays immediate and
+    // `didChangeNotification` still fires per-tick from the IBAction
+    // (the IBActions post the notification themselves via the save
+    // path, so we post it per-tick from here too to keep the observer
+    // cadence intact for the in-memory re-render).
+    //
+    // Design notes:
+    //   - `DispatchWorkItem` over `Timer`: no RunLoop dependency, easy
+    //     cancel-and-replace semantics, plays nicely with tests that
+    //     don't pump a RunLoop. `Timer` would require us to attach to
+    //     .common mode and tests would need RunLoop pumping.
+    //   - 150ms delay: one slider drag at 60Hz produces ~9 ticks; the
+    //     debounce lands a single write ~150ms after drag release,
+    //     which feels instant to a user but collapses the steady-state
+    //     tick storm into one write. Longer would risk a visible
+    //     "pending save" if the app is killed immediately after drag
+    //     release; shorter doesn't save enough writes.
+    //   - Main-queue dispatch: matches the IBAction call site and the
+    //     rest of FSNotes which is almost entirely main-thread.
+    //
+    // The live-preview observer does NOT require a disk write — it
+    // reads `Theme.shared` directly on `didChangeNotification`. So we
+    // post the notification per-tick (cheap, in-memory) and coalesce
+    // only the file write.
+
+    /// Lock guarding `pendingSaveWorkItem` / `pendingSaveArgs`. Main-
+    /// queue dispatch is the normal case, but we still serialize
+    /// mutation of these fields across any caller that might reach
+    /// this API off-main (defensive — no production caller does so
+    /// today).
+    private static let debounceLock = NSLock()
+
+    /// The most-recent scheduled save. `cancel()` on rescheduling
+    /// turns the prior tick into a no-op.
+    private static var pendingSaveWorkItem: DispatchWorkItem?
+
+    /// Arguments for the next scheduled save. Held here so rapid-fire
+    /// callers with different `preferredName`/`userThemesDirectory`
+    /// (theoretical — production has a single call site) collapse to
+    /// the final caller's arguments, matching "last write wins".
+    private static var pendingSaveArgs: (
+        preferredName: String?,
+        userThemesDirectory: URL?
+    )?
+
+    /// Default debounce interval for `saveActiveThemeDebounced`. A
+    /// slider drag at 60Hz produces ~9 ticks inside one of these
+    /// windows, collapsing to a single disk write.
+    public static let saveActiveThemeDebounceInterval: TimeInterval = 0.15
+
+    /// Coalescing wrapper over `saveActiveTheme`. Safe to call at
+    /// slider-tick rates: only the final call within a 150ms window
+    /// reaches disk. The live-preview notification still fires
+    /// synchronously so observers re-render on every tick.
+    ///
+    /// Posts `didChangeNotification` eagerly (so observers see the
+    /// in-memory `Theme.shared` mutation immediately), defers the JSON
+    /// write to a debounced work item.
+    public static func saveActiveThemeDebounced(
+        preferredName: String? = nil,
+        userThemesDirectory: URL? = nil,
+        interval: TimeInterval = saveActiveThemeDebounceInterval,
+        queue: DispatchQueue = .main
+    ) {
+        // Eager live-preview notify — keep the in-memory re-render
+        // cadence at slider-tick rate; only the disk write is
+        // deferred.
+        NotificationCenter.default.post(
+            name: BlockStyleTheme.didChangeNotification, object: nil
+        )
+
+        debounceLock.lock()
+        pendingSaveWorkItem?.cancel()
+        pendingSaveArgs = (preferredName, userThemesDirectory)
+
+        let item = DispatchWorkItem {
+            debounceLock.lock()
+            let args = pendingSaveArgs
+            pendingSaveArgs = nil
+            pendingSaveWorkItem = nil
+            debounceLock.unlock()
+
+            guard let args = args else { return }
+            _ = BlockStyleTheme.saveActiveTheme(
+                preferredName: args.preferredName,
+                userThemesDirectory: args.userThemesDirectory
+            )
+        }
+        pendingSaveWorkItem = item
+        debounceLock.unlock()
+
+        queue.asyncAfter(deadline: .now() + interval, execute: item)
+    }
+
+    /// Test/teardown hook: cancel any pending debounced save and
+    /// drop the captured args. Intended for unit-test teardown so
+    /// cross-test pending work items can't fire into the next test.
+    public static func cancelPendingDebouncedSave() {
+        debounceLock.lock()
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
+        pendingSaveArgs = nil
+        debounceLock.unlock()
     }
 }
