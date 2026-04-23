@@ -144,11 +144,18 @@ extension EditTextView {
     /// container width changes — `TableLayoutFragment` re-computes
     /// column widths on each layout.
     public func reflowAttachmentsForWidthChange() {
-        // Phase 4.5: TK1 `NSLayoutManager.invalidateLayout` path removed
-        // with the custom layout-manager subclass. Under TK2, layout
-        // fragments (including `CenteredImageCell` / `TableLayoutFragment`)
-        // re-compute on the next pass when the container width changes.
-        // A redisplay is enough to flush cached draw output.
+        // Phase 4.5 moved this off the deleted TK1 NSLayoutManager
+        // subclass. Under TK2, width-sensitive fragments
+        // (`CenteredImageCell`, `TableLayoutFragment`, the mermaid/math
+        // bitmap fragments) cache measured geometry on first layout;
+        // without an explicit invalidation, a window / split-view
+        // resize leaves stale geometry until the user scrolls or
+        // edits. Invalidate the whole document range — cheap on TK2,
+        // defensive against any fragment that caches more than it
+        // should.
+        if let tlm = textLayoutManager, let tcm = tlm.textContentManager {
+            tlm.invalidateLayout(for: tcm.documentRange)
+        }
         needsDisplay = true
     }
 
