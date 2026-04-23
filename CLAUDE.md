@@ -1,82 +1,107 @@
 # CLAUDE.md — FSNotes++ Project Rules
 
-Read `ARCHITECTURE.md` in this same directory for the full technical architecture (pipeline stages, block model, state machine, test infrastructure, build/deploy).
+Read `ARCHITECTURE.md` in this same directory for the full technical architecture (TK2 element / fragment dispatch, block model, FSMs per block type, edit contracts, theme, test infrastructure).
 
 ---
 
-## Rules That Exist Because I Broke Them
+## Invariants Established by the Refactor
 
-These rules are here because I violated them on the `InlineTableView` / table cell editing work and shipped a chain of bugs as a result. Read them first. They override convenience every time.
+These are facts about the post-refactor codebase. The earlier iteration of this file phrased them as defensive rules against bugs that had shipped; the refactor has since made the violations either architecturally impossible or automatically caught. Read these before editing — they tell you what the code now guarantees so you don't write defensive patches against conditions that can't arise.
 
-### 1. No architectural shortcuts. Ever.
+### A. Single write path into `NSTextContentStorage`
 
-If the correct path is "parse → mutate projection → re-render → save" and you're tempted to do "mutate view state directly and reconcile later," **stop**. That temptation is the signal that you're about to do something wrong.
+`DocumentEditApplier.applyDocumentEdit(priorDoc:newDoc:contentStorage:…)` (`FSNotesCore/Rendering/DocumentEditApplier.swift`) is the one function that mutates TK2 content storage for WYSIWYG edits. It consumes two `Document` values and emits a minimal element-bounded splice inside `performEditingTransaction`. Phase 5a lands a `#if DEBUG` assertion trapping any `NSTextContentStorage` character write outside this function and the fill paths — the only documented exemption is the composition-session window (Phase 5e IME / marked-text handling) which is gated on `compositionSession.isActive && range ⊂ markedRange`.
 
-The block model is the single source of truth for every block type. There is no exception for "hard" widgets. If a new widget can't fit the block-model contract cleanly, the answer is to design the primitive that lets it fit — not to route around the architecture and promise to come back later. You won't come back later. You'll patch the symptoms until the file is unfixable.
+Consequence: you cannot route an edit around the block model by reaching into storage directly. If a new editing feature tempts you to do so, build the `EditingOps` primitive and let the applier deliver it.
 
-**The table widget is the cautionary tale.** `InlineTableView` was built with its own mutable `rows`/`headers`/`alignments` state, and cell edits mutated that state directly. `serializeViaBlockModel()` was then patched to reach sideways into live view state at save time and rewrite `Block.table.raw` before serialization. This violated every architecture principle in this file. It produced: (a) a cross-cell data-loss bug where editing one cell wiped formatting in another, (b) a save-persistence hole that required a live-tables check in `save()`, (c) zero testability because every bug required an `NSWindow` + field editor to reproduce. The "I'll do it properly later" was a lie to myself — the correct time to design the primitive was before the first line of `InlineTableView`.
+### B. One layout primitive per block type
 
-**The rule:** if routing through `EditingOps.replaceBlock` requires a new primitive, design the primitive. If it requires new infrastructure to "re-render one piece of a block without rebuilding the attachment," build that infrastructure. Do not ship the shortcut and plan to refactor later.
+Every per-block visual runs through TK2's element + fragment dispatch (`BlockModelContentStorageDelegate` → `BlockModelLayoutManagerDelegate` in `FSNotesCore/Rendering/`). Each block kind maps to exactly one `NSTextParagraph` subclass and at most one `NSTextLayoutFragment` subclass: `TableElement` / `TableLayoutFragment`, `CodeBlockElement` / `CodeBlockLayoutFragment`, `HeadingElement` / `HeadingLayoutFragment`, `BlockquoteElement` / `BlockquoteLayoutFragment`, `HorizontalRuleElement` / `HorizontalRuleLayoutFragment`, `MermaidElement` / `MermaidLayoutFragment`, `MathElement` / `MathLayoutFragment`, `DisplayMathElement` / `DisplayMathLayoutFragment`, `ParagraphWithKbdElement` / `KbdBoxParagraphLayoutFragment`, `SourceMarkdownElement` / `SourceLayoutFragment`, `FoldedElement` / `FoldedLayoutFragment`. Plain paragraphs and list items fall back to the default fragment.
 
-### 2. Views render data. Views never write to data.
+Consequence: there is no second draw path for any block kind. If a block's rendering is wrong, the fragment class for that kind is where the fix lives. Don't add a parallel drawer.
 
-Unidirectional data flow is not optional. The projection → renderer → view chain is one-way. Views capture user intent (clicks, keystrokes, selections) and call a pure function on the projection that returns a new projection. The new projection flows back through the renderer and updates the view. Views must **never** be read by the data layer.
+### C. All block content lives in `NSTextContentStorage`
 
-The `collectCellData()` function in `InlineTableView` used to walk every cell in the table and copy its `stringValue` back into the `rows`/`headers` arrays. This is a bidirectional data flow, and it produced the exact class of bug you would expect: a cell rendered with `attributedStringValue` (with bold markers stripped by `parseInlineMarkdown`) was later read back via `stringValue`, silently overwriting the data model with the stripped text. Bold gone. That's not a race condition or a subtle timing bug — it's the direct consequence of letting the view be a source of truth.
+Tables carry cell text as live character runs in content storage (Phase 2e T2-f, default `true` since 2026-04-23 commit `957dc7e`). Mermaid and math keep their source text in storage and hide only visually via their fragments. `NSTextFinder` / Cmd+F / accessibility traverse everything by construction — Bug #60 ("find across table cells") is now a passing test, not a feature request.
 
-**The rule:** if you're writing code that reads state out of an `NSView` subclass and assigns it back into a model struct, stop. The model is the source of truth. The view is a projection of the model. If the user's edit isn't already in the model, you captured it at the wrong layer.
+Consequence: no block kind should route through `NSTextAttachment` as its *only* source of text. Attachments are for inline images, PDFs, QuickLook previews, list bullets, and checkboxes — not for block content that needs to participate in text search.
 
-### 3. If you can't unit-test it without an `NSWindow`, it's in the wrong layer.
+### D. No marker-hiding tricks in storage
 
-Every bug in the table cell edit path required a real window, a real field editor, and manual clicking to reproduce. That's a direct consequence of rule 2: because the data lived in the view, you needed the view to exercise the data. The pipeline-layer tests (parser, renderer, `EditingOps`) are strong because those layers are pure functions operating on value types — you can write a test that calls `EditingOps.toggleInlineTrait(.bold, at: range, in: projection)` and assert on the resulting projection without any AppKit at all.
+WYSIWYG storage contains only displayed characters — markdown markers (`**`, `#`, `` ` ``, `>`, list prefixes, fence lines, HR lines, cell pipes) do not exist in `textStorage.string`. There is nothing to hide, so the tiny-font / clear-foreground / negative-kern / invisible-character tricks of earlier iterations cannot arise. Source mode *does* contain markers but renders them via `SourceRenderer` + `SourceLayoutFragment.draw` overpainting `.markerRange` runs in `Theme.shared.chrome.sourceMarker`; the default text-layer `.foregroundColor` is never mutated to hide or dim markers.
 
-**The rule:** when you add a feature, the core logic must be testable as a pure function on value types. If your test needs to instantiate a window, attach a field editor, and send synthetic mouse events, the logic is in the wrong place. Move it to a pure primitive and leave the view thin.
+`scripts/rule7-gate.sh` enforces this as a grep gate: `systemFont(ofSize: 0.…)`, `ofSize: 0`, `foregroundColor ... NSColor.clear`, `addAttribute(.kern`, `func parseInlineMarkdown` all exit 1. Run it before editing any file under `FSNotes/Rendering/` or `FSNotesCore/Rendering/`.
 
-### 4. When you're about to violate a principle, stop and tell the user.
+### E. Views read data; views never write data
 
-The correct response to "routing this properly requires more work than I want to do right now" is to tell the user that, explain the tradeoff, and let them decide. It is never to quietly ship the shortcut and hope the user doesn't notice. If they don't notice, the shortcut compounds. If they do notice, you will be caught in a position where defending the shortcut requires lying about why you took it.
+The projection → renderer → element → fragment chain is one-way. Views capture user intent (clicks, keystrokes, selections) and call a pure `EditingOps.*` primitive that returns a new `Document`; `applyDocumentEdit` delivers the minimal splice. The Phase 5a debug assertion catches the storage-write half of any bidirectional-flow mistake; the rule-7 gate catches the view-read half via banned patterns for `headers[…] = …stringValue` / `rows[…][…] = …stringValue`.
 
-**The rule:** if you catch yourself about to write code that violates a rule in this file, stop the tool call, write a paragraph to the user that says "doing this properly requires X, the shortcut would be Y, here's the tradeoff," and wait. The user's time budget is theirs to spend, not yours.
+The `InlineTableView` / `TableRenderController` widget files that historically violated this (mutable `rows`/`headers`/`alignments` state, `collectCellData` reading `cell.stringValue` back into the model, `serializeViaBlockModel` walking live attachments at save time) were deleted on 2026-04-23 in Phase 2e T2-h (commit `de1f146`, ~4,524 LoC removed). They are the cautionary tale in the Historical Record below, not live code.
 
-### 5. Never fabricate historical or technical reasoning.
+### F. Theme is the sole presentation source of truth
 
-When asked why a shortcut exists, the honest answer is "I took it because the correct path required more work." That is always the truth. Do not invent a plausible-sounding alternative history ("the widget predates the architecture," "this was a constraint from an earlier design") to make the shortcut look forced. You don't have reliable access to git history in the moment of the question, and if you invent one it will be wrong.
+Every font size, color, paragraph spacing, border width, margin, and line-height literal is defined in `FSNotesCore/Rendering/ThemeSchema.swift` and `Resources/default-theme.json` (+ `Resources/Themes/Dark.json`, `HighContrast.json`). Renderers and fragments *read* from `Theme.shared`; they do not hardcode values. The rule-7 gate enforces this with `literalSystemFont`, `literalParaSpacing`, and `hexColorLiteral` patterns scoped to `FSNotesCore/Rendering/`. User theme overrides at `~/Library/Application Support/FSNotes++/Themes/*.json` replace the bundled entry of the same basename.
 
-**The rule:** if the user asks why a piece of code looks wrong, the answer starts with "I wrote it that way because" followed by the actual reason. Not an invented one. If you don't remember, say "I don't remember, let me look at git blame" and actually look. The CLAUDE.md source-verification rules exist specifically to prevent this failure mode — honor them.
+Consequence: if you need a new presentation value, extend `ThemeSchema.swift` and the JSON defaults; don't inline a literal in a fragment.
 
-### 6. A passing test suite with shipping bugs means the tests cover the wrong layer.
+### G. `EditContract` checks every edit
 
-556+ tests all passing while the user reports 30+ live bugs means the test suite is testing the pipeline and ignoring the live paths. That's not "the tests are good, the product is bad" — it's "the tests are in the wrong place." The fix is not to write more pipeline tests. The fix is to move the logic that's currently hiding in views into pure primitives, then test those primitives. See rule 3.
+Every `EditingOps` primitive returns an `EditResult` carrying an `EditContract` (before-span, after-span, replacement bytes, resulting cursor). `Invariants.assertContract(before:after:contract:)` runs in the pure unit tests *and* in the `EditorHarness` live harness after every scripted input. Both the pipeline tests and the live-editor tests share the same invariant check — a pure-layer pass implies a live-layer pass for the same primitive.
 
-### 7. Mechanical pre-edit check for banned-pattern keywords.
+---
 
-Rule 4 ("catch yourself before violating a principle") fails when you're in fix-the-bug flow and reading existing code for "what tools are available." You pattern-match from what's already in the file. If what's in the file is itself a violation, you inherit and extend the violation. This has a name: **inherited-violation**, and every compound bug in `InlineTableView` / `TableRenderController` is an instance of it.
+## Rules That Still Apply
 
-The fix is not more discipline. Discipline fails under load. The fix is mechanical: before editing a file that renders block-model content, grep the file and the diff for these tokens. If any match, stop and check against the architectural rules *before* writing.
+The refactor cannot enforce these; they are discipline rules for Claude and anyone writing code in this repo.
 
-**Banned patterns in view-layer and renderer code** (anything in `FSNotes/` or `FSNotesCore/Rendering/` that's not explicitly the inline renderer):
+### 1. When you're about to violate a principle, stop and tell the user.
+
+If a task seems to require routing around the architecture (a second write path, a view reading back into the model, a literal presentation value outside Theme), stop the tool call and write a paragraph to the user: "the clean fix requires X, the shortcut would be Y, here's the tradeoff." Wait for a decision. The user's time budget is theirs to spend, not yours. The refactor's invariants exist because the last time this rule was skipped, the compounding shortcuts in `InlineTableView` accumulated into a widget that had to be deleted wholesale.
+
+### 2. Never fabricate historical or technical reasoning.
+
+When asked why a piece of code looks a certain way, the honest answer starts with either "I wrote it that way because <actual reason>" or "I don't remember — let me look at git blame." Do not invent a plausible-sounding history ("this predates the refactor," "this was a constraint from an earlier design") to paper over not remembering. You don't have reliable in-the-moment access to history; if you invent one it will be wrong.
+
+### 3. A passing test suite with shipping bugs means the tests cover the wrong layer.
+
+~1330+ tests passing while the user reports live bugs means the test suite is pure-layer only and the bug is in the widget/view glue. The fix is not to add more pipeline tests — it's to identify the pure function that represents the feature's core logic and test *that*. If no such pure function exists yet, extracting it is the first fix. This principle is what made the pre-refactor `InlineTableView` bugs invisible to the then-556-test suite.
+
+### 4. New widgets and new renderers must be unit-testable as pure functions on value types.
+
+If a test for your feature's core logic needs an `NSWindow`, a real field editor, or synthetic mouse events, the logic is in the wrong layer. Move it into a pure primitive on `Document` / `Block` / `Inline` values and test that. Keep the widget thin — it captures intent and calls the primitive.
+
+### 5. Run the rule-7 grep gate before editing files under `FSNotes/Rendering/` or `FSNotesCore/Rendering/`.
 
 ```bash
-# Marker-hiding via visual attributes — the banned phase-4 pattern.
-# If you catch these in code you're writing or extending, STOP.
-grep -nE 'systemFont\(ofSize: 0\.[0-9]|ofSize: ?0\b|foregroundColor.*clear|NSColor\.clear.*foreground|addAttribute\(\.kern' <file>
-
-# Bidirectional data flow: reading back view state into the model.
-grep -nE '\.stringValue\s*$|cell\.attributedStringValue\s*[^=]|fieldEditor\.string.*=.*rows\[|headers\[.*\]\s*=.*\.stringValue' <file>
-
-# Re-implementations of InlineRenderer inside widgets.
-grep -nE 'NSRegularExpression.*(\\\\\*\\\\\*|~~|<mark>|<u>|parseInlineMarkdown' <file>
+./scripts/rule7-gate.sh        # exit 0 = clean, 1 = violation
 ```
 
-The first hit on any of these in a file I'm editing means I stop writing and check:
-- Is this existing code a violation I'm about to extend? (Read rules 1–3 against it.)
-- Is the fix I'm planning going to add more matches?
+It's fast (pure shell, no xcodebuild). The gate enforces the marker-hiding and literal-presentation-value bans automatically. If the baseline isn't clean, stop — the existing code is already violating an invariant and pattern-matching from it will extend the violation.
 
-If yes to either, stop the tool call, tell the user exactly which rule is in tension, and propose the architecturally clean fix *before* the minimal-change one.
+The "inherited violation" failure mode is the reason this is mechanical rather than discretionary: discipline fails under load. Running the gate is cheap and catches the whole class.
 
-**Meta-rule**: when editing `InlineTableView.swift`, `TableRenderController.swift`, or any file whose name contains `Inline` or `Table`, assume the existing code is a violation until proven otherwise. Read the file's function you're about to extend, check it against rules 1–3, and only then proceed. Do not pattern-match from what's there. The whole point of the cautionary tale in rule 1 is that the existing shortcuts compound.
+### 6. Debug flow: identify the stage, fix at the stage.
 
-**The rule:** before claiming a feature is done, identify the pure function that represents its core logic and write a test against that function. If no such function exists, the feature isn't done — the logic is still tangled in the view layer.
+Before writing any fix:
+
+1. Which pipeline stage is responsible? (parser, `EditingOps` primitive, `DocumentRenderer`, element class, fragment class, `applyDocumentEdit`, theme lookup)
+2. Am I modifying THAT stage, or patching somewhere else?
+3. If #2 is "somewhere else" — stop. Go back to #1.
+
+Never set attributes after an operation to override what a stage already applied. Never patch the save path to rewrite state at serialization time. If the projection is wrong at save, the edit that produced it was wrong.
+
+### 7. After 3 failed attempts, write a test.
+
+If a bug isn't fixed after 3 tries, stop coding and write a pure-function unit test that captures the bug. If you can't express the bug as a pure function on value types, that's the bug — the logic is tangled in the view layer and needs extraction first.
+
+### 8. Read before writing.
+
+Before writing ANY code:
+
+- Read every function in the call chain.
+- Search for existing mechanisms before adding new ones (grep the method name, read the parent class, read the callers).
+- Trace the full execution path ONCE before making changes; don't patchwork-fix.
+- Never use `== .none` on a Swift `Optional` — it conflates `Optional.none` with an enum case named `.none`. Use `== nil`.
 
 ---
 
@@ -90,9 +115,9 @@ If yes to either, stop the tool call, tell the user exactly which rule is in ten
 ## Build Environment
 
 - **Workspace**: `FSNotes.xcworkspace` (not `.xcodeproj` — Pods won't resolve)
-- **Pods are pre-installed** in the repo. Do NOT run `pod install`. If you get "unable to resolve module dependency" errors, you're using `-project` instead of `-workspace`
-- Use the `xcode-build-deploy` skill for ALL builds. Don't improvise the sequence
-- **ALWAYS redirect xcodebuild output to a file.** xcodebuild (build AND test) produces thousands of lines per invocation — dumping that into context burns budget. Redirect to a temp log and grep for what matters:
+- **Pods are pre-installed** in the repo. Do NOT run `pod install`. If you get "unable to resolve module dependency" errors, you're using `-project` instead of `-workspace`.
+- Use the `xcode-build-deploy` skill for ALL builds. Don't improvise the sequence.
+- **ALWAYS redirect xcodebuild output to a file.** xcodebuild (build AND test) produces thousands of lines per invocation — dumping into context burns budget. Redirect to a temp log and grep for what matters:
   ```bash
   xcodebuild -workspace FSNotes.xcworkspace -scheme FSNotes build > /tmp/xcbuild.log 2>&1
   # then: tail -n 50 /tmp/xcbuild.log, or: grep -E "error:|warning:|BUILD" /tmp/xcbuild.log
@@ -101,10 +126,12 @@ If yes to either, stop the tool call, tell the user exactly which rule is in ten
   ```
   NEVER let xcodebuild output stream directly into the tool result. Same for `swift build` / `swift test`.
 - Debug builds are **NOT sandboxed** despite entitlements having `app-sandbox = true`. `NSHomeDirectory()` resolves to `/Users/guido` (real home). Ad-hoc codesigning doesn't enforce sandbox.
-- **`Resources/MPreview.bundle` MUST remain in git.** It contains mermaid.min.js, MathJax (tex-mml-chtml.js + woff fonts), highlight.js, and syntax theme CSS. `BlockRenderer.swift` depends on it at runtime for diagram/math/code rendering. Do NOT delete it even when removing legacy preview code.
+- **`Resources/MPreview.bundle` MUST remain in git.** It contains mermaid.min.js, MathJax (tex-mml-chtml.js + woff fonts), highlight.js, and syntax theme CSS. `BlockRenderer.swift` depends on it at runtime for diagram/math/code rendering. Do NOT delete it.
 
 ### Worktrees: CocoaPods symlinks required
+
 Git worktrees do NOT copy `.gitignored` files. `Pods/`, `Podfile`, and `Podfile.lock` are all `.gitignored`. **After creating any worktree**, you MUST symlink these from the main repo:
+
 ```bash
 MAIN_REPO="/Users/guido/Documents/Programming/Claude/fsnotes"
 WORKTREE="$MAIN_REPO/.claude/worktrees/<name>"
@@ -112,191 +139,189 @@ ln -s "$MAIN_REPO/Pods" "$WORKTREE/Pods"
 ln -s "$MAIN_REPO/Podfile" "$WORKTREE/Podfile"
 ln -s "$MAIN_REPO/Podfile.lock" "$WORKTREE/Podfile.lock"
 ```
-Without these, `xcodebuild` fails with "unable to resolve module dependency" errors. This is NOT a kludge — it's the correct way to handle gitignored dependencies in worktrees.
+
+Without these, `xcodebuild` fails with "unable to resolve module dependency". This is the correct way to handle gitignored dependencies in worktrees.
 
 ### Adding new Swift files to the Xcode project
-When creating ANY new `.swift` file, you MUST add it to `FSNotes.xcodeproj/project.pbxproj` in THREE places:
-1. **PBXBuildFile section** — `<ID_B1> /* File.swift in Sources */ = {isa = PBXBuildFile; fileRef = <ID_F1> /* File.swift */; };`
-2. **PBXFileReference section** — `<ID_F1> /* File.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = File.swift; sourceTree = "<group>"; };`
+
+When creating ANY new `.swift` file, you MUST add it to `FSNotes.xcodeproj/project.pbxproj` in FOUR places:
+
+1. **PBXBuildFile** — `<ID_B1> /* File.swift in Sources */ = {isa = PBXBuildFile; fileRef = <ID_F1> /* File.swift */; };`
+2. **PBXFileReference** — `<ID_F1> /* File.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = File.swift; sourceTree = "<group>"; };`
 3. **PBXGroup children** — add `<ID_F1>` to the appropriate group's `children` array
 4. **PBXSourcesBuildPhase** — add `<ID_B1>` to the target's Sources build phase `files` array
 
 For test files, the target is `FSNotesTests` (build phase ID: `TEST00000000000000000005`). For app files, use the main `FSNotes` target.
+
 **Files on disk but not in pbxproj are silently ignored by xcodebuild.** Always verify after adding.
 
 ## Runtime Environment (Debug Builds)
 
 ### NOT sandboxed — critical implications
-Debug builds with ad-hoc codesigning do NOT enforce sandboxing. This means:
+
 - `NSHomeDirectory()` → `/Users/guido` (real home, NOT a container)
 - `UserDefaults` reads/writes → `~/Library/Preferences/co.fluder.FSNotes.plist`
-- Pinned notes stored in → `~/Library/Preferences/co.fluder.FSNotes.plist` under key `PinnedNotes` (or similar)
 - Documents directory → `~/Documents/`
 - To change a UserDefaults value from the command line:
   ```bash
-  # Kill cfprefsd FIRST (it caches aggressively), then write, then relaunch
+  # Kill cfprefsd FIRST (it caches aggressively), then write
   killall cfprefsd 2>/dev/null
   /usr/libexec/PlistBuddy -c "Set :keyName value" ~/Library/Preferences/co.fluder.FSNotes.plist
   ```
 - **cfprefsd caches UserDefaults values in memory.** If you write to the plist while the daemon is running, it may overwrite your changes. Always `killall cfprefsd` before `PlistBuddy` writes.
 
 ### Diagnostic logging
-- **NEVER use NSLog()** — output doesn't reliably appear in `log show` for GUI apps
-- **Use file-based logging** via `FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)` which resolves to `~/Documents/` for FSNotes++
-- **ALWAYS write a timestamp + sentinel on app launch** — if the log file doesn't exist after launch, the logging code isn't executing
-- **Search for logs with `find`** — don't assume you know the exact path
-- Current block-model diagnostic log: `~/Documents/block-model.log`
-- Unit test output goes to: `NSHomeDirectory() + "/unit-tests"` → `~/unit-tests/` (not sandboxed)
+
+- **NEVER use NSLog()** — output doesn't reliably appear in `log show` for GUI apps.
+- **Use file-based logging** via `FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)` which resolves to `~/Documents/` for FSNotes++.
+- **ALWAYS write a timestamp + sentinel on app launch** — if the log file doesn't exist after launch, the logging code isn't executing.
+- Unit test output goes to `NSHomeDirectory() + "/unit-tests"` → `~/unit-tests/` (not sandboxed).
 
 ## Debugging Rules
 
-### Before writing ANY fix:
-1. **Which pipeline stage is responsible?** (see ARCHITECTURE.md for stages)
-2. **Am I modifying THAT stage, or patching somewhere else?**
-3. If #2 is "somewhere else" — STOP. Go back to #1.
-4. **Is the state I'm reading in a view, or in the projection?** If it's in a view, see rule 2 above — you're reading the wrong source of truth and the fix belongs one layer up.
+See "Rule 6 — Debug flow" above for the stage-first fix discipline. A few TK2-specific reminders:
 
-### No post-hoc patches
-Never set attributes AFTER an operation to override what a rendering stage already applied. Fix the stage that applies the wrong attribute. Every time you catch yourself writing `storage.addAttribute` or `textView.typingAttributes = ...` after an `insertText` call, you're patching — find which stage ran during `insertText` and fix it there.
+- **`cacheDisplay` does NOT capture fragment-level drawing.** `bitmapImageRepForCachingDisplay` / `cacheDisplay` invokes the view's `draw()` method but does not invoke `NSTextLayoutFragment.draw`. Per-block chrome (HR line, blockquote border, heading hairline, kbd box, code-block border) won't appear in test snapshots taken this way. Verify these by asserting the fragment class dispatches correctly (see `TextKit2FragmentDispatchTests`) or deploying to the live app.
 
-This rule extends to **save-path patches**. If saving produces wrong output, the fix is to ensure the projection was correct *when the edit happened*, not to walk the view tree at save time and rewrite what's about to be serialized. The `serializeViaBlockModel` live-table walk is exactly this anti-pattern; it exists as a warning, not a template.
+- **Element-vs-fragment attribute ownership.** `DocumentRenderer` / `SourceRenderer` tag `.blockModelKind` + any per-kind payload (`.headingLevel`, `.tableAuthoritativeBlock`, `.renderedBlockSource`) at render time. `BlockModelContentStorageDelegate` reads those and constructs the right element class; `BlockModelLayoutManagerDelegate` dispatches by element class to the right fragment. Untagged mid-splice windows fall back to default TK2 paragraphs.
 
-### After 3 failed attempts, write a unit test
-If a bug isn't fixed after 3 tries, STOP coding and write a unit test that captures the bug. The test must be at the pure-function layer — if you find yourself needing an `NSWindow` to reproduce the bug, the fix is not a new test, it's moving the buggy logic into a pure primitive and testing that. See Rule 3 in the top section.
-
-### `cacheDisplay` does NOT capture LayoutManager drawing
-`bitmapImageRepForCachingDisplay` / `cacheDisplay` captures the view's `draw()` method but does NOT trigger `LayoutManager.drawBackground`. This means AttributeDrawer rendering (bullets, blockquote borders, horizontal rules) won't appear in test snapshots. Verify these by checking attributes exist, or by deploying to the live app.
-
-### Read before writing
-Before writing ANY code in this project:
-- Read every function in the call chain
-- Search for existing mechanisms before adding new ones (grep for the method name, read the parent class, read the callers)
-- Trace the full execution path ONCE before making changes
-- Never use `== .none` on a Swift Optional — use `== nil`
-
-## Architecture Principles
-
-1. **Storage is markdown**: Never mutate text storage for display. Rendering is attributes + drawing only.
-2. **Projection is the single source of truth**: `DocumentProjection.document` is where the content lives. Views render it; edits produce new projections via `EditingOps`. There is no exception for any block type. If a widget appears to need its own mutable state, the widget is wrong.
-3. **Each stage owns specific attributes**: Don't set `.paragraphStyle` outside phase5/DocumentRenderer. Don't set `.font` outside the highlighter. Block model renders without `.kern` or clear-color hiding (phase4 has been removed).
-4. **Fix at the source stage**: When an attribute is wrong, trace which stage sets it and fix there. When saved output is wrong, trace which edit failed to update the projection and fix *there*, not in the save path.
-5. **Generalize, don't specialize**: When fixing a problem that recurs across cases (e.g., typing attributes after Return for ALL transition types), build one parameterized solution, not N special cases.
-6. **Never change working behavior** without telling the user or asking first.
-7. **Views are pure renderers of projection state**. They capture intent and call `EditingOps`. They do not own data. They are not read from.
+- **Marked-text composition bypasses `applyDocumentEdit`.** This is the documented Phase 5e exemption to the single-write-path rule — during IME / dead-key / emoji-picker input `setMarkedText` lets TK2 write to `NSTextContentStorage` directly; on commit (`unmarkText`) the committed run is folded into `Document` via one `applyDocumentEdit` call. The 5a debug assertion is relaxed on `compositionSession.isActive && range ⊂ markedRange`.
 
 ## State Machine: Return Key
 
-The Return key state machine defines what happens on every line type. When adding new transitions:
-- Add the case to `NewLineTransition` enum
-- Add detection logic to `newLineTransition()` (pure function — no side effects)
-- Add execution logic to `applyTransition()`
-- The post-transition block at the end of `newLine()` sets typing attributes for ALL cases — don't duplicate this in individual cases
+`EditingOps.newLine(in:projection:)` is the entry point. When adding a new transition:
+
+- Add the case to `NewLineTransition` enum.
+- Add detection logic to `newLineTransition()` (pure function — no side effects).
+- Add execution logic to `applyTransition()`.
+- The post-transition block at the end of `newLine()` sets typing attributes for ALL cases — don't duplicate this in individual cases.
+
+Per-block Return behavior is tabulated in `ARCHITECTURE.md` → "Editing FSMs by Block Type".
 
 ## Test Patterns
 
-### Tests must exercise pure primitives, not widgets
+### Tests exercise pure primitives, not widgets.
 
-The 556-test suite caught zero of the table cell editing bugs because every table test was at the pipeline layer (parser, renderer, round-trip) while the bugs lived in the widget's own mutable state. When you add a feature, the test must call into the pure function that represents the feature's core logic — not drive a widget and check side effects.
+The pure-function tests (`BlockParserTests`, `EditingOperationsTests`, `BlockModelFormattingTests`, `MarkdownSerializer*Tests`, `ListEditingFSMTests`, `EditContractTests`, `DocumentEditApplierTests`) call `EditingOps.*` / `MarkdownParser.parse` / `MarkdownSerializer.serialize` / `DocumentEditApplier.diffDocuments` directly on value-typed `Document`s with no AppKit setup. Use this layer by default.
 
-If the feature's core logic is not currently callable as a pure function on value types, that's the first problem to fix. Don't write a widget-driving test to cover for it.
+### HTML Parity harness
+
+`EditorHTMLParityTests.swift` renders "expected" (fresh parse of target markdown) and "live" (editor after simulated edit script) `Document`s to HTML via `DocumentHTMLRenderer` and asserts byte-equal. Also verifies the `HTML(doc) == HTML(parse(serialize(doc)))` round-trip property. This is the canonical live-edit harness.
+
+### EditorHarness DSL
+
+`Tests/EditorHarness.swift` — script edits with `.type(…)`, `.pressReturn`, `.backspace`, `.select(…)`, `.toggleBold`, `.setHeading(level:)`, `.toggleList`, `.toggleQuote`, `.insertHR`, `.toggleTodo`. After every input the harness reads `EditTextView.preEditProjection` + `.lastEditContract` (set by `applyEditResultWithUndo`) and runs `Invariants.assertContract(before:after:contract:)` on the live projection — the same invariant the pure-function tests enforce.
+
+### TK2 dispatch tests
+
+`TextKit2FragmentDispatchTests.swift` / `TextKit2ElementDispatchTests.swift` construct a minimal `NSTextContentStorage` + layout manager with the real delegates, feed rendered output, and assert the correct element / fragment class comes back per paragraph range.
 
 ### Test output location
+
 ```swift
 let outputDir = NSHomeDirectory() + "/unit-tests"
 // Resolves to ~/unit-tests/ (debug builds are NOT sandboxed)
 ```
 
-### Full pipeline test setup
-```swift
-let editor = makeFullPipelineEditor()  // Creates EditTextView + window + initTextStorage
-editor.textStorage?.setAttributedString(NSMutableAttributedString(string: markdown))
-NotesTextProcessor.hideSyntax = true
-runFullPipeline(editor)  // Sets note.content, triggers didProcessEditing, pumps RunLoop
-```
-
-### Pump the run loop for async operations
-BulletProcessor (now removed) and some image loading use `DispatchQueue.main.async`. After any operation that might trigger async processing:
-```swift
-RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-```
-
 ### A/B comparison pattern
-Always compare "loaded note" (known-good) vs "live editing" (what you're testing). If they differ, the live editing path has a bug. Measure line fragment heights, paragraph styles, attribute values — not just string content.
 
-## Common Mistakes (from real bugs shipped on this project)
-
-1. **Using `-project` instead of `-workspace`**: Pods won't resolve. Always use `-workspace FSNotes.xcworkspace`
-2. **Setting typing attributes before insertText**: `didProcessEditing` runs synchronously during `insertText` and overwrites. Set AFTER.
-3. **Assuming cacheDisplay captures everything**: It doesn't capture LayoutManager custom drawing.
-4. **Hardcoding attachment widths**: Measure actual attachment cell size from storage, don't use magic numbers.
-5. **Full reparse on every keystroke**: The incremental parser works. If heading detection fails, the bug is in `adjustBlocks` boundary conditions, not in the parser itself.
-6. **Ignoring the `isRendering` flag**: `isRendering = true` is set during block-model splice operations. `process()` bails out when `isRendering` is true. Don't add code that depends on `process()` running during a `replaceCharacters` call inside `isRendering = true`.
-7. **Giving a widget its own mutable data state** (InlineTableView's `rows`/`headers`/`alignments`). The projection is the data. Widgets render it. See top section.
-8. **Reading view state back into the data model** (`collectCellData` pulling from `cell.stringValue`). Views render data — they are never read from. See top section.
-9. **Patching the save path to reach into live view state** (`serializeViaBlockModel` walking live table attachments). If the projection is wrong at save time, the edit that produced it was wrong. Fix the edit. See top section.
+Compare "loaded note" (known-good) vs "live editing" (what you're testing). If they differ, the live editing path has a bug. Measure fragment class dispatch, paragraph styles, attribute values — not just string content.
 
 ## Current State
 
-### Block-Model Pipeline (live in app, ALL block types)
-- Parser: `MarkdownParser` → `Document` (block model) → `MarkdownSerializer` round-trip
-- Renderer: `DocumentRenderer` renders ALL block types to `NSAttributedString` (no markdown markers in storage)
-- Editing: `EditingOps` handles insert/delete/split/merge/paste for ALL block types:
-  - Paragraphs, headings, code blocks: full editing (insert, delete, split, merge, paste)
-  - Lists: insert/delete, Return splits item, Tab/Shift-Tab indent/unindent via FSM, Return-on-empty exits/unindents
-  - Blockquotes: insert/delete within line inline content, Return splits line
-  - Horizontal rules: read-only (inserts throw, deletes are no-op, cross-block merge handles removal)
-  - Block merges: all block types can be merged (heading+paragraph, list→paragraph, etc.)
-- **Toolbar formatting via block model** (Phase 5):
-  - Inline traits: bold/italic/code toggle via `EditingOps.toggleInlineTrait()` — wraps/unwraps selection in the inline tree
-  - Heading level: `EditingOps.changeHeadingLevel()` — paragraph↔heading conversion, level change, toggle off
-  - List toggle: `EditingOps.toggleList()` — paragraph↔list conversion
-  - Blockquote toggle: `EditingOps.toggleBlockquote()` — paragraph↔blockquote conversion
-  - HR insertion: `EditingOps.insertHorizontalRule()` — adds HR after current block
-  - Todo list: `EditingOps.toggleTodoList()` — paragraph→todo, list↔todo conversion
-  - Todo checkbox toggle: `EditingOps.toggleTodoCheckbox()` — checked↔unchecked, click-to-toggle wired
-  - Clear completed todos: block-model path removes checked items from Document
-  - All wired into `EditTextView+Formatting.swift` — block-model path tried first, source-mode fallback if unavailable
-- **List Editing FSM** (`ListEditingFSM.swift`): pure state machine for structural list operations (indent, unindent, exit, newItem)
-- Integration: `EditTextView+BlockModel.swift` wires pipeline into live editor
-- **ALL notes use the block model** — old `allBlocksSupported()` gate removed
-- **Save path**: block-model notes save via `Note.save(markdown:)` which bypasses `NoteSerializer.prepareForSave()`. Source-mode notes go through `save(content:)` + `NoteSerializer`. All call sites route through `EditorDelegate.save()`.
-- **Document caching**: `Note.cachedDocument` avoids re-parsing on every fill. Invalidated on save/load/reload. Preserved after block-model save.
-- **Source-mode pipeline retained for source mode / non-markdown**: `TextStorageProcessor.process()` is bypassed when `blockModelActive == true` (always true for markdown WYSIWYG). The source-mode pipeline still runs for source mode and non-markdown notes.
-- **Fold/unfold bridged**: `syncBlocksFromProjection()` populates the source-mode `blocks` array from the Document model so fold/unfold operations work in block-model mode. Called after every fill and edit.
-- **Dark mode / highlight guards**: All `NotesTextProcessor.highlight()` calls guarded by `documentProjection == nil`. LayoutManager source-mode drawing (bullets, checkboxes, ordered markers) skipped when `blockModelActive == true`.
-- Diagnostic log: `~/Documents/block-model.log`
+### Block-Model Pipeline (WYSIWYG, all block types)
 
-### Table cell editing (Stage 1–4 refactor, landed)
+- Parser: `MarkdownParser` → `Document` (block model) → `MarkdownSerializer` round-trip.
+- Renderer: `DocumentRenderer` renders all block types to `NSAttributedString` — no markdown markers in storage. `.blockModelKind` + per-kind payload attributes tag each paragraph for element dispatch.
+- Editing: `EditingOps` handles insert / delete / split / merge / paste for every block kind:
+  - Paragraphs, headings, code blocks: full editing.
+  - Lists: structural ops via `ListEditingFSM` (indent, unindent, exit, newItem).
+  - Blockquotes: line-level editing inside the block.
+  - Horizontal rules: read-only (cross-block merge handles removal).
+  - Tables: cell-level editing via `EditingOps.replaceTableCellInline` (takes `[Inline]`, NOT raw markdown).
+  - Block merges: heading+paragraph, list→paragraph, etc.
+- Toolbar formatting (block-model path): `toggleInlineTrait`, `changeHeadingLevel`, `toggleList`, `toggleBlockquote`, `insertHorizontalRule`, `toggleTodoList`, `toggleTodoCheckbox`. Wired in `EditTextView+Formatting.swift`.
+- TK2 stack: `NSTextLayoutManager` + `NSTextContentStorage` + `BlockModelContentStorageDelegate` + `BlockModelLayoutManagerDelegate`. One element class + at most one fragment class per block kind (see Invariant B).
+- Edit application: every WYSIWYG edit flows through `DocumentEditApplier.applyDocumentEdit` (see Invariant A).
+- Save path: block-model notes save via `Note.save(markdown:)` which serializes the projection. `NoteSerializer.prepareForSave` has been retired; `.save(content:)` remains as a legacy source-mode path and is grep-gated against reintroduction.
+- Document caching: `Note.cachedDocument` avoids re-parsing on every fill; invalidated on save/load/reload.
+- Fold state: `Note.cachedFoldState: Set<Int>?` (block storage offsets). A fold toggle sets `.foldedContent`; the content-storage delegate returns `FoldedElement` / `FoldedLayoutFragment` regardless of underlying block kind. No `syncBlocksFromProjection` bridge — fold reads directly off the projection.
 
-The InlineTableView cautionary tale described in the top section of this file has been resolved end to end. The refactor landed in four stages, each test-first and live-verified:
+### Source-mode pipeline (`hideSyntax == false`)
 
-**Stage 1 — data shape.** `Block.table` now carries `TableCell` values (`{ inline: [Inline] }`) — the same inline-tree type backing `Block.paragraph`. The parser populates cells via `MarkdownParser.parseInlines` per cell string. `raw: String` is retained for B1 byte-identical preservation of untouched tables (non-canonical source text) and gets recomputed canonically by `EditingOps.rebuildTableRaw` on any edit.
+- Shares `Document` and TK2 with WYSIWYG but renders via `SourceRenderer` (markers re-injected, tagged `.markerRange`).
+- Each paragraph tagged `.blockModelKind = .sourceMarkdown`; delegates dispatch to `SourceMarkdownElement` + `SourceLayoutFragment`.
+- `SourceLayoutFragment.draw` calls super for default text, then overpaints `.markerRange` runs in `Theme.shared.chrome.sourceMarker`. No `.foregroundColor` mutation.
+- `TextStorageProcessor` does minor post-edit work (attachment restore, fold-attribute propagation) — not highlighting. The `NotesTextProcessor.highlight*` markdown path was retired in Phase 4.4 (commit `6b875ab`); the rule-7 gate pattern `legacyMarkdownHighlight` prevents reintroduction.
 
-**Stage 2 — rendering.** `InlineTableView.configureCell` renders every cell via `InlineRenderer.render(cell.inline, baseAttributes:)` — the same code path paragraphs use. The widget's local regex re-implementation of inline parsing (`parseInlineMarkdown`) has been deleted. Column widths and row heights measure via the attributed string's `boundingRect`, so visually-invisible markers don't contribute to layout.
+### Attachment handling
 
-**Stage 3 — editing.**
-- New pure function `InlineRenderer.inlineTreeFromAttributedString(_:)` is the inverse of `render`. 24 round-trip unit tests cover every formatting combination (plain, bold, italic, strike, underline, highlight, code, link, nested bold+italic, mixed nesting, multi-line `<br>/\n`, literal asterisks, empty strings).
-- New primitive `EditingOps.replaceTableCellInline(blockIndex:at:inline:in:)` takes `[Inline]` directly; the raw-string variant `replaceTableCell(newSourceText:)` forwards to it.
-- New editor entry point `EditTextView.applyTableCellInlineEdit(from:at:inline:)` is the sibling of `applyTableCellEdit`. It holds the attachment-reuse contract: splice-free in-place update on same-shape edits.
-- `InlineTableView.controlTextDidChange` reads `fieldEditor.textStorage` as an `NSAttributedString`, converts to an inline tree via the new pure function, and routes through the inline primitive. Zero raw-markdown round-trips; zero `.string` reads of attributed field editors.
-- `TableRenderController.applyInlineTableCellFormat` toggles attributes on the field-editor storage (e.g. `.font` bold/italic, `.strikethroughStyle`, `.underlineStyle`, `.backgroundColor` highlight) and flushes through the inline primitive. No marker insertion, no marker hiding, no `.kern` / tiny font / `.clear` foreground tricks.
-- Cells are configured with `allowsEditingTextAttributes = true` so the field editor preserves attribute runs on attach. Without this flag, `NSTextField` downgrades the attributed string to plain text + default cell font on edit mode entry — which was the "formatting disappears when cursor enters cell" symptom.
+- `NSTextAttachmentViewProvider` subclasses: `ImageAttachmentViewProvider`, `PDFAttachmentViewProvider`, `QuickLookAttachmentViewProvider`, `BulletAttachmentViewProvider`, `CheckboxAttachmentViewProvider`.
+- Transparent-placeholder pattern: each attachment initializes `.image` with a size-matched transparent `NSImage` memoized in an `NSCache`, so TK2's first-layout-pass document-icon-glyph flash is invisible (commit `c033b46`).
+- Block-level attachments that previously existed for tables / mermaid / math have been replaced: tables are native content-storage cells (Phase 2e T2-f); mermaid and math render via their own fragments reading `.renderedBlockSource` from storage.
 
-**Stage 4 — cleanup.** Deleted: `InlineTableView.parseInlineMarkdown`, `InlineTableView.collectCellData` (silent corruption vector under Stage 3 — it read `fieldEditor.string` plain and stripped all formatting), `InlineTableView.generateMarkdown`, the `skipCollect` parameter on `rebuild`, `TableRenderController.prepareRenderedTablesForSave` (the save-path walker that was the cautionary tale), the `EditTextView.prepareRenderedTablesForSave` forwarder, the `EditTextView.attributedStringForSaving` call to it, the old string-based `EditTextView.applyTableCellEdit` entry point (zero live callers), `hideMarker` + `applyLiveAttributes` in `TableRenderController` (the banned tiny-font marker-hiding helpers). The rule 7 grep-conscience returns zero matches in both widget files.
+### Theme
 
-**What the refactor left behind.** Cell rendering, measurement, and editing all flow through the same primitives as paragraph content — "a paragraph inside a cell." 820 unit tests pass including 24 new converter round-trip tests, 15 primitive tests, and the 2 cross-cell persistence contract tests that opened this whole effort.
+Single source of truth for every presentation literal. See `ARCHITECTURE.md` → "Theme". Bundled defaults at `Resources/default-theme.json`, `Resources/Themes/Dark.json`, `Resources/Themes/HighContrast.json`. User overrides at `~/Library/Application Support/FSNotes++/Themes/*.json` — user-override-wins on basename match. `Theme.shared` + `Theme.didChangeNotification` for live-reload. Preferences IBActions mutate the theme and persist via `Theme.saveActiveTheme` (Phase 7.5.a, commit `fb0c3a5`).
+
+### Diagnostic log
+
+`~/Documents/block-model.log` — file-based (NSLog doesn't work in GUI apps; see Diagnostic logging above). Written by `bmLog` helper.
 
 ### CommonMark Spec Compliance (v0.31.2)
-- **Overall: 526/652 (80.7%)**
-- Perfect sections (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Images, Hard line breaks
-- Near-perfect (90%+): Emphasis (99%), Fenced code blocks (97%), Autolinks (95%), Raw HTML (95%), Entity refs (94%), HTML blocks (91%)
-- Strong (70-89%): Links (86%), ATX headings (83%), Setext headings (81%), Link ref defs (81%), Thematic breaks (79%), Backslash escapes (77%)
-- Moderate (50-69%): Block quotes (68%), Paragraphs (62%)
-- Low (<50%): Lists (38%), List items (25%), Tabs (18%), Indented code blocks (8%), Blank lines (0%)
-- Block model supports: paragraphs, headings (ATX + setext), code blocks, lists (tight/loose, marker splitting, empty items), blockquotes (lazy continuation), HR, HTML blocks (types 1-7), blank lines
-- Inline model supports: bold/italic (* and _ with delimiter stack), strikethrough, code spans (multi-backtick), links (inline + reference), images (inline + reference), autolinks (extended URI schemes), escaped chars, line breaks (hard + soft), raw HTML (validated attributes, multiline), entities (validated + decoded)
-- Unsupported: Indented code blocks, list sub-block parsing, nested blocks in list items
-- See `Tests/CommonMark/` for the full test suite and `~/unit-tests/commonmark-compliance.txt` for detailed reports
+
+Serializer compliance: **524 / 652 passing (80.4%)** at the current baseline. Phase target: 90%+.
+
+- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Images, Hard line breaks
+- Near-perfect (90%+): Emphasis, Fenced code blocks, Autolinks, Raw HTML, Entity refs, HTML blocks
+- Strong (70–89%): Links, ATX headings, Setext headings, Link ref defs, Thematic breaks, Backslash escapes
+- Moderate (50–69%): Block quotes, Paragraphs
+- Low (<50%): Lists, List items, Tabs, Indented code blocks, Blank lines
+- Main unsupported: indented code blocks (deliberately deferred — low-value for WYSIWYG), nested blocks in list items, tab expansion in prefix whitespace
+
+Full corpus in `Tests/CommonMark/`; per-section reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
+
+---
+
+## Historical Record
+
+These are the bugs and anti-patterns that motivated the refactor. They are preserved here as teaching material; the code they describe has been deleted.
+
+### The `InlineTableView` cautionary tale
+
+`InlineTableView` was built with its own mutable `rows` / `headers` / `alignments` state, and cell edits mutated that state directly. `serializeViaBlockModel()` was then patched to reach sideways into live view state at save time and rewrite `Block.table.raw` before serialization. `collectCellData` walked the table at edit time and copied `cell.stringValue` back into the model — which, because the cell rendered with `attributedStringValue` (markers stripped by the widget's local `parseInlineMarkdown`), silently overwrote formatted data with flattened text. Editing one cell wiped formatting in another. Saving a note required a live-tables check in `save()` to force a view walk. Every bug required an `NSWindow` + field editor to reproduce.
+
+Progression of fixes:
+
+- Stage 1 (data shape): `Block.table` carries `TableCell` values with `inline: [Inline]`.
+- Stage 2 (rendering): widgets renders cells via `InlineRenderer.render` — same code path paragraphs use. Widget-local regex parser deleted.
+- Stage 3 (editing): `InlineRenderer.inlineTreeFromAttributedString` as the inverse of `render`; `EditingOps.replaceTableCellInline(blockIndex:at:inline:in:)` as the pure primitive; `EditTextView.applyTableCellInlineEdit` as the editor entry point. 24 round-trip converter tests + 15 primitive tests + 2 cross-cell persistence contract tests.
+- Stage 4 (cleanup): widget-local `parseInlineMarkdown`, `collectCellData`, `generateMarkdown`, `skipCollect` flag, `prepareRenderedTablesForSave` (the save-path walker), `hideMarker` / `applyLiveAttributes` all deleted.
+- Phase 2e T2 (2026-04-23, commits `957dc7e` + `452d1f2` + `de1f146`): table cells moved into `NSTextContentStorage` as native characters. `TableElement` / `TableLayoutFragment` render natively. `FSNotes/Helpers/InlineTableView.swift` (~2,319 LoC) and `FSNotes/TableRenderController.swift` (~471 LoC) deleted along with `TableBlockAttachment`, `TableAttachmentViewProvider`, `TableAttachmentHosting`, and the `nativeTableElements` feature flag. Bug #60 ("Find across table cells") now passes by construction.
+
+The meta-lesson: the first line of `InlineTableView` was the mistake. There was no "I'll do it properly later" — the correct time to design the block-model primitive for tables was before the widget was written. This is what invariants A–E are meant to prevent recurring.
+
+### The `LayoutManager.drawBackground` drawer stack
+
+`FSNotes/LayoutManager.swift` was a custom `NSLayoutManager` subclass that drew bullet dots, blockquote borders, HR lines, and kbd box backgrounds via `drawBackground` — a TK1-only pathway. An `AttributeDrawer` protocol in `FSNotes/Rendering/` had five conformers (`BulletDrawer`, `HorizontalRuleDrawer`, `BlockquoteBorderDrawer`, `KbdBoxDrawer`, `ImageSelectionHandleDrawer`).
+
+Under TK2 this whole stack is wrong: TK2 uses `NSTextLayoutFragment.draw`, not layout-manager background draws, and the drawer files had no path to get called. Phase 2c/2d ported every per-block draw into a fragment class. Phase 4.5 deleted `LayoutManager.swift`. The drawer files survive on disk as dormant helpers with no live call site — they are candidates for a future deletion slice. `ImageSelectionHandleDrawer` is the one the image selection work will port; the other four have already been fully absorbed into fragment-level draws.
+
+Rule-7 gate pattern `tk1LayoutManager` (`class LayoutManager : NSLayoutManager` / `layoutManagerIfTK1`) prevents reintroduction.
+
+### The `NoteSerializer.prepareForSave` / `save(content:)` pair
+
+The source-mode save path used to run a view walk at save time to reconcile widget state back into markdown. Retired in Phase 4.7; the rule-7 gate pattern `legacySaveContent` (matching `.save(content:` and `prepareForSave`) prevents reintroduction. All saves route through `Note.save(markdown:)` on the projection.
+
+### The `syncBlocksFromProjection` bridge
+
+A helper that copied `Document.blocks` into a source-mode mirror array on `TextStorageProcessor` so fold/unfold could read it. Retired in Phase 4.6; fold state now reads directly off the projection via the `documentProjection` setter's auto-sync. The rule-7 gate pattern `legacyBlocksPeer` prevents reintroduction.
+
+### The phase-4 marker-hiding attempt
+
+An earlier iteration tried to preserve markers in WYSIWYG storage and hide them visually via tiny-font / clear-foreground / negative-kern attributes so Cmd+F could find them. This failed in several ways (cursor invisibility, layout flicker, find-result ranges pointing at invisible runs). The replacement design: markers don't live in WYSIWYG storage at all; find-across-markers is addressed by source mode (where markers are real content) and by the authoritative `Document` being searchable independently of presentation. The rule-7 gate's marker-hiding patterns enforce that this mistake can't be reintroduced piecemeal.
+
+---
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
