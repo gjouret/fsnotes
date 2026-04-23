@@ -344,6 +344,43 @@ extension EditTextView {
             processor.restoreCollapsedState(savedFolds, textStorage: storage)
         }
 
+        // Phase 2e T2-f (Batch N+2): install live table widgets and
+        // force an initial layout pass **synchronously**, before the
+        // first paint. Previously these ran via `DispatchQueue.main.async`
+        // at the fill() call site, which meant:
+        //   • Table attachments showed AppKit's generic document-icon
+        //     placeholder for ~500ms (until the async block ran and
+        //     TableRenderController swapped in the InlineTableView cell).
+        //   • Checkbox / view-provider attachments didn't draw until
+        //     the user scrolled or clicked, because TK2's view-provider
+        //     integration needs a layout pass to wire the hosted views
+        //     and the first layout pass was deferred to the next user
+        //     event.
+        // The fix: call renderTables() directly here, then force the
+        // layout manager to complete its initial layout for the full
+        // document range. Both are lightweight operations on typical
+        // notes (a single enumerateAttribute walk for tables, and a
+        // viewport-bounded layout pass for TK2). Heavier async work
+        // (mermaid/math bitmap rendering, PDF hydration, image load)
+        // remains on its existing async path.
+        renderTables()
+        if let tlm = textLayoutManager {
+            // Scope the sync layout pass to the visible viewport, not
+            // the whole document. A full-doc `ensureLayout` on a
+            // 500k-char note blocks the main thread for seconds. We
+            // only need first-paint to resolve attachment view
+            // providers that intersect the viewport — everything
+            // offscreen falls on TK2's normal lazy layout path
+            // triggered by scroll. Document-range fallback handles the
+            // case where the viewport range can't be derived (e.g. the
+            // view hasn't been added to a window yet during tests).
+            if let viewport = tlm.textViewportLayoutController.viewportRange {
+                tlm.ensureLayout(for: viewport)
+            } else {
+                tlm.ensureLayout(for: tlm.documentRange)
+            }
+        }
+
         bmLog("✅ fillViaBlockModel complete: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")
 
         return true
@@ -1619,7 +1656,7 @@ extension EditTextView {
         // cell. Arrow keys and other selection-only events still
         // fire `controlTextDidChange`, so without this check the
         // full primitive + save pipeline runs for every caret move.
-        if case .table(let header, _, let rows, _) = projection.document.blocks[blockIndex] {
+        if case .table(let header, _, let rows, _, _) = projection.document.blocks[blockIndex] {
             let existing: [Inline]?
             switch location {
             case .header(let col):
@@ -1846,7 +1883,7 @@ extension EditTextView {
             bmLog("⛔ handleTableCellEdit: projection has no block at offset \(ctx.elementStorageStart)")
             return false
         }
-        guard case .table(let header, _, _, _) =
+        guard case .table(let header, _, _, _, _) =
                 projection.document.blocks[blockIdx] else {
             bmLog("⛔ handleTableCellEdit: block \(blockIdx) is not a table")
             return false
@@ -1899,10 +1936,10 @@ extension EditTextView {
             }
             // Clamp the cursor to the cell's new length — the new cell
             // may have more or fewer characters than the requested
-            // offset (e.g. `<br>` encodes as `\n` which is one UTF-16
-            // unit, and `.rawHTML("<br>")` renders back as `\n` too,
-            // so counts match for this slice — but a future `<br>` →
-            // `<br>` rawHTML emission from the converter would not).
+            // offset. `<br>` encodes as a single `\n` UTF-16 unit in
+            // the attributed-string form (see
+            // `InlineRenderer.isBrTag`), which matches the `+1`
+            // advance computed for a Return keystroke.
             let newCellLen: Int
             if case .table = tmp.newProjection.document.blocks[blockIdx],
                let probe = TableElement(

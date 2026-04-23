@@ -2,25 +2,24 @@
 //  TableCellCursorMathTests.swift
 //  FSNotesTests
 //
-//  Pins the invariants called out at `EditTextView+BlockModel.swift:1900`
-//  and documents a latent bug in T2-e's Return-in-cell handler that this
-//  test suite surfaced:
+//  Pins the invariants called out at `EditTextView+BlockModel.swift`
+//  for Return-in-cell cursor placement.
 //
-//    T2-e's `handleTableCellEdit` inserts `Inline.rawHTML("<br>")` on
-//    Return. Its design comment (EditTextView+BlockModel.swift:1902-1906)
-//    assumes `<br>` rawHTML renders to a single `\n` UTF-16 unit, so the
-//    cursor advance from `newCellLocalOffset = oldOffset + 1` matches the
-//    stored length delta. In reality `InlineRenderer.render` emits
-//    rawHTML verbatim, so `<br>` lands in the cell as four literal
-//    characters ("<br>"). Cell length increases by 4, cursor placed at
-//    `oldOffset + 1`, and the clamp at :1917 silently lands the cursor
-//    mid-`<br>` literal.
+//  History: T2-e's `handleTableCellEdit` inserts `Inline.rawHTML("<br>")`
+//  on Return. The initial design assumed `<br>` rawHTML renders to a
+//  single `\n` UTF-16 unit, but the initial implementation of
+//  `InlineRenderer.render` emitted rawHTML verbatim, so `<br>` landed
+//  in the cell as four literal characters ("<br>"). The cursor-advance
+//  math (`oldOffset + 1`) then placed the caret mid-`<br>` literal.
 //
-//  These tests PIN the current rendering reality (rawHTML is verbatim)
-//  so any future fix — either switching the handler to `.lineBreak` /
-//  `.softBreak`, or teaching `InlineRenderer` to decode `<br>` specially
-//  — is accompanied by a test-suite update that makes the intent
-//  explicit.
+//  Fix (T2-f, Batch N+2): `InlineRenderer.render` now special-cases a
+//  rawHTML `<br>` tag (case-insensitive, optional self-close) to render
+//  as a single `\n`. Serialization and parsing paths are unchanged —
+//  corpus notes with `<br>` in cells still round-trip byte-identically
+//  through `MarkdownSerializer`. Other rawHTML (spans, divs, comments)
+//  continues to render verbatim.
+//
+//  These tests PIN the post-fix reality: `<br>` = one `\n`.
 //
 //  Pure-primitive: no NSWindow. Exercises renderer + `EditingOps`
 //  directly.
@@ -36,33 +35,37 @@ final class TableCellCursorMathTests: XCTestCase {
         .monospacedSystemFont(ofSize: 14, weight: .regular)
     }
 
-    /// Reality check: `Inline.rawHTML("<br>")` renders as the literal
-    /// four-character string `"<br>"`, NOT `"\n"`. The T2-e design
-    /// comment at `EditTextView+BlockModel.swift:1902-1906` should be
-    /// reconciled with this — either the handler switches to
-    /// `Inline.lineBreak` / `Inline.softBreak` or the renderer grows a
-    /// `<br>` → `\n` special-case. Tracked for Phase 2e T2-f follow-up.
-    func test_phase2eT2e_brRender_isLiteralFourChars() {
-        let tree: [Inline] = [.rawHTML("<br>")]
-        let rendered = InlineRenderer.render(tree, baseAttributes: [:])
-        XCTAssertEqual(
-            rendered.string.utf16.count, 4,
-            "rawHTML renders verbatim. If this ever becomes 1, update handleTableCellEdit's `replacement == \"\\n\" ? +1 : +N` math and delete this test."
-        )
-        XCTAssertEqual(
-            rendered.string, "<br>",
-            "rawHTML stays as raw text in the rendered string; the converter inverse shape is InlineRenderer.inlineTreeFromAttributedString turning `\\n` back into `.rawHTML(<br>)`, but forward rendering is literal."
-        )
+    /// `Inline.rawHTML("<br>")` renders as a single `\n` (one UTF-16
+    /// unit). Case-insensitive and self-close variants are also
+    /// accepted. Other rawHTML (non-`<br>`) renders verbatim.
+    func test_phase2eT2f_brRender_isSingleNewline() {
+        // Canonical lowercase `<br>`.
+        let lower = InlineRenderer.render([.rawHTML("<br>")], baseAttributes: [:])
+        XCTAssertEqual(lower.string.utf16.count, 1, "<br> must render as a single UTF-16 unit")
+        XCTAssertEqual(lower.string, "\n", "<br> must render as a newline")
+
+        // Uppercase and self-close variants also render as `\n`.
+        let upper = InlineRenderer.render([.rawHTML("<BR>")], baseAttributes: [:]).string
+        XCTAssertEqual(upper, "\n", "<BR> (uppercase) must render as a newline")
+        let selfClose = InlineRenderer.render([.rawHTML("<br/>")], baseAttributes: [:]).string
+        XCTAssertEqual(selfClose, "\n", "<br/> (self-close) must render as a newline")
+        let selfCloseSpaced = InlineRenderer.render([.rawHTML("<br />")], baseAttributes: [:]).string
+        XCTAssertEqual(selfCloseSpaced, "\n", "<br /> (self-close with space) must render as a newline")
+
+        // Sanity: non-`<br>` rawHTML still renders verbatim.
+        let other = InlineRenderer.render([.rawHTML("<span>")], baseAttributes: [:]).string
+        XCTAssertEqual(other, "<span>", "non-<br> rawHTML must still render verbatim")
     }
 
     /// Inserting a `<br>` rawHTML into a cell increases the cell's
-    /// rendered UTF-16 length by exactly **4** today — NOT by 1.
-    /// `EditTextView+BlockModel.swift:1917` compensates via `min()`
-    /// clamp, which lands the cursor at `cellStart + oldOffset + 1`
-    /// — i.e. between the first two chars of the `<br>` literal.
-    /// This is a known T2-e regression. The clamp at :1917 is
-    /// load-bearing and a proper fix is tracked for T2-f.
-    func test_phase2eT2e_brInsert_addsFourUtf16Units_notOne() throws {
+    /// rendered UTF-16 length by exactly **1** (one `\n`). This is the
+    /// contract `handleTableCellEdit` relies on when computing
+    /// `newCellLocalOffset = oldOffset + newText.utf16.count` for the
+    /// Return keystroke: the replacement attributed string is `\n`
+    /// (1 unit), the converter turns that `\n` into `.rawHTML("<br>")`,
+    /// and `InlineRenderer.render` brings it back to `\n` (1 unit) so
+    /// the cursor advance matches the stored length delta.
+    func test_phase2eT2f_brInsert_addsOneUtf16Unit() throws {
         let md = """
         | A |
         |---|
@@ -80,7 +83,7 @@ final class TableCellCursorMathTests: XCTestCase {
             return false
         }
         guard let blockIdx = blockIdx,
-              case let .table(_, _, rows, _) = proj.document.blocks[blockIdx] else {
+              case let .table(_, _, rows, _, _) = proj.document.blocks[blockIdx] else {
             XCTFail("Expected a .table block at some index")
             return
         }
@@ -103,18 +106,72 @@ final class TableCellCursorMathTests: XCTestCase {
             in: proj
         )
 
-        guard case let .table(_, _, newRows, _) = result.newProjection.document.blocks[blockIdx] else {
+        guard case let .table(_, _, newRows, _, _) = result.newProjection.document.blocks[blockIdx] else {
             XCTFail("Post-edit block must still be .table")
             return
         }
-        let renderedNew = InlineRenderer.render(
+        let renderedString = InlineRenderer.render(
             newRows[0][0].inline,
             baseAttributes: [:]
-        ).string.utf16.count
+        ).string
+        let renderedNew = renderedString.utf16.count
 
         XCTAssertEqual(
-            renderedNew, renderedOld + 4,
-            "Today `<br>` rawHTML is a 4-char literal in the rendered string. `handleTableCellEdit` computes `newCellLocalOffset = oldOffset + 1` (assuming a single `\\n` unit) and relies on the `min()` clamp at EditTextView+BlockModel.swift:1917 to prevent out-of-bounds cursor — but the placed cursor is then between the `<` and `b` of the literal `<br>`. Tracked for Phase 2e T2-f follow-up."
+            renderedNew, renderedOld + 1,
+            "<br> rawHTML renders as a single `\\n` in the cell. `handleTableCellEdit` computes `newCellLocalOffset = oldOffset + 1` and the rendered length delta must match."
+        )
+        XCTAssertEqual(
+            renderedString, "he\nllo",
+            "The cell's rendered string must contain a literal newline between `he` and `llo`."
+        )
+    }
+
+    /// Serialization round-trip contract: a cell containing a `<br>`
+    /// rawHTML inline must serialize back to `<br>` markdown source
+    /// (NOT to a `\n`, which would split the table row). This protects
+    /// corpus notes that already use `<br>` as a cell line-break from
+    /// silent data loss if the renderer change above is ever naively
+    /// applied to the serializer too.
+    func test_phase2eT2f_brRoundTrip_serializesAsLiteralBrTag() {
+        let md = """
+        | A |
+        |---|
+        | hello |
+        """
+        let doc = MarkdownParser.parse(md)
+
+        // Build a new Document where the body cell has a <br> mid-text.
+        guard case let .table(header, alignments, _, _, raw) = doc.blocks[0] else {
+            XCTFail("Expected a table block")
+            return
+        }
+        _ = raw
+        let newRows: [[TableCell]] = [
+            [TableCell([
+                .text("he"),
+                .rawHTML("<br>"),
+                .text("llo")
+            ])]
+        ]
+        let newRaw = EditingOps.rebuildTableRaw(
+            header: header,
+            alignments: alignments,
+            rows: newRows
+        )
+        let newDoc = Document(
+            blocks: [.table(header: header, alignments: alignments, rows: newRows, columnWidths: nil, raw: newRaw)],
+            trailingNewline: doc.trailingNewline,
+            refDefs: doc.refDefs
+        )
+
+        let serialized = MarkdownSerializer.serialize(newDoc)
+        XCTAssertTrue(
+            serialized.contains("he<br>llo"),
+            "Serialized markdown must contain the literal `<br>` tag, not a newline. Got: \(serialized)"
+        )
+        XCTAssertFalse(
+            serialized.contains("he\nllo"),
+            "Serialized markdown must NOT embed a `\\n` inside a table row — that would split the row."
         )
     }
 }

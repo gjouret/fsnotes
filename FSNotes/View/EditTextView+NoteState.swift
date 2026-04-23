@@ -338,6 +338,15 @@ extension EditTextView {
             }
         } else {
             // Block-model path.
+            //
+            // Phase 2e T2-f (Batch N+2): `renderTables()` and the initial
+            // TK2 layout pass now happen **synchronously** inside
+            // `fillViaBlockModel` — before the first paint — so table
+            // attachments and checkbox view providers are wired up from
+            // frame 0. The remaining async work is the genuinely-heavy
+            // stuff: mermaid/math bitmap generation, PDF hydration, and
+            // remote image loading. Keep those async to avoid freezing
+            // the UI on large notes.
             if NotesTextProcessor.hideSyntax {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
@@ -345,8 +354,6 @@ extension EditTextView {
                     // (source-mode renderSpecialCodeBlocks can't detect
                     // language from text storage because fences are absent).
                     self.renderSpecialBlocksViaBlockModel()
-                    // Render tables via the source-mode mechanism.
-                    self.renderTables()
                     self.renderPDFsAndRestoreScroll(note: note)
                 }
             } else {

@@ -163,6 +163,19 @@ public enum InlineRenderer {
         case .lineBreak:
             return NSAttributedString(string: "\n", attributes: baseAttributes)
         case .rawHTML(let html):
+            // A `<br>` HTML tag is the canonical "line break" inside a
+            // table cell (cells cannot contain `\n` in their markdown
+            // source — the row separator-encoded storage would split).
+            // Render it as a single `\n` so the visual output matches
+            // a hard line break. All variants are accepted: `<br>`,
+            // `<br/>`, `<br />`, case-insensitive. Other rawHTML is
+            // emitted verbatim (preserves `<span>`, `<div>`, comments,
+            // etc.). Serialization (`MarkdownSerializer.serialize`)
+            // still emits the original `<br>` source text, so corpus
+            // notes round-trip byte-identically.
+            if Self.isBrTag(html) {
+                return NSAttributedString(string: "\n", attributes: baseAttributes)
+            }
             return NSAttributedString(string: html, attributes: baseAttributes)
         case .entity(let raw):
             return NSAttributedString(string: raw, attributes: baseAttributes)
@@ -420,6 +433,23 @@ public enum InlineRenderer {
             }
         }
         return s
+    }
+
+    /// True if the rawHTML string is a `<br>` tag (any case, optional
+    /// self-close spacing). Accepts `<br>`, `<BR>`, `<br/>`, `<br />`,
+    /// `<Br  />`. Used by `render` to emit a `\n` instead of a literal
+    /// tag — the canonical line break inside a table cell and a natural
+    /// visual rendering for `<br>` in paragraph inline content.
+    internal static func isBrTag(_ html: String) -> Bool {
+        // Strip angle brackets.
+        guard html.first == "<", html.last == ">" else { return false }
+        let inner = html.dropFirst().dropLast()
+        // Drop trailing `/` (self-close) and collapse whitespace.
+        var trimmed = inner.drop(while: { $0 == " " || $0 == "\t" })
+        while let last = trimmed.last, last == " " || last == "\t" || last == "/" {
+            trimmed = trimmed.dropLast()
+        }
+        return trimmed.lowercased() == "br"
     }
 
     private enum Trait { case bold, italic }
