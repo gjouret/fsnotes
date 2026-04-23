@@ -421,7 +421,7 @@ Character-by-character typing can complete inline patterns (e.g., typing `*` com
 
 ## TextKit 2 Adoption
 
-The app is fully on TextKit 2 (`NSTextView` backed by `NSTextLayoutManager` + `NSTextContentStorage`). All per-block-kind visuals run through TK2's element / fragment dispatch — there is no `LayoutManager.drawBackground` / `AttributeDrawer` path left (Phase 4.5 deleted `FSNotes/LayoutManager.swift`).
+The app is fully on TextKit 2 (`NSTextView` backed by `NSTextLayoutManager` + `NSTextContentStorage`). All per-block-kind visuals run through TK2's element / fragment dispatch. Phase 4.5 deleted `FSNotes/LayoutManager.swift`; the `AttributeDrawer` protocol and its five conformers (`BulletDrawer`, `HorizontalRuleDrawer`, `BlockquoteBorderDrawer`, `KbdBoxDrawer`, `ImageSelectionHandleDrawer`) in `FSNotes/Rendering/` survive as dormant helpers but have no live call site — they are candidates for deletion in a follow-up slice.
 
 ### Content-storage delegate
 
@@ -508,9 +508,10 @@ exactly one place literal presentation values are allowed: theme JSON files and
 
 ### Load order
 
-1. **Bundled defaults** ship inside the app bundle at
-   `Resources/default-theme.json` and `Resources/Themes/*.json` (`Default`,
-   `Dark`, `High Contrast`).
+1. **Bundled defaults** ship inside the app bundle: the `Default` theme is
+   `Resources/default-theme.json`; siblings `Dark` and `High Contrast` live
+   under `Resources/Themes/*.json`. (The two paths are discovered separately
+   by `ThemeDiscovery` but merged in `Theme.availableThemes`.)
 2. **User overrides** live at
    `~/Library/Application Support/FSNotes++/Themes/*.json`. A user theme with
    the same basename as a bundled theme replaces the bundled entry in
@@ -609,13 +610,13 @@ Obsidian-style `</>` hover button that swaps a code block between its rendered f
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **526 / 652 passing (80.7%)** at the current baseline. The refactor phase target is 90%+ by end of phase. Live breakdown per spec section is in `CLAUDE.md`; the main gaps are nested list sub-block parsing, indented code blocks (deliberately deferred — they're low-value for a WYSIWYG editor), and tab expansion in prefix whitespace.
+Serializer compliance against CommonMark 0.31.2 spec: **524 / 652 passing (80.4%)** at the current baseline. The refactor phase target is 90%+ by end of phase. Live breakdown per spec section is in `CLAUDE.md`; the main gaps are nested list sub-block parsing, indented code blocks (deliberately deferred — they're low-value for a WYSIWYG editor), and tab expansion in prefix whitespace.
 
 The full conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
 
 ## Test Infrastructure
 
-~1420+ test functions across ~85 files in `Tests/`. Four complementary harnesses:
+~1330+ test functions across ~85 files in `Tests/`. Four complementary harnesses:
 
 **Pure-function unit tests** — `BlockParserTests`, `EditingOperationsTests`, `BlockModelFormattingTests`, `MarkdownSerializer*Tests`, `ListEditingFSMTests`, `EditContractTests`, `DocumentEditApplierTests`, etc. — call `EditingOps.*` / `MarkdownParser.parse` / `MarkdownSerializer.serialize` / `DocumentEditApplier.diffDocuments` directly on value-typed `Document`s. No AppKit setup.
 
