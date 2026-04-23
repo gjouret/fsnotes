@@ -1189,7 +1189,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         }
     }
 
-    // Table rendering moved to EditTextView (InlineTableView types not available in FSNotesCore)
+    // Tables are rendered via `TableLayoutFragment` (FSNotesCore) in
+    // the WYSIWYG block-model path. The source-mode processor has no
+    // table rendering of its own.
     #endif
 
     private func getImageMaxWidth() -> CGFloat {

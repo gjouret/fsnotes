@@ -169,8 +169,10 @@ public enum DocumentRenderer {
                 // `BlockModelKind`. The TK2 content-storage delegate
                 // reads this attribute to dispatch on `NSTextParagraph`
                 // subclass (see `BlockModelElements.swift`). Tables
-                // are intentionally omitted here — they still flow
-                // through the NSTextAttachment path until Phase 2e.
+                // are tagged separately by `TableTextRenderer`
+                // (which emits a single flat attributed string per table
+                // and tags it `.blockModelKind = .table`), so they are
+                // intentionally omitted from this pass.
                 if let kind = blockModelKind(for: block, editingCodeBlocks: editingCodeBlocks) {
                     // Phase 2d: upgrade `.paragraph` to `.paragraphWithKbd`
                     // when the rendered paragraph contains any `.kbdTag`

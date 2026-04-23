@@ -187,9 +187,10 @@ public enum InlineRenderer {
             var attrs = baseAttributes
             // Phase 7.2: resolve the highlight background from the active
             // theme. The static `highlightColor` below is retained as
-            // the converter fallback (and for `TableRenderController`'s
-            // attribute-toggle path) but the live render now honors the
-            // theme value. Default theme ships `#FFE60080` which matches
+            // the converter fallback (the pre-Phase-2e
+            // `TableRenderController.swift` attribute-toggle path was
+            // deleted with the `InlineTableView` widget in slice
+            // 2e-T2-h). Default theme ships `#FFE60080` which matches
             // the static value within the 0.02-per-component tolerance
             // `colorsApproximatelyEqual` uses.
             attrs[.backgroundColor] = theme.colors.highlightBackground
@@ -653,9 +654,10 @@ public enum InlineRenderer {
     /// the active theme under the current appearance; the
     /// `#FFE60080` default in `ThemeColors.highlightBackground` matches
     /// the pre-theme constant within the 0.02-per-component tolerance
-    /// used by `colorsApproximatelyEqual`. Still consumed by the table
-    /// cell formatting toolbar path in `TableRenderController` and by
-    /// `isHighlightColor` below.
+    /// used by `colorsApproximatelyEqual`. Still consumed by
+    /// `isHighlightColor` below (the pre-Phase-2e
+    /// `TableRenderController` attribute-toggle path that used it has
+    /// been deleted).
     public static var highlightColor: PlatformColor {
         Theme.shared.colors.highlightBackground.resolvedForCurrentAppearance(
             fallback: PlatformColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5)
@@ -666,7 +668,9 @@ public enum InlineRenderer {
     /// component tolerance. The tolerance absorbs the small RGBA
     /// drift that color-space conversions introduce on the way
     /// through AppKit. Used by the converter (highlight detection)
-    /// and by `TableRenderController`'s attribute-toggle path.
+    /// and retained as the contract for any future attribute-toggle
+    /// path. (Historically used by the since-deleted
+    /// `TableRenderController`.)
     public static func colorsApproximatelyEqual(_ a: PlatformColor, _ b: PlatformColor) -> Bool {
         #if os(OSX)
         guard let aRGB = a.usingColorSpace(.sRGB),

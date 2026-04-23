@@ -2,20 +2,15 @@
 //  SourceLayoutFragment.swift
 //  FSNotesCore
 //
-//  Phase 4.1 (dormant additive slice) — custom NSTextLayoutFragment for
-//  `SourceRenderer`-emitted paragraphs. Paints `.markerRange`-tagged
-//  runs in `Theme.shared.chrome.sourceMarker` as an overlay after the
-//  default text draw.
+//  Custom NSTextLayoutFragment for `SourceRenderer`-emitted paragraphs.
+//  Paints `.markerRange`-tagged runs in `Theme.shared.chrome.sourceMarker`
+//  as an overlay after the default text draw.
 //
-//  This fragment is DEAD CODE in Phase 4.1 — no layout-manager delegate
-//  dispatches to it and no call site consults `FeatureFlag.useSourceRendererV2`
-//  yet. Phase 4.4 will:
-//    1. Flip `useSourceRendererV2` on by default.
-//    2. Flip source-mode rendering onto `SourceRenderer.render`.
-//    3. Wire the layout-manager delegate to return `SourceLayoutFragment`
-//       for any paragraph whose `.blockModelKind == .sourceMarkdown`
-//       (and for a source-mode editor, return it for every paragraph
-//       regardless of tag).
+//  Phase 4.4 (shipped) wired this fragment in as the live source-mode
+//  paint path: the layout-manager delegate returns it for any paragraph
+//  whose `.blockModelKind == .sourceMarkdown` (and for a source-mode
+//  editor, returns it for every paragraph regardless of tag).
+//  `FeatureFlag.useSourceRendererV2` has been removed.
 //
 //  Draw model:
 //    1. Invoke `super.draw(at:in:)` to paint default text (body font,
@@ -102,11 +97,9 @@ public final class SourceLayoutFragment: NSTextLayoutFragment {
     /// Draws the run's glyphs as a `CTLine` at the baseline TK2
     /// assigns via the fragment's text-line-fragments table.
     ///
-    /// Phase 4.1 scope: the skeleton is additive and dormant. It
-    /// supports single-line runs inside a single text-line fragment,
-    /// which covers every marker shape this slice emits (fences, `>`,
-    /// `#`, `**`, `---`, inline markers). Phase 4.4 extends this to
-    /// multi-line runs when hard-break + soft-wrap scenarios land live.
+    /// Supports runs that span multiple text-line fragments (hard-break
+    /// + soft-wrap scenarios) by intersecting with each line fragment's
+    /// character range in turn.
     private func paintRun(
         attributed: NSAttributedString,
         subrange: NSRange,

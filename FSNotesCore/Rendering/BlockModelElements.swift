@@ -2,24 +2,27 @@
 //  BlockModelElements.swift
 //  FSNotesCore
 //
-//  Phase 2b — TextKit 2 element subclasses per block-model block type.
+//  TextKit 2 element subclasses per block-model block type.
 //
-//  These classes are intentionally empty. They exist so the
-//  `NSTextContentStorageDelegate` installed on `NSTextContentStorage`
-//  can dispatch on the `.blockModelKind` attribute and hand the
-//  matching subclass back to the layout manager. The custom
-//  `NSTextLayoutFragment` subclasses that land in Phase 2c will route
-//  their drawing on the element's concrete class.
+//  These classes are intentionally empty at the content-storage layer:
+//  they exist so the `NSTextContentStorageDelegate` installed on
+//  `NSTextContentStorage` can dispatch on the `.blockModelKind`
+//  attribute and hand the matching subclass back to the layout manager.
+//  The custom `NSTextLayoutFragment` subclasses (see `Fragments/`)
+//  route their drawing off the element's concrete class via
+//  `BlockModelLayoutManagerDelegate`.
 //
-//  Today every class inherits `NSTextParagraph` without override, so
-//  the TK2 layout engine treats them identically to a plain paragraph.
-//  This is deliberate — 2b is plumbing, not behaviour.
+//  Each class inherits `NSTextParagraph` without override at the
+//  content-storage level — the subclass identity is purely a dispatch
+//  key for the layout-manager delegate's fragment selection.
 //
 
 import AppKit
 
-/// Base class for block-model paragraph elements. Subclasses add no
-/// behaviour in 2b; 2c will override layout-fragment selection.
+/// Base class for block-model paragraph elements. Subclasses carry no
+/// content-storage behaviour; the concrete subclass identity is the
+/// dispatch key used by `BlockModelLayoutManagerDelegate` to pick a
+/// layout fragment.
 public class BlockModelElement: NSTextParagraph {
     public var blockKind: BlockModelKind { .paragraph }
 }
@@ -136,12 +139,12 @@ public enum BlockModelElementFactory {
     }
 }
 
-/// Phase 2b — `NSTextContentStorageDelegate` that reads the
-/// `.blockModelKind` attribute tagged by `DocumentRenderer` and returns
-/// the matching `BlockModelElement` subclass for each paragraph. The
-/// layout manager receives the subclass via the content-storage
-/// substitution hook; Phase 2c will override layout-fragment selection
-/// on the subclass to take over block visuals.
+/// `NSTextContentStorageDelegate` that reads the `.blockModelKind`
+/// attribute tagged by `DocumentRenderer` and returns the matching
+/// `BlockModelElement` subclass for each paragraph. The layout manager
+/// receives the subclass via the content-storage substitution hook;
+/// `BlockModelLayoutManagerDelegate` then picks a matching
+/// `NSTextLayoutFragment` subclass off the element's concrete class.
 ///
 /// If the paragraph carries no `.blockModelKind` attribute (untagged
 /// ranges during edit reconciliation) the delegate returns `nil` so

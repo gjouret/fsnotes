@@ -3,26 +3,22 @@
 //  FSNotesCore
 //
 //  Phase 2e-T2-a — Pure-function column-width and row-height computer
-//  for table grids. Ported verbatim from the geometry methods of
-//  `InlineTableView` (`contentBasedColumnWidths`, `rowHeights`,
-//  `wrappedCellHeight`) so that pixel-for-pixel identical grid sizing
-//  is available to the TK2 native-cell path without having to stand up
-//  an `NSWindow` + `NSView` pair.
+//  for table grids. Originally ported verbatim from the geometry
+//  methods of the since-deleted `InlineTableView` widget
+//  (`contentBasedColumnWidths`, `rowHeights`, `wrappedCellHeight`) so
+//  that pixel-for-pixel identical grid sizing is available to the TK2
+//  native-cell path without having to stand up an `NSWindow` +
+//  `NSView` pair.
 //
 //  This type is a value type with no mutable state. Input is a
 //  block-model table plus the container width and note font; output is
 //  column widths, row heights, and total grid height. No AppKit views,
 //  no `NSTextContentStorage`, no side effects.
 //
-//  The original widget methods that this file replaces live in
-//  `FSNotes/Helpers/InlineTableView.swift` and remain the production
-//  path until slice 2e-T2-h deletes them. Keeping both copies in the
-//  tree for now is deliberate: slices 2e-T2-b through -g will converge
-//  on `TableGeometry`, and the final deletion is the last step.
-//
-//  Do NOT refactor the ported logic while it lives here in parallel
-//  with the widget copy. Any drift in measurement produces a pixel
-//  diff that will be hard to attribute.
+//  The original widget that this file replaced lived in
+//  `FSNotes/Helpers/InlineTableView.swift` and was deleted in slice
+//  2e-T2-h (commit de1f146). `TableGeometry` is now the sole source of
+//  truth for grid measurement.
 //
 
 import AppKit
@@ -43,9 +39,9 @@ public enum TableGeometry {
 
     // MARK: - Layout constants
     //
-    // Ported verbatim from `InlineTableView`. Any change here MUST be
-    // mirrored there (and vice versa) until slice 2e-T2-h deletes the
-    // widget copy.
+    // Originally ported verbatim from the deleted `InlineTableView`
+    // widget (slice 2e-T2-h). These values are now the sole source of
+    // truth for grid measurement.
 
     /// Minimum column width. Matches `InlineTableView.minColumnWidth`.
     public static let minColumnWidth: CGFloat = 80

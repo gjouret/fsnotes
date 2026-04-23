@@ -439,15 +439,15 @@ public struct ThemeChrome: Codable, Equatable {
     /// predating T2-g.4 still load cleanly.
     public var tableResizePreview: ThemeColor
 
-    // MARK: - Phase 4.1 anchor: source-marker color (do not reorder)
+    // MARK: - Source-marker color (do not reorder)
 
-    /// Phase 4.1 (dormant): foreground color used by
-    /// `SourceLayoutFragment` when painting marker runs (`.markerRange`
-    /// attribute) of the `SourceRenderer` path. Default `#999999FF` —
-    /// a mid gray that reads as "markdown syntax" without fighting body
-    /// text. Defaulted so existing themes that don't set it still load
-    /// cleanly. Unused until Phase 4.4 flips source mode onto the new
-    /// renderer.
+    /// Foreground color used by `SourceLayoutFragment` when painting
+    /// marker runs (`.markerRange` attribute) of the `SourceRenderer`
+    /// path. Default `#999999FF` — a mid gray that reads as "markdown
+    /// syntax" without fighting body text. Defaulted so existing themes
+    /// that don't set it still load cleanly. Live since Phase 4.4
+    /// (source mode now uses `SourceRenderer` + `SourceLayoutFragment`
+    /// unconditionally).
     public var sourceMarker: ThemeColor
 
     public init(

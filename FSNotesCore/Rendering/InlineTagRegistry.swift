@@ -70,7 +70,8 @@ public func buildInlineTagDefinitions(baseFont: PlatformFont) -> [InlineTagDefin
 /// For each tag definition:
 /// 1. Find all matches of the regex in the given range
 /// 2. Apply contentAttributes to the content (capture group 1)
-/// 3. Set the marker attribute if defined (for LayoutManager custom drawing)
+/// 3. Set the marker attribute if defined (consumed by the source-mode
+///    paint path, historically by the deleted TK1 `LayoutManager` subclass)
 /// 4. Hide the open and close tags (clear color + negative kern)
 public func processInlineTags(
     definitions: [InlineTagDefinition],

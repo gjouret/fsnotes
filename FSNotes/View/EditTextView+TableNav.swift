@@ -243,9 +243,8 @@ extension EditTextView {
     /// row-major order, wrapping across rows. At the end of the last
     /// cell, Tab wraps to the header's first cell; at the start of
     /// the first cell, Shift-Tab wraps to the last body cell. This
-    /// is the InlineTableView widget's behaviour; T2-e may refine it
-    /// (e.g. "Tab at bottom-right appends a new body row") but the
-    /// wrap-around is the read-only default.
+    /// mirrors the pre-Phase-2e `InlineTableView` widget's wrap-around
+    /// behaviour (the widget was deleted in commit de1f146).
     private func moveToAdjacentCell(
         from ctx: TableCursorContext,
         offset delta: Int
@@ -340,7 +339,7 @@ extension EditTextView {
 
     /// Down-arrow: same column, row below. At the bottom-most row, fall
     /// through so the default handler exits the grid into the block
-    /// below (which is the InlineTableView widget's behaviour).
+    /// below (matches the pre-Phase-2e `InlineTableView` widget).
     ///
     /// Up-arrow: same column, row above. At the top-most row, fall
     /// through so the default handler exits into the block above.

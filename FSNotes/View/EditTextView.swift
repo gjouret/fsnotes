@@ -249,8 +249,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         super.draw(dirtyRect)
 
         // Draw gutter icons (fold carets, H-level badges) in the text view's coordinate space.
-        // Must be here (not in LayoutManager.drawBackground) because the gutter is OUTSIDE
-        // the text container bounds and would be clipped by the layout manager.
+        // The gutter is OUTSIDE the text container bounds (it lives in the
+        // view's margin area), so it must be painted by the view's
+        // `draw(_:)` override — layout-fragment draw calls are clipped to
+        // the text container.
         if NotesTextProcessor.hideSyntax {
             gutterController.drawIcons(in: dirtyRect)
         }
@@ -400,11 +402,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// already installed via the initializers above — this function
     /// only hooks the processor into the edit-callback chain.
     ///
-    /// Accepted 2a regressions (deferred to 2c/2d): the custom
-    /// `LayoutManager.drawBackground` visuals (bullets, HR lines,
-    /// blockquote borders, kbd boxes) no longer fire under TK2. All
-    /// other editing behaviour (typing, selection, Find, scroll,
-    /// copy/paste) rides the default TK2 paragraph-element path.
+    /// The visuals that used to be painted by the deleted TK1
+    /// `LayoutManager.drawBackground` path (bullets, HR lines,
+    /// blockquote borders, kbd boxes) are now painted by dedicated
+    /// `NSTextLayoutFragment` subclasses (see `FSNotesCore/Rendering/
+    /// Fragments/`). All other editing behaviour (typing, selection,
+    /// Find, scroll, copy/paste) rides the default TK2 paragraph-element
+    /// path.
     public func initTextStorage() {
         let processor = TextStorageProcessor()
         processor.editor = self

@@ -102,14 +102,11 @@ public enum BlockModelKind: String {
     /// separators.
     case table
 
-    /// Phase 4.1 (dormant): paragraph-shaped range rendered by
-    /// `SourceRenderer` — carries visible markdown markers
-    /// (`#`, `**`, fences, `>`, `---`, etc.) tagged with
-    /// `.markerRange` and otherwise appears as a plain paragraph.
-    /// No live dispatch route exists until Phase 4.4 flips source mode
-    /// onto the new renderer; the content-storage delegate falls
-    /// through to `ParagraphElement` for this kind today so a stray
-    /// tagged range cannot crash TK2.
+    /// Paragraph-shaped range rendered by `SourceRenderer` — carries
+    /// visible markdown markers (`#`, `**`, fences, `>`, `---`, etc.)
+    /// tagged with `.markerRange` and otherwise appears as a plain
+    /// paragraph. Live since Phase 4.4 (source mode dispatches to
+    /// `SourceLayoutFragment` for paragraphs tagged with this kind).
     case sourceMarkdown
 }
 

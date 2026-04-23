@@ -2,13 +2,12 @@
 //  SourceRenderer.swift
 //  FSNotesCore
 //
-//  Phase 4.1 (dormant additive slice) — sibling of `DocumentRenderer`
-//  that renders a `Document` to an attributed string WITH visible
-//  markdown markers (e.g. `#`, `**`, backticks, `>`, `---`) tagged via
-//  the `.markerRange` attribute. Marker color is not set here;
-//  `SourceLayoutFragment` paints those runs in
-//  `Theme.shared.chrome.sourceMarker` at draw time without mutating the
-//  storage's `.foregroundColor`.
+//  Sibling of `DocumentRenderer` that renders a `Document` to an
+//  attributed string WITH visible markdown markers (e.g. `#`, `**`,
+//  backticks, `>`, `---`) tagged via the `.markerRange` attribute.
+//  Marker color is not set here; `SourceLayoutFragment` paints those
+//  runs in `Theme.shared.chrome.sourceMarker` at draw time without
+//  mutating the storage's `.foregroundColor`.
 //
 //  WYSIWYG vs. source mode — the split:
 //    * `DocumentRenderer` (existing) is the WYSIWYG path: renders
@@ -21,12 +20,12 @@
 //      highlighting. Marker runs are tagged with `.markerRange`; the
 //      fragment paints them in a distinct color.
 //
-//  This file is DORMANT in Phase 4.1 — no call site reads
-//  `FeatureFlag.useSourceRendererV2` yet. Phase 4.4 wires the flag on,
-//  deletes the `NotesTextProcessor.highlight*` path, and makes this
-//  renderer the live source-mode path.
+//  Phase 4.4 (shipped) wired this renderer in as the live source-mode
+//  path. The legacy `NotesTextProcessor.highlight*` path is retired;
+//  `FeatureFlag.useSourceRendererV2` has been removed (see
+//  `FeatureFlag.swift`).
 //
-//  Block coverage (Phase 4.4 — complete):
+//  Block coverage:
 //    * `.paragraph` — inline content with inline markers
 //      (`**bold**`, `_italic_`, `` `code` ``, etc.) re-injected around
 //      the `InlineRenderer` output and tagged.
