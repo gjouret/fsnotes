@@ -88,9 +88,14 @@ add_pattern "negativeKern"        'addAttribute\(\.kern'                        
 add_pattern "localInlineParse"    'func[[:space:]]+parseInlineMarkdown\b'                                     ""
 
 # --- View-to-model bidirectional data flow (read cell state into model) ---
-# Only banned inside inline/table widget files — everywhere else NSTextField
-# reads are a legitimate UI pattern (search fields, preferences inputs, etc.).
-add_pattern "cellReadBack"        'headers\[[^]]*\][[:space:]]*=[[:space:]]*.*\.stringValue|rows\[[^]]*\]\[[^]]*\][[:space:]]*=[[:space:]]*.*\.stringValue'   "FSNotes/Helpers/InlineTableView.swift FSNotes/TableRenderController.swift"
+# The InlineTableView.swift / TableRenderController.swift widget files that
+# historically held the bidirectional-flow bug were deleted 2026-04-23 in
+# Phase 2e T2-h (commit de1f146). Native TableElement has no widget state
+# to read back from. Pattern retired, kept commented as a regression anchor
+# so any future widget-style table/cell renderer inherits the prohibition:
+#   add_pattern "cellReadBack" \
+#     'headers\[[^]]*\][[:space:]]*=[[:space:]]*.*\.stringValue|rows\[[^]]*\]\[[^]]*\][[:space:]]*=[[:space:]]*.*\.stringValue' \
+#     "FSNotes/Helpers/InlineTableView.swift FSNotes/TableRenderController.swift"
 
 # --- Hardcoded presentation literals in the rendering pipeline ---
 # These are the Phase 7.5 "no hardcoded values" invariant. Variable sizes
