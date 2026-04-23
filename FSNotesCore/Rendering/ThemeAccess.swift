@@ -49,6 +49,12 @@ public extension BlockStyleTheme {
         t.bodyFontSize = self.noteFontSize
         t.codeFontName = self.codeFontName
         t.codeFontSize = self.codeFontSize
+        // Phase 7.5.c: promote the bold/italic markers out of the
+        // UserDefaults plane into the flat theme surface. Existing
+        // callers of `theme.typography.{bold,italic}Marker` continue to
+        // read through the synthesis.
+        t.italicMarker = self.italic
+        t.boldMarker = self.bold
         return t
     }
 
@@ -56,6 +62,11 @@ public extension BlockStyleTheme {
     var spacing: ThemeSpacing {
         var s = ThemeSpacing.default
         s.paragraphSpacing = self.paragraphSpacing
+        // Phase 7.5.c: promote `lineHeightMultiple` from the legacy UD
+        // key into the flat theme surface. Existing callers of
+        // `theme.spacing.lineHeightMultiple` continue to read through
+        // this synthesis.
+        s.lineHeightMultiple = self.lineHeightMultiple
         // Note: `paragraphSpacingMultiplier` and
         // `structuralBlockSpacingMultiplier` are Phase-7.1 additions that
         // have no flat-field source; they take their `ThemeSpacing.default`

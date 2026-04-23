@@ -11,6 +11,10 @@
     "marginSize": 20,
     "imagesWidth": 450,
 
+    "lineHeightMultiple": 1.4,
+    "italic": "*",
+    "bold": "__",
+
     "headingFontScales": [2.0, 1.7, 1.4, 1.2, 1.1, 1.05],
     "headingSpacingBefore": [1.2, 1.0, 0.9, 0.8, 0.7, 0.6],
     "headingSpacingAfter": [0.67, 0.5, 0.4, 0.35, 0.3, 0.25],
@@ -115,6 +119,8 @@
             "backgroundHover": "#00000014",
             "backgroundActive": "#00000028"
         },
-        "tableHandle": "#BBBBBBCC"
+        "tableHandle": "#BBBBBBCC",
+        "tableResizePreview": "#007AFFFF",
+        "sourceMarker": "#999999FF"
     }
 }

@@ -161,66 +161,54 @@ public class UserDefaultsManagement {
         static let Welcome = "welcome2026"
     }
 
-    // Phase 7.5 transitional: the editor typography / layout keys below
-    // (codeFontName, codeFontSize, fontName, fontSize, editorLineSpacing,
+    // Phase 7.5.c — Theme proxy layer.
+    //
+    // The editor typography / layout properties below (codeFontName,
+    // codeFontSize, fontName, fontSize, editorLineSpacing,
     // lineHeightMultiple, lineWidth, marginSize, imagesWidth, italic,
-    // bold) are being subsumed by `Theme.shared`. As of the IBAction
-    // write-back slice, Preferences IBActions dual-write — mutating
-    // `Theme.shared` via `Theme.saveActiveTheme()` AND writing the UD
-    // key below — to keep the rest of the codebase (which still reads
-    // these keys directly) working during migration. A later 7.5 slice
-    // replaces the bodies below with proxies onto `Theme.shared` and
-    // deletes the backing UD keys. Do NOT remove keys in this slice.
+    // bold) are computed proxies over `Theme.shared`. Getters read
+    // from Theme each call (no caching — a `Theme.shared = ...` swap
+    // is visible to readers immediately). Setters mutate Theme and
+    // post `Theme.didChangeNotification` so live observers re-render.
+    //
+    // Legacy UD key constants (e.g. `Constants.CodeFontNameKey`) are
+    // retained because `migrateEditorKeysIntoTheme75c()` uses them to
+    // read pre-7.5.c saved values into Theme on first launch.
+    //
+    // The IBAction layer in `PreferencesEditorViewController` still
+    // calls `persistActiveTheme()` (→ `Theme.saveActiveThemeDebounced`)
+    // to drive the JSON write — this proxy deliberately does NOT trigger
+    // a save on every set (a disk write per UD access would be wrong).
 
     static var codeFontName: String {
-        get {
-            if let returnFontName = shared?.object(forKey: Constants.CodeFontNameKey) as? String {
-                return returnFontName
-            } else {
-                return "Source Code Pro"
-            }
-        }
+        get { BlockStyleTheme.shared.codeFontName }
         set {
-            shared?.set(newValue, forKey: Constants.CodeFontNameKey)
+            BlockStyleTheme.shared.codeFontName = newValue
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
 
     static var codeFontSize: Int {
-        get {
-            if let returnFontSize = shared?.object(forKey: Constants.CodeFontSizeKey) as? Int {
-                return returnFontSize
-            } else {
-                return self.DefaultFontSize
-            }
-        }
+        get { Int(BlockStyleTheme.shared.codeFontSize) }
         set {
-            shared?.set(newValue, forKey: Constants.CodeFontSizeKey)
+            BlockStyleTheme.shared.codeFontSize = CGFloat(newValue)
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
 
     static var fontName: String? {
-        get {
-            if let returnFontName = shared?.object(forKey: Constants.FontNameKey) as? String {
-                return returnFontName
-            }
-
-            return nil
-        }
+        get { BlockStyleTheme.shared.noteFontName }
         set {
-            shared?.set(newValue, forKey: Constants.FontNameKey)
+            BlockStyleTheme.shared.noteFontName = newValue
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
-    
+
     static var fontSize: Int {
-        get {
-            if let returnFontSize = shared?.object(forKey: Constants.FontSizeKey) as? Int {
-                return returnFontSize
-            } else {
-                return self.DefaultFontSize
-            }
-        }
+        get { Int(BlockStyleTheme.shared.noteFontSize) }
         set {
-            shared?.set(newValue, forKey: Constants.FontSizeKey)
+            BlockStyleTheme.shared.noteFontSize = CGFloat(newValue)
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
     
@@ -687,57 +675,41 @@ public class UserDefaultsManagement {
         }
     }
     
+    // Phase 7.5.c proxy — reads/writes through `Theme.shared.editorLineSpacing`.
+    // The original body truncated `Float(Int(result))` at read time; we
+    // preserve that by doing the same truncation on the CGFloat read.
     static var editorLineSpacing: Float {
-        get {
-            if let result = shared?.object(forKey: Constants.LineSpacingEditorKey) as? Float {
-                return Float(Int(result))
-            } else {
-                #if os(iOS)
-                    return 6
-                #else
-                    return 4
-                #endif
-            }
-        }
+        get { Float(Int(BlockStyleTheme.shared.editorLineSpacing)) }
         set {
-            shared?.set(newValue, forKey: Constants.LineSpacingEditorKey)
+            BlockStyleTheme.shared.editorLineSpacing = CGFloat(newValue)
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
-    
+
+    // Phase 7.5.c proxy — reads/writes through `Theme.shared.lineHeightMultiple`.
     static var lineHeightMultiple: CGFloat {
-        get {
-            if let result = shared?.object(forKey: Constants.LineHeightMultipleKey) as? Float {
-                return CGFloat(result)
-            } else {
-                return 1.4
-            }
-        }
+        get { BlockStyleTheme.shared.lineHeightMultiple }
         set {
-            shared?.set(Float(newValue), forKey: Constants.LineHeightMultipleKey)
+            BlockStyleTheme.shared.lineHeightMultiple = newValue
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
 
+    // Phase 7.5.c proxy — reads/writes through `Theme.shared.imagesWidth`.
     static var imagesWidth: Float {
-        get {
-            if let result = shared?.object(forKey: Constants.ImagesWidthKey) as? Float {
-                return result
-            }
-            return 450
-        }
+        get { Float(BlockStyleTheme.shared.imagesWidth) }
         set {
-            shared?.set(newValue, forKey: Constants.ImagesWidthKey)
+            BlockStyleTheme.shared.imagesWidth = CGFloat(newValue)
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
 
+    // Phase 7.5.c proxy — reads/writes through `Theme.shared.lineWidth`.
     static var lineWidth: Float {
-        get {
-            if let result = shared?.object(forKey: Constants.LineWidthKey) as? Float {
-                return result
-            }
-            return 1000
-        }
+        get { Float(BlockStyleTheme.shared.lineWidth) }
         set {
-            shared?.set(newValue, forKey: Constants.LineWidthKey)
+            BlockStyleTheme.shared.lineWidth = CGFloat(newValue)
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
     
@@ -1094,15 +1066,12 @@ public class UserDefaultsManagement {
         }
     }
 
+    // Phase 7.5.c proxy — reads/writes through `Theme.shared.marginSize`.
     static var marginSize: Float {
-        get {
-            if let result = shared?.object(forKey: Constants.MarginSizeKey) as? Float {
-                return result
-            }
-            return 20
-        }
+        get { Float(BlockStyleTheme.shared.marginSize) }
         set {
-            shared?.set(newValue, forKey: Constants.MarginSizeKey)
+            BlockStyleTheme.shared.marginSize = CGFloat(newValue)
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
 
@@ -1889,29 +1858,141 @@ public class UserDefaultsManagement {
         }
     }
     
+    // Phase 7.5.c proxy — reads/writes through `Theme.shared.italic`.
     static var italic: String {
-        get {
-            if let returnFontName = shared?.object(forKey: Constants.italicKey) as? String {
-                return returnFontName
-            }
-            
-            return "*"
-        }
+        get { BlockStyleTheme.shared.italic }
         set {
-            shared?.set(newValue, forKey: Constants.italicKey)
+            BlockStyleTheme.shared.italic = newValue
+            UserDefaultsManagement.postTheme75cChange()
         }
     }
-    
+
+    // Phase 7.5.c proxy — reads/writes through `Theme.shared.bold`.
     static var bold: String {
-        get {
-            if let returnFontName = shared?.object(forKey: Constants.boldKey) as? String {
-                return returnFontName
-            }
-            
-            return "__"
-        }
+        get { BlockStyleTheme.shared.bold }
         set {
-            shared?.set(newValue, forKey: Constants.boldKey)
+            BlockStyleTheme.shared.bold = newValue
+            UserDefaultsManagement.postTheme75cChange()
         }
+    }
+
+    // Phase 7.5.c helper — post `Theme.didChangeNotification` after a
+    // proxied setter mutates `Theme.shared`. The JSON save is owned by
+    // the IBAction layer (Phase 7.5.a), not by this proxy.
+    fileprivate static func postTheme75cChange() {
+        NotificationCenter.default.post(
+            name: BlockStyleTheme.didChangeNotification, object: nil
+        )
+    }
+
+    // MARK: - Phase 7.5.c migration from legacy UD keys into Theme
+    //
+    // Phase 7.5.c migration:
+    //   On first launch after 7.5.c lands, copy any values the user had
+    //   previously saved into the legacy UserDefaults keys (these were
+    //   the backing store before the proxy replaced them) into the
+    //   active `Theme.shared` values. Then delete the legacy keys and
+    //   set a sentinel so the migration runs exactly once.
+    //
+    //   The raw legacy values are read directly via
+    //   `UserDefaults.standard.object(forKey:)` using the key constants
+    //   below — NOT through the new proxy, which now reads from Theme
+    //   instead of UserDefaults. After migration, the proxy handles all
+    //   reads/writes and the UD keys are gone.
+    //
+    //   Called from `AppDelegate.applicationDidFinishLaunching(_:)` right
+    //   after `Theme.shared = Theme.load(...)` so the migration layers on
+    //   top of the newly-loaded theme (user overrides legacy UD).
+
+    /// Sentinel key. When `true`, migration has already run and will
+    /// not re-run.
+    public static let theme75cMigrationCompleteKey = "theme75cMigrationComplete"
+
+    /// Legacy-key name list used by the migration. Kept separate from
+    /// the `Constants` struct so this remains self-contained and easy
+    /// to delete in a future phase once the install base has rotated.
+    private enum LegacyProxyKeys {
+        static let codeFontName = "codeFont"
+        static let codeFontSize = "codeFontSize"
+        static let fontName = "font"
+        static let fontSize = "fontsize"
+        static let editorLineSpacing = "lineSpacingEditor"
+        static let lineHeightMultiple = "lineHeightMultipleKey"
+        static let lineWidth = "lineWidth"
+        static let marginSize = "marginSize"
+        static let imagesWidth = "imagesWidthKey"
+        static let italic = "italicKeyed"
+        static let bold = "boldKeyed"
+    }
+
+    /// Copy any legacy UD values into `Theme.shared`, save the active
+    /// theme, then delete the legacy keys + set the sentinel. Idempotent.
+    ///
+    /// `userThemesDirectory` is optional so tests can redirect the JSON
+    /// write; production passes `nil` (Application Support default).
+    public static func migrateEditorKeysIntoTheme75c(
+        userThemesDirectory: URL? = nil
+    ) {
+        guard let defaults = shared else { return }
+        if defaults.bool(forKey: theme75cMigrationCompleteKey) { return }
+
+        // Code font name/size.
+        if let name = defaults.object(forKey: LegacyProxyKeys.codeFontName) as? String {
+            BlockStyleTheme.shared.codeFontName = name
+        }
+        if let size = defaults.object(forKey: LegacyProxyKeys.codeFontSize) as? Int {
+            BlockStyleTheme.shared.codeFontSize = CGFloat(size)
+        }
+
+        // Note font name/size.
+        if let name = defaults.object(forKey: LegacyProxyKeys.fontName) as? String {
+            BlockStyleTheme.shared.noteFontName = name
+        }
+        if let size = defaults.object(forKey: LegacyProxyKeys.fontSize) as? Int {
+            BlockStyleTheme.shared.noteFontSize = CGFloat(size)
+        }
+
+        // Editor layout (Float-backed in UD).
+        if let v = defaults.object(forKey: LegacyProxyKeys.editorLineSpacing) as? Float {
+            BlockStyleTheme.shared.editorLineSpacing = CGFloat(v)
+        }
+        if let v = defaults.object(forKey: LegacyProxyKeys.lineHeightMultiple) as? Float {
+            BlockStyleTheme.shared.lineHeightMultiple = CGFloat(v)
+        }
+        if let v = defaults.object(forKey: LegacyProxyKeys.lineWidth) as? Float {
+            BlockStyleTheme.shared.lineWidth = CGFloat(v)
+        }
+        if let v = defaults.object(forKey: LegacyProxyKeys.marginSize) as? Float {
+            BlockStyleTheme.shared.marginSize = CGFloat(v)
+        }
+        if let v = defaults.object(forKey: LegacyProxyKeys.imagesWidth) as? Float {
+            BlockStyleTheme.shared.imagesWidth = CGFloat(v)
+        }
+
+        // Markers.
+        if let v = defaults.object(forKey: LegacyProxyKeys.italic) as? String {
+            BlockStyleTheme.shared.italic = v
+        }
+        if let v = defaults.object(forKey: LegacyProxyKeys.bold) as? String {
+            BlockStyleTheme.shared.bold = v
+        }
+
+        // Persist the migrated theme so the override is picked up on
+        // subsequent launches.
+        _ = BlockStyleTheme.saveActiveTheme(userThemesDirectory: userThemesDirectory)
+
+        // Delete the legacy keys — Theme is now the single source of truth.
+        for key in [
+            LegacyProxyKeys.codeFontName, LegacyProxyKeys.codeFontSize,
+            LegacyProxyKeys.fontName, LegacyProxyKeys.fontSize,
+            LegacyProxyKeys.editorLineSpacing, LegacyProxyKeys.lineHeightMultiple,
+            LegacyProxyKeys.lineWidth, LegacyProxyKeys.marginSize,
+            LegacyProxyKeys.imagesWidth,
+            LegacyProxyKeys.italic, LegacyProxyKeys.bold
+        ] {
+            defaults.removeObject(forKey: key)
+        }
+
+        defaults.set(true, forKey: theme75cMigrationCompleteKey)
     }
 }

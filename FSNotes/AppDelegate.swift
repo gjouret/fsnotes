@@ -64,6 +64,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             named: UserDefaultsManagement.currentThemeName ?? Theme.defaultThemeName
         )
 
+        // Phase 7.5.c migration — after the active theme has loaded,
+        // copy any remaining legacy UD typography/layout values into
+        // `Theme.shared`, persist, then delete the legacy keys. Gated
+        // by a sentinel so this runs exactly once per install.
+        UserDefaultsManagement.migrateEditorKeysIntoTheme75c()
+
         applyAppearance()
 
         #if CLOUD_RELATED_BLOCK

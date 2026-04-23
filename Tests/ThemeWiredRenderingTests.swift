@@ -17,6 +17,26 @@ import XCTest
 
 class ThemeWiredRenderingTests: XCTestCase {
 
+    // MARK: - Hermetic theme state
+    //
+    // Tests in this suite assume `BlockStyleTheme.shared` is the bundled
+    // default (base font size 14, etc.). Without an explicit reset the
+    // suite inherits whatever the prior test or the host app's first
+    // launch seeded — e.g. a 17pt `noteFontSize` migrated in by Phase
+    // 7.5.c's `migrateEditorKeysIntoTheme75c` from a stale cfprefsd UD
+    // value. Snapshot + restore makes the suite deterministic.
+
+    private var savedShared: BlockStyleTheme!
+
+    override func setUpWithError() throws {
+        savedShared = BlockStyleTheme.shared
+        BlockStyleTheme.shared = BlockStyleTheme.default
+    }
+
+    override func tearDownWithError() throws {
+        BlockStyleTheme.shared = savedShared
+    }
+
     // MARK: - Helpers
 
     private let baseFontSize: CGFloat = 14

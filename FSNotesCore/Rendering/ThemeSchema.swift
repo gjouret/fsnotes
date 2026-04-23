@@ -434,6 +434,22 @@ public struct ThemeChrome: Codable, Equatable {
     /// existing themes that don't set it still load cleanly.
     public var tableHandle: ThemeColor
 
+    /// Table column drag-resize live-preview line color (Phase 2e
+    /// T2-g.4). Default is macOS system-blue. Defaulted so themes
+    /// predating T2-g.4 still load cleanly.
+    public var tableResizePreview: ThemeColor
+
+    // MARK: - Phase 4.1 anchor: source-marker color (do not reorder)
+
+    /// Phase 4.1 (dormant): foreground color used by
+    /// `SourceLayoutFragment` when painting marker runs (`.markerRange`
+    /// attribute) of the `SourceRenderer` path. Default `#999999FF` —
+    /// a mid gray that reads as "markdown syntax" without fighting body
+    /// text. Defaulted so existing themes that don't set it still load
+    /// cleanly. Unused until Phase 4.4 flips source mode onto the new
+    /// renderer.
+    public var sourceMarker: ThemeColor
+
     public init(
         kbdCornerRadius: CGFloat = 3.0,
         kbdBorderWidth: CGFloat = 1.0,
@@ -450,7 +466,9 @@ public struct ThemeChrome: Codable, Equatable {
         headingBorderThickness: CGFloat = 0.5,
         headingBorderOffsetBelowText: CGFloat = 1.0,
         codeBlockEditToggle: ThemeCodeBlockEditToggle = .default,
-        tableHandle: ThemeColor = ThemeColor(hex: "#BBBBBBCC")
+        tableHandle: ThemeColor = ThemeColor(hex: "#BBBBBBCC"),
+        tableResizePreview: ThemeColor = ThemeColor(hex: "#007AFFFF"),
+        sourceMarker: ThemeColor = ThemeColor(hex: "#999999FF")
     ) {
         self.kbdCornerRadius = kbdCornerRadius
         self.kbdBorderWidth = kbdBorderWidth
@@ -468,10 +486,13 @@ public struct ThemeChrome: Codable, Equatable {
         self.headingBorderOffsetBelowText = headingBorderOffsetBelowText
         self.codeBlockEditToggle = codeBlockEditToggle
         self.tableHandle = tableHandle
+        self.tableResizePreview = tableResizePreview
+        self.sourceMarker = sourceMarker
     }
 
     // MARK: Codable — tolerate missing `codeBlockEditToggle` /
-    // `tableHandle` for themes predating the respective slices.
+    // `tableHandle` / `sourceMarker` for themes predating the
+    // respective slices.
 
     private enum CodingKeys: String, CodingKey {
         case kbdCornerRadius, kbdBorderWidth,
@@ -479,7 +500,8 @@ public struct ThemeChrome: Codable, Equatable {
              codeBlockCornerRadius, codeBlockHorizontalBleed, codeBlockBorderWidth,
              blockquoteBarWidth, blockquoteBarSpacing, blockquoteBarInitialOffset,
              hrThickness, headingBorderThickness, headingBorderOffsetBelowText,
-             codeBlockEditToggle, tableHandle
+             codeBlockEditToggle, tableHandle, tableResizePreview,
+             sourceMarker
     }
 
     public init(from decoder: Decoder) throws {
@@ -517,6 +539,10 @@ public struct ThemeChrome: Codable, Equatable {
             ThemeCodeBlockEditToggle.self, forKey: .codeBlockEditToggle) ?? def.codeBlockEditToggle
         self.tableHandle = try c.decodeIfPresent(
             ThemeColor.self, forKey: .tableHandle) ?? def.tableHandle
+        self.tableResizePreview = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .tableResizePreview) ?? def.tableResizePreview
+        self.sourceMarker = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .sourceMarker) ?? def.sourceMarker
     }
 
     public static let `default` = ThemeChrome()
