@@ -62,6 +62,8 @@
 		THMJ000000000000000000B1 /* default-theme.json in Resources */ = {isa = PBXBuildFile; fileRef = THMJ000000000000000000F1 /* default-theme.json */; };
 		BSTT000000000000000000B1 /* BlockStyleThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */; };
 		THMT000000000000000000B1 /* ThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THMT000000000000000000F1 /* ThemeTests.swift */; };
+		THM7200000000000000000B1 /* ThemeAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = THM7200000000000000000F1 /* ThemeAccess.swift */; };
+		TWRT000000000000000000B1 /* ThemeWiredRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TWRT000000000000000000F1 /* ThemeWiredRenderingTests.swift */; };
 		BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */; };
 		FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */; };
 		TELE000000000000000000B1 /* TableElement.swift in Sources */ = {isa = PBXBuildFile; fileRef = TELE000000000000000000F1 /* TableElement.swift */; };
@@ -1134,6 +1136,8 @@
 		THMJ000000000000000000F1 /* default-theme.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "default-theme.json"; path = "default-theme.json"; sourceTree = "<group>"; };
 		BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockStyleThemeTests.swift; sourceTree = "<group>"; };
 		THMT000000000000000000F1 /* ThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeTests.swift; sourceTree = "<group>"; };
+		THM7200000000000000000F1 /* ThemeAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeAccess.swift; sourceTree = "<group>"; };
+		TWRT000000000000000000F1 /* ThemeWiredRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeWiredRenderingTests.swift; sourceTree = "<group>"; };
 		BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/BlockModelLayoutManagerDelegate.swift; sourceTree = "<group>"; };
 		FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/FoldedLayoutFragment.swift; sourceTree = "<group>"; };
 		TELE000000000000000000F1 /* TableElement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableElement.swift; sourceTree = "<group>"; };
@@ -1683,6 +1687,7 @@
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
 				BSTH000000000000000000F1 /* BlockStyleTheme.swift */,
 				THM7000000000000000000F1 /* ThemeSchema.swift */,
+				THM7200000000000000000F1 /* ThemeAccess.swift */,
 				DEA0000000000000000000F1 /* DocumentEditApplier.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
 				AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */,
@@ -2513,6 +2518,7 @@
 				LHOV000000000000000000F1 /* LinkHoverTests.swift */,
 				BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */,
 				THMT000000000000000000F1 /* ThemeTests.swift */,
+				TWRT000000000000000000F1 /* ThemeWiredRenderingTests.swift */,
 				CORPUS00000000000000000F1 /* Corpus */,
 				CMARK000000000000000005 /* CommonMark */,
 			);
@@ -3398,6 +3404,7 @@
 				KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */,
 				BSTH000000000000000000B1 /* BlockStyleTheme.swift in Sources */,
 				THM7000000000000000000B1 /* ThemeSchema.swift in Sources */,
+				THM7200000000000000000B1 /* ThemeAccess.swift in Sources */,
 				BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */,
 				FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */,
 				TELE000000000000000000B1 /* TableElement.swift in Sources */,
@@ -3993,6 +4000,7 @@
 				LHOV000000000000000000B1 /* LinkHoverTests.swift in Sources */,
 				BSTT000000000000000000B1 /* BlockStyleThemeTests.swift in Sources */,
 				THMT000000000000000000B1 /* ThemeTests.swift in Sources */,
+				TWRT000000000000000000B1 /* ThemeWiredRenderingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

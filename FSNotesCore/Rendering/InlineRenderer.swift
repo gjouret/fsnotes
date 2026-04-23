@@ -31,14 +31,20 @@ public enum InlineRenderer {
     ///   image/PDF paths. When nil, `.image` inlines fall back to
     ///   rendering their alt text. Defaults to nil so tests that don't
     ///   need attachment rendering stay source-compatible.
+    /// - Parameter theme: the active theme. Phase 7.2 consumes
+    ///   `theme.typography.subSuperFontSizeMultiplier`,
+    ///   `theme.typography.kbdFontSizeMultiplier`, and
+    ///   `theme.colors.highlightBackground`. Defaults to `Theme.shared`
+    ///   so existing callers stay source-compatible.
     public static func render(
         _ inlines: [Inline],
         baseAttributes: [NSAttributedString.Key: Any],
-        note: Note? = nil
+        note: Note? = nil,
+        theme: Theme = .shared
     ) -> NSAttributedString {
         let out = NSMutableAttributedString()
         for inline in inlines {
-            out.append(render(inline, baseAttributes: baseAttributes, note: note))
+            out.append(render(inline, baseAttributes: baseAttributes, note: note, theme: theme))
         }
         return out
     }
@@ -46,33 +52,43 @@ public enum InlineRenderer {
     private static func render(
         _ inline: Inline,
         baseAttributes: [NSAttributedString.Key: Any],
-        note: Note?
+        note: Note?,
+        theme: Theme = .shared
     ) -> NSAttributedString {
+        // Theme-derived sizes. Reading once per inline node keeps the
+        // hot path cheap and avoids plumbing individual fields through
+        // each branch.
+        let baseSize: CGFloat = (baseAttributes[.font] as? PlatformFont)?.pointSize
+            ?? theme.typography.bodyFontSize
+        let codeMultiplier = theme.typography.inlineCodeSizeMultiplier
+        let subSuperMultiplier = theme.typography.subSuperFontSizeMultiplier
+        let kbdMultiplier = theme.typography.kbdFontSizeMultiplier
+
         switch inline {
         case .text(let s):
             return NSAttributedString(string: s, attributes: baseAttributes)
         case .bold(let children, _):
             var attrs = baseAttributes
             attrs[.font] = applyTrait(.bold, to: baseAttributes[.font] as? PlatformFont)
-            return render(children, baseAttributes: attrs, note: note)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .italic(let children, _):
             var attrs = baseAttributes
             attrs[.font] = applyTrait(.italic, to: baseAttributes[.font] as? PlatformFont)
-            return render(children, baseAttributes: attrs, note: note)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .strikethrough(let children):
             var attrs = baseAttributes
             attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-            return render(children, baseAttributes: attrs, note: note)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .code(let s):
             var attrs = baseAttributes
-            let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14
-            attrs[.font] = PlatformFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
+            attrs[.font] = PlatformFont.monospacedSystemFont(
+                ofSize: baseSize * codeMultiplier, weight: .regular
+            )
             return NSAttributedString(string: s, attributes: attrs)
         case .math(let content):
             // Inline math: placeholder text with .inlineMathSource marker.
             // The view layer renders via BlockRenderer + MathJax inline mode.
             var attrs = baseAttributes
-            let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14
             let mono = PlatformFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
             attrs[.font] = PlatformFont.withTraits(font: mono, traits: .italic)
             #if os(OSX)
@@ -87,7 +103,6 @@ public enum InlineRenderer {
             // The view layer renders via BlockRenderer + MathJax display mode,
             // producing a centered block image (like mermaid but no frame).
             var attrs = baseAttributes
-            let baseSize = (baseAttributes[.font] as? PlatformFont)?.pointSize ?? 14
             let mono = PlatformFont.monospacedSystemFont(ofSize: baseSize, weight: .regular)
             attrs[.font] = PlatformFont.withTraits(font: mono, traits: .italic)
             #if os(OSX)
@@ -102,7 +117,7 @@ public enum InlineRenderer {
             if let url = URL(string: rawDest) {
                 attrs[.link] = url
             }
-            return render(text, baseAttributes: attrs, note: note)
+            return render(text, baseAttributes: attrs, note: note, theme: theme)
         case .image(let alt, let rawDest, let width):
             // Native block-model image rendering. Emit a single
             // NSTextAttachment character with resolved metadata IFF the
@@ -126,7 +141,7 @@ public enum InlineRenderer {
             ) {
                 return attachmentString
             }
-            return render(alt, baseAttributes: baseAttributes, note: note)
+            return render(alt, baseAttributes: baseAttributes, note: note, theme: theme)
         case .autolink(let text, let isEmail):
             var attrs = baseAttributes
             let urlString = isEmail ? "mailto:\(text)" : text
@@ -145,48 +160,60 @@ public enum InlineRenderer {
         case .underline(let children):
             var attrs = baseAttributes
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            return render(children, baseAttributes: attrs, note: note)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .highlight(let children):
             var attrs = baseAttributes
-            attrs[.backgroundColor] = Self.highlightColor
-            return render(children, baseAttributes: attrs, note: note)
+            // Phase 7.2: resolve the highlight background from the active
+            // theme. The static `highlightColor` below is retained as
+            // the converter fallback (and for `TableRenderController`'s
+            // attribute-toggle path) but the live render now honors the
+            // theme value. Default theme ships `#FFE60080` which matches
+            // the static value within the 0.02-per-component tolerance
+            // `colorsApproximatelyEqual` uses.
+            attrs[.backgroundColor] = theme.colors.highlightBackground
+                .resolvedForCurrentAppearance(fallback: Self.highlightColor)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .superscript(let children):
             // Bug #17: <sup>…</sup>. NSAttributedString.Key.superscript
             // takes an Int; positive = superscript, negative = subscript.
-            // Shrink the font to ~75% and shift baseline up so the glyph
-            // sits above the baseline (AppKit's .superscript attribute
-            // alone does not resize the glyph).
+            // Shrink the font (Phase 7.2: via
+            // `theme.typography.subSuperFontSizeMultiplier`, default 0.75)
+            // and shift baseline up so the glyph sits above the baseline
+            // (AppKit's .superscript attribute alone does not resize the
+            // glyph).
             var attrs = baseAttributes
             attrs[.superscript] = 1
             if let baseFont = attrs[.font] as? PlatformFont {
-                attrs[.font] = PlatformFont.systemFont(ofSize: baseFont.pointSize * 0.75)
+                attrs[.font] = PlatformFont.systemFont(ofSize: baseFont.pointSize * subSuperMultiplier)
                 attrs[.baselineOffset] = baseFont.pointSize * 0.35
             }
-            return render(children, baseAttributes: attrs, note: note)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .`subscript`(let children):
             // Bug #17: <sub>…</sub>. Mirror of superscript — negative
             // `.superscript` int + negative baseline offset.
             var attrs = baseAttributes
             attrs[.superscript] = -1
             if let baseFont = attrs[.font] as? PlatformFont {
-                attrs[.font] = PlatformFont.systemFont(ofSize: baseFont.pointSize * 0.75)
+                attrs[.font] = PlatformFont.systemFont(ofSize: baseFont.pointSize * subSuperMultiplier)
                 attrs[.baselineOffset] = -baseFont.pointSize * 0.15
             }
-            return render(children, baseAttributes: attrs, note: note)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .kbd(let children):
             // <kbd>…</kbd> — keyboard-key styling.
             //
             // Apply the same content attributes that source-mode emits
             // via `InlineTagRegistry.buildInlineTagDefinitions` (the kbd
-            // entry): monospaced 0.85× font + a dark-gray foreground.
-            // Tag the rendered range with `.kbdTag = true` so
-            // `DocumentRenderer` can detect paragraphs that need the
-            // `KbdBoxParagraphLayoutFragment` dispatch, and so the
-            // fragment itself can find the run at draw time.
+            // entry): monospaced (Phase 7.2:
+            // `theme.typography.kbdFontSizeMultiplier`, default 0.85) ×
+            // font + a dark-gray foreground. Tag the rendered range with
+            // `.kbdTag = true` so `DocumentRenderer` can detect
+            // paragraphs that need the `KbdBoxParagraphLayoutFragment`
+            // dispatch, and so the fragment itself can find the run at
+            // draw time.
             var attrs = baseAttributes
             if let baseFont = attrs[.font] as? PlatformFont {
                 attrs[.font] = PlatformFont.monospacedSystemFont(
-                    ofSize: baseFont.pointSize * 0.85,
+                    ofSize: baseFont.pointSize * kbdMultiplier,
                     weight: .medium
                 )
             }
@@ -194,7 +221,7 @@ public enum InlineRenderer {
                 red: 0.333, green: 0.333, blue: 0.333, alpha: 1.0
             )
             attrs[.kbdTag] = true
-            return render(children, baseAttributes: attrs, note: note)
+            return render(children, baseAttributes: attrs, note: note, theme: theme)
         case .wikilink(let target, let display):
             // Wikilink renders as styled clickable text (no [[ ]]
             // brackets in the output). The .link attribute uses the
@@ -389,7 +416,15 @@ public enum InlineRenderer {
     private enum Trait { case bold, italic }
 
     private static func applyTrait(_ trait: Trait, to font: PlatformFont?) -> PlatformFont {
-        let base = font ?? PlatformFont.systemFont(ofSize: 14)
+        // Defensive fallback: if the caller didn't carry a font on
+        // `baseAttributes[.font]`, synthesize one from the shared theme's
+        // body font size. This path is effectively unreachable in the
+        // live renderer because every render-site populates `.font`, but
+        // the Rule-7 grep gate demands no literal size constants in this
+        // file.
+        let base = font ?? PlatformFont.systemFont(
+            ofSize: Theme.shared.typography.bodyFontSize
+        )
         #if os(OSX)
         var traits = base.fontDescriptor.symbolicTraits
         switch trait {

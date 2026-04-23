@@ -33,7 +33,8 @@ public enum HeadingRenderer {
     public static func render(
         level: Int,
         suffix: String,
-        bodyFont: PlatformFont
+        bodyFont: PlatformFont,
+        theme: Theme = .shared
     ) -> NSAttributedString {
         // Architectural invariant: the rendered string must contain ONLY
         // the displayed heading text. It MUST NOT contain `#` characters.
@@ -58,7 +59,8 @@ public enum HeadingRenderer {
         ]
         return InlineRenderer.render(
             [.text(String(displayed))],
-            baseAttributes: attrs
+            baseAttributes: attrs,
+            theme: theme
         )
     }
 

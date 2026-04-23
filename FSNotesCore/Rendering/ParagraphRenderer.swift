@@ -26,15 +26,19 @@ public enum ParagraphRenderer {
     ///
     /// - Parameter note: optional note context used by InlineRenderer to
     ///   resolve relative image/PDF paths. Defaults to nil for tests.
+    /// - Parameter theme: the active theme. Phase 7.2 forwards this to
+    ///   `InlineRenderer.render` so inline theming (highlight color,
+    ///   sub/sup multiplier) resolves from the same theme value.
     public static func render(
         inline: [Inline],
         bodyFont: PlatformFont,
-        note: Note? = nil
+        note: Note? = nil,
+        theme: Theme = .shared
     ) -> NSAttributedString {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: bodyFont,
             .foregroundColor: PlatformColor.label
         ]
-        return InlineRenderer.render(inline, baseAttributes: attrs, note: note)
+        return InlineRenderer.render(inline, baseAttributes: attrs, note: note, theme: theme)
     }
 }

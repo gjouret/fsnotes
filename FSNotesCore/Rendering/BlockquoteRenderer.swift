@@ -43,7 +43,8 @@ public enum BlockquoteRenderer {
     public static func render(
         lines: [BlockquoteLine],
         bodyFont: PlatformFont,
-        note: Note? = nil
+        note: Note? = nil,
+        theme: Theme = .shared
     ) -> NSAttributedString {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: bodyFont,
@@ -53,7 +54,7 @@ public enum BlockquoteRenderer {
         let out = NSMutableAttributedString()
         for (idx, qLine) in lines.enumerated() {
             let lineStart = out.length
-            out.append(InlineRenderer.render(qLine.inline, baseAttributes: attrs, note: note))
+            out.append(InlineRenderer.render(qLine.inline, baseAttributes: attrs, note: note, theme: theme))
             let lineEnd = out.length
 
             // Tag the rendered line with .blockquote = nesting depth so that

@@ -78,42 +78,34 @@ public enum DocumentRenderer {
         }
     }
 
-    // MARK: - Paragraph Spacing Constants
-    // These multipliers are applied to the base font size to determine
-    // paragraph spacing. Defined here to avoid magic numbers.
-    
-    /// Spacing after paragraphs and blank lines (0.85 × font size)
-    private static let paragraphSpacingMultiplier: CGFloat = 0.85
-    
-    /// Spacing after structural blocks (code, lists, blockquotes, etc.)
-    /// (1.1 × font size) - slightly more visual separation
-    private static let structuralBlockSpacingMultiplier: CGFloat = 1.1
-    
-    // Heading spacing multipliers (proportional to level)
-    private static let h1SpacingMultiplier: CGFloat = 0.67
-    private static let h2SpacingMultiplier: CGFloat = 0.5
-    private static let h3SpacingMultiplier: CGFloat = 0.4
-    private static let h4SpacingMultiplier: CGFloat = 0.35
-    private static let h5SpacingMultiplier: CGFloat = 0.3
-    private static let h6SpacingMultiplier: CGFloat = 0.25
-    
-    private static let h1SpacingBeforeMultiplier: CGFloat = 1.2
-    private static let h2SpacingBeforeMultiplier: CGFloat = 1.0
-    private static let h3SpacingBeforeMultiplier: CGFloat = 0.9
-    private static let h4SpacingBeforeMultiplier: CGFloat = 0.8
-    private static let h5SpacingBeforeMultiplier: CGFloat = 0.7
-    private static let h6SpacingBeforeMultiplier: CGFloat = 0.6
+    // MARK: - Paragraph Spacing
+    //
+    // Phase 7.2: paragraph-spacing values are now read from the active
+    // `Theme` instead of being file-local constants. `theme.spacing.*`
+    // carries the multipliers applied against the body font size, and
+    // `theme.headingSpacingBefore` / `theme.headingSpacingAfter` (flat
+    // fields on `BlockStyleTheme`) carry the per-heading-level values.
+    // Defaults match the pre-theme hardcoded values byte-for-byte, so
+    // `theme: .shared` (today's default theme) is a visual no-op.
 
     /// Render a document to an attributed string + per-block span map.
     ///
-    /// - Parameter note: optional note context threaded through to
-    ///   InlineRenderer for resolving relative image/PDF paths. Defaults
-    ///   to nil so tests without a note stay source-compatible.
+    /// - Parameters:
+    ///   - document: the block-model document to render.
+    ///   - bodyFont: the body font for paragraph / heading text.
+    ///   - codeFont: the code font for code blocks.
+    ///   - note: optional note context threaded through to
+    ///     InlineRenderer for resolving relative image/PDF paths.
+    ///     Defaults to nil so tests without a note stay source-compatible.
+    ///   - theme: the active theme. Defaults to `Theme.shared` so
+    ///     existing callers don't need updating. Renderer-level tests
+    ///     pass a custom theme to assert theme-driven values.
     public static func render(
         _ document: Document,
         bodyFont: PlatformFont,
         codeFont: PlatformFont,
-        note: Note? = nil
+        note: Note? = nil,
+        theme: Theme = .shared
     ) -> RenderedDocument {
         let out = NSMutableAttributedString()
         var spans: [NSRange] = []
@@ -128,7 +120,7 @@ public enum DocumentRenderer {
 
         for (i, block) in document.blocks.enumerated() {
             let start = out.length
-            let blockRendered = renderBlock(block, bodyFont: bodyFont, codeFont: codeFont, note: note)
+            let blockRendered = renderBlock(block, bodyFont: bodyFont, codeFont: codeFont, note: note, theme: theme)
             out.append(blockRendered)
             let end = out.length
             let blockRange = NSRange(location: start, length: end - start)
@@ -140,7 +132,8 @@ public enum DocumentRenderer {
             // DEBUG: Log paragraph style application
             let paraStyle = paragraphStyle(
                 for: block, isFirst: (i == 0),
-                baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                baseSize: bodyFont.pointSize, lineSpacing: lineSpacing,
+                theme: theme
             )
             logAttributes("BLOCK-\(i)-\(type(of: block))", range: blockRange, style: paraStyle, font: bodyFont)
             // Skip paragraph style application for blank lines (zero-length content)
@@ -152,7 +145,8 @@ public enum DocumentRenderer {
                     block: block,
                     isFirst: (i == 0),
                     baseSize: bodyFont.pointSize,
-                    lineSpacing: lineSpacing
+                    lineSpacing: lineSpacing,
+                    theme: theme
                 )
 
                 // Phase 2b: tag the block's range with its
@@ -247,7 +241,8 @@ public enum DocumentRenderer {
                 if case .blankLine = nextBlock {
                     let paraStyle = paragraphStyle(
                         for: .paragraph(inline: []), isFirst: false,
-                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing,
+                        theme: theme
                     )
                     var blankLineSepAttrs = separatorAttrs
                     blankLineSepAttrs[.paragraphStyle] = paraStyle
@@ -261,7 +256,8 @@ public enum DocumentRenderer {
                     // body-text left margin with correct line spacing.
                     let paraStyle = paragraphStyle(
                         for: nextBlock, isFirst: (i + 1 == 0),
-                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing,
+                        theme: theme
                     )
                     var emptyParaSepAttrs = separatorAttrs
                     emptyParaSepAttrs[.paragraphStyle] = paraStyle
@@ -270,7 +266,8 @@ public enum DocumentRenderer {
                     // For other blocks, apply the block's paragraph style to the separator.
                     let blockStyle = paragraphStyle(
                         for: block, isFirst: (i == 0),
-                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing,
+                        theme: theme
                     )
                     var blockSepAttrs = separatorAttrs
                     blockSepAttrs[.paragraphStyle] = blockStyle
@@ -290,7 +287,8 @@ public enum DocumentRenderer {
             let lastBlock = document.blocks[lastIdx]
             let lastStyle = paragraphStyle(
                 for: lastBlock, isFirst: (lastIdx == 0),
-                baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                baseSize: bodyFont.pointSize, lineSpacing: lineSpacing,
+                theme: theme
             )
             var lastAttrs = separatorAttrs
             lastAttrs[.paragraphStyle] = lastStyle
@@ -300,7 +298,7 @@ public enum DocumentRenderer {
         // Post-processing: auto-link bare URLs in paragraph/heading text.
         // This doesn't modify the Document model — bare URLs stay as
         // plain text and serialize back without [text](url) wrapping.
-        applyAutoLinks(to: out)
+        applyAutoLinks(to: out, theme: theme)
 
         return RenderedDocument(
             document: document,
@@ -327,14 +325,24 @@ public enum DocumentRenderer {
     /// `.link` attributes. Skips ranges that already have a `.link`
     /// attribute (e.g., markdown `[text](url)` links) and ranges
     /// inside code blocks (monospace font).
-    static func applyAutoLinks(to attrStr: NSMutableAttributedString) {
+    static func applyAutoLinks(
+        to attrStr: NSMutableAttributedString,
+        theme: Theme = .shared
+    ) {
         let string = attrStr.string
         let fullRange = NSRange(location: 0, length: attrStr.length)
 
+        // Phase 7.2: link color now reads from the active theme's
+        // `colors.link` entry. The default theme ships with
+        // `{ "asset": "linkColor" }` so the previous `NSColor(named: "link")`
+        // behaviour is preserved; themes without an asset fall back to
+        // a per-theme hex, and finally to the platform system-blue.
         #if os(OSX)
-        let linkColor = NSColor(named: "link") ?? NSColor.systemBlue
+        let linkColor = theme.colors.link
+            .resolvedForCurrentAppearance(fallback: NSColor.systemBlue)
         #else
-        let linkColor = UIColor.systemBlue
+        let linkColor = theme.colors.link
+            .resolvedForCurrentAppearance(fallback: UIColor.systemBlue)
         #endif
 
         let processMatch: (NSTextCheckingResult) -> Void = { match in
@@ -388,43 +396,45 @@ public enum DocumentRenderer {
 
     /// Build a paragraph style for a rendered block, matching the
     /// spacing values from the source-mode phase5_paragraphStyles.
+    ///
+    /// Phase 7.2: spacing multipliers are read from `theme.spacing.*`
+    /// (paragraph + structural-block) and from the flat
+    /// `theme.headingSpacingBefore` / `theme.headingSpacingAfter` arrays
+    /// (per-heading-level values). The default theme carries values that
+    /// match the prior hardcoded constants so the default render is
+    /// byte-identical.
     static func paragraphStyle(
         for block: Block,
         isFirst: Bool,
         baseSize: CGFloat,
-        lineSpacing: CGFloat
+        lineSpacing: CGFloat,
+        theme: Theme = .shared
     ) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = lineSpacing
         style.alignment = .left
 
+        let paragraphMult = theme.spacing.paragraphSpacingMultiplier
+        let structuralMult = theme.spacing.structuralBlockSpacingMultiplier
+
         switch block {
         case .heading(let level, _):
-            // Spacing proportional to heading level for clear visual hierarchy.
-            switch level {
-            case 1:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * h1SpacingBeforeMultiplier }
-                style.paragraphSpacing = baseSize * h1SpacingMultiplier
-            case 2:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * h2SpacingBeforeMultiplier }
-                style.paragraphSpacing = baseSize * h2SpacingMultiplier
-            case 3:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * h3SpacingBeforeMultiplier }
-                style.paragraphSpacing = baseSize * h3SpacingMultiplier
-            case 4:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * h4SpacingBeforeMultiplier }
-                style.paragraphSpacing = baseSize * h4SpacingMultiplier
-            case 5:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * h5SpacingBeforeMultiplier }
-                style.paragraphSpacing = baseSize * h5SpacingMultiplier
-            default:
-                if !isFirst { style.paragraphSpacingBefore = baseSize * h6SpacingBeforeMultiplier }
-                style.paragraphSpacing = baseSize * h6SpacingMultiplier
+            // Spacing proportional to heading level for clear visual
+            // hierarchy. Values are indexed off the theme's flat
+            // `headingSpacingBefore` / `headingSpacingAfter` arrays via
+            // the clamped `headingSpacingBeforeMultiplier(for:)` /
+            // `headingSpacingAfterMultiplier(for:)` helpers so invalid
+            // levels (0, 7+) never index out of bounds.
+            if !isFirst {
+                style.paragraphSpacingBefore =
+                    baseSize * theme.headingSpacingBeforeMultiplier(for: level)
             }
+            style.paragraphSpacing =
+                baseSize * theme.headingSpacingAfterMultiplier(for: level)
 
         case .paragraph(let inline):
             // Use proportional spacing based on actual font size
-            style.paragraphSpacing = baseSize * paragraphSpacingMultiplier
+            style.paragraphSpacing = baseSize * paragraphMult
             // Image-only paragraphs (a single `.image` inline) are
             // centered in the text column. Without centering, an
             // image resize drag visually grows/shrinks from the left
@@ -438,21 +448,21 @@ public enum DocumentRenderer {
 
         case .codeBlock:
             style.lineSpacing = 0
-            style.paragraphSpacing = baseSize * structuralBlockSpacingMultiplier
+            style.paragraphSpacing = baseSize * structuralMult
             style.paragraphSpacingBefore = 0
 
         case .blankLine:
             // Blank lines should have same spacing as empty paragraphs
             // to prevent visual jumps when they convert to paragraphs
-            style.paragraphSpacing = baseSize * paragraphSpacingMultiplier
+            style.paragraphSpacing = baseSize * paragraphMult
 
         case .list, .blockquote, .horizontalRule, .table:
             // Structural block types. Basic spacing for read-only display.
-            style.paragraphSpacing = baseSize * structuralBlockSpacingMultiplier
+            style.paragraphSpacing = baseSize * structuralMult
 
         case .htmlBlock:
             style.lineSpacing = 0
-            style.paragraphSpacing = baseSize * structuralBlockSpacingMultiplier
+            style.paragraphSpacing = baseSize * structuralMult
             style.paragraphSpacingBefore = 0
         }
 
@@ -476,13 +486,15 @@ public enum DocumentRenderer {
         block: Block,
         isFirst: Bool,
         baseSize: CGFloat,
-        lineSpacing: CGFloat
+        lineSpacing: CGFloat,
+        theme: Theme = .shared
     ) {
         switch block {
         case .blockquote, .list:
             let blockSpacing = paragraphStyle(
                 for: block, isFirst: isFirst,
-                baseSize: baseSize, lineSpacing: lineSpacing
+                baseSize: baseSize, lineSpacing: lineSpacing,
+                theme: theme
             )
             attrStr.enumerateAttribute(.paragraphStyle, in: range, options: []) { value, subRange, _ in
                 if let existing = value as? NSParagraphStyle {
@@ -496,7 +508,8 @@ public enum DocumentRenderer {
         default:
             let paraStyle = paragraphStyle(
                 for: block, isFirst: isFirst,
-                baseSize: baseSize, lineSpacing: lineSpacing
+                baseSize: baseSize, lineSpacing: lineSpacing,
+                theme: theme
             )
             attrStr.addAttribute(.paragraphStyle, value: paraStyle, range: range)
         }
@@ -504,23 +517,30 @@ public enum DocumentRenderer {
 
     /// Render a single block. Dispatches to the per-block renderer.
     /// Output contains NO trailing newline — the caller owns separators.
+    ///
+    /// Phase 7.2: the `theme` parameter is threaded into the inline
+    /// renderer for blocks that flow through it (paragraph, heading,
+    /// list item, blockquote line). Per-block renderers that do NOT
+    /// consume `InlineRenderer` directly (code, table, HR) stay
+    /// theme-agnostic for now — those are Phase 7.3 scope.
     public static func renderBlock(
         _ block: Block,
         bodyFont: PlatformFont,
         codeFont: PlatformFont,
-        note: Note? = nil
+        note: Note? = nil,
+        theme: Theme = .shared
     ) -> NSAttributedString {
         switch block {
         case .paragraph(let inline):
-            return ParagraphRenderer.render(inline: inline, bodyFont: bodyFont, note: note)
+            return ParagraphRenderer.render(inline: inline, bodyFont: bodyFont, note: note, theme: theme)
         case .heading(let level, let suffix):
-            return HeadingRenderer.render(level: level, suffix: suffix, bodyFont: bodyFont)
+            return HeadingRenderer.render(level: level, suffix: suffix, bodyFont: bodyFont, theme: theme)
         case .codeBlock(let language, let content, _):
             return CodeBlockRenderer.render(language: language, content: content, codeFont: codeFont)
         case .list(let items, _):
-            return ListRenderer.render(items: items, bodyFont: bodyFont, note: note)
+            return ListRenderer.render(items: items, bodyFont: bodyFont, note: note, theme: theme)
         case .blockquote(let lines):
-            return BlockquoteRenderer.render(lines: lines, bodyFont: bodyFont, note: note)
+            return BlockquoteRenderer.render(lines: lines, bodyFont: bodyFont, note: note, theme: theme)
         case .horizontalRule:
             return HorizontalRuleRenderer.render(bodyFont: bodyFont)
         case .htmlBlock(let raw):

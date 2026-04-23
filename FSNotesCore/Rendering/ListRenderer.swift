@@ -121,13 +121,19 @@ public enum ListRenderer {
     /// newline-separated sequence of rendered items, with no trailing
     /// newline — callers compose list output with sibling blocks via
     /// the usual block-joining newline.
+    ///
+    /// Phase 7.2: accepts an optional `theme` parameter that gets
+    /// forwarded to `InlineRenderer.render` for inline-content
+    /// styling. List-level layout constants (indent, cell size, bullet
+    /// draw scale) stay in-file for now; Phase 7.3 migrates them.
     public static func render(
         items: [ListItem],
         bodyFont: PlatformFont,
-        note: Note? = nil
+        note: Note? = nil,
+        theme: Theme = .shared
     ) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        renderItems(items, depth: 0, bodyFont: bodyFont, note: note, into: out)
+        renderItems(items, depth: 0, bodyFont: bodyFont, note: note, theme: theme, into: out)
         // Remove the trailing "\n" that the last item appended — the
         // block-join layer owns inter-block separators.
         if out.length > 0, out.string.hasSuffix("\n") {
@@ -141,6 +147,7 @@ public enum ListRenderer {
         depth: Int,
         bodyFont: PlatformFont,
         note: Note? = nil,
+        theme: Theme = .shared,
         into out: NSMutableAttributedString
     ) {
         let attrs: [NSAttributedString.Key: Any] = [
@@ -183,9 +190,9 @@ public enum ListRenderer {
                     checkedAttrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
                     checkedAttrs[.foregroundColor] = UIColor.secondaryLabel
                     #endif
-                    out.append(InlineRenderer.render(item.inline, baseAttributes: checkedAttrs, note: note))
+                    out.append(InlineRenderer.render(item.inline, baseAttributes: checkedAttrs, note: note, theme: theme))
                 } else {
-                    out.append(InlineRenderer.render(item.inline, baseAttributes: attrs, note: note))
+                    out.append(InlineRenderer.render(item.inline, baseAttributes: attrs, note: note, theme: theme))
                 }
             } else {
                 // Regular list item: render bullet via attachment.
@@ -202,7 +209,7 @@ public enum ListRenderer {
                     font: bodyFont
                 )
                 out.append(bulletAttachment)
-                out.append(InlineRenderer.render(item.inline, baseAttributes: attrs, note: note))
+                out.append(InlineRenderer.render(item.inline, baseAttributes: attrs, note: note, theme: theme))
             }
             // Apply paragraph style to this item's line.
             let lineRange = NSRange(location: lineStart, length: out.length - lineStart)
@@ -211,7 +218,7 @@ public enum ListRenderer {
             out.append(NSAttributedString(string: "\n", attributes: attrs))
             if !item.children.isEmpty {
                 renderItems(item.children, depth: depth + 1,
-                            bodyFont: bodyFont, note: note, into: out)
+                            bodyFont: bodyFont, note: note, theme: theme, into: out)
             }
         }
     }
