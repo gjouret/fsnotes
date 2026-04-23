@@ -24,12 +24,6 @@ class PreferencesEditorViewController: NSViewController {
     @IBOutlet weak var inlineTags: NSButton!
     @IBOutlet weak var clickableLinks: NSButton!
 
-    @IBOutlet weak var italicAsterisk: NSButton!
-    @IBOutlet weak var italicUnderscore: NSButton!
-
-    @IBOutlet weak var boldAsterisk: NSButton!
-    @IBOutlet weak var boldUnderscore: NSButton!
-
     // Phase 7.4 — Theme section (programmatic, appended below the
     // storyboard-defined content). Kept as stored properties so the
     // appear pass can refresh the popup selection without rebuilding.
@@ -38,8 +32,13 @@ class PreferencesEditorViewController: NSViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        // Bumped height by the Theme section (48pt: label row + controls row).
-        preferredContentSize = NSSize(width: 550, height: 560)
+        // Height tuned after removing the Italic/Bold radio section:
+        // the storyboard chain (top-anchored) terminates at the "Code
+        // block live highlighting" checkbox ~440pt from the top; the
+        // programmatic Theme section below needs ~80pt for separator +
+        // header + popup row + bottom margin. 550 leaves a clean ~20pt
+        // gap between the checkbox and the Theme separator.
+        preferredContentSize = NSSize(width: 550, height: 550)
     }
 
     override func viewDidAppear() {
@@ -67,12 +66,6 @@ class PreferencesEditorViewController: NSViewController {
         
         setCodeFontPreview()
         setNoteFontPreview()
-        
-        italicAsterisk.state = UserDefaultsManagement.italic == "*" ? .on : .off
-        italicUnderscore.state = UserDefaultsManagement.italic == "_" ? .on : .off
-
-        boldAsterisk.state = UserDefaultsManagement.bold == "**" ? .on : .off
-        boldUnderscore.state = UserDefaultsManagement.bold == "__" ? .on : .off
 
         // Phase 7.4 — build (once) + refresh the Theme section.
         buildThemeSectionIfNeeded()
@@ -132,13 +125,22 @@ class PreferencesEditorViewController: NSViewController {
         revealButton.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(revealButton)
 
-        // Layout — the VC view is 550×560 (after bump). Attach to
-        // bottom-left with fixed offsets so the section sits below
-        // the storyboard content without touching existing frames.
+        // Layout — the VC view is 550×550 (post Italic/Bold removal).
+        // Attach to bottom-left with fixed offsets so the section sits
+        // below the storyboard content without touching existing frames.
+        //
+        // The `-90` separator offset was chosen to (a) clear the last
+        // storyboard control ("Code block live highlighting" checkbox,
+        // which terminates the top-anchored storyboard chain around
+        // y=440 from the top) by ~20pt and (b) leave ~30pt of bottom
+        // margin below the popup row. If future storyboard edits add or
+        // remove rows above, this constant needs to be re-tuned — there
+        // is no constraint-chain link between the storyboard content and
+        // this programmatic section.
         NSLayoutConstraint.activate([
             separator.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             separator.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            separator.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -60),
+            separator.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -90),
             separator.heightAnchor.constraint(equalToConstant: 1),
 
             header.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 33),
@@ -331,12 +333,11 @@ class PreferencesEditorViewController: NSViewController {
 
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
-            if let note = editor.note, let evc = editor.editorViewController {
-                // Skip source-mode highlight when block model is active —
-                // refillEditArea() re-renders from the Document model.
-                if editor.documentProjection == nil {
-                    NotesTextProcessor.highlight(attributedString: note.content)
-                }
+            if let _ = editor.note, let evc = editor.editorViewController {
+                // Phase 4.4: both WYSIWYG (block-model) and source-mode
+                // (SourceRenderer) re-render via `refillEditArea()` —
+                // the legacy `NotesTextProcessor.highlight(note.content)`
+                // call was retired in 4.4.
                 evc.disablePreview()
                 evc.refillEditArea()
             }
@@ -492,32 +493,6 @@ class PreferencesEditorViewController: NSViewController {
 
         setCodeFontPreview()
         setNoteFontPreview()
-    }
-
-    @IBAction func changeItalic(_ sender: NSButton) {
-        let marker = sender.identifier?.rawValue == "italicAsterisk" ? "*" : "_"
-        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
-        // Italic/bold markers live in the synthesized ThemeTypography group
-        // and have no flat-field storage on BlockStyleTheme today; a later
-        // 7.5 slice adds storage and wires the mutation here. For now we
-        // dual-write to UD and still persist + notify so any observer
-        // refreshes on the other fields that landed.
-        UserDefaultsManagement.italic = marker
-        persistActiveTheme()
-
-        italicAsterisk.state = sender.identifier?.rawValue == "italicAsterisk" ? .on : .off
-        italicUnderscore.state = sender.identifier?.rawValue == "italicUnderscore" ? .on : .off
-    }
-
-    @IBAction func changeBold(_ sender: NSButton) {
-        let marker = sender.identifier?.rawValue == "boldAsterisk" ? "**" : "__"
-        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
-        // (Same rationale as `changeItalic`.)
-        UserDefaultsManagement.bold = marker
-        persistActiveTheme()
-
-        boldAsterisk.state = sender.identifier?.rawValue == "boldAsterisk" ? .on : .off
-        boldUnderscore.state = sender.identifier?.rawValue == "boldUnderscore" ? .on : .off
     }
 
     // MARK: - Phase 7.5: persist helper

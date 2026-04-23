@@ -3777,65 +3777,6 @@ Olena Hlushcneko</string>
                                     <action selector="codeBlockHighlight:" target="ssC-ed-19K" id="Ygz-lW-YAb"/>
                                 </connections>
                             </button>
-                            <box verticalHuggingPriority="750" boxType="separator" translatesAutoresizingMaskIntoConstraints="NO" id="dof-lA-EwF">
-                                <rect key="frame" x="20" y="93" width="428" height="5"/>
-                            </box>
-                            <button identifier="italicAsterisk" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="iOb-Wa-2km">
-                                <rect key="frame" x="145" y="58" width="33" height="18"/>
-                                <buttonCell key="cell" type="radio" title="*" bezelStyle="regularSquare" imagePosition="left" alignment="left" state="on" inset="2" id="VV2-X2-moA">
-                                    <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
-                                    <font key="font" metaFont="system"/>
-                                </buttonCell>
-                                <connections>
-                                    <action selector="changeItalic:" target="ssC-ed-19K" id="oel-2a-Lf0"/>
-                                </connections>
-                            </button>
-                            <button identifier="italicUnderscore" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="9qv-bd-BU8">
-                                <rect key="frame" x="190" y="58" width="34" height="18"/>
-                                <buttonCell key="cell" type="radio" title="_" bezelStyle="regularSquare" imagePosition="left" alignment="left" inset="2" id="e7y-7Z-36y">
-                                    <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
-                                    <font key="font" metaFont="system"/>
-                                </buttonCell>
-                                <connections>
-                                    <action selector="changeItalic:" target="ssC-ed-19K" id="1ss-jd-8eY"/>
-                                </connections>
-                            </button>
-                            <textField focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="dKW-T5-3Vc">
-                                <rect key="frame" x="87" y="59" width="37" height="16"/>
-                                <textFieldCell key="cell" lineBreakMode="clipping" title="Italic:" id="aLg-MQ-amx">
-                                    <font key="font" metaFont="system"/>
-                                    <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
-                                    <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
-                                </textFieldCell>
-                            </textField>
-                            <textField focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="cO6-GH-v1T">
-                                <rect key="frame" x="89" y="35" width="35" height="16"/>
-                                <textFieldCell key="cell" lineBreakMode="clipping" title="Bold:" id="xeP-Zg-vmO">
-                                    <font key="font" metaFont="system"/>
-                                    <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
-                                    <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
-                                </textFieldCell>
-                            </textField>
-                            <button identifier="boldAsterisk" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="ySi-3O-8zp">
-                                <rect key="frame" x="145" y="34" width="39" height="18"/>
-                                <buttonCell key="cell" type="radio" title="**" bezelStyle="regularSquare" imagePosition="left" alignment="left" identifier="boldAsterisk" inset="2" id="jRr-Ih-RYc">
-                                    <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
-                                    <font key="font" metaFont="system"/>
-                                </buttonCell>
-                                <connections>
-                                    <action selector="changeBold:" target="ssC-ed-19K" id="blk-X5-ZLx"/>
-                                </connections>
-                            </button>
-                            <button identifier="boldUnderscore" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="y1p-hH-bBl">
-                                <rect key="frame" x="190" y="34" width="41" height="18"/>
-                                <buttonCell key="cell" type="radio" title="__" bezelStyle="regularSquare" imagePosition="left" alignment="left" state="on" inset="2" id="yMX-hz-B8Y">
-                                    <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
-                                    <font key="font" metaFont="system"/>
-                                </buttonCell>
-                                <connections>
-                                    <action selector="changeBold:" target="ssC-ed-19K" id="4kx-4z-D67"/>
-                                </connections>
-                            </button>
                             <slider verticalHuggingPriority="750" verticalCompressionResistancePriority="751" translatesAutoresizingMaskIntoConstraints="NO" id="T2k-ya-69N">
                                 <rect key="frame" x="145" y="325" width="290" height="28"/>
                                 <sliderCell key="cell" state="on" alignment="left" minValue="1" maxValue="10" doubleValue="4" tickMarkPosition="above" numberOfTickMarks="10" sliderType="linear" id="fZA-cO-0ac"/>
@@ -3846,7 +3787,6 @@ Olena Hlushcneko</string>
                         </subviews>
                         <constraints>
                             <constraint firstItem="QvM-a9-vnf" firstAttribute="trailing" secondItem="rmv-ik-PYa" secondAttribute="trailing" id="03S-qV-blX"/>
-                            <constraint firstItem="y1p-hH-bBl" firstAttribute="leading" secondItem="9qv-bd-BU8" secondAttribute="leading" id="0Cq-Bf-GrH"/>
                             <constraint firstItem="L2J-w9-lFQ" firstAttribute="leading" secondItem="7Az-gx-yGL" secondAttribute="leading" id="1Dq-H8-Q22"/>
                             <constraint firstItem="Vrr-sG-fOD" firstAttribute="trailing" secondItem="3el-ze-TIn" secondAttribute="trailing" id="1hh-K9-SSl"/>
                             <constraint firstItem="T2k-ya-69N" firstAttribute="leading" secondItem="7Az-gx-yGL" secondAttribute="leading" id="2oZ-sG-5F0"/>
@@ -3855,11 +3795,9 @@ Olena Hlushcneko</string>
                             <constraint firstItem="GnH-BV-JGa" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="35" id="4kf-96-700"/>
                             <constraint firstItem="DQU-Se-i0R" firstAttribute="leading" secondItem="T2k-ya-69N" secondAttribute="leading" id="5Io-2d-DT7"/>
                             <constraint firstItem="Kcg-vn-Dwj" firstAttribute="leading" secondItem="mLR-t7-nz0" secondAttribute="leading" id="7ES-Fk-IxN"/>
-                            <constraint firstItem="dKW-T5-3Vc" firstAttribute="trailing" secondItem="3el-ze-TIn" secondAttribute="trailing" id="7Ld-MX-BiG"/>
                             <constraint firstItem="Vrr-sG-fOD" firstAttribute="leading" secondItem="GY1-6c-5uL" secondAttribute="leading" priority="999" constant="35" id="7hq-sQ-Rka"/>
                             <constraint firstItem="cMm-a9-mcN" firstAttribute="trailing" secondItem="bEN-ep-bl6" secondAttribute="trailing" id="8pv-Qz-KPk"/>
                             <constraint firstItem="cMm-a9-mcN" firstAttribute="trailing" secondItem="GnH-BV-JGa" secondAttribute="trailing" id="981-PH-aBD"/>
-                            <constraint firstAttribute="trailing" relation="greaterThanOrEqual" secondItem="y1p-hH-bBl" secondAttribute="trailing" constant="35" id="A0L-mE-zcW"/>
                             <constraint firstItem="B07-UG-KXb" firstAttribute="leading" secondItem="rmv-ik-PYa" secondAttribute="trailing" constant="25" id="BHd-tb-ZsE"/>
                             <constraint firstItem="cj1-ab-Sv6" firstAttribute="top" secondItem="2ZF-VY-6Ij" secondAttribute="bottom" constant="20" id="CJe-3R-a6A"/>
                             <constraint firstItem="7Az-gx-yGL" firstAttribute="trailing" secondItem="B07-UG-KXb" secondAttribute="trailing" id="CW3-MY-m5U"/>
@@ -3874,10 +3812,7 @@ Olena Hlushcneko</string>
                             <constraint firstItem="gk5-il-WSG" firstAttribute="leading" secondItem="cj1-ab-Sv6" secondAttribute="leading" id="G4j-25-mt3"/>
                             <constraint firstItem="3el-ze-TIn" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="35" id="GGY-Ip-Wbs"/>
                             <constraint firstItem="cMm-a9-mcN" firstAttribute="top" secondItem="GnH-BV-JGa" secondAttribute="bottom" constant="8" symbolic="YES" id="GmS-cz-t0z"/>
-                            <constraint firstItem="cO6-GH-v1T" firstAttribute="top" secondItem="dKW-T5-3Vc" secondAttribute="bottom" constant="8" symbolic="YES" id="H1s-B2-taj"/>
-                            <constraint firstItem="dKW-T5-3Vc" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="35" id="HPd-75-v8x"/>
                             <constraint firstItem="xZA-pB-1nm" firstAttribute="centerY" secondItem="UiV-vt-WHK" secondAttribute="centerY" id="ILO-oX-1tz"/>
-                            <constraint firstItem="y1p-hH-bBl" firstAttribute="leading" secondItem="ySi-3O-8zp" secondAttribute="trailing" constant="8" symbolic="YES" id="JXr-hf-b85"/>
                             <constraint firstItem="BAc-kR-eMo" firstAttribute="leading" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="20" symbolic="YES" id="K6Z-iF-q6Y"/>
                             <constraint firstItem="f8R-08-jeb" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="7Az-gx-yGL" secondAttribute="trailing" constant="8" symbolic="YES" id="Kku-G0-F2c"/>
                             <constraint firstItem="bEN-ep-bl6" firstAttribute="leading" secondItem="GY1-6c-5uL" secondAttribute="leading" priority="999" constant="35" id="L8X-9U-db1"/>
@@ -3891,25 +3826,20 @@ Olena Hlushcneko</string>
                             <constraint firstItem="XOm-C4-sCs" firstAttribute="top" secondItem="gk5-il-WSG" secondAttribute="bottom" constant="6" symbolic="YES" id="XWf-PM-9az"/>
                             <constraint firstItem="DQU-Se-i0R" firstAttribute="trailing" secondItem="T2k-ya-69N" secondAttribute="trailing" id="YUg-B5-IwW"/>
                             <constraint firstItem="rmv-ik-PYa" firstAttribute="trailing" secondItem="cMm-a9-mcN" secondAttribute="trailing" id="YqS-w0-sAd"/>
-                            <constraint firstItem="iOb-Wa-2km" firstAttribute="leading" secondItem="gl0-rI-S66" secondAttribute="leading" id="Z9i-X3-dd9"/>
                             <constraint firstAttribute="trailing" relation="greaterThanOrEqual" secondItem="RxO-oS-Sa7" secondAttribute="trailing" constant="35" id="ZBy-Qc-O9t"/>
                             <constraint firstItem="T2k-ya-69N" firstAttribute="centerY" secondItem="cMm-a9-mcN" secondAttribute="centerY" id="ZTm-7E-HhR"/>
                             <constraint firstItem="gl0-rI-S66" firstAttribute="leading" secondItem="T2k-ya-69N" secondAttribute="leading" id="aY8-QU-fsQ"/>
                             <constraint firstItem="f8R-08-jeb" firstAttribute="trailing" secondItem="T2k-ya-69N" secondAttribute="trailing" id="aqZ-pc-TWu"/>
-                            <constraint firstItem="dof-lA-EwF" firstAttribute="leading" secondItem="2ZF-VY-6Ij" secondAttribute="leading" id="aqr-wY-N1l"/>
                             <constraint firstItem="QvM-a9-vnf" firstAttribute="leading" secondItem="GY1-6c-5uL" secondAttribute="leading" priority="999" constant="35" id="bIC-6L-ItK"/>
                             <constraint firstAttribute="trailing" secondItem="f8R-08-jeb" secondAttribute="trailing" constant="35" id="beh-df-WKA"/>
-                            <constraint firstItem="ySi-3O-8zp" firstAttribute="centerY" secondItem="cO6-GH-v1T" secondAttribute="centerY" id="cgk-58-VzE"/>
                             <constraint firstItem="DQU-Se-i0R" firstAttribute="centerY" secondItem="bEN-ep-bl6" secondAttribute="centerY" id="cj3-SS-036"/>
                             <constraint firstItem="3el-ze-TIn" firstAttribute="leading" secondItem="GY1-6c-5uL" secondAttribute="leading" priority="999" constant="35" id="cmP-rx-GF3"/>
-                            <constraint firstItem="iOb-Wa-2km" firstAttribute="top" secondItem="dof-lA-EwF" secondAttribute="bottom" constant="20" id="dK7-09-xju"/>
                             <constraint firstItem="mLR-t7-nz0" firstAttribute="leading" secondItem="XOm-C4-sCs" secondAttribute="leading" id="djq-aH-p2t"/>
                             <constraint firstItem="2ZF-VY-6Ij" firstAttribute="leading" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="20" symbolic="YES" id="djv-bU-ozQ"/>
                             <constraint firstItem="7Az-gx-yGL" firstAttribute="centerY" secondItem="QvM-a9-vnf" secondAttribute="centerY" id="dol-sg-1VZ"/>
                             <constraint firstItem="f8R-08-jeb" firstAttribute="centerY" secondItem="7Az-gx-yGL" secondAttribute="centerY" id="duo-fC-TLc"/>
                             <constraint firstItem="Kcg-vn-Dwj" firstAttribute="top" secondItem="mLR-t7-nz0" secondAttribute="bottom" constant="6" symbolic="YES" id="eX4-8b-ROa"/>
                             <constraint firstItem="L2J-w9-lFQ" firstAttribute="top" secondItem="7Az-gx-yGL" secondAttribute="bottom" constant="8" symbolic="YES" id="ecc-mo-zqp"/>
-                            <constraint firstItem="ySi-3O-8zp" firstAttribute="leading" secondItem="iOb-Wa-2km" secondAttribute="leading" id="eyj-6H-ZcW"/>
                             <constraint firstItem="fYl-Tw-kcO" firstAttribute="leading" secondItem="B07-UG-KXb" secondAttribute="trailing" constant="8" symbolic="YES" id="f4G-5z-TRd"/>
                             <constraint firstItem="dmd-5j-kY7" firstAttribute="leading" secondItem="T2k-ya-69N" secondAttribute="leading" id="gOJ-e8-LVN"/>
                             <constraint firstItem="bEN-ep-bl6" firstAttribute="trailing" secondItem="Vrr-sG-fOD" secondAttribute="trailing" id="hTm-Ni-1JP"/>
@@ -3925,37 +3855,27 @@ Olena Hlushcneko</string>
                             <constraint firstItem="B07-UG-KXb" firstAttribute="top" secondItem="xZA-pB-1nm" secondAttribute="bottom" constant="8" symbolic="YES" id="n7b-63-UXn"/>
                             <constraint firstItem="GnH-BV-JGa" firstAttribute="top" secondItem="BAc-kR-eMo" secondAttribute="bottom" constant="20" id="nGj-iU-ZYE"/>
                             <constraint firstItem="UiV-vt-WHK" firstAttribute="trailing" secondItem="rmv-ik-PYa" secondAttribute="trailing" id="oP0-I4-Zmn"/>
-                            <constraint firstItem="iOb-Wa-2km" firstAttribute="centerY" secondItem="dKW-T5-3Vc" secondAttribute="centerY" id="oRY-Nv-s3N"/>
                             <constraint firstItem="UiV-vt-WHK" firstAttribute="top" secondItem="GY1-6c-5uL" secondAttribute="top" constant="35" id="oVz-K1-G01"/>
                             <constraint firstItem="UiV-vt-WHK" firstAttribute="leading" secondItem="GY1-6c-5uL" secondAttribute="leading" priority="999" constant="35" id="ow0-zC-ejB"/>
                             <constraint firstItem="gk5-il-WSG" firstAttribute="top" secondItem="cj1-ab-Sv6" secondAttribute="bottom" constant="6" symbolic="YES" id="pB5-UY-9Eg"/>
                             <constraint firstItem="UiV-vt-WHK" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="35" id="pBh-hx-Sih"/>
                             <constraint firstAttribute="trailing" relation="greaterThanOrEqual" secondItem="L2J-w9-lFQ" secondAttribute="trailing" constant="20" symbolic="YES" id="qRj-MG-tFO"/>
-                            <constraint firstItem="cO6-GH-v1T" firstAttribute="trailing" secondItem="dKW-T5-3Vc" secondAttribute="trailing" id="r6v-by-lDW"/>
                             <constraint firstItem="xZA-pB-1nm" firstAttribute="leading" secondItem="UiV-vt-WHK" secondAttribute="trailing" constant="25" id="rIl-Ed-uYN"/>
-                            <constraint firstAttribute="bottom" secondItem="ySi-3O-8zp" secondAttribute="bottom" constant="35" id="rRh-eK-aWM"/>
                             <constraint firstAttribute="trailing" secondItem="fYl-Tw-kcO" secondAttribute="trailing" constant="35" id="rb6-2g-dvg"/>
-                            <constraint firstItem="cO6-GH-v1T" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="35" id="sIb-T1-xam"/>
                             <constraint firstItem="Kcg-vn-Dwj" firstAttribute="trailing" secondItem="mLR-t7-nz0" secondAttribute="trailing" id="t3P-9h-M9O"/>
                             <constraint firstItem="7Az-gx-yGL" firstAttribute="top" secondItem="B07-UG-KXb" secondAttribute="bottom" constant="10" symbolic="YES" id="t7Z-Fy-QdR"/>
                             <constraint firstItem="gk5-il-WSG" firstAttribute="trailing" secondItem="cj1-ab-Sv6" secondAttribute="trailing" id="uDF-5L-1Qp"/>
                             <constraint firstItem="2ZF-VY-6Ij" firstAttribute="top" secondItem="3el-ze-TIn" secondAttribute="bottom" constant="20" id="uQn-Tx-nFn"/>
                             <constraint firstItem="bEN-ep-bl6" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="35" id="vH1-tR-yNz"/>
-                            <constraint firstItem="9qv-bd-BU8" firstAttribute="centerY" secondItem="dKW-T5-3Vc" secondAttribute="centerY" id="viq-c7-D8b"/>
                             <constraint firstItem="QvM-a9-vnf" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="GY1-6c-5uL" secondAttribute="leading" constant="35" id="vxD-V3-CzO"/>
                             <constraint firstItem="dmd-5j-kY7" firstAttribute="centerY" secondItem="Vrr-sG-fOD" secondAttribute="centerY" id="wi3-Lx-dIK"/>
-                            <constraint firstItem="y1p-hH-bBl" firstAttribute="centerY" secondItem="cO6-GH-v1T" secondAttribute="centerY" id="wkx-jp-KWV"/>
                             <constraint firstItem="rmv-ik-PYa" firstAttribute="centerY" secondItem="B07-UG-KXb" secondAttribute="centerY" id="xg5-Ka-fyG"/>
                             <constraint firstItem="GnH-BV-JGa" firstAttribute="trailing" secondItem="QvM-a9-vnf" secondAttribute="trailing" id="yef-tJ-6pg"/>
-                            <constraint firstItem="dof-lA-EwF" firstAttribute="top" secondItem="Kcg-vn-Dwj" secondAttribute="bottom" constant="20" id="yvx-pF-jgL"/>
-                            <constraint firstItem="dof-lA-EwF" firstAttribute="trailing" secondItem="2ZF-VY-6Ij" secondAttribute="trailing" id="zQm-5d-zfY"/>
                             <constraint firstItem="mLR-t7-nz0" firstAttribute="trailing" secondItem="XOm-C4-sCs" secondAttribute="trailing" id="zc0-G9-yAY"/>
                         </constraints>
                     </view>
                     <connections>
                         <outlet property="autocloseBrackets" destination="gk5-il-WSG" id="Iug-US-Weg"/>
-                        <outlet property="boldAsterisk" destination="ySi-3O-8zp" id="W7N-vi-qTe"/>
-                        <outlet property="boldUnderscore" destination="y1p-hH-bBl" id="IJw-SX-nBJ"/>
                         <outlet property="clickableLinks" destination="mLR-t7-nz0" id="Obm-sY-z1U"/>
                         <outlet property="codeBlockHighlight" destination="Kcg-vn-Dwj" id="7yz-yx-8Tu"/>
                         <outlet property="codeFontPreview" destination="B07-UG-KXb" id="3G7-e5-Ckw"/>
@@ -3963,8 +3883,6 @@ Olena Hlushcneko</string>
                         <outlet property="inEditorFocus" destination="cj1-ab-Sv6" id="KG5-A9-BXB"/>
                         <outlet property="indentUsing" destination="RxO-oS-Sa7" id="PVx-5A-VrQ"/>
                         <outlet property="inlineTags" destination="XOm-C4-sCs" id="HFO-i5-dZl"/>
-                        <outlet property="italicAsterisk" destination="iOb-Wa-2km" id="eOr-eS-WpQ"/>
-                        <outlet property="italicUnderscore" destination="9qv-bd-BU8" id="rkI-x6-Lwe"/>
                         <outlet property="lineSpacing" destination="T2k-ya-69N" id="JH9-pd-ke1"/>
                         <outlet property="lineWidth" destination="DQU-Se-i0R" id="k9W-FU-OtS"/>
                         <outlet property="marginSize" destination="gl0-rI-S66" id="Apd-uE-KF3"/>
