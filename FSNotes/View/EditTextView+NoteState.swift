@@ -230,12 +230,8 @@ extension EditTextView {
         // Clear block-model state BEFORE touching textStorage.
         // This prevents any textDidChange triggered by the
         // storage-clearing below from seeing stale block-model state.
-        // Phase 4.3 — also reset the non-markdown gate so a switch from
-        // a `.txt` note back into a markdown note doesn't carry over
-        // the suppressed-highlight state.
         documentProjection = nil
         textStorageProcessor?.blockModelActive = false
-        textStorageProcessor?.nonMarkdownActive = false
         textStorageProcessor?.blocks = []
 
         if !note.isLoaded {
@@ -306,25 +302,12 @@ extension EditTextView {
                 storage.setAttributedString(content)
             }
         } else {
-            // Phase 4.3: non-markdown notes (.txt / .rtf) route through
-            // the dedicated TK2 renderer. No markdown parsing, no block
-            // model, no `NotesTextProcessor.highlight` call — just body
-            // font + theme foreground. `note.content` was populated by
-            // `Note.getContent()` which reads the file as plain text;
-            // for `.rtf` bytes the user's styling survives on the
-            // `NSAttributedString` already. We normalize everything
-            // through `NonMarkdownRenderer.render(content:)` so the
-            // editor sees the configured body font. `nonMarkdownActive`
-            // gates `TextStorageProcessor.process()` so markdown
-            // highlighting doesn't fire on subsequent edits.
+            // Unreachable today: `NoteType` has exactly one case
+            // (`.Markdown`), so `note.isMarkdown()` is always true.
+            // Kept as a safety fallback in case the type system grows
+            // a new primary-content format later.
             documentProjection = nil
-            textStorageProcessor?.blockModelActive = false
-            textStorageProcessor?.nonMarkdownActive = true
-            let rendered = NonMarkdownRenderer.render(
-                content: note.content.string,
-                bodyFont: UserDefaultsManagement.noteFont
-            )
-            storage.setAttributedString(rendered)
+            storage.setAttributedString(note.content)
         }
 
         if highlight {

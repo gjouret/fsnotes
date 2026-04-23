@@ -104,13 +104,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// process() pipeline must not run — it would apply syntax colors,
     /// kern, and clear-foreground to storage that has no markdown markers.
     public var blockModelActive = false
-    /// Phase 4.3 — when true, the current note is non-markdown
-    /// (`.txt` / `.rtf`). The legacy `process()` pipeline must not run:
-    /// it would apply markdown syntax highlighting to content that has
-    /// no markdown structure. Non-markdown fill uses `NonMarkdownRenderer`
-    /// for the initial paint; subsequent edits don't need any post-
-    /// processing — plain text stays plain.
-    public var nonMarkdownActive = false
 
     // MARK: - Source-Mode Block Array
 
@@ -626,15 +619,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
         // Block-model pipeline owns rendering — bail out entirely.
         if blockModelActive {
-            return
-        }
-
-        // Phase 4.3 — non-markdown notes (.txt / .rtf) don't want ANY
-        // markdown highlighting. `NonMarkdownRenderer` handled the
-        // initial paint; editing a plain-text note shouldn't trigger
-        // `NotesTextProcessor.highlightMarkdown`, which would apply
-        // heading fonts, kern, etc. to what the user typed as prose.
-        if nonMarkdownActive {
             return
         }
 

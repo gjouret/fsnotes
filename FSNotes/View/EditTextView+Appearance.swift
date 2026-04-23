@@ -149,10 +149,7 @@ extension EditTextView {
         // source-mode highlight call — it would apply syntax colors to
         // note.content (raw markdown) that the block-model pipeline
         // doesn't use.
-        // Phase 4.3 — also skip for non-markdown notes (`.txt` / `.rtf`),
-        // which render via `NonMarkdownRenderer` and have no markdown
-        // structure to highlight.
-        if documentProjection == nil, note.isMarkdown() {
+        if documentProjection == nil {
             NotesTextProcessor.highlight(attributedString: note.content)
         }
 

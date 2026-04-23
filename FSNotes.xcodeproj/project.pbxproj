@@ -80,8 +80,6 @@
 		P41S000000000000000000B1 /* SourceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F1 /* SourceRenderer.swift */; };
 		P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F2 /* SourceLayoutFragment.swift */; };
 		P41S000000000000000000B3 /* Phase41SourceRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */; };
-		P43N000000000000000000B1 /* NonMarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = P43N000000000000000000F1 /* NonMarkdownRenderer.swift */; };
-		P43N000000000000000000B2 /* Phase43NonMarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P43N000000000000000000F2 /* Phase43NonMarkdownRendererTests.swift */; };
 		TGEO000000000000000000B1 /* TableGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGEO000000000000000000F1 /* TableGeometry.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
@@ -1184,8 +1182,6 @@
 		P41S000000000000000000F1 /* SourceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceRenderer.swift; sourceTree = "<group>"; };
 		P41S000000000000000000F2 /* SourceLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/SourceLayoutFragment.swift; sourceTree = "<group>"; };
 		P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase41SourceRendererTests.swift; sourceTree = "<group>"; };
-		P43N000000000000000000F1 /* NonMarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NonMarkdownRenderer.swift; sourceTree = "<group>"; };
-		P43N000000000000000000F2 /* Phase43NonMarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase43NonMarkdownRendererTests.swift; sourceTree = "<group>"; };
 		TGEO000000000000000000F1 /* TableGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableGeometry.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
@@ -1746,7 +1742,6 @@
 				TGEO000000000000000000F1 /* TableGeometry.swift */,
 				P41S000000000000000000F1 /* SourceRenderer.swift */,
 				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
-				P43N000000000000000000F1 /* NonMarkdownRenderer.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
 				BSTH000000000000000000F1 /* BlockStyleTheme.swift */,
 				THM7000000000000000000F1 /* ThemeSchema.swift */,
@@ -2602,7 +2597,6 @@
 				PTWB000000000000000000F1 /* PreferencesThemeWritebackTests.swift */,
 				P75C000000000000000000F1 /* Phase75cUDProxyTests.swift */,
 				P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */,
-				P43N000000000000000000F2 /* Phase43NonMarkdownRendererTests.swift */,
 				P1AA000000000000000000F1 /* ThemeSaveThrottleTests.swift */,
 				P1BB000000000000000000F1 /* ThemeSaveSecurityTests.swift */,
 				P1CC000000000000000000F1 /* ListRendererPlaceholderCacheTests.swift */,
@@ -3503,7 +3497,6 @@
 				TGEO000000000000000000B1 /* TableGeometry.swift in Sources */,
 				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
 				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
-				P43N000000000000000000B1 /* NonMarkdownRenderer.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
 				DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */,
 				BREF000000000000000000B1 /* BlockRef.swift in Sources */,
@@ -4115,7 +4108,6 @@
 				PTWB000000000000000000B1 /* PreferencesThemeWritebackTests.swift in Sources */,
 				P75C000000000000000000B1 /* Phase75cUDProxyTests.swift in Sources */,
 				P41S000000000000000000B3 /* Phase41SourceRendererTests.swift in Sources */,
-				P43N000000000000000000B2 /* Phase43NonMarkdownRendererTests.swift in Sources */,
 				P1AA000000000000000000B1 /* ThemeSaveThrottleTests.swift in Sources */,
 				P1BB000000000000000000B1 /* ThemeSaveSecurityTests.swift in Sources */,
 				P1CC000000000000000000B1 /* ListRendererPlaceholderCacheTests.swift in Sources */,
