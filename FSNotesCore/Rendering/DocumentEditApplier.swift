@@ -288,15 +288,22 @@ public enum DocumentEditApplier {
         }
 
         let preLen = textStorage.length
-        contentStorage.performEditingTransaction {
-            // Clamp the prior range against the current storage length.
-            // In normal use the lengths match exactly; the clamp guards
-            // against call-site drift (a caller that invoked
-            // applyDocumentEdit on a stale priorDoc).
-            let clampedLoc = max(0, min(priorRange.location, textStorage.length))
-            let clampedLen = max(0, min(priorRange.length, textStorage.length - clampedLoc))
-            let clampedRange = NSRange(location: clampedLoc, length: clampedLen)
-            textStorage.replaceCharacters(in: clampedRange, with: replacement)
+        // Phase 5a: mark this mutation as authorized so the debug
+        // assertion in `TextStorageProcessor.didProcessEditing` sees
+        // an active write scope. Release builds use the same wrapper
+        // — the flag flip is cheap and keeps the primitive honest
+        // across all build configurations.
+        StorageWriteGuard.performingApplyDocumentEdit {
+            contentStorage.performEditingTransaction {
+                // Clamp the prior range against the current storage length.
+                // In normal use the lengths match exactly; the clamp guards
+                // against call-site drift (a caller that invoked
+                // applyDocumentEdit on a stale priorDoc).
+                let clampedLoc = max(0, min(priorRange.location, textStorage.length))
+                let clampedLen = max(0, min(priorRange.length, textStorage.length - clampedLoc))
+                let clampedRange = NSRange(location: clampedLoc, length: clampedLen)
+                textStorage.replaceCharacters(in: clampedRange, with: replacement)
+            }
         }
         let postLen = textStorage.length
 
