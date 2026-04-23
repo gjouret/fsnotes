@@ -2,9 +2,10 @@
 //  AttributeDrawer.swift
 //  FSNotes
 //
-//  Protocol for custom attribute-based drawing in LayoutManager.
-//  Each drawer handles one visual effect (borders, backgrounds, boxes).
-//  Adding a new visual = one new file implementing this protocol.
+//  Protocol for custom attribute-based drawing in the editor's
+//  NSLayoutManager. Each drawer handles one visual effect (borders,
+//  backgrounds, boxes). Adding a new visual = one new file implementing
+//  this protocol.
 //
 
 import Cocoa
@@ -49,7 +50,7 @@ func drawAttributeRanges(
     }
 }
 
-// MARK: - Fileprivate NSRange extension (matches LayoutManager.swift)
+// MARK: - Fileprivate NSRange extension
 
 fileprivate extension NSRange {
     func clamped(to maxRange: NSRange) -> NSRange {

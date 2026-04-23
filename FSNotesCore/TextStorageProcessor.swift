@@ -206,7 +206,17 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// automatically — app-layer callers no longer invoke a public sync.
     ///
     /// IMPORTANT: preserves the `collapsed` flag from any existing blocks
-    /// at the same index so fold state survives re-renders.
+    /// keyed by storage offset (NOT by index). Keying by index would
+    /// shift fold state to the wrong block when a new block is inserted
+    /// above a folded heading: previously-folded index 5 would stay
+    /// `collapsed = true` even after a paragraph insertion pushed the
+    /// real heading to index 6. Keying by `range.location` instead
+    /// means "the block that starts at this storage offset stays folded,"
+    /// which tracks the user's intent through inserts and deletes above.
+    /// When the folded block itself is edited (its location changes),
+    /// the fold is dropped — which is arguably the right semantic: a
+    /// user editing the heading content probably wants to see what
+    /// they're typing, not keep it folded.
     internal func rebuildBlocksFromProjection(_ projection: DocumentProjection) {
         let doc = projection.document
         let spans = projection.blockSpans
@@ -215,18 +225,18 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             return
         }
 
-        // Snapshot previous collapsed states keyed by block index.
-        let previousCollapsed = Dictionary(
-            uniqueKeysWithValues: blocks.enumerated()
-                .filter { $0.element.collapsed }
-                .map { ($0.offset, true) }
+        // Snapshot previous collapsed states keyed by storage offset.
+        let previousCollapsedByLocation = Dictionary(
+            uniqueKeysWithValues: blocks
+                .filter { $0.collapsed }
+                .map { ($0.range.location, true) }
         )
 
         var newBlocks: [MarkdownBlock] = []
         newBlocks.reserveCapacity(doc.blocks.count)
         for (i, block) in doc.blocks.enumerated() {
             var mb = makeBlockEntry(block: block, span: spans[i], projection: projection)
-            if previousCollapsed[i] == true {
+            if previousCollapsedByLocation[spans[i].location] == true {
                 mb.collapsed = true
             }
             newBlocks.append(mb)
