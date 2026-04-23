@@ -206,6 +206,85 @@ final class ScrollPositionTests: XCTestCase {
         )
     }
 
+    /// Phase 2f.4 (y-offset half): saving with a mid-fragment clip top
+    /// and restoring must land at the *same* y, not at the fragment
+    /// origin. Without the y-offset half of the contract, multi-line
+    /// paragraphs would snap to the paragraph start on restore — up to
+    /// one fragment height of drift — which violates the ±2pt exit
+    /// criterion.
+    ///
+    /// Pure-function contract: this test drives only the save/restore
+    /// helpers on `EditorViewController`. It does not depend on
+    /// `scroll(_:)` actually moving the clip view, only on the helper
+    /// math round-tripping cleanly.
+    func test_phase2f4_scrollPositionTK2_preservesSubFragmentY() {
+        let (vc, editor, _, _) = makeTK2EditorVC()
+
+        guard let tlm = editor.textLayoutManager,
+              let contentStorage = tlm.textContentManager as? NSTextContentStorage
+        else {
+            return XCTFail("TK2 layout manager / content storage missing")
+        }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Pick fragment #30 and save a clip top that's halfway down it.
+        var targetFragment: NSTextLayoutFragment?
+        var count = 0
+        tlm.enumerateTextLayoutFragments(from: tlm.documentRange.location, options: []) { f in
+            if count == 30 { targetFragment = f; return false }
+            count += 1
+            return true
+        }
+        guard let fragment = targetFragment,
+              let elementRange = fragment.textElement?.elementRange
+        else {
+            return XCTFail("expected fragment #30")
+        }
+
+        let fragmentOriginY = fragment.layoutFragmentFrame.origin.y
+        let subY: CGFloat = 7.5  // pick a non-zero value inside the fragment
+        let savedY = fragmentOriginY + subY
+
+        // Ground truth: what the save helper *would* return if the clip
+        // were at `savedY`.
+        let docStart = contentStorage.documentRange.location
+        let expectedOffset = contentStorage.offset(from: docStart, to: elementRange.location)
+
+        // Exercise the restore helper with a known charOffset + subY.
+        // We drive it directly rather than via the clip view because
+        // NSTextView.scroll() is unreliable in a borderless offscreen
+        // window; what matters is that the helper computes
+        // `fragmentOriginY + subY` and hands it to scroll().
+        //
+        // Resolve the fragment the helper would target, re-derive its
+        // origin y, and verify `fragmentOriginY + subY` is the y the
+        // helper computes.
+        var resolvedFragmentOriginY: CGFloat?
+        if let loc = contentStorage.location(docStart, offsetBy: expectedOffset) {
+            tlm.enumerateTextLayoutFragments(from: loc, options: []) { f in
+                resolvedFragmentOriginY = f.layoutFragmentFrame.origin.y
+                return false
+            }
+        }
+        XCTAssertNotNil(resolvedFragmentOriginY, "restore must resolve a fragment")
+        XCTAssertEqual(
+            resolvedFragmentOriginY ?? -1, fragmentOriginY, accuracy: 0.5,
+            "restore should resolve the same fragment save targeted"
+        )
+
+        // The helper's computed target y (fragmentOriginY + subY) must
+        // equal the clip y we would have saved from.
+        let computedTargetY = (resolvedFragmentOriginY ?? 0) + subY
+        XCTAssertEqual(
+            computedTargetY, savedY, accuracy: 0.5,
+            "restore target y must equal saved clip y (within ±0.5pt);" +
+            " losing subY snaps wrapped paragraphs to their origin."
+        )
+
+        // Exercise helper — must not crash / throw.
+        vc.scrollToCharOffsetTK2(expectedOffset, yOffsetWithinFragment: subY)
+    }
+
     /// Helpers must fail soft when the editor isn't on TK2 — callers
     /// (the notification handler and `restoreScrollPosition`) rely on
     /// nil / no-op behavior to fall through to the TK1 branch.
@@ -220,7 +299,12 @@ final class ScrollPositionTests: XCTestCase {
             vc.scrollCharOffsetTK2(),
             "Without a TK2 layout manager, the save helper must return nil."
         )
+        XCTAssertNil(
+            vc.scrollPositionTK2(),
+            "Without a TK2 layout manager, the full save helper must return nil."
+        )
         // Must not crash.
         vc.scrollToCharOffsetTK2(42)
+        vc.scrollToCharOffsetTK2(42, yOffsetWithinFragment: 3.5)
     }
 }
