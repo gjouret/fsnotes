@@ -640,6 +640,53 @@ Eliminate the "two pipelines fighting" bug class. Per user: **Option B — port 
 
 9. **CommonMark compliance:** must not regress from current 80%+. Target 90%+ after canonical table serialization lands.
 
+### Slice plan (9 slices, foundation-first)
+
+Design spike 2026-04-23 produced this detailed breakdown. User picked Option A (complete Phase 2e T2 before Phase 4) over Option B (ship Phase 4 with tables as a half-win), so the "T2 half-win caveat" doesn't apply — the guard sweep in 4.8 will be complete.
+
+**Surface inventory.** `NotesTextProcessor.scanBasicSyntax` — **0 in-tree call sites** already; exit criterion met before slice 4.4 starts. `NotesTextProcessor.highlight*` (markdown path) — 6 production sites. `NotesTextProcessor.swift` total — 1,618 LoC. `FSNotes/LayoutManager.swift` — 724 LoC (TK1 subclass, already gated by `blockModelActive` since 2a). `TextStorageProcessor.blocks` + `syncBlocksFromProjection` — at `TextStorageProcessor.swift:113, 200` + 5 production call sites + 9 test sites (fold/unfold reads `self.blocks`). `NoteSerializer.prepareForSave()` + `Note.save(content:)` — 34 LoC + 9 call sites. `Block.table.raw` — `Document.swift:232` + readers in `MarkdownSerializer.swift:74`, `EditingOperations.swift`, `Editing/TableEditing.swift`, `InlineTableView.swift` (canonical rebuild already exists via `EditingOps.rebuildTableRaw`). `blockModelActive` guards — 38 hits across 20 files. `documentProjection == nil` guards — 26 hits across 16 files. `.txt` / `.rtf` path — `Note.swift:746, 1393`. **Total:** ~30 files, ~3,800 LoC deleted or replaced.
+
+**`SourceRenderer` design questions to resolve before slice 4.1 writes code:**
+1. Mode semantics — new `BlockModelKind` variants (`.sourceMarkdown` / `.sourceHeading`) vs. a "syntax-highlight mode" flag on existing kinds? Recommendation: new `.sourceMarkdown` kind + dedicated `SourceLayoutFragment`.
+2. Fragment reuse — `FoldedLayoutFragment` reused; `CodeBlockLayoutFragment` reused; `HeadingLayoutFragment` / `MermaidLayoutFragment` / `MathLayoutFragment` / `KbdBoxParagraphLayoutFragment` NOT reused (source mode shows markers). Net: ~1 new fragment.
+3. Marker coloring — needs `.markerRange` sibling attribute so `SourceLayoutFragment` paints `#` / `**` / ` `` ` / `>` markers in a different foreground color without mutating storage.
+4. Editing parity — every `EditingOps` primitive must produce identical `Document` output across source vs. WYSIWYG. Any view-mode branch in editing ops is a bug.
+5. Mode-toggle preservation — `Note.scrollPosition` + `cachedFoldState` already round-trip through mode switches on the current pipeline; confirm no additional plumbing needed post-unification.
+
+**Slices:**
+
+- **4.0 — Audit `Block.table.raw` drop impact (prep, non-shipping).** Corpus round-trip with `raw` forcibly recomputed; diff. User sign-off per plan. Risk: L (read-only). Rollback: N/A.
+
+- **4.1 — `SourceRenderer` + `SourceLayoutFragment` (additive, feature-flagged).** New `FSNotesCore/Rendering/SourceRenderer.swift`, new fragment, new `BlockModelKind` variant + element. Gated by `useSourceRendererV2` debug flag; source mode still uses old pipeline by default. Grep gate: zero `NotesTextProcessor.highlight` calls in the new path. Risk: M. Rollback: flip flag off; files remain unused.
+
+- **4.2 — Delete `Block.table.raw`.** Remove field from `Document.swift:232`. `MarkdownSerializer.swift:74` always emits canonical. Drop readers in `EditingOperations.swift`, `Editing/TableEditing.swift`, `InlineTableView.swift`. Grep gate: zero `table.raw` matches outside docs. Accepted trade: first save of legacy notes with non-canonical tables produces a diff. Risk: M. Rollback: single revert.
+
+- **4.3 — Non-markdown (`.txt`, `.rtf`) TK2 path.** Trivial "body-font element" renderer for non-markdown notes. Remove non-markdown dependency on `NotesTextProcessor`. Grep gate: non-markdown notes render without any `highlight*` call. Risk: L. Rollback: revert one commit.
+
+- **4.4 — Flip source mode to `SourceRenderer`; delete markdown highlight path. [HIGH RISK]** Default-on `SourceRenderer`; remove debug flag. Delete all 6 `NotesTextProcessor.highlight*` markdown call sites. Grep gate: `grep NotesTextProcessor.highlight` == 0 outside fenced code-block highlighter (`SwiftHighlighter` is separate — untouched). Risk: H — user-visible source-mode behavior change; regression potential across dark mode + preferences. Rollback: revert 4.4 only; 4.1's `SourceRenderer` stays.
+
+- **4.5 — Delete `FSNotes/LayoutManager.swift`.** File delete (724 LoC). Wire-up cleanup in views that instantiated it. Grep gate: zero `NSLayoutManager` subclasses in `FSNotes/`. Already gated by `blockModelActive` since 2a — any latent TK1 fallback crashes. Risk: M. Rollback: revert one commit.
+
+- **4.6 — Delete `Note.blocks` peer + `syncBlocksFromProjection`.** Retire `blocks: [MarkdownBlock]` on `TextStorageProcessor`. Fold/unfold consumes `Document.blocks` directly (`cachedFoldState: Set<Int>` already indexes block indices). 5 production call-site removals in `EditTextView+BlockModel.swift` + `EditTextView+Todo.swift`. 9 test sites to rewrite (tests exercising `syncBlocksFromProjection` directly — rewrite against `Document.blocks`, adds ~1 day). `Tests/BlockModelFormattingTests.swift` has 7 tests at lines 794–872 needing this rewrite. Grep gate: zero `syncBlocksFromProjection` matches. Risk: M — fold/unfold is load-bearing; covered by `GutterOverlayTests`.
+
+- **4.7 — Delete `NoteSerializer.prepareForSave()` + `Note.save(content:)`. [HIGH RISK]** Delete `NoteSerializer.swift`. Route all 9 call sites through `save(markdown: MarkdownSerializer.serialize(doc))`. Grep gate: zero `prepareForSave` / `save(content:` matches. Risk: H — save path is load-bearing; regression corrupts user data. Mandatory dogfood on real notes. Rollback: revert one commit.
+
+- **4.8 — Delete all `blockModelActive` / `documentProjection == nil` guards.** Sweep 64 conditionals across 20 files. After 4.4–4.7 every guarded branch is dead. Grep gate: `grep blockModelActive` == 0 and `grep 'documentProjection == nil'` == 0 in non-test code. Risk: L-M. Each file change independent; revert per-file possible.
+
+**Side notes folded into scope:**
+- `scanBasicSyntax`: zero in-tree call sites; exit criterion already met. Drop from explicit scope — just confirm in 4.4.
+- `MarkdownBlockParser.swift`: dead code once `SourceRenderer` is live. Add to 4.4 or 4.8 deletion scope.
+- iOS `EditorViewController.swift:653` calls `note.save(content:)` — confirm in/out of macOS-only Phase 4 scope.
+- `hermes_conversation_20260417_154911.json` at repo root is a large conversation dump — candidate for `.gitignore` (unrelated side cleanup).
+- 4.4's deletion of `NotesTextProcessor.highlight*` does NOT affect `CodeBlockRenderer.swift`'s fenced-code highlighting (uses `highlightr` via `SwiftHighlighter` — separate library, preserved).
+
+**Ship order decision log:**
+- Plan's natural order (SourceRenderer first → deletions → guard removal) confirmed correct.
+- Added 4.0 (audit) and 4.3 (non-markdown) as low-risk preparatory slices to de-risk 4.4.
+- 4.4 is "flip the switch" moment — highest live risk. Stabilize 4.1/4.2/4.3 before.
+- 4.5–4.7 are deletion-only after 4.4 is stable.
+- 4.8 is final cleanup.
+
 ### Exit criteria
 - Grep: zero `NotesTextProcessor.scanBasicSyntax` calls
 - Grep: zero `blockModelActive` / `documentProjection == nil` guards in view-layer
@@ -993,6 +1040,61 @@ Rationale over two-files: a theme bundles "a look" — the designer wants both v
 ### Contradictions / notes from existing plan
 - `BlockStyleTheme` exists and is partially wired but never mentioned in Phases 0–6. Phase 7 absorbs it explicitly.
 - Phase 6 says "Rule 7 grep across `FSNotes/` and `FSNotesCore/Rendering/` — zero hits required" for the banned marker-hiding patterns (tiny font, clear color, `.kern`). Phase 7's grep gate is stricter (typography/color literals anywhere, not just marker-hiding) but complementary — 6's gate is a correctness invariant, 7's is an architectural-centralization invariant. Both should run in CI after 7.5.
+
+---
+
+## Phase 8 — Code-Block Edit Toggle (Obsidian-style hover `</>`)
+
+### Goal
+Hover a code block → semi-transparent `</>` button appears top-right → click to toggle between rendered and editable source form → cursor leaves the block → it re-renders. Fixes the UX hole where mermaid/math blocks render as bitmaps and can't be edited without toggling the entire note to source mode.
+
+### Design
+
+**Toggle location: top-right overlay of the code block.** `NSView` subclass `CodeBlockEditToggleView`, child of `EditTextView`. Positioned by a `CodeBlockEditToggleOverlay` controller that enumerates `CodeBlockLayoutFragment`s and places one button per logical block at the first fragment's top-right. Scrolls naturally with the text view. Pooled instances to avoid per-scroll allocations. **NOT in the gutter** — gutter keeps its copy icon on the left; toggle sits on the right (both coexist, matching Obsidian's visual).
+
+**State:** `editingCodeBlocks: Set<BlockRef>` on `EditTextView`. Per-editor-session, not persisted. Keyed by content-hash (via `MarkdownSerializer.serializeBlock(_:)` → stable across structural edits that insert blocks above, not sensitive to block index).
+
+**Fences-visible mechanism:** `CodeBlockRenderer.render(...)` grows an `editingForm: Bool = false` parameter. When `true`:
+- For every language, emit `"\`\`\`<lang>\n<content>\n\`\`\`"` as plain themed code font (no syntax highlighting — raw source).
+- For `mermaid`/`math`/`latex`, skip the `BlockSourceTextAttachment` branch entirely. Fall through to the plain fenced-text path.
+- `DocumentRenderer.blockModelKind(for:editingCodeBlocks:)` downgrades `.mermaid`/`.math` → `.codeBlock` for any block in the set, so `CodeBlockLayoutFragment` (not the bitmap fragment) handles display during edit.
+
+Rejected alternatives: hidden fences via `foregroundColor = .clear` + negative kern (**banned by CLAUDE.md rule 7**); distinct element kind (`CodeBlockEditingElement` — duplicates fragment plumbing).
+
+**Cursor-leaves detection:** `textViewDidChangeSelection` observer on `EditTextView+BlockModel.swift`. Per iteration: for every block ref in `editingCodeBlocks`, check whether the new selection falls inside that block's storage span. If not, remove the ref and trigger re-render.
+
+**Re-render trigger:** thread `editingCodeBlocks` through `DocumentEditApplier.applyDocumentEdit(...)` with separate `priorEditingBlocks` / `newEditingBlocks` parameters. On toggle, the applier re-renders both prior and new documents with their respective sets; the toggled block's rendered bytes differ, so the existing LCS diff picks it up as `.modified` and replaces just that block's span. Post-LCS `promoteToggledBlocksToModified` pass ensures a toggle-only call (priorDoc == newDoc, sets differ) doesn't get swallowed by the identical-doc fast path. **Rejected:** targeted `rerenderBlock(...)` helper — violates "one place" architectural principle (two write paths into storage).
+
+**UX details:** SF Symbol `chevron.left.forwardslash.chevron.right`. Hover: alpha 0 → 0.5. Active edit-mode: alpha 0.9 regardless of hover (so user can click to exit). Click toggles + moves cursor inside the block. Scroll tracks naturally (text-view subview). Track-area per fragment rect; `boundsDidChange` reposition pass.
+
+### Integration with shipped phases
+- **Phase 3 `DocumentEditApplier`**: consumes the new `priorEditingBlocks` / `newEditingBlocks` params. Initial `fillViaBlockModel` must also accept the set for a consistent starting point (deferred until Slice 3 wires UI).
+- **Phase 7 theme**: `Theme.chrome.codeBlockEditToggle = { cornerRadius, horizontalPadding, verticalPadding, foreground, backgroundHover, backgroundActive }`. Defaults match `CodeBlockLayoutFragment.cornerRadius = 5`. Wired as part of Phase 7.3.
+- **Phase 2f.2 gutter**: unchanged — different edge.
+- **Fold state**: overlay controller skips blocks carrying `.foldedContent`. No toggle on folded blocks.
+
+### Slices
+
+- **Slice 1 — Renderer flag threaded, no UI. — ✅ SHIPPED 2026-04-23 (commit `52f4fe5`).** `editingCodeBlocks: Set<BlockRef> = []` threaded through `DocumentRenderer.render(...)`. `CodeBlockRenderer.render(...editingForm: Bool = false)` emits fenced plain source when true. `DocumentEditApplier.applyDocumentEdit(priorEditingBlocks:newEditingBlocks:...)` re-renders with sets + `promoteToggledBlocksToModified` post-LCS pass. `BlockRef` content-hash keyed on `MarkdownSerializer.serializeBlock(_:)`. 6 tests in `CodeBlockEditToggleTests.swift` all pass. **Slice 2 of the original plan (mermaid/math editing-form branch) is ABSORBED here** — inseparable from the `CodeBlockRenderer` + `blockModelKind` changes.
+- **Slice 3 — Hover-triggered `</>` button UI.** New `FSNotes/Helpers/CodeBlockEditToggleView.swift` (`NSView` subclass). New `FSNotes/Helpers/CodeBlockEditToggleOverlay.swift` (controller on `EditTextView`). Enumerates `CodeBlockLayoutFragment`s, positions pooled buttons. Click flips `editingCodeBlocks` + calls `applyDocumentEdit` with current Document. Theme hook `Theme.chrome.codeBlockEditToggle` (stub if Phase 7.3 hasn't wired yet). Risk: M (new `NSView` lifecycle inside `EditTextView`). Rollback: remove overlay; no storage touched.
+- **Slice 4 — Cursor-leaves trigger.** `textViewDidChangeSelection` observer drops blocks from `editingCodeBlocks` when cursor exits their span. Re-apply via `DocumentEditApplier`. Risk: L. Rollback: remove observer; edit mode becomes sticky-until-click.
+- **Slice 5 — Dogfood + theme polish.** User feedback pass. Theme values tuned. Keyboard `Tab`-out / arrow-out verified against Slice 4. Risk: L. Rollback: revert cosmetic tweaks.
+
+### Risks + unknowns
+
+- **MermaidLayoutFragment bitmap cache**: `BlockRenderer.render` cache is keyed by `(source, type, maxWidth)`. Changes during edit mode produce a new cache key → fresh render on flip back. No collision expected; verify on dogfood.
+- **Block-ref stability**: content-hash key beats block-index key across structural edits. Switch hash function if collisions become a problem (unlikely for typical code-block sizes).
+- **Undo**: toggling is visual-only (no Document mutation). Edits made in edit mode are normal undoable block mutations. Undo past toggle-point doesn't "un-toggle" — Slice 4's selection observer handles collapse on next move.
+- **Keyboard nav**: Tab-out + arrow-out both fire `textViewDidChangeSelection` → Slice 4 handles.
+- **Multi-window**: `editingCodeBlocks` is per-editor. Each window independently edits different blocks. Saves are whole-file; unaffected.
+- **Viewport layout timing**: overlay positioning needs TK2's `textViewportLayoutController` to have run. Schedule after `configureRenderingSurfaceFor` or first `enumerateTextLayoutFragments`.
+
+### Out of scope
+- Full-note source-mode toggle (existing editor mode).
+- Syntax highlighting theming (orthogonal — Phase 7).
+- Code-block fold UI (exists).
+- Table / PDF / image hover toggles (different architectures).
+- CommonMark fence-variant handling (reads `Block.codeBlock(...fence:)` — no new parser).
 
 ---
 
