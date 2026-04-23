@@ -405,13 +405,13 @@ Sub-phases 2a–2d cover every block type **except tables**. Tables are a separa
 
 | Block type | Mechanism | Notes |
 |---|---|---|
-| Mermaid fenced code | `MermaidLayoutFragment` | WebView renders bitmap; fragment draws it; source stays as searchable text in content storage |
-| Math fenced code | `MathLayoutFragment` | Same pattern as mermaid |
+| Mermaid fenced code | `MermaidLayoutFragment` + `BlockSourceTextAttachment` (landed 2026-04-23) | WebView renders bitmap; fragment draws it. Storage contains a single `U+FFFC` attachment character per block — `CodeBlockRenderer.render` emits `NSAttributedString(attachment: BlockSourceTextAttachment())` for `mermaid/math/latex` rather than the source text verbatim. `DocumentRenderer` tags the attachment's one-character range with `.renderedBlockSource` carrying the full multi-line source. Fragment reads the attribute to recover source before handing to `BlockRenderer`. The attachment's `viewProvider(...)` returns `nil` so TK2 paints no default placeholder; the fragment owns all drawing. Keeps the whole block as one `NSTextContentStorage` paragraph regardless of how many source lines it contains — without this, `\n`-on-paragraph-boundary semantics split the block into one element per line, each submitting a single line to MermaidJS (which rejects every call because one line isn't a valid diagram). Trade-off: Find-in-note cannot match text inside mermaid source — source lives on an attribute, not the paragraph string. Fragment overrides `layoutFragmentFrame` to `max(base.height, bitmapHeight)` so TK2 reserves enough vertical space for the bitmap — without this override the one-character-tall default frame would cause the bitmap to overlap the fragments below (confirmed regression 2026-04-23 when `BlockSourceTextAttachment` replaced source-in-storage). (The earlier U+2028 substitution approach was reverted 2026-04-23 in favour of this cleaner path — one character in storage, no cross-reader converter contract to maintain.) |
+| Math fenced code | `MathLayoutFragment` + `BlockSourceTextAttachment` (landed 2026-04-23) | Same pattern as mermaid, same `layoutFragmentFrame` override. MathJax receives real `\n` between `\begin{…}` / `\end{…}` lines via `.renderedBlockSource`. |
 | Horizontal rule | `HorizontalRuleLayoutFragment` | Fixed-height fragment, no attachment |
 | Kbd inline tag | `KbdBoxParagraphLayoutFragment` | Paragraph-level fragment (`.paragraphWithKbd` element kind) draws rounded chip behind tagged runs |
 | Code block background | `CodeBlockLayoutFragment` | Draws gutter + background; text flows standard |
 | Display math (single-inline paragraphs) | `DisplayMathLayoutFragment` | Paragraphs containing ONLY a `.displayMath` inline route here |
-| Display math (mixed-content paragraphs) | `NSTextAttachment` (retained) | Paragraphs with display math PLUS other content stay on the attachment path — flagged for follow-up |
+| Display math (mixed-content paragraphs) | `NSTextAttachment` + `CenteredImageCell` (wired 2026-04-23) | Paragraphs with display math PLUS other content render the bitmap via `renderDisplayMathViaBlockModel()`, gated by the paragraph's `.blockModelKind` so it never collides with the single-inline fragment path |
 | PDF attachments | `PDFNSTextAttachment` + `PDFAttachmentViewProvider` | TK2 view-provider pattern; `PDFAttachmentCell` kept as TK1 fallback dead code (Phase 4 cleanup) |
 | QuickLook previews | `QuickLookNSTextAttachment` + `QuickLookAttachmentViewProvider` | Same pattern; `QuickLookAttachmentCell` kept for Phase 4 cleanup |
 | Inline images | `ImageNSTextAttachment` + `ImageAttachmentViewProvider` | Within-paragraph, view-provider pattern |
@@ -421,8 +421,8 @@ Sub-phases 2a–2d cover every block type **except tables**. Tables are a separa
 
 **2d grep-gate audit result (2026-04-22):** zero violations. Every `NSTextAttachment` reference in `FSNotesCore/Rendering/**` and `FSNotes/Helpers/{InlinePDFView,InlineQuickLookView,InlineImageView}.swift` is either (a) tables (Phase 2e), (b) a view-provider-vending attachment, (c) inline image content, (d) infrastructure (attachment-equality helpers in `EditingPrimitives.swift`), or (e) comments/documentation referencing the old path. Legacy TK1 cell classes `PDFAttachmentCell` and `QuickLookAttachmentCell` remain referenced by hydration skip-checks (`InlineQuickLookView.swift:322-323`) and by dispatch-correctness tests (`Tests/TextKit2FragmentDispatchTests.swift`); both carry "Phase 4 cleanup" comments and are safe to leave.
 
-**2d follow-ups (not gating):**
-- Display math on mixed-content paragraphs still uses the legacy attachment path. Single-inline display math paragraphs migrated cleanly; the mixed case needs a paragraph-fragment-internal display-math layout primitive or an inline-equivalent fragment. Carried forward as a late-2e or 2f item.
+**2d follow-ups — status:**
+- ~~Display math on mixed-content paragraphs still uses the legacy attachment path. Single-inline display math paragraphs migrated cleanly; the mixed case needs a paragraph-fragment-internal display-math layout primitive or an inline-equivalent fragment. Carried forward as a late-2e or 2f item.~~ **Shipped 2026-04-23.** `renderDisplayMathViaBlockModel()` (an `ImageAttachmentHydrator`-style post-fill scan) is now wired back into `renderSpecialBlocksViaBlockModel` and renders mixed-content paragraphs via `CenteredImageCell`. The hydrator is gated by `.blockModelKind`: ranges inside a single-inline-displayMath paragraph (tagged `.blockModelKind = .displayMath`) are skipped, so `DisplayMathLayoutFragment` still owns the single-inline path and the two never collide. A clean inline-equivalent fragment primitive was considered and passed on — the attachment path is the Phase 2d-sanctioned pattern for hosted content and `CenteredImageCell` already gives us the container-wide centering behaviour display math wants. Tests added: `test_phase2d_followup_mixedContentDisplayMath_tagsAsParagraphKind` and `test_phase2d_followup_singleInlineDisplayMath_isFilteredByKind` pin both sides of the `.blockModelKind` discriminator the filter relies on.
 
 **2e. Shipped (T1 path — view provider) — 2026-04-22.**
 
@@ -494,40 +494,31 @@ User reviews after 2a (TextKit 2 baseline), after each non-table block-type sub-
 
 **Scope (prioritized by user impact):**
 
-- **2f.1 — Header folding display** (highest impact)
-  - Storage-side state (`.foldedContent` attribute, `LayoutManager.unfoldedRanges`) is intact from the TK1 era; what broke is the drawing side — TK1 hid folded content via `LayoutManager` glyph-range suppression, and TK2 fragments currently render folded ranges at full height.
-  - **Candidate approach:** `HeadingLayoutFragment` (and any fragment whose element falls inside a folded range) consults a `FoldState` helper during `draw(at:in:)` and `layoutFragmentFrame`, collapses to zero height when fully folded, and suppresses its `draw` when inside a folded range. `NSTextContentStorageDelegate` invalidates affected fragments when fold state toggles so `NSTextLayoutManager` re-lays them out.
-  - **Open:** whether fold state lives on the `NSTextElement` (per-element attribute read at fragment-creation time) or on an editor-side side-table keyed by block identity (Phase 3's identity work). Leaning side-table so fold is a view-concern, not a content-concern — but the trade gets made at implementation time.
-  - **Out of scope for 2f.1:** the fold gutter caret UI (covered by 2f.2). 2f.1 is strictly the "fold collapses to zero height" piece; the control surface that triggers folds is 2f.2.
-  - **Estimate:** 2–3 days.
+- **2f.1 — Header folding display — ✅ SHIPPED (landed in commit 0cb1ea3; tests verified 2026-04-23)**
+  - `FSNotesCore/Rendering/Fragments/FoldedLayoutFragment.swift` — pairs with `FoldedElement`. Overrides `layoutFragmentFrame` to zero height, `renderingSurfaceBounds` to empty, `draw(at:in:)` as a no-op. Source characters stay in `NSTextContentStorage` so selection / Find / serialization continue to work; only visual rendering collapses.
+  - Fold toggle invalidation: `TextStorageProcessor.toggleFold` mutates the `.foldedContent` attribute inside a `beginEditing` / `endEditing` pair; `NSTextContentStorage` observes the `.editedAttributes` mask and invalidates affected fragments, which re-dispatch through the layout-manager delegate to `FoldedLayoutFragment` (folded) vs. the normal block-model fragments (unfolded).
+  - Tests in `Tests/TextKit2FragmentDispatchTests.swift`: `test_phase2f_foldedElement_dispatchesToFoldedLayoutFragment` (element → fragment dispatch), plus zero-geometry + layout-stack contracts at lines 1283+ and 1340+. Pass.
 
-- **2f.2 — Gutter re-implementation**
-  - Today's `GutterController` hosts fold carets, H-level badges, and code-block/table copy icons. All TK1-only (guarded by `layoutManagerIfTK1` per 2a landing note 4). Under TK2 the gutter is dead — it has no TK1 layout manager to enumerate glyph rects off.
-  - **Candidate approach:** keep `GutterController` as a separate `NSView` overlay in the scroll view, but change its data source. Instead of reading glyph rects from `NSLayoutManager`, enumerate visible fragments via `NSTextLayoutManager.enumerateTextLayoutFragments(from:options:)` (options: `.ensuresLayout`), inspect each fragment's element type (is it a `HeadingElement`? `CodeBlockElement`? `TableElement`?), and place icons at the fragment's `layoutFragmentFrame.origin.y`. Re-enumerate on scroll + content-change notifications.
-  - The gutter itself is a separate NSView; it does not need its own `NSTextLayoutFragment`. This keeps it decoupled from per-block drawing and avoids growing 2c's scope.
-  - **Estimate:** 3 days.
+- **2f.2 — Gutter re-implementation — ✅ SHIPPED (landed in commit 0cb1ea3; tests verified 2026-04-23)**
+  - `FSNotes/GutterController.swift` gets TK2 fragment-enumeration paths starting line ~349 ("MARK: - TextKit 2 Gutter Support (Phase 2f.2)"). The TK2 path enumerates visible fragments via `NSTextLayoutManager.enumerateTextLayoutFragments` at three call sites (draw / hit-test / badge-layout), inspects element type (`HeadingElement` / `CodeBlockElement` / `TableElement`), and places icons at `layoutFragmentFrame.origin.y`. TK1 branch retained for the non-TK2 editor builds.
+  - Tests in `Tests/GutterOverlayTests.swift`: `test_phase2f2_gutterFindsHeadingFragmentsUnderTK2`, `test_phase2f2_gutterClickOnCaret_togglesFold`, `test_phase2f2_gutterFindsCodeBlockFragmentsUnderTK2`, `test_phase2f2_gutterRendersHBadges_whenHovered`. All pass.
 
-- **2f.3 — Link-hover cursor**
-  - Current mouse-move handler (`EditTextView+Interaction.mouseMoved`) uses TK1 glyph-hit-testing via `layoutManagerIfTK1` — which under TK2 returns nil, so hover does nothing.
-  - **Candidate approach:** replace the TK1 glyph-hit-test with `NSTextLayoutManager.textLayoutFragment(for: CGPoint)` → `NSTextLineFragment` lookup → character-range inspection via the fragment's `textLineFragments`. Convert the hovered point to a `NSTextLocation`, read the `.link` attribute off `NSTextContentStorage` at that location, swap `NSCursor` accordingly. Same call sites (`mouseMoved`, `cursorUpdate`) — only the hit-test primitive changes.
-  - Thin by design. The correctness gate is dogfood on a note with mixed `[text](url)`, `<autolink>`, wikilinks, and image links — each should flip the cursor on hover and back when the mouse leaves.
-  - **Estimate:** 1 day.
+- **2f.3 — Link-hover cursor — ✅ SHIPPED (landed in commit 0cb1ea3; test verified 2026-04-23)**
+  - TK2 hit-test implemented in `FSNotes/View/EditTextView+Interaction.swift` via `characterIndexTK2(at:)` helper (lines 279–301) using `NSTextLayoutManager.textLayoutFragment(for:)` → `textLineFragments.first(where: typographicBounds.contains)` → `NSTextLineFragment.characterIndex(for:)` → `NSTextContentStorage.offset(from:to:)`. Both `mouseMoved` (lines 160–267) and `updateCursorForMouse(at:)` / `flagsChanged` (lines 311–381) have TK1 branch + TK2 fallback.
+  - Test: `Tests/LinkHoverTests.swift` — `test_phase2f3_characterIndexTK2_resolvesPointToLinkAttribute` renders a markdown link, resolves a point inside its typographic bounds via the pure helper, and asserts `.link` attribute is non-nil at the resolved index. Passes.
 
-- **2f.4 — Scroll-position save/restore**
-  - Current `EditorViewController+ScrollPosition` uses `boundingRect(forGlyphRange:)` — TK1-only, returns zero under TK2.
-  - **Candidate approach:** save position as a `DocumentCursor` (Phase 1 type) if available, or as an `NSTextLocation` otherwise, plus a y-offset within the referenced fragment. On restore, resolve the location back to a fragment via `NSTextLayoutManager.textLayoutFragment(for: NSTextLocation)` and scroll to `fragment.layoutFragmentFrame.origin.y + savedOffset`. Off-screen fragments may be unlaid; call `textLayoutManager.ensureLayout(for:)` on a range containing the target before reading the frame.
-  - **Open:** whether to piggyback on Phase 1's `DocumentCursor` (cleaner) or keep a TK2-native `NSTextLocation` representation (fewer dependencies). Piggyback if Phase 1 has landed by the time 2f.4 is picked up; otherwise `NSTextLocation` directly and migrate later.
-  - **Estimate:** 2 days.
+- **2f.4 — Scroll-position save/restore — ✅ SHIPPED (landed 2026-04-23)**
+  - Sub-fragment y-offset preservation added to `FSNotes/EditorViewController+ScrollPosition.swift`: new `TK2ScrollPosition { charOffset: Int; yOffsetWithinFragment: CGFloat }` struct + `scrollPositionTK2()` save helper (computes `clipTopY - fragment.layoutFragmentFrame.origin.y`) + `scrollToCharOffsetTK2(_:yOffsetWithinFragment:)` restore helper (computes target y = `fragment.layoutFragmentFrame.origin.y + yOffsetWithinFragment`, `ensureLayout(for:)` first). Storage contract unchanged — saved state unpacks into the existing `Note.scrollPosition: Int?` + `Note.scrollOffset: CGFloat?` fields (previously only `scrollPosition` was used on macOS; `scrollOffset` is the iOS-parity field now live on macOS TK2). TK1 path also updated to record `note.scrollOffset = visibleRect.origin.y - glyphRect.minY` for parity across modes. TK1 branch retained as fallback; `scrollCharOffsetTK2()` preserved as a back-compat zero-y shim.
+  - Test: `Tests/ScrollPositionTests.swift` — `test_phase2f4_scrollPositionTK2_preservesSubFragmentY` computes a mid-fragment save point (fragmentOriginY + 7.5pt), round-trips through the save/restore helpers, asserts target y matches within ±0.5pt. Plus `test_phase2f4_helpersAreNoOpOnTK1` extended for the new two-arg signatures. 62 / 62 phase-2f-related tests pass (ScrollPosition + LinkHover + PDFExporter + TextKit2FragmentDispatch).
 
 - **2f.5 — Inline-image drag-resize bound updates**
   - Slice 1 of the image-resize work already restored inline-image *rendering* under TK2 via `ImageAttachmentViewProvider` (per the separately tracked image-resize slices). What remains: drag-resize bound updates, which currently call `invalidateLayout(forCharacterRange:)` on the TK1 layout manager in `ImageAttachmentHydrator`. Under TK2 the equivalent is `NSTextLayoutManager.invalidateLayout(for: NSTextRange)` plus a re-measure of the hosting fragment.
   - **Candidate approach:** covered by slices 2–4 of the image-resize work, tracked separately from this plan. 2f.5 is a pointer, not a duplicated scope — flagged here so the "accepted-2a regressions" list has a home for every item. When slices 2–4 land, this sub-item closes automatically.
   - **Estimate:** tracked externally (image-resize slices 2–4, roughly 2–4 days combined, not re-estimated here).
 
-- **2f.6 — PDF export used-rect measurement**
-  - `PDFExporter.export` currently measures `usedRect` via `layoutManagerIfTK1`, which is nil under TK2. The current fallback uses `dataWithPDF:` default rect, which captures the visible bounds but may miss content below the fold or content that extends past the scroll view's reported bounds.
-  - **Candidate approach:** measure total content height by enumerating all fragments via `NSTextLayoutManager.enumerateTextLayoutFragments(from: nil, options: .ensuresLayout) { fragment in ... }` and summing `fragment.layoutFragmentFrame.height`, then drive `dataWithPDF:` over a rect that height. Verify against known-length notes (e.g. a 10,000-line paragraph corpus) that the full content lands in the PDF.
-  - **Estimate:** 1 day.
+- **2f.6 — PDF export used-rect measurement — ✅ SHIPPED (landed in commit 0cb1ea3; tests verified 2026-04-23)**
+  - `FSNotes/Helpers/PDFExporter.swift` `measureUsedRect(textView:textContainer:)` branches TK1 (via `layoutManagerIfTK1.usedRect(for:)` — retained as fallback) vs. TK2 (`measureUsedRectTK2` enumerates fragments via `.ensuresLayout`, prefers `tlm.usageBoundsForTextContainer` after enumeration, falls back to fragment union for newly-bootstrapped views).
+  - Tests: `Tests/PDFExporterMeasurementTests.swift` — `test_phase2f6_pdfExporterUsedRect_nonZeroUnderTK2` (30-paragraph note, TK2 preconditions asserted, measured height > 50) + `test_phase2f6_pdfExporterUsedRect_emptyDocReturnsEmptyRect` (empty-doc crash guard). Both pass.
 
 **Out of scope:**
 
@@ -557,6 +548,18 @@ User reviews after 2a (TextKit 2 baseline), after each non-table block-type sub-
 ---
 
 ## Phase 3 — Element-level edit application (narrowSplice in TextKit 2)
+
+**Primitive shipped 2026-04-23; wire-in deferred to a separate slice.** `FSNotesCore/Rendering/DocumentEditApplier.swift` (~720 LoC) implements `applyDocumentEdit(priorDoc:newDoc:contentStorage:...)` — the one function that mutates `NSTextContentStorage`. Uses LCS-based diff on `Block: Equatable` (O(M·N)), then a post-pass merges adjacent `(delete priorIdx, insert newIdx)` of the **same block kind** into a single `.modified(priorIdx, newIdx)` so "typing into paragraph N" becomes one localized change rather than delete+insert. No Block/Document model invasion — structural matching only. Emits mutations via `NSTextContentStorage.performEditingTransaction` over `NSTextRange` spans; does NOT go through the TK1 `textStorage` bridge.
+
+DEBUG instrumentation logs every edit to `<repo>/logs/element-edits.log` (or `$TMPDIR/fsnotes-logs/element-edits.log` when the primary directory isn't writable — e.g. the XCTest host). One line per call: `elementsChanged=[...] elementsInserted=[...] elementsDeleted=[...] replacedRange=[...] totalLenDelta=N noop=bool`.
+
+Tests in `Tests/DocumentEditApplierTests.swift` (9 tests, all passing):
+- `test_phase3_applyDocumentEdit_unchangedElementsUntouched` — elements outside the edit range preserve content across the splice.
+- `test_phase3_applyDocumentEdit_sameShapeUpdatesInPlace` — modifying `bbb → bbbX` emits exactly one `.modified(1,1)`.
+- `test_phase3_applyDocumentEdit_structuralInsertDelete` — insert-middle / delete-middle / append-end / delete-end sub-cases.
+- Plus identical-docs (no-op), singleModify, insertInMiddle, deleteInMiddle, multipleEdits-sequence (4 edits including paragraph→heading kind change).
+
+**Wire-in (separate slice, pending):** replace `narrowSplice → storage.replaceCharacters` inside `EditTextView+BlockModel.swift:applyEditResultWithUndo` with a call to `DocumentEditApplier.applyDocumentEdit(priorDoc: oldProjection.document, newDoc: result.newProjection.document, ...)`. Keep `applyEditResultWithUndo` owning undo registration, cursor placement, pending-trait restoration, attachment hydration, scroll-lock, and paragraph-style sync. `fillViaBlockModel` can stay on `storage.setAttributedString` for the initial fill — only subsequent edits flow through the new primitive. Before wire-in, add coverage for insert-at-start, delete-at-start, and `trailingNewline=true` cases (the multi-edit test exercises insert-at-start; the other two need direct coverage).
 
 ### Goal
 Design the edit-application mechanism on `NSTextContentStorage` that preserves the user's block-bounded redraw constraints:
@@ -799,6 +802,181 @@ Remove code that's now redundant so there's no confusion or duplication.
 
 ### Rollback
 Each deletion atomic; easy one-off reverts.
+
+---
+
+## Phase 7 — Theme system via stylesheet JSON (user item 7)
+
+### Goal
+Remove all remaining hardcoded typography, spacing, and chrome constants from rendering code. Expose them as entries in a single `Theme` struct loaded from a JSON stylesheet. The stylesheet unifies:
+1. Every field currently exposed in **Settings / Editor** (font, size, line spacing, line width, margin, image width, indent, brackets, inline tags, bold/italic marker style, code highlight theme).
+2. Rendering parameters currently hardcoded (heading scales + spacing-before/after, paragraph spacing, code-block chrome, blockquote bars, HR, kbd chip, list indents, inline highlight color, link color, container inset).
+
+`Theme` becomes the **single source of truth** for presentation — every renderer and fragment reads from it; `UserDefaultsManagement` typography keys become thin wrappers that mutate the active `Theme`.
+
+### Motivation
+- Enable swappable themes: users pick from a menu; community contributes JSON stylesheet files.
+- Centralize a currently-scattered concern. Today the same "paragraph spacing" idea exists in `DocumentRenderer.paragraphSpacingMultiplier`, `BlockStyleTheme.paragraphSpacing`, `TextStorageProcessor` literals, and fragment-local static constants. One canonical place.
+- Prerequisite for accessibility modes (high-contrast, dyslexia-friendly fonts, large-text) without shipping separate builds.
+- The half-built `BlockStyleTheme` struct (`FSNotesCore/Rendering/BlockStyleTheme.swift`) is the obvious seed. Phase 7 finishes it: wires it through every renderer + fragment, subsumes the `UserDefaultsManagement` typography keys, and exposes it to users as a selectable theme.
+
+### Status of existing work
+- `BlockStyleTheme` struct + Codable + `load()` / `save()` / `reload()` + `migrateFromUserDefaults()` already exist.
+- Fonts (noteFont / codeFont), editor chrome (line spacing, margin, line width, images width), heading scales + spacing, list geometry, blockquote bar geometry, table placeholder, HR block spacing, and blank-line heights are all modeled.
+- **Not wired**: fragment drawing code still uses file-local `static let` constants (`HorizontalRuleLayoutFragment.ruleColor`, `KbdBoxParagraphLayoutFragment.fillColor/strokeColor`, `HeadingLayoutFragment.borderColor`, `BlockquoteLayoutFragment.barColor`, code-block corner radius / border width, etc.). `TextStorageProcessor.swift` (source-mode path) still uses raw literals — scope question resolved below (Phase 4 deletes it, so 7.x doesn't need to touch it).
+- **Not modeled**: per-heading font family overrides, link color, code-span background, kbd chip colors + padding, HR thickness + color, code-block corner radius + border width + horizontal bleed, lineFragmentPadding, container top inset, dark-mode color variants.
+
+### Scope of settings the final `Theme` must cover
+
+Pulled from the Step 1 grep pass + Settings/Editor outlets:
+
+**From existing Settings / Editor UI** (already in `PreferencesEditorViewController`):
+- `noteFont` (family + size), `codeFont` (family + size), reset-fonts
+- `lineSpacing` slider (→ `lineHeightMultiple`; today also clamps `editorLineSpacing = 1`)
+- `imagesWidth`, `lineWidth`, `marginSize` sliders
+- `codeBlockHighlight` toggle + `markdownCodeTheme` popup (code syntax highlight theme)
+- `indentUsing` (tabs vs spaces)
+- `inEditorFocus`, `autocloseBrackets`, `inlineTags`, `clickableLinks` toggles
+- `italicAsterisk`/`italicUnderscore`, `boldAsterisk`/`boldUnderscore` marker style
+
+**Already in `BlockStyleTheme`** (keep):
+- `noteFontName`, `noteFontSize`, `codeFontName`, `codeFontSize`, `editorLineSpacing`, `lineWidth`, `marginSize`, `imagesWidth`
+- `headingFontScales[6]`, `headingSpacingBefore[6]`, `headingSpacingAfter[6]`
+- `paragraphSpacing`, `codeBlock{LineSpacing,ParagraphSpacing,SpacingBefore}`
+- `list{IndentScale,CellScale,BulletSizeScale,NumberDrawScale,CheckboxDrawScale,BulletStrokeInset,BulletStrokeWidth,BlockSpacing}`
+- `blockquote{BarInitialOffset,BarSpacing,BarWidth,GapAfterBars,BlockSpacing}`
+- `table{PlaceholderWidth,PlaceholderHeight,BlockSpacing}`, `hrBlockSpacing`
+- `htmlBlock{LineSpacing,ParagraphSpacing,SpacingBefore}`
+- `highlightColor`, `blankLine{Min,Max}Height`
+
+**New — must be added to `Theme`**:
+- Inline: `linkColor`, `codeSpanBackground`, `codeSpanForeground`, `strikethroughStyle`, `underlineStyle`
+- Heading: `headingBorderColor`, `headingBorderThickness`, `headingBorderOffsetBelowText`
+- Code block: `codeBlockCornerRadius`, `codeBlockBorderWidth`, `codeBlockBorderColor`, `codeBlockHorizontalBleed`, `codeBlockBackgroundColor` (currently pulled from the syntax-highlighter theme — move into `Theme` for override)
+- Blockquote: `blockquoteBarColor`
+- HR: `hrThickness`, `hrColor`
+- Kbd chip: `kbdFillColor`, `kbdStrokeColor`, `kbdShadowColor`, `kbdCornerRadius`, `kbdBorderWidth`, `kbdHorizontalPadding`, `kbdVerticalPaddingTop`, `kbdVerticalPaddingBottom`
+- Editor chrome: `lineFragmentPadding`, `textContainerInsetTop`, `textContainerInsetWidth`
+- Bold/italic marker style (`"**"|"__"` and `"*"|"_"`) — currently in `UserDefaultsManagement`
+- Indent style (`tabs|spaces`, width) — currently in `UserDefaultsManagement`
+- Per-heading family override (optional, nullable — most themes use body family)
+- Inter-paragraph multipliers that today live in `DocumentRenderer` `private static let`: `paragraphSpacingMultiplier`, `structuralBlockSpacingMultiplier` — absorb into `Theme.paragraphSpacingMultiplier` etc. (BlockStyleTheme today has `paragraphSpacing` as a fixed CGFloat; need to reconcile with the multiplier model)
+
+### Design sketch
+
+**Struct shape.** Keep `BlockStyleTheme` as the vehicle; rename to `Theme` or leave as-is. Add a `ThemeInline`, `ThemeBlock`, `ThemeChrome`, `ThemeColors` grouping to keep JSON readable:
+```
+Theme {
+  typography: ThemeTypography   // noteFont*, codeFont*, headingFontScales, italic/boldMarker
+  spacing:    ThemeSpacing      // lineSpacing, paragraph+heading spacing, blockquote, list geometry
+  chrome:     ThemeChrome       // margin, lineWidth, imageWidth, containerInset, lineFragmentPadding
+  colors:     ThemeColors       // link, highlight, borders, kbd, code-block, blockquote bar, HR
+  behavior:   ThemeBehavior     // autocloseBrackets, clickableLinks, inlineTags, indentUsing (debatable — see below)
+}
+```
+Decision: keep `behavior` keys in `UserDefaultsManagement` (they're not presentation — they're editor behavior). `Theme` is presentation-only. Font-marker choice (`italic`/`bold` glyph) is presentation-adjacent but sits under `typography` because it affects output markdown bytes.
+
+**Dark/light.** Single JSON with paired values per color:
+```json
+"linkColor": { "light": "#007AFF", "dark": "#0A84FF" }
+```
+Rationale over two-files: a theme bundles "a look" — the designer wants both variants to travel together and stay in sync. Non-color values (sizes, scales) have no variant. Loader resolves `.light`/`.dark` at read time using the effective appearance.
+
+**Loading + bundling.**
+- Bundled themes ship in `Resources/Themes/*.json` (e.g. `Default.json`, `HighContrast.json`, `Solarized.json`).
+- User themes in `~/Library/Application Support/FSNotes++/Themes/*.json`.
+- Active theme name stored in `UserDefaultsManagement.activeThemeName`.
+- Loader order: bundled default → user-overridden default → named-theme file. Invalid/missing falls back to compiled-in `Theme.default` with a user-visible warning (non-modal banner, not an alert).
+
+**Renderer wiring.**
+- `DocumentRenderer.init(theme: Theme)` — removes file-local `paragraphSpacingMultiplier` etc.
+- `InlineRenderer.render(_:baseAttributes:theme:)` — removes `Self.highlightColor`.
+- `CodeBlockRenderer`, `ListRenderer`, `HeadingRenderer`, `BlockquoteRenderer` — all gain a `theme:` parameter.
+- Fragments (drawing code) are trickier: they're instantiated by `NSTextLayoutManagerDelegate` and have no natural constructor-injection point. Access pattern: `BlockStyleTheme.shared` (already the pattern) + a `Theme.notifyChange` NotificationCenter signal that every live fragment subscribes to and re-draws on.
+- **Live re-render on theme switch:** invalidate all layout fragments via `textLayoutManager.invalidateLayout(for:)`, re-run `DocumentRenderer.render(document, theme: newTheme)`, preserve scroll position by anchoring on the top-visible block's id. Reuses the invalidation primitive landing in Phase 3's `applyDocumentEdit`.
+
+**UserDefaults subsumption.**
+- `UserDefaultsManagement.noteFont`, `.fontName`, `.fontSize`, `.codeFont`, `.codeFontName`, `.codeFontSize`, `.editorLineSpacing`, `.lineHeightMultiple`, `.lineWidth`, `.marginSize`, `.imagesWidth`, `.italic`, `.bold` become **computed properties** that read from / write to `Theme.shared`. Settings sliders stop writing to `UserDefaults` directly; they mutate the active theme and persist via `Theme.save()`.
+- `migrateFromUserDefaults()` already handles the first-launch migration; extend it for the new keys.
+- Non-presentation keys (`codeBlockHighlight`, `codeTheme`, `focusInEditorOnNoteSelect`, `autocloseBrackets`, `indentUsing`, `inlineTags`, `clickableLinks`) stay in UserDefaultsManagement.
+
+### Migration plan (5 slices)
+
+**7.1 — Consolidate + extend `Theme` struct (additive, no wiring change).**
+- Rename `BlockStyleTheme` → `Theme` (or keep — bikeshed in review).
+- Add the "New — must be added" fields listed above.
+- Add `light/dark` CodableColor pairs where relevant; add `ThemeColors.resolved(for: NSAppearance)` helper.
+- Extend `Theme.default` with all existing hardcoded values copied in (from fragment statics, `DocumentRenderer` multipliers, `InlineTagRegistry.highlightColor`, `InlineRenderer` highlight).
+- Ship `Resources/Themes/Default.json` matching `Theme.default` byte-for-byte so load-then-save is idempotent.
+- **Exit:** new fields compile; `Theme.shared` loads from `Default.json`; zero callers changed yet.
+
+**7.2 — Wire `Theme` through `DocumentRenderer` + `InlineRenderer`.**
+- Thread `theme:` parameter from `DocumentRenderer.render(_:)` into paragraph-style construction.
+- Replace `paragraphSpacingMultiplier` / `structuralBlockSpacingMultiplier` / `h{1..6}Spacing{Before,}Multiplier` file-locals with `theme.spacing.*`.
+- Replace `InlineRenderer.highlightColor` with `theme.colors.highlight.resolved(for:)`.
+- Replace `linkColor` named-asset lookup with `theme.colors.link.resolved(for:)`.
+- Pipe `theme` into `CodeBlockRenderer`, `ListRenderer` (already consumes `BlockStyleTheme.shared` indirectly; make the parameter explicit), `HeadingRenderer`, `BlockquoteRenderer`.
+- **Exit:** corpus round-trip unchanged; grep of `FSNotesCore/Rendering/*.swift` (excluding `Theme.swift`) shows zero `NSFont.systemFont`, zero `PlatformFont.monospacedSystemFont`, zero numeric literals in `paragraphSpacing*` assignments.
+
+**7.3 — Wire `Theme` into per-block fragments.**
+- `HeadingLayoutFragment`, `BlockquoteLayoutFragment`, `HorizontalRuleLayoutFragment`, `KbdBoxParagraphLayoutFragment`, `CodeBlockLayoutFragment` switch their `public static let` color/size constants to `Theme.shared.colors.*` / `Theme.shared.chrome.*` reads.
+- Keep geometry computations (e.g. `HorizontalRuleLayoutFragment.ruleThickness` arithmetic, `CodeBlockLayoutFragment.cornerRadius` rounding) as-is; only the *values* move.
+- Each fragment subscribes to `Theme.didChange` and calls `setNeedsDisplay` on its owning text layout manager.
+- **Exit:** Rule 7 grep across `FSNotesCore/Rendering/Fragments/*.swift` shows zero hardcoded color literals and zero numeric point/size literals that aren't inherently structural (e.g. bezier offsets). Snapshot corpus renders byte-identical with `Default.json`.
+
+**7.4 — Theme switcher UI + bundled themes.**
+- Add "Theme" NSPopUpButton to `PreferencesEditorViewController`.
+- Populate from bundled `Resources/Themes/*.json` ∪ `~/Library/Application Support/FSNotes++/Themes/*.json`.
+- Wire font/size/slider IBActions to mutate `Theme.shared` + call `Theme.save()` instead of writing `UserDefaultsManagement` keys.
+- Ship bundled themes: `Default.json`, `HighContrast.json`, at least one dark-optimized (`Nord.json` or similar).
+- Live reload on selection change; preserve scroll position.
+- **Exit:** user can switch themes; all Settings / Editor sliders still work and are now writing to the active theme.
+
+**7.5 — Grep gate + UserDefaults subsumption.**
+- `UserDefaultsManagement.noteFont/.fontName/.fontSize/.codeFont/.codeFontName/.codeFontSize/.editorLineSpacing/.lineHeightMultiple/.lineWidth/.marginSize/.imagesWidth/.italic/.bold` become computed getters/setters proxying `Theme.shared`.
+- Delete the backing UserDefaults keys (migration already copied them to the active theme on first launch).
+- Run the final Rule 7 / banned-pattern grep across `FSNotes/` and `FSNotesCore/` — zero hits for literal `NSFont.systemFont(ofSize:`, literal `paragraphSpacing = <number>`, literal color in fragment/renderer files.
+- Update `ARCHITECTURE.md` to document `Theme` as the single presentation source of truth.
+- **Exit:** grep gate passes; all renderer/fragment values come from `Theme.shared`.
+
+### Exit criteria (phase-wide)
+- Grep gate: zero hardcoded typography/color/spacing literals in `FSNotesCore/Rendering/*.swift` (excluding `Theme.swift` + default-value constructor) and in `FSNotesCore/Rendering/Fragments/*.swift`.
+- `Theme(fromJSON: data)` loads + validates a theme file; invalid themes fall back to `Theme.default` with a user-visible warning.
+- Switching themes in Preferences applies live without app restart and without losing scroll position or selection.
+- Existing Settings / Editor UI rewired to mutate the active theme (for the user's personal default) instead of writing independent `UserDefaultsManagement` typography keys.
+- Corpus round-trip unchanged (theme is presentation-layer only — serialization bytes identical).
+- CommonMark compliance ≥ 80% (unchanged from baseline — no parser/serializer work).
+- Harness tests pass; invariants unchanged (a theme swap is not an edit).
+- At least 2 bundled themes ship (`Default`, one alternative).
+
+### Dependencies
+- **Phase 3 (`applyDocumentEdit`) is NOT strictly required.** Phase 7 can proceed on the current rendering pipeline.
+- **If Phase 3 lands first**, theme-switch invalidation reuses its invalidation primitive instead of hand-rolling one.
+- **Phase 4 removes `TextStorageProcessor`** (the main other site of hardcoded spacing literals). If 7 lands before 4, 7 intentionally does NOT touch `TextStorageProcessor` — the source-mode path dies in Phase 4 and wiring it through Theme would be wasted work.
+- Must land AFTER Phase 2 (fragments exist); works cleanly with Phase 2c as-landed.
+
+### Estimate
+7–12 days. Breakdown:
+- 7.1: 1–2 days (additive struct work + default JSON)
+- 7.2: 2–3 days (renderer wiring; invariants must stay green)
+- 7.3: 2–3 days (fragment wiring + change notification)
+- 7.4: 1–2 days (UI + bundled themes)
+- 7.5: 1 day (grep gate + UserDefaults subsumption + doc update)
+
+### Rollback
+- 7.1 is additive; trivial to revert.
+- 7.2–7.5 each atomic per slice; each slice can be reverted by restoring the previous hardcoded value list. Because the JSON is already shipped by 7.1, a 7.2 revert does not break loading — it just stops consuming theme values.
+- `Theme.shared` survives a partial revert since `BlockStyleTheme` already has it.
+
+### Checkpoint
+- User reviews after **7.1** (struct shape + default JSON + list of fields).
+- User reviews after **7.3** (visual dogfood — switch between bundled themes on real notes folder, confirm nothing regresses).
+- User reviews before **7.4** (UI surface design — popup placement, restart-required warnings, preview behavior).
+- User reviews final grep gate before **7.5** is declared done.
+
+### Contradictions / notes from existing plan
+- `BlockStyleTheme` exists and is partially wired but never mentioned in Phases 0–6. Phase 7 absorbs it explicitly.
+- Phase 6 says "Rule 7 grep across `FSNotes/` and `FSNotesCore/Rendering/` — zero hits required" for the banned marker-hiding patterns (tiny font, clear color, `.kern`). Phase 7's grep gate is stricter (typography/color literals anywhere, not just marker-hiding) but complementary — 6's gate is a correctness invariant, 7's is an architectural-centralization invariant. Both should run in CI after 7.5.
 
 ---
 
