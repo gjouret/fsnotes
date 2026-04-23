@@ -104,4 +104,40 @@ public enum BlockModelKind: String {
 /// ranges, attribute absent elsewhere).
 public extension NSAttributedString.Key {
     static let tableHeader = NSAttributedString.Key(rawValue: "es.fsnot.table.header")
+
+    /// Phase 2e-T2-e: carries the authoritative `Block.table` value for
+    /// a `.table`-kinded range. Set by `TableTextRenderer.renderNative`
+    /// on the full range of the emitted separator-encoded cell text;
+    /// read by the content-storage delegate when vending a
+    /// `TableElement` so the element's `block` payload has accurate
+    /// `alignments`, `header`, `rows`, and `raw` (vs. the placeholder
+    /// decoded from the flat string, which loses alignments).
+    ///
+    /// Value: a `TableAuthoritativeBlockBox` wrapper holding the
+    /// `Block.table`. The value is wrapped in a reference type so it
+    /// can live on an `NSAttributedString` attribute run without
+    /// requiring `Block` itself to be Objective-C compatible. The
+    /// render path holds a strong reference for the lifetime of the
+    /// storage range; the delegate reads it out on element construction.
+    ///
+    /// Absence of this attribute is tolerated: the delegate falls
+    /// back to the placeholder decode path. This preserves flag-off
+    /// byte-identical behaviour and keeps edit-reconciliation windows
+    /// (where the attribute may briefly be missing mid-splice) safe.
+    static let tableAuthoritativeBlock = NSAttributedString.Key(rawValue: "es.fsnot.table.auth")
+}
+
+/// Phase 2e-T2-e: boxed `Block.table` for storage on an
+/// `NSAttributedString` attribute run. Reference type so the value
+/// can be carried on attribute runs without requiring the block to be
+/// Objective-C convertible.
+///
+/// The box is immutable after construction — the render path creates
+/// a fresh box on every emission, so stale payloads never appear on a
+/// run that's been edited through the cell primitives.
+public final class TableAuthoritativeBlockBox {
+    public let block: Block
+    public init(_ block: Block) {
+        self.block = block
+    }
 }

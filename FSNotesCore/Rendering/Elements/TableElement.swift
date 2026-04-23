@@ -209,6 +209,30 @@ public final class TableElement: NSTextParagraph {
         return nil
     }
 
+    /// Element-local UTF-16 range of the cell at `(row, col)`. The
+    /// range covers the cell's content characters — from the first
+    /// character after the preceding separator (or element start) up
+    /// to the next separator (or element end). Returns `nil` if the
+    /// coordinate is out of range.
+    ///
+    /// Used by 2e-T2-e to splice a new cell substring into the
+    /// separator-encoded storage without disturbing the surrounding
+    /// separators.
+    public func cellRange(forCellAt position: (row: Int, col: Int)) -> NSRange? {
+        guard let start = offset(forCellAt: position) else { return nil }
+        let string = attributedString.string as NSString
+        let length = string.length
+        let cellSep: unichar = unichar(Self.cellSeparator.unicodeScalars.first!.value)
+        let rowSep: unichar = unichar(Self.rowSeparator.unicodeScalars.first!.value)
+        var end = start
+        while end < length {
+            let ch = string.character(at: end)
+            if ch == cellSep || ch == rowSep { break }
+            end += 1
+        }
+        return NSRange(location: start, length: end - start)
+    }
+
     /// Given a `(row, col)` coordinate, return the element-local
     /// UTF-16 offset of the FIRST content character of that cell.
     /// Returns `nil` if `(row, col)` is out of range for the block

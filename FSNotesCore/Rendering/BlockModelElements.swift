@@ -205,11 +205,27 @@ public final class BlockModelContentStorageDelegate: NSObject, NSTextContentStor
         // guard only accepts a `.table` block, so we synthesize a
         // minimal placeholder from the decoded separator structure.
         if kind == .table {
-            let placeholderBlock = synthesizePlaceholderTableBlock(
-                from: substring.string
-            )
+            // Prefer the authoritative `Block.table` carried on the
+            // `.tableAuthoritativeBlock` attribute by `TableTextRenderer
+            // .renderNative(...)`. This preserves the alignments /
+            // structural fields that the flat separator-encoded string
+            // alone cannot convey. Fall back to the placeholder decode
+            // if the attribute is missing — e.g. during edit-
+            // reconciliation windows where the run is briefly untagged.
+            let authBlock: Block
+            if let box = storage.attribute(
+                .tableAuthoritativeBlock,
+                at: clamped.location,
+                effectiveRange: nil
+            ) as? TableAuthoritativeBlockBox {
+                authBlock = box.block
+            } else {
+                authBlock = synthesizePlaceholderTableBlock(
+                    from: substring.string
+                )
+            }
             if let element = TableElement(
-                block: placeholderBlock,
+                block: authBlock,
                 attributedString: substring
             ) {
                 return element

@@ -399,9 +399,16 @@ final class TableNavigationTests: XCTestCase {
         )
     }
 
-    // MARK: - 9. Return inside a cell is a no-op (T2-e ships <br>)
+    // MARK: - 9. Return inside a cell inserts a `<br>`  (T2-e)
+    //
+    // This test originally asserted Return was a no-op (T2-d slice) and
+    // carried the comment "T2-e will handle <br>". T2-e has landed; the
+    // test now locks in the new behaviour: Return inside a cell inserts
+    // a `.rawHTML("<br>")` into the cell's inline tree, the block
+    // structure stays intact, and the serialized markdown changes to
+    // include `<br>` inside the cell.
 
-    func test_T2d_returnKey_inCell_noOps() throws {
+    func test_T2d_returnKey_inCell_insertsBr() throws {
         guard let ctx = makeHarnessWith2x2Table(flagResetter: self) else {
             XCTFail("Harness setup failed")
             return
@@ -427,15 +434,30 @@ final class TableNavigationTests: XCTestCase {
             XCTFail("Document gone after Return")
             return
         }
-        // Contract: Document blocks count + serialized markdown unchanged.
+        // Block count + count of table rows must not change — Return
+        // inside a cell is a cell-internal edit.
         XCTAssertEqual(
             before.blocks.count, after.blocks.count,
             "Return inside a cell must not change the Document's block count"
         )
-        XCTAssertEqual(
-            MarkdownSerializer.serialize(before),
-            MarkdownSerializer.serialize(after),
-            "Return inside a cell must not change the Document (T2-e will handle <br>)"
+        // Locate the table block and assert the edited cell (header,
+        // col 0) carries a `.rawHTML("<br>")` inline.
+        var found = false
+        for block in after.blocks {
+            if case .table(let header, _, _, _) = block {
+                let inline = header[0].inline
+                if inline.contains(where: { node in
+                    if case .rawHTML(let s) = node, s == "<br>" { return true }
+                    return false
+                }) {
+                    found = true
+                    break
+                }
+            }
+        }
+        XCTAssertTrue(
+            found,
+            "Return inside header cell (0,0) should insert `<br>` into its inline tree"
         )
     }
 }

@@ -182,7 +182,7 @@ extension EditTextView {
             if cursorIsInTableElement(),
                selector == #selector(NSResponder.insertNewline(_:)) ||
                selector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)) {
-                bmLog("T2-d: Return in TableElement (on separator) — no-op (T2-e will handle <br>)")
+                bmLog("T2-e: Return in TableElement (on separator) — no-op")
                 return true
             }
             return false
@@ -209,7 +209,27 @@ extension EditTextView {
 
         case #selector(NSResponder.insertNewline(_:)),
              #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-            bmLog("T2-d: Return in cell (\(ctx.row),\(ctx.col)) — no-op (T2-e will handle <br>)")
+            // Phase 2e-T2-e: Return inside a cell inserts a hard line
+            // break into the cell's inline tree. Route through the
+            // shared cell-edit path in `handleEditViaBlockModel` so
+            // every insert shares the same encoding contract (the
+            // converter translates `\n` in a cell's attributed string
+            // to `.rawHTML("<br>")`, which matches the widget path's
+            // cell line-break representation).
+            let caret = selectedRange().location
+            let insertedRange = NSRange(location: caret, length: 0)
+            let handled = handleEditViaBlockModel(
+                in: insertedRange, replacementString: "\n"
+            )
+            if handled {
+                bmLog("T2-e: Return in cell (\(ctx.row),\(ctx.col)) inserted <br>")
+                return true
+            }
+            // If the edit couldn't be routed through the cell path,
+            // swallow the Return anyway — we never want the default
+            // newline path (which inserts a real `\n` into storage) to
+            // corrupt the separator-encoded TableElement.
+            bmLog("T2-e: Return in cell (\(ctx.row),\(ctx.col)) — cell path refused, swallowing")
             return true
 
         default:
