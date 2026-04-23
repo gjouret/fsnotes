@@ -681,8 +681,14 @@ public class Note: NSObject  {
     
     func getPrettifiedContent() -> String {
         #if IOS_APP || os(OSX)
-            let prepared = NoteSerializer.prepareForSave(NSMutableAttributedString(attributedString: self.content))
-            let mutable = NotesTextProcessor.convertAppTags(in: prepared, codeBlockRanges: codeBlockRangesCache)
+            // Phase 4.7: NoteSerializer deleted. The two-step pipeline
+            // (restore rendered blocks → unload attachments) is inlined
+            // here because this code produces HTML-like output, not
+            // disk-saved markdown — it cannot use Note.save(markdown:).
+            let prepared = NSMutableAttributedString(attributedString: self.content)
+            _ = prepared.restoreRenderedBlocks()
+            let unloaded = prepared.unloadImagesAndFiles()
+            let mutable = NotesTextProcessor.convertAppTags(in: unloaded, codeBlockRanges: codeBlockRangesCache)
         let content = NotesTextProcessor.convertAppLinks(in: mutable, codeBlockRanges: codeBlockRangesCache)
             let cleaned = cleanMetaData(content: content.string)
             let result = Note.replaceHorizontalRulesOutsideCodeBlocks(cleaned)
@@ -816,8 +822,23 @@ public class Note: NSObject  {
         operation.addExecutionBlock { [weak self] in
             guard let self = self, !operation.isCancelled else { return }
 
+            // Phase 4.7: funnel source-mode saves through save(markdown:).
+            // Convert the attributed content to disk-ready markdown by
+            // restoring rendered blocks (mermaid/math) and unloading
+            // image/file attachments. Then save as a byte-preserving
+            // markdown string via save(markdown:). The user's live bytes
+            // (their in-progress typing) round-trip verbatim — there's no
+            // MarkdownParser/MarkdownSerializer canonicalization here.
             let mutable = NSMutableAttributedString(attributedString: copy)
-            self.save(content: mutable)
+            _ = mutable.restoreRenderedBlocks()
+            let unloaded = mutable.unloadImagesAndFiles()
+
+            // SAFETY: reject empty from non-empty input.
+            if unloaded.length == 0 && copy.length > 0 {
+                NSLog("SAVE BLOCKED: serialization produced empty content from \(copy.length)-char input for: \(self.title)")
+            } else {
+                self.save(markdown: unloaded.string)
+            }
 
             if !operation.isCancelled {
                 self.isBlocked = false
@@ -828,10 +849,11 @@ public class Note: NSObject  {
         sharedStorage.plainWriter.addOperation(operation)
     }
 
-    /// Save raw markdown directly to disk, bypassing NoteSerializer.
-    /// Used by the block-model pipeline which already produces clean
-    /// markdown via MarkdownSerializer — no attachment unloading or
-    /// rendered-block restoration needed.
+    /// Save raw markdown directly to disk. This is the single save
+    /// entry point for both block-model and (post-Phase 4.7) source-mode
+    /// saves. Callers with an attributed string must first run the
+    /// unload pipeline (`restoreRenderedBlocks()` + `unloadImagesAndFiles()`)
+    /// and pass the resulting `.string`.
     public func save(markdown: String) {
         // Update the in-memory content cache
         self.content = NSMutableAttributedString(string: markdown)
@@ -856,28 +878,10 @@ public class Note: NSObject  {
         isBlocked = false
     }
 
-    public func save(content: NSMutableAttributedString) {
-        self.content = content
-        self.cachedDocument = nil  // Invalidate — content changed
-
-        // Full serialization pipeline: bullet restore + rendered block restore + attachment unload
-        let copy = NoteSerializer.prepareForSave(
-            NSMutableAttributedString(attributedString: content)
-        )
-
-        // SAFETY: If serialization produced empty content from non-empty input, abort.
-        // This catches bugs in the serialization pipeline that would wipe the file.
-        if copy.length == 0 && content.length > 0 {
-            NSLog("SAVE BLOCKED: serialization produced empty content from \(content.length)-char input for: \(title)")
-            return
-        }
-
-        modifiedLocalAt = Date()
-
-        if write(attributedString: copy) {
-            sharedStorage.add(self)
-        }
-    }
+    // Phase 4.7: `save(content:)` has been removed. All source-mode
+    // save paths now route through `save(markdown:)` after performing
+    // `restoreRenderedBlocks()` + `unloadImagesAndFiles()` inline. See
+    // `save(attributed:)` above.
 
     public func replace(tag: String, with string: String) {
         content.replaceTag(name: tag, with: string)
@@ -890,10 +894,15 @@ public class Note: NSObject  {
     }
         
     public func save() -> Bool {
-        let attributedString = NoteSerializer.prepareForSave(
-            NSMutableAttributedString(attributedString: self.content)
-        )
-        return write(attributedString: attributedString)
+        // Phase 4.7: NoteSerializer removed. Inline the two-step
+        // pipeline (restore rendered blocks + unload attachments) so
+        // self.content becomes disk-ready markdown. No round-trip
+        // through MarkdownParser/MarkdownSerializer — the bytes the
+        // user typed are preserved verbatim.
+        let prepared = NSMutableAttributedString(attributedString: self.content)
+        _ = prepared.restoreRenderedBlocks()
+        let unloaded = prepared.unloadImagesAndFiles()
+        return write(attributedString: unloaded)
     }
 
     private func write(attributedString: NSAttributedString) -> Bool {
@@ -1366,17 +1375,23 @@ public class Note: NSObject  {
         note.content = content
 
         let imagesMeta = content.getImagesAndFiles()
-        let mutableContent = NoteSerializer.prepareForSave(NSMutableAttributedString(attributedString: content))
+        // Phase 4.7: inline the prepareForSave two-step pipeline. The
+        // result (`mutableContent`) is the post-unload markdown — that's
+        // what gets written and then further mutated by
+        // `moveFilesFlatToAssets` to rewrite image paths.
+        let mutableContent = NSMutableAttributedString(attributedString: content)
+        _ = mutableContent.restoreRenderedBlocks()
+        let unloaded = mutableContent.unloadImagesAndFiles()
 
         // write textbundle body
-        guard note.write(attributedString: mutableContent) else { return note.url }
+        guard note.write(attributedString: unloaded) else { return note.url }
 
         for imageMeta in imagesMeta {
-            moveFilesFlatToAssets(attributedString: mutableContent, from: imageMeta.url, imagePath: imageMeta.path, to: note.url)
+            moveFilesFlatToAssets(attributedString: unloaded, from: imageMeta.url, imagePath: imageMeta.path, to: note.url)
         }
 
         // write updated image pathes
-        guard note.write(attributedString: mutableContent) else {
+        guard note.write(attributedString: unloaded) else {
             return note.url
         }
 
@@ -1440,7 +1455,10 @@ public class Note: NSObject  {
     }
 
     private func moveFilesAssetsToFlat(src: URL, project: Project) {
-        let mutableContent = NoteSerializer.prepareForSave(NSMutableAttributedString(attributedString: content))
+        // Phase 4.7: inline the prepareForSave two-step pipeline.
+        let mutable = NSMutableAttributedString(attributedString: content)
+        _ = mutable.restoreRenderedBlocks()
+        let mutableContent = mutable.unloadImagesAndFiles()
 
         let imagesMeta = content.getImagesAndFiles()
         for imageMeta in imagesMeta {
@@ -1808,22 +1826,19 @@ public class Note: NSObject  {
     }
 
     #if os(macOS)
+    /// Background pre-cache entry point called at app startup and after
+    /// tag scans. Phase 4.4: the legacy
+    /// `NotesTextProcessor.highlight(content)` pre-render was retired —
+    /// the WYSIWYG (block-model) and source-mode (SourceRenderer)
+    /// pipelines both re-render from the raw markdown at fill time and
+    /// do not read the pre-rendered `.content` attribute cache. What's
+    /// retained is `cacheCodeBlocks()`, which populates the
+    /// fenced-code-block preview cache used by the WYSIWYG renderer.
     public func cache() {
         if cacheLock { return }
-
-        let hash = content.string.fnv1a
         cacheLock = true
-
-        if let copy = content.mutableCopy() as? NSMutableAttributedString {
-            NotesTextProcessor.highlight(attributedString: copy)
-            cacheCodeBlocks()
-
-            if content.string.fnv1a == copy.string.fnv1a {
-                content = copy
-                cacheHash = hash
-            }
-        }
-
+        cacheHash = content.string.fnv1a
+        cacheCodeBlocks()
         cacheLock = false
     }
     #endif

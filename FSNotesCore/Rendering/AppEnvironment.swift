@@ -15,7 +15,8 @@ public final class AppEnvironment {
     // MARK: - Services
 
     public let editorPreferences: EditorPreferencesProvider
-    public let serializer: NoteSerializer.Type = NoteSerializer.self
+    // Phase 4.7: `serializer: NoteSerializer.Type` removed with the
+    // deletion of `NoteSerializer`. No call sites referenced it.
     public let noteStore: NoteStore
     public let projectStore: ProjectStore
 

@@ -70,9 +70,14 @@ extension EditorViewController: NSSharingServicePickerDelegate {
 
     public func saveTextAtClipboard() {
         if let note = vcEditor?.note {
-            let unloadedText = NoteSerializer.prepareForSave(
-                NSMutableAttributedString(attributedString: exportAttributedContent(for: note))
-            )
+            // Phase 4.7: inline the prepareForSave two-step pipeline.
+            // This path dumps the note to the clipboard as plain markdown —
+            // not a disk save — so we only need the transform, not
+            // save(markdown:). Rendered blocks restore to their original
+            // source; attachments unload to ![]() markdown.
+            let prepared = NSMutableAttributedString(attributedString: exportAttributedContent(for: note))
+            _ = prepared.restoreRenderedBlocks()
+            let unloadedText = prepared.unloadImagesAndFiles()
             let pasteboard = NSPasteboard.general
             pasteboard.declareTypes([NSPasteboard.PasteboardType.string], owner: nil)
             pasteboard.setString(unloadedText.string, forType: NSPasteboard.PasteboardType.string)

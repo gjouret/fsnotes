@@ -650,7 +650,11 @@ class EditorViewController: UIViewController,
         operation.addExecutionBlock { [weak self] in
             guard let self = self, let text = text else {return}
 
-            note.save(content: text)
+            // Phase 4.7: Note.save(content:) removed. Inline the
+            // unload pipeline and route through save(markdown:).
+            _ = text.restoreRenderedBlocks()
+            let unloaded = text.unloadImagesAndFiles()
+            note.save(markdown: unloaded.string)
 
             if note.isEncrypted() && !note.isUnlocked() {
                 DispatchQueue.main.async {

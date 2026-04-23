@@ -209,7 +209,13 @@ extension ViewController {
         content.replaceCharacters(in: firstLineRange, with: replacement)
 
         note.content = content
-        note.save(content: content)
+        // Phase 4.7: route through save(markdown:) after the standard
+        // unload pipeline so image attachments elsewhere in the note
+        // are preserved (re-emitted as ![alt](path) markdown).
+        let prepared = NSMutableAttributedString(attributedString: content)
+        _ = prepared.restoreRenderedBlocks()
+        let unloaded = prepared.unloadImagesAndFiles()
+        note.save(markdown: unloaded.string)
 
         // Refresh the editor if this note is currently open.
         if editor.note == note {

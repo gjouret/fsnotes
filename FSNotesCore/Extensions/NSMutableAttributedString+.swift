@@ -97,8 +97,15 @@ extension NSMutableAttributedString {
         addAttribute(.font, value: UserDefaultsManagement.noteFont, range: NSRange(location: 0, length: length))
     }
 
+    /// Run the full unload pipeline in-place-ish: restore rendered
+    /// blocks (mermaid/math) to their original markdown source, then
+    /// unload image/file attachments to `![](path)` syntax. Used by
+    /// clipboard paths that need a plain-markdown representation.
+    ///
+    /// Phase 4.7: was a wrapper around the deleted `NoteSerializer`.
     public func unloadAttachments() -> NSMutableAttributedString {
-        return NoteSerializer.prepareForSave(self)
+        _ = restoreRenderedBlocks()
+        return unloadImagesAndFiles()
     }
 
     /// Restore rendered block attachments (mermaid/math) back to their original markdown source

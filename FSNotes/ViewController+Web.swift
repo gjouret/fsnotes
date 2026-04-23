@@ -86,7 +86,10 @@ enum WebNotePublisher {
         from content: NSMutableAttributedString,
         attachments: [(url: URL, title: String, path: String)]
     ) -> String {
-        var markdown = NoteSerializer.prepareForSave(content).string
+        // Phase 4.7: inline the prepareForSave two-step pipeline.
+        let prepared = NSMutableAttributedString(attributedString: content)
+        _ = prepared.restoreRenderedBlocks()
+        var markdown = prepared.unloadImagesAndFiles().string
         for attachment in attachments {
             let encodedPath = attachment.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? attachment.path
             markdown = markdown.replacingOccurrences(of: encodedPath, with: "i/\(attachment.url.lastPathComponent)")

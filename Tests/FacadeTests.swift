@@ -85,11 +85,7 @@ class FacadeTests: XCTestCase {
         _ = prefs.fileFormat
     }
 
-    // MARK: - NoteSerializer
-
-    func test_noteSerializer_prepareForSave_plainText() {
-        let attrStr = NSMutableAttributedString(string: "# Hello\n\nPlain text")
-        let prepared = NoteSerializer.prepareForSave(attrStr)
-        XCTAssertEqual(prepared.string, "# Hello\n\nPlain text")
-    }
+    // Phase 4.7: `NoteSerializer.prepareForSave` has been removed.
+    // The unload pipeline is exercised by `Phase47SaveConsolidationTests`
+    // and the existing Note.save(markdown:) corpus tests.
 }

@@ -87,6 +87,20 @@ add_pattern "negativeKern"        'addAttribute\(\.kern'                        
 # --- Widget-local inline reparse (re-implementing InlineRenderer) ---
 add_pattern "localInlineParse"    'func[[:space:]]+parseInlineMarkdown\b'                                     ""
 
+# --- Phase 4.7: legacy NoteSerializer.prepareForSave / Note.save(content:) ---
+# retired. All saves route through Note.save(markdown:). Any reappearance
+# of either token indicates the source-mode save path is being resurrected.
+add_pattern "legacySaveContent"   '\.save\(content:|prepareForSave\b'                                          ""
+
+# --- Phase 4.4: legacy NotesTextProcessor.highlight* markdown path retired ---
+# Source-mode markdown rendering now flows through `SourceRenderer` (which
+# tags `.markerRange` runs painted by `SourceLayoutFragment`) instead of
+# the TK1-shaped `NotesTextProcessor.highlight(_:)` /
+# `NotesTextProcessor.highlightMarkdown(_:)` path. `SwiftHighlighter`
+# (fenced code-block syntax highlighting via highlightr) is a separate
+# subsystem and is NOT matched by this regex.
+add_pattern "legacyMarkdownHighlight" 'NotesTextProcessor\.highlight'                                         ""
+
 # --- View-to-model bidirectional data flow (read cell state into model) ---
 # The InlineTableView.swift / TableRenderController.swift widget files that
 # historically held the bidirectional-flow bug were deleted 2026-04-23 in
