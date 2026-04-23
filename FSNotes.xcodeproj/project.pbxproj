@@ -57,6 +57,11 @@
 		DMLF000000000000000000B1 /* DisplayMathLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */; };
 		CBLF000000000000000000B1 /* CodeBlockLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */; };
 		KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */; };
+		BSTH000000000000000000B1 /* BlockStyleTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTH000000000000000000F1 /* BlockStyleTheme.swift */; };
+		THM7000000000000000000B1 /* ThemeSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = THM7000000000000000000F1 /* ThemeSchema.swift */; };
+		THMJ000000000000000000B1 /* default-theme.json in Resources */ = {isa = PBXBuildFile; fileRef = THMJ000000000000000000F1 /* default-theme.json */; };
+		BSTT000000000000000000B1 /* BlockStyleThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */; };
+		THMT000000000000000000B1 /* ThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THMT000000000000000000F1 /* ThemeTests.swift */; };
 		BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */; };
 		FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */; };
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
@@ -1120,6 +1125,11 @@
 		DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/DisplayMathLayoutFragment.swift; sourceTree = "<group>"; };
 		CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/CodeBlockLayoutFragment.swift; sourceTree = "<group>"; };
 		KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/KbdBoxParagraphLayoutFragment.swift; sourceTree = "<group>"; };
+		BSTH000000000000000000F1 /* BlockStyleTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockStyleTheme.swift; sourceTree = "<group>"; };
+		THM7000000000000000000F1 /* ThemeSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSchema.swift; sourceTree = "<group>"; };
+		THMJ000000000000000000F1 /* default-theme.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "default-theme.json"; path = "default-theme.json"; sourceTree = "<group>"; };
+		BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockStyleThemeTests.swift; sourceTree = "<group>"; };
+		THMT000000000000000000F1 /* ThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeTests.swift; sourceTree = "<group>"; };
 		BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/BlockModelLayoutManagerDelegate.swift; sourceTree = "<group>"; };
 		FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/FoldedLayoutFragment.swift; sourceTree = "<group>"; };
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
@@ -1660,6 +1670,8 @@
 				BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */,
 				FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
+				BSTH000000000000000000F1 /* BlockStyleTheme.swift */,
+				THM7000000000000000000F1 /* ThemeSchema.swift */,
 				DEA0000000000000000000F1 /* DocumentEditApplier.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
 				AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */,
@@ -2244,6 +2256,7 @@
 				1175E09E2EDCA60200B92794 /* Initial */,
 				D7D79C27236798C300898A2D /* Welcome.bundle */,
 				11AABB11301A0001 /* MPreview.bundle */,
+				THMJ000000000000000000F1 /* default-theme.json */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -2486,6 +2499,8 @@
 				TDLC000000000000000000F1 /* TodoListColorTests.swift */,
 				BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */,
 				LHOV000000000000000000F1 /* LinkHoverTests.swift */,
+				BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */,
+				THMT000000000000000000F1 /* ThemeTests.swift */,
 				CORPUS00000000000000000F1 /* Corpus */,
 				CMARK000000000000000005 /* CommonMark */,
 			);
@@ -2819,6 +2834,7 @@
 				D7F2F1BB21C503F000E41811 /* AvenirNext-Thin.ttf in Resources */,
 				D7D79C28236798C300898A2D /* Welcome.bundle in Resources */,
 				11AABB11301A0002 /* MPreview.bundle in Resources */,
+				THMJ000000000000000000B1 /* default-theme.json in Resources */,
 				D7DD79581F4E60D000D5724B /* SourceCodePro-Black.ttf in Resources */,
 				D720241222A9412B000A7691 /* Text.icns in Resources */,
 				D7F2F1B221C503F000E41811 /* AvenirNext-HeavyItalic.ttf in Resources */,
@@ -3368,6 +3384,8 @@
 				DMLF000000000000000000B1 /* DisplayMathLayoutFragment.swift in Sources */,
 				CBLF000000000000000000B1 /* CodeBlockLayoutFragment.swift in Sources */,
 				KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */,
+				BSTH000000000000000000B1 /* BlockStyleTheme.swift in Sources */,
+				THM7000000000000000000B1 /* ThemeSchema.swift in Sources */,
 				BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */,
 				FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
@@ -3957,6 +3975,8 @@
 				TDLC000000000000000000B1 /* TodoListColorTests.swift in Sources */,
 				BG3N000000000000000000B1 /* Bugs3NoteColorTests.swift in Sources */,
 				LHOV000000000000000000B1 /* LinkHoverTests.swift in Sources */,
+				BSTT000000000000000000B1 /* BlockStyleThemeTests.swift in Sources */,
+				THMT000000000000000000B1 /* ThemeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
