@@ -114,15 +114,16 @@ extension BlockStyleTheme {
     public static func availableThemes(
         userThemesDirectory: URL? = nil
     ) -> [ThemeDescriptor] {
-        var out: [ThemeDescriptor] = []
-        var seen = Set<String>()
+        // Build the merged descriptor list with user-override semantics:
+        // a user theme file with the same basename as a bundled theme
+        // replaces the bundled entry at the same position. This matches
+        // the "user overrides win" pattern used elsewhere in FSNotes
+        // (user plist wins over bundled defaults, user syntax themes
+        // win over bundled). Fix for Phase 7.5: the prior implementation
+        // had bundled winning, which prevented `saveActiveTheme()` from
+        // producing a loadable override for bundled themes.
 
-        // ── Bundled "Default" always first ───────────────────────
-        //
-        // Look for `default-theme.json` in each candidate bundle; the
-        // first hit wins. If every bundle is missing the file, we
-        // still surface a "Default" entry with a nil URL so the load
-        // path falls through to the compiled-in failsafe.
+        // ── Bundled "Default" always first in the ordering ───────
         var defaultURL: URL?
         for bundle in Self.candidateBundles() {
             if let url = bundle.url(
@@ -132,12 +133,13 @@ extension BlockStyleTheme {
                 break
             }
         }
-        out.append(ThemeDescriptor(
-            name: Self.defaultThemeName,
-            url: defaultURL,
-            isBuiltIn: true
-        ))
-        seen.insert(Self.defaultThemeName.lowercased())
+        var orderedBundled: [ThemeDescriptor] = [
+            ThemeDescriptor(
+                name: Self.defaultThemeName,
+                url: defaultURL,
+                isBuiltIn: true
+            )
+        ]
 
         // ── Other bundled themes in `Themes/` subdirectory ───────
         //
@@ -145,17 +147,38 @@ extension BlockStyleTheme {
         // `Dracula.json`, etc. by dropping them into
         // `Resources/Themes/`. Today the directory may not exist;
         // that's fine — the enumeration just yields zero extras.
-        let bundleThemes = enumerateBundledExtraThemes()
-        for descriptor in bundleThemes {
-            let key = descriptor.name.lowercased()
-            if seen.contains(key) { continue }
-            out.append(descriptor)
-            seen.insert(key)
+        let bundleExtras = enumerateBundledExtraThemes()
+        for descriptor in bundleExtras {
+            if orderedBundled.contains(where: {
+                $0.name.caseInsensitiveCompare(descriptor.name) == .orderedSame
+            }) { continue }
+            orderedBundled.append(descriptor)
         }
 
         // ── User themes from Application Support ─────────────────
         let userDir = userThemesDirectory ?? defaultUserThemesDirectory()
         let userThemes = enumerateUserThemes(in: userDir)
+
+        // Index user themes by lowercase name so we can replace any
+        // bundled entry that shares a basename.
+        var userByKey: [String: ThemeDescriptor] = [:]
+        for descriptor in userThemes {
+            userByKey[descriptor.name.lowercased()] = descriptor
+        }
+
+        var out: [ThemeDescriptor] = []
+        var seen = Set<String>()
+        for descriptor in orderedBundled {
+            let key = descriptor.name.lowercased()
+            if let override = userByKey[key] {
+                out.append(override)
+            } else {
+                out.append(descriptor)
+            }
+            seen.insert(key)
+        }
+        // Any remaining user-only themes (no bundled sibling) appear
+        // alphabetically at the end.
         for descriptor in userThemes {
             let key = descriptor.name.lowercased()
             if seen.contains(key) { continue }
@@ -247,5 +270,112 @@ extension BlockStyleTheme {
         themeLog("Unknown theme name '\(targetName)'; falling back to default.")
         let (theme, _) = BlockStyleTheme.loadBundledDefault()
         return theme
+    }
+
+    // MARK: - Phase 7.5: Active-theme write-back
+    //
+    // SEMANTICS
+    // ---------
+    // `Theme.saveActiveTheme()` writes the current in-memory `Theme.shared`
+    // value out as JSON to the user-themes directory, under the basename
+    // of the active theme (resolved via `activeThemeName` — typically
+    // `UserDefaultsManagement.currentThemeName`, falling back to the
+    // canonical "Default" when unset).
+    //
+    // Bundled themes live inside the read-only `.app` bundle. When the
+    // user edits "Default" (or any other built-in), we can't mutate the
+    // bundle — so we drop a same-named override into
+    // `~/Library/Application Support/FSNotes++/Themes/<Name>.json`. On
+    // subsequent launches `Theme.load(named: "Default")` resolves to the
+    // user override (user > bundled precedence is enforced in
+    // `availableThemes` — see comment there).
+    //
+    // Rationale for "user override wins" semantics (vs. spawning a new
+    // "My Theme" copy): the user's personal customizations of Default
+    // should remain discoverable under the name they know ("Default"),
+    // not under a synthetic name. That matches how every other override
+    // mechanism in FSNotes behaves (user plist wins over bundled
+    // defaults, user syntax themes win over bundled, etc.).
+    //
+    // We post `Theme.didChangeNotification` after write so the 7.4
+    // observer on EditTextView re-renders live.
+
+    /// Resolve the active theme's display name — reads
+    /// `UserDefaultsManagement.currentThemeName` when available, else
+    /// the canonical `Default`. Exposed so tests / callers can override
+    /// it without touching global state.
+    public static func activeThemeName(
+        preferredName: String? = nil
+    ) -> String {
+        if let preferredName = preferredName, !preferredName.isEmpty {
+            return preferredName
+        }
+        // UserDefaultsManagement lives in FSNotesCore; reading it
+        // directly is the path the rest of Phase 7 uses. Falls back to
+        // the canonical "Default" when the key is unset.
+        if let stored = UserDefaultsManagement.currentThemeName, !stored.isEmpty {
+            return stored
+        }
+        return Self.defaultThemeName
+    }
+
+    /// Serialize `Theme.shared` and write it to the user-themes
+    /// directory under the active theme's display name. Creates the
+    /// directory if necessary. Returns the URL that was written, or
+    /// `nil` on I/O failure.
+    ///
+    /// Behaviour summary:
+    ///   1. Resolve active name (argument → UserDefaults → "Default").
+    ///   2. Compute `<userThemesDir>/<ActiveName>.json`.
+    ///   3. Encode `Theme.shared` as JSON with pretty-print + sorted keys.
+    ///   4. Ensure the user themes directory exists.
+    ///   5. Write atomically.
+    ///   6. Update `UserDefaultsManagement.currentThemeName` to the
+    ///      active name (ensures the loader picks up this override on
+    ///      relaunch, and also handles the "saved while on bundled
+    ///      Default" case).
+    ///   7. Post `Theme.didChangeNotification`.
+    @discardableResult
+    public static func saveActiveTheme(
+        preferredName: String? = nil,
+        userThemesDirectory: URL? = nil
+    ) -> URL? {
+        let dir = userThemesDirectory ?? defaultUserThemesDirectory()
+        let name = activeThemeName(preferredName: preferredName)
+        let url = dir.appendingPathComponent("\(name).json")
+
+        // Pull both flat + nested and encode them together so the
+        // on-disk JSON matches what the loader expects to read back.
+        let flat = BlockStyleTheme.shared
+        let nested = ThemeNestedGroups.synthesized(from: flat)
+
+        let data: Data
+        do {
+            data = try BlockStyleTheme.encodeWithNested(flat: flat, nested: nested)
+        } catch {
+            themeLog("Encode failed for active theme '\(name)': \(error.localizedDescription)")
+            return nil
+        }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } catch {
+            themeLog("Write failed for active theme at \(url.path): \(error.localizedDescription)")
+            return nil
+        }
+
+        // Ensure currentThemeName matches what we just wrote — if the
+        // user was on the bundled Default and saved customizations, the
+        // next launch must pick up our override file, which requires the
+        // name to be persisted.
+        UserDefaultsManagement.currentThemeName = name
+
+        NotificationCenter.default.post(
+            name: BlockStyleTheme.didChangeNotification, object: nil
+        )
+        return url
     }
 }

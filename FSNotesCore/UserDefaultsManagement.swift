@@ -161,6 +161,17 @@ public class UserDefaultsManagement {
         static let Welcome = "welcome2026"
     }
 
+    // Phase 7.5 transitional: the editor typography / layout keys below
+    // (codeFontName, codeFontSize, fontName, fontSize, editorLineSpacing,
+    // lineHeightMultiple, lineWidth, marginSize, imagesWidth, italic,
+    // bold) are being subsumed by `Theme.shared`. As of the IBAction
+    // write-back slice, Preferences IBActions dual-write — mutating
+    // `Theme.shared` via `Theme.saveActiveTheme()` AND writing the UD
+    // key below — to keep the rest of the codebase (which still reads
+    // these keys directly) working during migration. A later 7.5 slice
+    // replaces the bodies below with proxies onto `Theme.shared` and
+    // deletes the backing UD keys. Do NOT remove keys in this slice.
+
     static var codeFontName: String {
         get {
             if let returnFontName = shared?.object(forKey: Constants.CodeFontNameKey) as? String {

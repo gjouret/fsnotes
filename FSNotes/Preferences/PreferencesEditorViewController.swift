@@ -296,8 +296,15 @@ class PreferencesEditorViewController: NSViewController {
     }
 
     @IBAction func lineSpacing(_ sender: NSSlider) {
+        let newMultiple = CGFloat(1 + sender.floatValue / 10)
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
+        // `lineHeightMultiple` has no flat-field storage on BlockStyleTheme
+        // (it lives in the synthesized ThemeSpacing group), so we only
+        // dual-write to UD this slice; a later 7.5 slice adds flat storage
+        // on the Theme schema and will mutate `Theme.shared` here too.
         UserDefaultsManagement.editorLineSpacing = 1
-        UserDefaultsManagement.lineHeightMultiple = CGFloat(1 + sender.floatValue / 10)
+        UserDefaultsManagement.lineHeightMultiple = newMultiple
+        persistActiveTheme()
 
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
@@ -313,7 +320,10 @@ class PreferencesEditorViewController: NSViewController {
     }
 
     @IBAction func imagesWidth(_ sender: NSSlider) {
+        Theme.shared.imagesWidth = CGFloat(sender.floatValue)
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
         UserDefaultsManagement.imagesWidth = sender.floatValue
+        persistActiveTheme()
 
         var temporary = URL(fileURLWithPath: NSTemporaryDirectory())
         temporary.appendPathComponent("ThumbnailsBig")
@@ -334,7 +344,10 @@ class PreferencesEditorViewController: NSViewController {
     }
 
     @IBAction func lineWidth(_ sender: NSSlider) {
+        Theme.shared.lineWidth = CGFloat(sender.floatValue)
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
         UserDefaultsManagement.lineWidth = sender.floatValue
+        persistActiveTheme()
 
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
@@ -367,15 +380,18 @@ class PreferencesEditorViewController: NSViewController {
     }
 
     @IBAction func marginSize(_ sender: NSSlider) {
+        Theme.shared.marginSize = CGFloat(sender.floatValue)
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
         UserDefaultsManagement.marginSize = sender.floatValue
+        persistActiveTheme()
 
         let editors = AppDelegate.getEditTextViews()
         for editor in editors {
             if let evc = editor.editorViewController {
                 editor.updateTextContainerInset()
-    
+
                 NotesTextProcessor.resetCaches()
-    
+
                 evc.refillEditArea(force: true)
             }
         }
@@ -431,18 +447,28 @@ class PreferencesEditorViewController: NSViewController {
     @IBAction func changeCodeFont(_ sender: Any?) {
         let fontManager = NSFontManager.shared
         let newFont = fontManager.convert(UserDefaultsManagement.codeFont)
+
+        Theme.shared.codeFontName = newFont.familyName ?? "Source Code Pro"
+        Theme.shared.codeFontSize = newFont.pointSize
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
         UserDefaultsManagement.codeFont = newFont
         NotesTextProcessor.codeFont = newFont
-        
+        persistActiveTheme()
+
         ViewController.shared()?.reloadFonts()
-        
+
         setCodeFontPreview()
     }
 
     @IBAction func changeNoteFont(_ sender: Any?) {
         let fontManager = NSFontManager.shared
         let newFont = fontManager.convert(UserDefaultsManagement.noteFont)
+
+        Theme.shared.noteFontName = newFont.fontName
+        Theme.shared.noteFontSize = newFont.pointSize
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
         UserDefaultsManagement.noteFont = newFont
+        persistActiveTheme()
 
         ViewController.shared()?.reloadFonts()
 
@@ -450,27 +476,54 @@ class PreferencesEditorViewController: NSViewController {
     }
 
     @IBAction func resetFont(_ sender: Any) {
+        Theme.shared.noteFontName = nil
+        Theme.shared.codeFontName = "Source Code Pro"
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
         UserDefaultsManagement.fontName = nil
         UserDefaultsManagement.codeFontName = "Source Code Pro"
+        persistActiveTheme()
 
         ViewController.shared()?.reloadFonts()
 
         setCodeFontPreview()
         setNoteFontPreview()
     }
-    
+
     @IBAction func changeItalic(_ sender: NSButton) {
-        UserDefaultsManagement.italic = sender.identifier?.rawValue == "italicAsterisk" ? "*" : "_"
-        
+        let marker = sender.identifier?.rawValue == "italicAsterisk" ? "*" : "_"
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
+        // Italic/bold markers live in the synthesized ThemeTypography group
+        // and have no flat-field storage on BlockStyleTheme today; a later
+        // 7.5 slice adds storage and wires the mutation here. For now we
+        // dual-write to UD and still persist + notify so any observer
+        // refreshes on the other fields that landed.
+        UserDefaultsManagement.italic = marker
+        persistActiveTheme()
+
         italicAsterisk.state = sender.identifier?.rawValue == "italicAsterisk" ? .on : .off
         italicUnderscore.state = sender.identifier?.rawValue == "italicUnderscore" ? .on : .off
     }
-    
+
     @IBAction func changeBold(_ sender: NSButton) {
-        UserDefaultsManagement.bold = sender.identifier?.rawValue == "boldAsterisk" ? "**" : "__"
-        
+        let marker = sender.identifier?.rawValue == "boldAsterisk" ? "**" : "__"
+        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
+        // (Same rationale as `changeItalic`.)
+        UserDefaultsManagement.bold = marker
+        persistActiveTheme()
+
         boldAsterisk.state = sender.identifier?.rawValue == "boldAsterisk" ? .on : .off
         boldUnderscore.state = sender.identifier?.rawValue == "boldUnderscore" ? .on : .off
+    }
+
+    // MARK: - Phase 7.5: persist helper
+    //
+    // Centralizes the Theme.save() call so every IBAction gets the same
+    // semantics (write current `Theme.shared` to the active user theme
+    // file + post `didChangeNotification`). Errors are logged by the
+    // save helper and swallowed here — the UI never blocks on a disk
+    // failure (e.g. permissions).
+    private func persistActiveTheme() {
+        _ = Theme.saveActiveTheme()
     }
     
     private func setCodeFontPreview() {
