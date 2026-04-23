@@ -733,9 +733,7 @@ Significantly shrunk vs. the original plan because Phase 2 (TextKit 2) and Phase
 - Selection = `DocumentRange { start, end: DocumentCursor }`
 - `textView.selectedRange` / `textView.textLayoutManager.textSelections` setters intercepted; translated through `DocumentRange`
 
-**5c. Find** — **thin or unnecessary**
-- TextKit 2 + real element content means `NSTextFinder` works natively across all text-bearing block types (bug #60 fixed in Phase 2)
-- `DocumentFinder` only needed if we want Find to search inside mermaid/math source text that the layout fragment visually hides. If yes: thin wrapper that toggles the visibility for highlight purposes. If no: delete this sub-phase.
+**5c. Find — ⛔ SKIPPED 2026-04-23 (Batch N+7 audit).** No `DocumentFinder` wrapper needed. Audit outcome: all text-bearing block types — paragraphs, headings, lists, blockquotes, code blocks, table cells (Bug #60 fix, Phase 2e T2-f), mermaid/math/display-math source — already live in `textStorage.string`, which `NSTextFinder` walks natively via the `NSTextFinderClient` bridge on `NSTextView`. Mermaid and math fragments intentionally keep source characters in storage and hide them visually by suppressing `super.draw()`; Find works against the source characters with no extra glue. Users who want to visually locate a match inside a diagram can switch to source mode (Cmd+/). Wiring at `ViewController+Setup.swift:271–272` sets `usesFindBar = true` + `isIncrementalSearchingEnabled = true`; no custom `NSTextFinderClient.string` override. If a future block type ever chooses the "source not in storage" pattern (e.g. pure bitmap attachment with no backing characters), revisit then. Exit criterion for this sub-phase: *n/a — deleted from Phase 5 plan.*
 
 **5d. Copy / paste**
 - Copy: `document.slice(in: selectionRange)` → `MarkdownSerializer` → pasteboard (write both `public.utf8-plain-text` markdown and `public.rtf` for cross-app fidelity where cheap)
