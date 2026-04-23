@@ -242,6 +242,272 @@ class BlockModelFormattingTests: XCTestCase {
         assertSpliceInvariant(old: proj, result: result)
     }
 
+    // MARK: - Bug #59: multi-item list unwrap
+    //
+    // When the user selects multiple items of a bullet list and presses
+    // the Bullet-List toolbar button, all touched items must convert to
+    // paragraphs — not just the first. A whole list is a single block,
+    // so the original multi-block toolbar path (`applyToggleAcross-
+    // Selection`) iterated once and ran the single-item primitive at
+    // the head of the selection, leaving items 2..N as list entries.
+    // `EditingOps.toggleListRange` is the multi-entry complement.
+
+    func test_toggleListRange_entireList_unwrapsAllItems() throws {
+        let proj = project("- First item\n- Second item\n- Third item\n")
+        // Selection covers the full list block.
+        let span = proj.blockSpans[0]
+        let sel = NSRange(location: span.location, length: span.length)
+        let result = try EditingOps.toggleListRange(selection: sel, in: proj)
+        guard let result = result else {
+            XCTFail("toggleListRange returned nil for whole-list selection")
+            return
+        }
+        assertRoundTrip(result, expected: "First item\nSecond item\nThird item\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_toggleListRange_twoOfThreeItems_unwrapsOnlyTouched() throws {
+        // Selection covers items 1–2 (Second + Third); first item
+        // remains a list entry.
+        let proj = project("- First item\n- Second item\n- Third item\n")
+        let items: [ListItem] = [
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("First item")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("Second item")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("Third item")], children: [])
+        ]
+        let entries = EditingOps.flattenListPublic(items)
+        let span = proj.blockSpans[0]
+        let startOffset = span.location + entries[1].startOffset + entries[1].prefixLength
+        let endOffset = span.location + entries[2].startOffset + entries[2].prefixLength + entries[2].inlineLength
+        let sel = NSRange(location: startOffset, length: endOffset - startOffset)
+
+        let result = try EditingOps.toggleListRange(selection: sel, in: proj)
+        guard let result = result else {
+            XCTFail("toggleListRange returned nil for 2-item selection")
+            return
+        }
+        assertRoundTrip(result, expected: "- First item\nSecond item\nThird item\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_toggleListRange_middleItems_leavesBeforeAndAfterAsLists() throws {
+        // Selection covers middle two items of a four-item list. Before
+        // (item 0) and after (item 3) remain in their own list blocks.
+        let proj = project("- A\n- B\n- C\n- D\n")
+        let items: [ListItem] = [
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("A")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("B")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("C")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("D")], children: [])
+        ]
+        let entries = EditingOps.flattenListPublic(items)
+        let span = proj.blockSpans[0]
+        let startOffset = span.location + entries[1].startOffset + entries[1].prefixLength
+        let endOffset = span.location + entries[2].startOffset + entries[2].prefixLength + entries[2].inlineLength
+        let sel = NSRange(location: startOffset, length: endOffset - startOffset)
+
+        let result = try EditingOps.toggleListRange(selection: sel, in: proj)
+        guard let result = result else {
+            XCTFail("toggleListRange returned nil for middle-items selection")
+            return
+        }
+        // Expected: list[A] + B paragraph + C paragraph + list[D].
+        assertRoundTrip(result, expected: "- A\nB\nC\n- D\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_toggleListRange_singleItem_returnsNilSoCallerFallsBack() throws {
+        // Cursor inside a single item is NOT a multi-item-unwrap case —
+        // the primitive must return nil so the caller delegates to the
+        // existing single-item `toggleList` primitive (which splits the
+        // list: items before as list, current as paragraph, after as
+        // list). Guards against over-eager unwrap.
+        let proj = project("- First item\n- Second item\n- Third item\n")
+        let items: [ListItem] = [
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("First item")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("Second item")], children: []),
+            ListItem(indent: "", marker: "-", afterMarker: " ", checkbox: nil, inline: [.text("Third item")], children: [])
+        ]
+        let entries = EditingOps.flattenListPublic(items)
+        let span = proj.blockSpans[0]
+        let cursorOffset = span.location + entries[1].startOffset + entries[1].prefixLength + 3
+        let sel = NSRange(location: cursorOffset, length: 0)
+
+        let result = try EditingOps.toggleListRange(selection: sel, in: proj)
+        XCTAssertNil(result,
+            "Single-item cursor should return nil so caller delegates to single-item toggleList")
+    }
+
+    func test_toggleListRange_paragraphSelection_returnsNil() throws {
+        // Selection is entirely outside a list block — primitive must
+        // return nil. Prevents the multi-unwrap path from accidentally
+        // matching wrap-paragraphs-into-list selections.
+        let proj = project("First\n\nSecond\n")
+        let sel = NSRange(location: 0, length: proj.attributed.length)
+        let result = try EditingOps.toggleListRange(selection: sel, in: proj)
+        XCTAssertNil(result, "Non-list selection should return nil")
+    }
+
+    func test_toggleListRange_mixedDepthNested_entireListUnwraps() throws {
+        // Bug #59 follow-up: user reported that mixed L1/L2/L3 items
+        // only converted the first item when the toolbar toggled off.
+        // Root cause: the top-level-only path guard bailed to nil and
+        // the fallback single-item path unwrapped only the cursor's
+        // item. Fix: each top-level subtree is either all-touched
+        // (emit paragraphs for every entry in render order) or
+        // none-touched (keep as a list item).
+        let md = "- A\n  - A1\n    - A1a\n- B\n  - B1\n- C\n"
+        let proj = project(md)
+        XCTAssertEqual(proj.document.blocks.count, 1, "setup: single list block")
+
+        // Selection covers the entire list.
+        let span = proj.blockSpans[0]
+        let sel = NSRange(location: span.location, length: span.length)
+        let result = try EditingOps.toggleListRange(selection: sel, in: proj)
+        guard let result = result else {
+            XCTFail("toggleListRange returned nil for mixed-depth whole-list selection")
+            return
+        }
+        // Every entry becomes a paragraph in flat render order.
+        assertRoundTrip(result, expected: "A\nA1\nA1a\nB\nB1\nC\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_toggleListRange_mixedDepth_oneSubtreeUntouched() throws {
+        // User selects only the first subtree (A + its descendants);
+        // B + B1 and C remain as a list block after.
+        let md = "- A\n  - A1\n- B\n  - B1\n- C\n"
+        let proj = project(md)
+
+        let span = proj.blockSpans[0]
+        guard case .list(let items, _) = proj.document.blocks[0] else {
+            XCTFail("expected list block"); return
+        }
+        let entries = EditingOps.flattenListPublic(items)
+        // entries[0] = A (path [0]), entries[1] = A1 (path [0, 0])
+        let aStart = span.location + entries[0].startOffset + entries[0].prefixLength
+        let a1End = span.location + entries[1].startOffset + entries[1].prefixLength + entries[1].inlineLength
+        let sel = NSRange(location: aStart, length: a1End - aStart)
+
+        let result = try EditingOps.toggleListRange(selection: sel, in: proj)
+        guard let result = result else {
+            XCTFail("toggleListRange returned nil for first-subtree selection")
+            return
+        }
+        // A + A1 become paragraphs; B/B1/C remain a list.
+        assertRoundTrip(result, expected: "A\nA1\n- B\n  - B1\n- C\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    // MARK: - Bug: toolbar list toggle must not strip inline attachments
+    //
+    // The view-layer reproduction: user selects several paragraphs where
+    // one contains an image attachment (e.g. `![sheet](File.numbers)`),
+    // and presses the Bullet List toolbar button. Pre-fix, the live
+    // hydrated NSTextAttachment was being replaced by a bare placeholder
+    // and the QuickLook preview disappeared. The view-layer fix is in
+    // `applyEditResultWithUndo` (re-run the three attachment hydrators
+    // when the splice replacement contains any U+FFFC). The pure-
+    // function contract we pin here is that the Document tree itself
+    // preserves the `.image` inline — if that ever regresses, no amount
+    // of hydration can restore the attachment.
+
+    func test_bug_wrapMultiParagraphList_preservesImageInline() throws {
+        // Three paragraphs; middle one is a pure file-attachment image.
+        // After wrapping all three into a single list, the middle list
+        // item's inline tree must still contain the `.image` inline
+        // with the same alt text and destination.
+        let md = "Before\n\n![sheet](File.numbers)\n\nAfter\n"
+        let proj = project(md)
+        XCTAssertEqual(proj.document.blocks.count, 5,
+            "setup: para, blank, para(image), blank, para")
+
+        // Build a single list wrapping all three paragraphs (mirrors
+        // `wrapSelectionInSingleList`'s behavior).
+        var items: [ListItem] = []
+        for block in proj.document.blocks {
+            if case .paragraph(let inline) = block {
+                items.append(ListItem(
+                    indent: "", marker: "-", afterMarker: " ",
+                    checkbox: nil, inline: inline, children: []
+                ))
+            }
+        }
+        XCTAssertEqual(items.count, 3)
+
+        let result = try EditingOps.replaceBlockRange(
+            0...4,
+            with: [.list(items: items)],
+            in: proj
+        )
+
+        // The new document should be a single list with 3 items.
+        guard result.newProjection.document.blocks.count == 1,
+              case .list(let newItems, _) = result.newProjection.document.blocks[0] else {
+            XCTFail("expected single list block; got \(result.newProjection.document.blocks)")
+            return
+        }
+        XCTAssertEqual(newItems.count, 3)
+
+        // Middle item must still carry the image inline.
+        let middle = newItems[1].inline
+        var foundImage = false
+        for inl in middle {
+            if case .image(let alt, let dest, _) = inl {
+                // alt is [Inline] — flatten to plain text.
+                let altText = alt.reduce(into: "") { out, a in
+                    if case .text(let s) = a { out += s }
+                }
+                XCTAssertEqual(altText, "sheet")
+                XCTAssertEqual(dest, "File.numbers")
+                foundImage = true
+            }
+        }
+        XCTAssertTrue(foundImage,
+            "List-wrap must preserve .image inline; got middle=\(middle)")
+    }
+
+    func test_bug_wrapMultiParagraphList_preservesLinkInline() throws {
+        // Same test as above but with a `.link` inline instead of
+        // `.image` — covers the path where an attachment is rendered
+        // as a plain Markdown link rather than an image.
+        let md = "Before\n\n[File](folder/File.numbers)\n\nAfter\n"
+        let proj = project(md)
+        XCTAssertEqual(proj.document.blocks.count, 5)
+
+        var items: [ListItem] = []
+        for block in proj.document.blocks {
+            if case .paragraph(let inline) = block {
+                items.append(ListItem(
+                    indent: "", marker: "-", afterMarker: " ",
+                    checkbox: nil, inline: inline, children: []
+                ))
+            }
+        }
+        let result = try EditingOps.replaceBlockRange(
+            0...4,
+            with: [.list(items: items)],
+            in: proj
+        )
+        guard case .list(let newItems, _) = result.newProjection.document.blocks[0] else {
+            XCTFail("expected list"); return
+        }
+        let middle = newItems[1].inline
+        var foundLink = false
+        for inl in middle {
+            if case .link(let text, let dest) = inl {
+                let label = text.reduce(into: "") { out, t in
+                    if case .text(let s) = t { out += s }
+                }
+                XCTAssertEqual(label, "File")
+                XCTAssertEqual(dest, "folder/File.numbers")
+                foundLink = true
+            }
+        }
+        XCTAssertTrue(foundLink,
+            "List-wrap must preserve .link inline; got middle=\(middle)")
+    }
+
     // MARK: - Inline trait toggle: strikethrough
 
     func test_toggleStrikethrough_wrapSelection() throws {
@@ -295,9 +561,28 @@ class BlockModelFormattingTests: XCTestCase {
         let serialized = MarkdownSerializer.serialize(result.newProjection.document)
         // Should have the HR after the paragraph.
         XCTAssertTrue(serialized.contains("---"), "Expected HR in serialized output: \(serialized)")
-        // The document should have 3 blocks: paragraph + blankLine + HR.
-        // The blankLine prevents "---" from being parsed as a setext heading underline.
-        XCTAssertEqual(result.newProjection.document.blocks.count, 3)
+        // Document has 4 blocks: paragraph + blankLine + HR + trailing paragraph.
+        // The blankLine prevents "---" from being parsed as a setext heading
+        // underline. The trailing paragraph gives the cursor a place to land
+        // after HR insertion.
+        XCTAssertEqual(result.newProjection.document.blocks.count, 4)
+        // Cursor should land at the start of the trailing paragraph.
+        let trailingSpan = result.newProjection.blockSpans[3]
+        XCTAssertEqual(result.newCursorPosition, trailingSpan.location,
+            "Cursor should be at start of paragraph after HR")
+    }
+
+    func test_insertHorizontalRule_whenParagraphAlreadyFollows_doesNotAddExtra() throws {
+        // Two distinct paragraph blocks (separated by blank line).
+        let proj = project("Hello\n\nWorld\n")
+        XCTAssertEqual(proj.document.blocks.count, 3,
+            "Setup expects paragraph, blankLine, paragraph")
+        let result = try EditingOps.insertHorizontalRule(at: 0, in: proj)
+        // Should NOT insert an extra trailing paragraph because a
+        // paragraph ("World") already follows the HR position.
+        XCTAssertEqual(result.newProjection.document.blocks.count,
+                       proj.document.blocks.count + 2,
+                       "Only blankLine + HR should have been inserted")
     }
 
     // MARK: - Unsupported block types

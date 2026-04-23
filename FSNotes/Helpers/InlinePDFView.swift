@@ -6,10 +6,13 @@
 //  inside an NSTextAttachment, similar to how Apple Notes and Obsidian
 //  display PDF attachments inline.
 //
-//  Architecture:
+//  Architecture (TK2):
 //  - InlinePDFView wraps a PDFView with controls (toolbar, thumbnail sidebar)
-//  - PDFAttachmentCell hosts the InlinePDFView as a live subview of
-//    the EditTextView, positioned by the layout manager
+//  - PDFNSTextAttachment subclass holds a reference to the InlinePDFView
+//    and vends a PDFAttachmentViewProvider via viewProvider(for:location:textContainer:)
+//  - PDFAttachmentViewProvider (NSTextAttachmentViewProvider) hands the
+//    live InlinePDFView to TK2, which handles viewport lifecycle and
+//    subview positioning itself
 //  - PDFAttachmentProcessor scans textStorage for ![](*.pdf) patterns
 //    and replaces them with attachment characters
 //
@@ -348,11 +351,67 @@ class InlinePDFView: NSView {
     }
 }
 
-// MARK: - PDFAttachmentCell
+// MARK: - PDFNSTextAttachment (TK2)
 
-/// Custom NSTextAttachmentCell that hosts an InlinePDFView as a live
-/// subview of the text view. Follows the same pattern as
-/// InlineTableAttachmentCell.
+/// TK2 `NSTextAttachment` subclass that holds a reference to the live
+/// `InlinePDFView` and vends a `PDFAttachmentViewProvider` so TextKit 2
+/// can host the view directly. Under TK2,
+/// `NSTextAttachmentCell.draw(withFrame:in:characterIndex:layoutManager:)`
+/// is never called — view hosting must go through
+/// `NSTextAttachmentViewProvider`.
+class PDFNSTextAttachment: NSTextAttachment {
+
+    let inlinePDFView: InlinePDFView
+
+    init(inlineView: InlinePDFView, size: NSSize) {
+        self.inlinePDFView = inlineView
+        super.init(data: nil, ofType: nil)
+        self.bounds = NSRect(origin: .zero, size: size)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewProvider(for parentView: NSView?,
+                               location: any NSTextLocation,
+                               textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
+        let provider = PDFAttachmentViewProvider(
+            textAttachment: self,
+            parentView: parentView,
+            textLayoutManager: textContainer?.textLayoutManager,
+            location: location
+        )
+        provider.tracksTextAttachmentViewBounds = true
+        return provider
+    }
+}
+
+// MARK: - PDFAttachmentViewProvider (TK2)
+
+/// `NSTextAttachmentViewProvider` that hands the already-constructed
+/// `InlinePDFView` to TextKit 2. TK2 handles adding the view to the
+/// text view's hierarchy and positioning it within the viewport.
+class PDFAttachmentViewProvider: NSTextAttachmentViewProvider {
+
+    override func loadView() {
+        guard let attachment = textAttachment as? PDFNSTextAttachment else {
+            super.loadView()
+            return
+        }
+        self.view = attachment.inlinePDFView
+    }
+}
+
+// MARK: - PDFAttachmentCell (legacy, unwired)
+
+/// Legacy TK1 attachment cell. Kept during TK1-fallback period; remove
+/// when TK1 source-mode is deleted (Phase 4). No longer wired by
+/// `PDFAttachmentProcessor` — TK2 view hosting goes through
+/// `PDFNSTextAttachment` + `PDFAttachmentViewProvider` above. This class
+/// remains referenced only by orphan-cleanup code in
+/// `EditTextView+NoteState.swift` so old PDF cells from saved state can
+/// still be found and removed if they exist.
 class PDFAttachmentCell: NSTextAttachmentCell {
 
     let inlinePDFView: InlinePDFView
@@ -374,36 +433,6 @@ class PDFAttachmentCell: NSTextAttachmentCell {
 
     override func cellBaselineOffset() -> NSPoint {
         return NSPoint(x: 0, y: -2)
-    }
-
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
-        // No-op: wait for the characterIndex variant.
-    }
-
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?,
-                       characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
-        // Don't draw if inside a folded region
-        if let ts = layoutManager.textStorage,
-           charIndex < ts.length,
-           ts.attribute(.foldedContent, at: charIndex, effectiveRange: nil) != nil {
-            inlinePDFView.isHidden = true
-            return
-        }
-        guard let textView = controlView as? NSTextView else { return }
-
-        // Guard against invalid frames from non-contiguous layout
-        let hasContentBefore = charIndex > 10
-        let frameNearTop = cellFrame.origin.y < 50
-        if hasContentBefore && frameNearTop {
-            return
-        }
-
-        // Position the live PDF view and make it visible
-        inlinePDFView.frame = cellFrame
-        inlinePDFView.isHidden = false
-        if inlinePDFView.superview !== textView {
-            textView.addSubview(inlinePDFView)
-        }
     }
 }
 
@@ -454,9 +483,9 @@ enum PDFAttachmentProcessor {
             guard let attachment = value as? NSTextAttachment else { return }
             attachmentCount += 1
 
-            // Skip if already rendered as PDFAttachmentCell
-            if attachment.attachmentCell is PDFAttachmentCell {
-                bmLog("📄   skip @\(range.location): already PDFAttachmentCell")
+            // Skip if already rendered as a TK2 PDF attachment
+            if attachment is PDFNSTextAttachment {
+                bmLog("📄   skip @\(range.location): already PDFNSTextAttachment")
                 return
             }
 
@@ -474,10 +503,7 @@ enum PDFAttachmentProcessor {
             let size = pdfViewWidget.computeSize(forWidth: containerWidth)
             pdfViewWidget.frame = NSRect(origin: .zero, size: size)
 
-            let newAttachment = NSTextAttachment()
-            let cell = PDFAttachmentCell(pdfView: pdfViewWidget, size: size)
-            newAttachment.attachmentCell = cell
-            newAttachment.bounds = NSRect(origin: .zero, size: size)
+            let newAttachment = PDFNSTextAttachment(inlineView: pdfViewWidget, size: size)
 
             bmLog("📄   PENDING @\(range.location): \(url.lastPathComponent)")
             replacements.append((range, newAttachment))
@@ -537,10 +563,7 @@ enum PDFAttachmentProcessor {
             let size = pdfViewWidget.computeSize(forWidth: containerWidth)
             pdfViewWidget.frame = NSRect(origin: .zero, size: size)
 
-            let attachment = NSTextAttachment()
-            let cell = PDFAttachmentCell(pdfView: pdfViewWidget, size: size)
-            attachment.attachmentCell = cell
-            attachment.bounds = NSRect(origin: .zero, size: size)
+            let attachment = PDFNSTextAttachment(inlineView: pdfViewWidget, size: size)
 
             let replacement = NSMutableAttributedString(attachment: attachment)
             let repRange = NSRange(location: 0, length: replacement.length)

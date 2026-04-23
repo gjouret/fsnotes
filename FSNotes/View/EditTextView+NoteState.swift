@@ -452,7 +452,17 @@ extension EditTextView {
         // Ensure layout is up-to-date before scrolling, then scroll
         // synchronously. The previous async 100ms delay caused race
         // conditions with other cursor-setting operations.
-        if let lm = layoutManager, let tc = textContainer {
+        //
+        // Phase 2a TK2-safety (2026-04-22): bare `layoutManager` was an
+        // implicit `self.layoutManager` read. On a TK2-wired NSTextView
+        // that accessor lazy-instantiates a TK1 NSLayoutManager and
+        // permanently nils `textLayoutManager` — the same silent
+        // downgrade that kept Phase 2c HR rules from rendering. Route
+        // through `layoutManagerIfTK1`: on TK2 the accessor returns nil
+        // and we skip the ensureLayout hint — TK2's NSTextLayoutManager
+        // handles viewport layout lazily, so `scrollRangeToVisible`
+        // below still does the right thing.
+        if let lm = layoutManagerIfTK1, let tc = textContainer {
             lm.ensureLayout(for: tc)
         }
         let cursorRange = NSMakeRange(self.selectedRange().location, 0)
@@ -537,29 +547,16 @@ extension EditTextView {
         }
     }
 
-    /// Remove `InlinePDFView` subviews whose backing attachment has
-    /// been spliced out of storage. Mirrors the QuickLook and table
-    /// orphan cleanups. Falls back to a full teardown if there's no
-    /// storage to enumerate.
-    func removeOrphanedInlinePDFViews() {
-        guard textStorage != nil else { removeAllInlinePDFViews(); return }
-        removeOrphanedInlineViews(
-            cellType: PDFAttachmentCell.self,
-            viewType: InlinePDFView.self,
-            hostedView: { $0.inlinePDFView }
-        )
-    }
-
-    /// Remove `InlineQuickLookView` subviews whose backing attachment
-    /// has been spliced out of storage.
-    func removeOrphanedInlineQuickLookViews() {
-        guard textStorage != nil else { removeAllInlineQuickLookViews(); return }
-        removeOrphanedInlineViews(
-            cellType: QuickLookAttachmentCell.self,
-            viewType: InlineQuickLookView.self,
-            hostedView: { $0.inlineView }
-        )
-    }
+    // Note: `removeOrphanedInlinePDFViews` and
+    // `removeOrphanedInlineQuickLookViews` were deleted when
+    // `InlinePDFView` / `InlineQuickLookView` migrated from the
+    // TK1 `NSTextAttachmentCell.draw(...)` pattern to the TK2
+    // `NSTextAttachmentViewProvider` pattern. Under view providers,
+    // AppKit owns the view lifecycle — views are added and removed
+    // automatically as attachments enter/leave the viewport, so
+    // manual orphan cleanup is no longer necessary (and could race
+    // with views Apple just attached). `InlineTableView` still uses
+    // the legacy cell pattern, so its orphan cleanup remains below.
 
     /// Remove `InlineTableView` subviews whose backing attachment has
     /// been spliced out of storage.

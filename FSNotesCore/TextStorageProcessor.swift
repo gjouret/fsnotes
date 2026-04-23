@@ -461,6 +461,15 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         textStorage.layoutManagers.first?.invalidateLayout(
             forCharacterRange: foldRange, actualCharacterRange: nil)
 
+        // Phase 2f.1 — under TK2 the TK1 layout managers list is empty so
+        // the invalidations above are no-ops. Invalidate the TK2 layout
+        // stack directly so the content-storage delegate re-dispatches
+        // the affected paragraphs (folded → `FoldedElement` → zero-height
+        // `FoldedLayoutFragment`; unfolded → normal block-model element).
+        if let editTextView = editor as? EditTextView {
+            editTextView.invalidateTextKit2Layout(forCharacterRange: foldRange)
+        }
+
         // RC5: Persist fold state to the note so it survives note switches.
         if let note = editor?.note {
             note.cachedFoldState = collapsedBlockIndices

@@ -1,0 +1,7 @@
+- First item in the list
+- Second item has **bold text** inside it
+- Third item with a nested sublist
+  - Nested child alpha
+  - Nested child beta
+  - Nested child gamma
+- Fourth item closes the outer list

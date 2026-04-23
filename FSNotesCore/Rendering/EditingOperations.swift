@@ -498,6 +498,12 @@ public struct EditResult {
     /// operations (bold, italic, etc.) to keep text selected so the
     /// user can stack additional formatting.
     public var newSelectionLength: Int = 0
+
+    /// Phase 1: declarative contract. Populated by primitives that
+    /// have been retrofitted. `nil` on primitives not yet retrofitted —
+    /// callers must tolerate `nil` during the rollout. The harness
+    /// only runs contract invariants when `contract != nil`.
+    public var contract: EditContract? = nil
 }
 
 // NOTE: EditingError is now defined at the top of the file with the
@@ -567,6 +573,21 @@ public enum EditingOps {
                     )
                     let paraSpan = result.newProjection.blockSpans[blockIndex + 1]
                     result.newCursorPosition = paraSpan.location
+                    // Contract: the code block stays a code block at
+                    // `blockIndex` (content truncated by one trailing "\n")
+                    // and a fresh paragraph appears at `blockIndex + 1`.
+                    // The kind is unchanged, so `.modifyInline` is the
+                    // correct first-slot action.
+                    result.contract = EditContract(
+                        declaredActions: [
+                            .modifyInline(blockIndex: blockIndex),
+                            .insertBlock(at: blockIndex + 1)
+                        ],
+                        postCursor: result.newProjection.cursor(
+                            atStorageIndex: result.newCursorPosition
+                        ),
+                        postSelectionLength: 0
+                    )
                     return result
                 }
                 // Code blocks accept any content verbatim — fall through
@@ -581,6 +602,43 @@ public enum EditingOps {
                     // paragraph after the split point).
                     let lastNewBlockIdx = blockIndex + newBlocks.count - 1
                     result.newCursorPosition = result.newProjection.blockSpans[lastNewBlockIdx].location
+                    // Contract: `splitParagraphOnNewline` returns one of four
+                    // shapes depending on whether the before/after halves
+                    // were empty. See its doc for the mapping. The action
+                    // list reflects what happened at `blockIndex` (either a
+                    // kind change paragraph→blankLine when before is empty,
+                    // or an inline modification when before is non-empty)
+                    // plus one or two fresh inserts for the new sibling(s).
+                    let (beforeHalf, afterHalf) = splitInlines(inline, at: offsetInBlock)
+                    let beforeEmpty = isInlineEmpty(beforeHalf)
+                    let afterEmpty = isInlineEmpty(afterHalf)
+                    var actions: [EditAction] = []
+                    // First-block action: paragraph stays paragraph only when
+                    // the "before" half is non-empty. When before is empty,
+                    // the first block becomes a blankLine (kind change).
+                    if beforeEmpty {
+                        actions.append(.changeBlockKind(at: blockIndex))
+                    } else {
+                        actions.append(.modifyInline(blockIndex: blockIndex))
+                    }
+                    // Insert(s) for the new block(s) after blockIndex. Shape
+                    // count:
+                    //   - (true, true):   [.blankLine, .blankLine]              → 1 insert
+                    //   - (true, false):  [.blankLine, .paragraph(after)]       → 1 insert
+                    //   - (false, true):  [.paragraph(before), .blankLine]      → 1 insert
+                    //   - (false, false): [.paragraph(before), .blankLine,
+                    //                      .paragraph(after)]                   → 2 inserts
+                    actions.append(.insertBlock(at: blockIndex + 1))
+                    if !beforeEmpty && !afterEmpty {
+                        actions.append(.insertBlock(at: blockIndex + 2))
+                    }
+                    result.contract = EditContract(
+                        declaredActions: actions,
+                        postCursor: result.newProjection.cursor(
+                            atStorageIndex: result.newCursorPosition
+                        ),
+                        postSelectionLength: 0
+                    )
                     return result
                 }
                 // Multi-line paste into paragraph.
@@ -595,9 +653,58 @@ public enum EditingOps {
                 // of the pasted text. Since each "\n" becomes a block
                 // separator, count rendered chars = string.count.
                 result.newCursorPosition = storageIndex + string.count
+                // Contract: paragraph paste replaces the target block
+                // and inserts N additional blocks (the pasted-document
+                // tail), where N = post-edit delta. `replaceBlocksSlow`
+                // may coalesce adjacent lists in the result, shrinking
+                // the count; emit `.mergeAdjacent` actions in that case.
+                let pasteDeltaP = result.newProjection.document.blocks.count
+                    - projection.document.blocks.count
+                var pasteActionsP: [EditAction] = [.replaceBlock(at: blockIndex)]
+                if pasteDeltaP > 0 {
+                    for step in 0..<pasteDeltaP {
+                        pasteActionsP.append(.insertBlock(at: blockIndex + 1 + step))
+                    }
+                } else if pasteDeltaP < 0 {
+                    for _ in 0..<(-pasteDeltaP) {
+                        pasteActionsP.append(.mergeAdjacent(firstIndex: blockIndex))
+                    }
+                }
+                result.contract = EditContract(
+                    declaredActions: pasteActionsP,
+                    postCursor: result.newProjection.cursor(
+                        atStorageIndex: result.newCursorPosition
+                    ),
+                    postSelectionLength: 0
+                )
                 return result
             case .list(let items, _):
                 if string == "\n" {
+                    // Return at the home (offset 0) of a list item's
+                    // inline content is treated the same as Delete-at-home
+                    // / Shift-Tab: at depth 0 exit to body, at depth > 0
+                    // unindent. The previous behavior (split into an empty
+                    // leading item + content item) was not useful — the
+                    // user either wants a blank line above the item
+                    // (exitToBody produces it) or to de-nest.
+                    if ListEditingFSM.isAtHomePosition(storageIndex: storageIndex, in: projection) {
+                        let entries = flattenList(items)
+                        if let (entryIdx, _) = listEntryContaining(
+                            entries: entries, offset: offsetInBlock, forInsertion: true
+                        ), !isInlineEmpty(entries[entryIdx].item.inline) {
+                            let state = ListEditingFSM.detectState(
+                                storageIndex: storageIndex, in: projection
+                            )
+                            switch state {
+                            case .listItem(depth: 0, _):
+                                return try exitListItem(at: storageIndex, in: projection)
+                            case .listItem:
+                                return try unindentListItem(at: storageIndex, in: projection)
+                            case .bodyText:
+                                break
+                            }
+                        }
+                    }
                     do {
                         let newBlocks = try splitListOnNewline(
                             items: items, at: offsetInBlock, blockIndex: blockIndex, in: projection
@@ -620,6 +727,19 @@ public enum EditingOps {
                         } else {
                             result.newCursorPosition = blockSpan.location
                         }
+                        // Contract: `splitListOnNewline` returns exactly one
+                        // new `.list` block — the list structure changes
+                        // (one extra item) but the top-level block count,
+                        // kind, and index are unchanged. Use `.replaceBlock`
+                        // (not `.modifyInline`) because the list items
+                        // array gained an entry, which is structural.
+                        result.contract = EditContract(
+                            declaredActions: [.replaceBlock(at: blockIndex)],
+                            postCursor: result.newProjection.cursor(
+                                atStorageIndex: result.newCursorPosition
+                            ),
+                            postSelectionLength: 0
+                        )
                         return result
                     } catch EditingError.unsupported(let reason) where reason.contains("empty item return") {
                         // FSM: empty item → exit or unindent.
@@ -632,6 +752,17 @@ public enum EditingOps {
                     blockIndex: blockIndex, in: projection
                 )
                 result.newCursorPosition = storageIndex + string.count
+                // Contract: `pasteIntoList` always produces exactly one
+                // `.list` block (items array grows); block kind and count
+                // unchanged. `.replaceBlock` covers the items-array shape
+                // change.
+                result.contract = EditContract(
+                    declaredActions: [.replaceBlock(at: blockIndex)],
+                    postCursor: result.newProjection.cursor(
+                        atStorageIndex: result.newCursorPosition
+                    ),
+                    postSelectionLength: 0
+                )
                 return result
             case .blockquote(let lines):
                 if string == "\n" {
@@ -651,6 +782,19 @@ public enum EditingOps {
                     } else {
                         result.newCursorPosition = blockSpan.location
                     }
+                    // Contract: `splitBlockquoteOnNewline` returns exactly one
+                    // new `.blockquote` block — the `lines` array gained an
+                    // entry (structural, inside the block). Block index,
+                    // kind, and count are unchanged. Use `.replaceBlock`
+                    // because a new line entry appeared, not just an inline
+                    // content change.
+                    result.contract = EditContract(
+                        declaredActions: [.replaceBlock(at: blockIndex)],
+                        postCursor: result.newProjection.cursor(
+                            atStorageIndex: result.newCursorPosition
+                        ),
+                        postSelectionLength: 0
+                    )
                     return result
                 }
                 // Multi-line paste into blockquote
@@ -659,6 +803,16 @@ public enum EditingOps {
                     blockIndex: blockIndex, in: projection
                 )
                 result.newCursorPosition = storageIndex + string.count
+                // Contract: `pasteIntoBlockquote` produces exactly one
+                // `.blockquote` block (lines array grows); kind and count
+                // unchanged.
+                result.contract = EditContract(
+                    declaredActions: [.replaceBlock(at: blockIndex)],
+                    postCursor: result.newProjection.cursor(
+                        atStorageIndex: result.newCursorPosition
+                    ),
+                    postSelectionLength: 0
+                )
                 return result
             case .htmlBlock:
                 // HTML blocks accept any content verbatim, like code blocks.
@@ -717,6 +871,27 @@ public enum EditingOps {
                     // new block).
                     let paraBlockIdx = blockIndex + 1
                     result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
+                    // Contract: heading split always produces two blocks. The
+                    // first block-slot either:
+                    //   - keeps kind (heading, shortened suffix) →
+                    //     `.modifyInline`, OR
+                    //   - degrades to blankLine (when the user split at the
+                    //     marker boundary and the heading text is empty) →
+                    //     `.changeBlockKind`.
+                    // The second slot is always a newly-inserted paragraph.
+                    let firstSlotAction: EditAction = (headingIsEmpty && level > 0)
+                        ? .changeBlockKind(at: blockIndex)
+                        : .modifyInline(blockIndex: blockIndex)
+                    result.contract = EditContract(
+                        declaredActions: [
+                            firstSlotAction,
+                            .insertBlock(at: blockIndex + 1)
+                        ],
+                        postCursor: result.newProjection.cursor(
+                            atStorageIndex: result.newCursorPosition
+                        ),
+                        postSelectionLength: 0
+                    )
                     return result
                 }
                 // Multi-line paste into heading: treat like Return + paste remainder into new paragraph
@@ -725,6 +900,29 @@ public enum EditingOps {
                     blockIndex: blockIndex, in: projection
                 )
                 result.newCursorPosition = storageIndex + string.count
+                // Contract: heading paste always converts the heading to a
+                // paragraph (kind change → `.replaceBlock(at: blockIndex)`)
+                // and then appends N additional blocks from the pasted
+                // content. Delta-based shape handles coalesce shrinkage.
+                let pasteDeltaH = result.newProjection.document.blocks.count
+                    - projection.document.blocks.count
+                var pasteActionsH: [EditAction] = [.replaceBlock(at: blockIndex)]
+                if pasteDeltaH > 0 {
+                    for step in 0..<pasteDeltaH {
+                        pasteActionsH.append(.insertBlock(at: blockIndex + 1 + step))
+                    }
+                } else if pasteDeltaH < 0 {
+                    for _ in 0..<(-pasteDeltaH) {
+                        pasteActionsH.append(.mergeAdjacent(firstIndex: blockIndex))
+                    }
+                }
+                result.contract = EditContract(
+                    declaredActions: pasteActionsH,
+                    postCursor: result.newProjection.cursor(
+                        atStorageIndex: result.newCursorPosition
+                    ),
+                    postSelectionLength: 0
+                )
                 return result
                 
             case .blankLine:
@@ -734,16 +932,45 @@ public enum EditingOps {
                     var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
                     let lastNewBlockIdx = blockIndex + newBlocks.count - 1
                     result.newCursorPosition = result.newProjection.blockSpans[lastNewBlockIdx].location
+                    // Contract: the pre-edit blankLine at `blockIndex` is
+                    // preserved (same slot, same kind, no inline to modify —
+                    // blankLine has no content). A new blankLine appears at
+                    // `blockIndex + 1` with a fresh slot id (minted by
+                    // replaceBlocksSlow).
+                    result.contract = EditContract(
+                        declaredActions: [.insertBlock(at: blockIndex + 1)],
+                        postCursor: result.newProjection.cursor(
+                            atStorageIndex: result.newCursorPosition
+                        ),
+                        postSelectionLength: 0
+                    )
                     return result
                 }
                 throw EditingError.unsupported(
                     reason: "newline insertion in blankLine not supported"
                 )
             case .horizontalRule, .table:
-                throw EditingError.unsupported(
-                    reason: "newline insertion in \(describe(oldBlock)) not supported"
-                )
+                // Handled below as an atomic-block insertion (creates a
+                // paragraph sibling instead of editing the block in place).
+                break
             }
+        }
+
+        // Atomic blocks (.table, .horizontalRule) have no editable inline
+        // content. Any insertion — Return or typed characters — becomes a
+        // new paragraph sibling: before the atomic block when the cursor
+        // is at its start, after it otherwise.
+        switch oldBlock {
+        case .table, .horizontalRule:
+            return try insertAroundAtomicBlock(
+                atomicBlock: oldBlock,
+                offsetInBlock: offsetInBlock,
+                string: string,
+                blockIndex: blockIndex,
+                in: projection
+            )
+        default:
+            break
         }
 
         let newBlock = try insertIntoBlock(oldBlock, offsetInBlock: offsetInBlock, string: string)
@@ -752,7 +979,138 @@ public enum EditingOps {
             with: newBlock,
             in: projection
         )
-        result.newCursorPosition = storageIndex + string.count
+        // Default cursor: at the end of the typed input.
+        let defaultCursor = storageIndex + string.count
+        // If a code-block diagram-language promotion fired inside
+        // `insertIntoBlock` (Bug #41), the block's rendered content
+        // shrunk (e.g. "mermaid" promoted → content == ""), and the
+        // default cursor now points past the block's span. Clamp to
+        // the block's new end so the next keystroke lands inside the
+        // freshly-promoted block's content area rather than outside
+        // any block (which throws `notInsideBlock`).
+        let newSpan = result.newProjection.blockSpans[blockIndex]
+        let blockEnd = newSpan.location + newSpan.length
+        result.newCursorPosition = min(defaultCursor, blockEnd)
+        // Contract: single-block in-place character insert. This path
+        // is the common typing fall-through — no newline, no FSM
+        // transition, no atomic-block sibling creation. `insertIntoBlock`
+        // preserves the block kind; the diagram-language promotion path
+        // inside `insertIntoBlock` keeps the block as a `.codeBlock`
+        // (only its language field changes), so `.modifyInline` remains
+        // accurate.
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            ),
+            postSelectionLength: 0
+        )
+        return result
+    }
+
+    /// Insert `string` around an atomic block (.table, .horizontalRule).
+    /// The atomic block has no editable inline content, so the insertion
+    /// becomes a new paragraph sibling.
+    ///
+    /// - `offsetInBlock == 0` (cursor at start): paragraph goes BEFORE.
+    /// - otherwise (cursor at or past end): paragraph goes AFTER.
+    ///
+    /// Multi-line strings are parsed as a Document and inserted as a
+    /// run of sibling blocks.
+    private static func insertAroundAtomicBlock(
+        atomicBlock: Block,
+        offsetInBlock: Int,
+        string: String,
+        blockIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        let insertBefore = (offsetInBlock == 0)
+
+        if string.contains("\n") && string != "\n" {
+            // Multi-line paste: parse and splice all blocks as siblings.
+            var siblings = MarkdownParser.parse(string).blocks
+            if siblings.isEmpty { siblings = [.paragraph(inline: [])] }
+            let newBlocks: [Block] = insertBefore
+                ? siblings + [atomicBlock]
+                : [atomicBlock] + siblings
+            var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+            let lastSiblingIdx = insertBefore
+                ? blockIndex + siblings.count - 1
+                : blockIndex + siblings.count
+            let span = result.newProjection.blockSpans[lastSiblingIdx]
+            result.newCursorPosition = span.location + span.length
+            // Contract: N-block splice around an atomic block. The
+            // pre-edit atomic slot id is preserved at `blockIndex`
+            // (the "replaceBlock" slot) — which in `insertBefore` mode
+            // becomes the first sibling, and in `!insertBefore` mode
+            // stays the atomic block itself. The remaining newBlocks
+            // (siblings and — in `insertBefore` mode — the atomic
+            // itself moved one slot up) get fresh ids.
+            //
+            // Delta-based shape (same pattern as paragraph/heading
+            // multi-line paste): one `.replaceBlock(at: blockIndex)`
+            // plus N × `.insertBlock` for the observed growth.
+            let deltaA = result.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var actionsA: [EditAction] = [.replaceBlock(at: blockIndex)]
+            if deltaA > 0 {
+                for step in 0..<deltaA {
+                    actionsA.append(.insertBlock(at: blockIndex + 1 + step))
+                }
+            } else if deltaA < 0 {
+                for _ in 0..<(-deltaA) {
+                    actionsA.append(.mergeAdjacent(firstIndex: blockIndex))
+                }
+            }
+            result.contract = EditContract(
+                declaredActions: actionsA,
+                postCursor: result.newProjection.cursor(
+                    atStorageIndex: result.newCursorPosition
+                ),
+                postSelectionLength: 0
+            )
+            return result
+        }
+
+        let newPara: Block
+        let cursorOffsetInPara: Int
+        if string == "\n" {
+            newPara = .paragraph(inline: [])
+            cursorOffsetInPara = 0
+        } else {
+            newPara = .paragraph(inline: [.text(string)])
+            cursorOffsetInPara = string.count
+        }
+
+        let newBlocks: [Block] = insertBefore
+            ? [newPara, atomicBlock]
+            : [atomicBlock, newPara]
+        let paraBlockIdx = blockIndex + (insertBefore ? 0 : 1)
+        var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
+        let paraSpan = result.newProjection.blockSpans[paraBlockIdx]
+        result.newCursorPosition = paraSpan.location + cursorOffsetInPara
+        // Contract: the atomic block (.table or .horizontalRule) is preserved
+        // unchanged; a paragraph sibling is inserted either before or after.
+        //
+        // Identity semantics: `replaceBlocksSlow` preserves the pre-edit slot
+        // id at `blockIndex`. When `insertBefore`, the new paragraph lands at
+        // `blockIndex` (inheriting the preserved id) and the atomic block
+        // shifts to `blockIndex + 1` with a fresh id. This is a pure
+        // renaming: the atomic block is the same value; the "inserted" slot
+        // is `blockIndex + 1` in the post-edit document, since that's the
+        // slot whose id wasn't in the pre-edit set.
+        //
+        // When `!insertBefore`, the atomic block stays at `blockIndex`
+        // (preserved id); the new paragraph appears at `blockIndex + 1`
+        // (fresh id).
+        let insertSlot = blockIndex + 1
+        result.contract = EditContract(
+            declaredActions: [.insertBlock(at: insertSlot)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            ),
+            postSelectionLength: 0
+        )
         return result
     }
 
@@ -797,6 +1155,19 @@ public enum EditingOps {
         let newBlock = try replaceInBlock(block, from: startOffset, to: endOffset, with: string)
         var result = try replaceBlock(atIndex: startBlock, with: newBlock, in: projection)
         result.newCursorPosition = storageRange.location + string.count
+        // Contract: single-block, single-line replace preserves block
+        // kind (paragraph stays paragraph, code stays code, etc.). The
+        // `maybePromoteDiagramLanguage` path for code blocks promotes
+        // the fence's language field but keeps the block as a code
+        // block — still the same Block.codeBlock case, so
+        // `.modifyInline` remains the correct declaration.
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: startBlock)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            ),
+            postSelectionLength: 0
+        )
         return result
     }
 
@@ -852,7 +1223,14 @@ public enum EditingOps {
 
         case .codeBlock(let language, let content, let fence):
             let newContent = spliceString(content, at: fromOffset, replacing: length, with: replacement)
-            return .codeBlock(language: language, content: newContent, fence: fence)
+            let spliced = Block.codeBlock(language: language, content: newContent, fence: fence)
+            // Bug #41: if the user typed a known diagram-language identifier
+            // on its own line at the top of a no-language code block, promote
+            // it into the fence's language field. Block-model WYSIWYG mode
+            // hides the fences from storage, so this is the only way for a
+            // user to upgrade an untagged code block to a mermaid/math
+            // rendered block via keystrokes alone.
+            return maybePromoteDiagramLanguage(spliced)
 
         case .list(let items, _):
             return try replaceInList(items: items, from: fromOffset, to: toOffset, with: replacement)
@@ -969,11 +1347,21 @@ public enum EditingOps {
             // Degenerate: no-op delete. Produce an empty splice at the
             // deletion point (callers may still want a new projection
             // for symmetry; in practice they'll skip this path).
-            return EditResult(
+            //
+            // Contract: zero structural change, cursor stays at the
+            // no-op location.
+            var result = EditResult(
                 newProjection: projection,
                 spliceRange: storageRange,
                 spliceReplacement: NSAttributedString(string: "")
             )
+            result.newCursorPosition = storageRange.location
+            result.contract = EditContract(
+                declaredActions: [],
+                postCursor: projection.cursor(atStorageIndex: storageRange.location),
+                postSelectionLength: 0
+            )
+            return result
         }
         // Locate the block for the start and end. They must be the same.
         guard let (startBlock, startOffset) = projection.blockContaining(storageIndex: storageRange.location) else {
@@ -985,13 +1373,41 @@ public enum EditingOps {
         }
         if startBlock != endBlock {
             // Multi-block selection: delegate to mergeAdjacentBlocks
-            // which properly handles content truncation and merging
+            // which properly handles content truncation and merging.
+            //
+            // NOTE: An earlier attempt at bug #41 (Return-then-Delete
+            // cursor) computed a `seamCursor` here for the specific
+            // (paragraph, blankLine, paragraph) delete case. User
+            // reports it made things worse in the live app ("a mess"),
+            // so it was reverted 2026-04-21. The correct cursor math
+            // for the blankLine-consume case needs to account for the
+            // live narrowSplice / attachment-reuse behavior, not just
+            // the pure-function post-merge span layout — revisit with
+            // a live-repro driven investigation, not a storage-index
+            // arithmetic patch. See `test_bug41_returnThenDelete_*`
+            // for the pure-function semantic that was being tested.
             var result = try mergeAdjacentBlocks(
                 startBlock: startBlock, startOffset: startOffset,
                 endBlock: endBlock, endOffset: endOffset,
                 in: projection
             )
             result.newCursorPosition = storageRange.location
+            // `mergeAdjacentBlocks` already populated `result.contract`
+            // with a delta-based shape rooted at `effectiveStart` (which
+            // may be `startBlock - 1` when mergeIncludesPrevious). The
+            // cursor override above means the postCursor inside that
+            // contract is stale for the typical "cursor lands at
+            // storageRange.location" UX — refresh it so the invariant
+            // harness sees the correct post-edit cursor.
+            if let oldContract = result.contract {
+                result.contract = EditContract(
+                    declaredActions: oldContract.declaredActions,
+                    postCursor: result.newProjection.cursor(
+                        atStorageIndex: result.newCursorPosition
+                    ),
+                    postSelectionLength: 0
+                )
+            }
             return result
         }
         let oldBlock = projection.document.blocks[startBlock]
@@ -1020,6 +1436,15 @@ public enum EditingOps {
                     in: projection
                 )
                 result.newCursorPosition = storageRange.location
+                // Contract: atomic block (table / HR) → empty paragraph.
+                // Slot position unchanged; block kind changes.
+                result.contract = EditContract(
+                    declaredActions: [.changeBlockKind(at: onlyBlockIdx)],
+                    postCursor: result.newProjection.cursor(
+                        atStorageIndex: storageRange.location
+                    ),
+                    postSelectionLength: 0
+                )
                 return result
             }
         }
@@ -1031,6 +1456,16 @@ public enum EditingOps {
             in: projection
         )
         result.newCursorPosition = storageRange.location
+        // Contract: single-block inner delete. `deleteInBlock` preserves
+        // the block kind (code stays code, paragraph stays paragraph,
+        // etc.) so this is strictly an inline-level change.
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: startBlock)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: storageRange.location
+            ),
+            postSelectionLength: 0
+        )
         return result
     }
 
@@ -1096,8 +1531,19 @@ public enum EditingOps {
               range.upperBound < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
+        // Preserve slot identities for overlapping positions. The first
+        // `min(rangeCount, newBlocks.count)` replacement blocks inherit
+        // the ids of the pre-edit slots they occupy; any extra replacement
+        // blocks (growth case) get fresh ids. This keeps `.replaceBlock`
+        // identity-preservation contracts intact even when primitives use
+        // `replaceBlockRange` for what's semantically a one-replace +
+        // N-insert operation.
         var newDoc = projection.document
-        newDoc.blocks.replaceSubrange(range, with: newBlocks)
+        let rangeCount = range.upperBound - range.lowerBound + 1
+        let overlap = Swift.min(rangeCount, newBlocks.count)
+        let preservedIds = Array(projection.document.blockIds[range.lowerBound..<(range.lowerBound + overlap)])
+        let freshIds = (0..<(newBlocks.count - overlap)).map { _ in UUID() }
+        newDoc.replaceBlocks(range, with: newBlocks, ids: preservedIds + freshIds)
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
@@ -1164,7 +1610,7 @@ public enum EditingOps {
     ) -> EditResult {
         // 1. Build the new Document.
         var newDoc = projection.document
-        newDoc.blocks[blockIndex] = newBlock
+        newDoc.replaceBlock(at: blockIndex, with: newBlock)
 
         // 2. Render ONLY the changed block. Pass the note through so
         //    image inlines can resolve relative paths and emit real
@@ -1240,8 +1686,29 @@ public enum EditingOps {
         in projection: DocumentProjection
     ) -> EditResult {
         // Build the new Document by splicing the block list.
+        //
+        // Identity semantics: the slow path is used for single-block replace
+        // (newBlocks.count == 1) AND for splits (newBlocks.count > 1). In
+        // both cases the first replacement inherits the slot identity at
+        // `blockIndex`; any additional blocks get fresh ids (they are
+        // genuinely new slots). The coalesce pass below may further
+        // consume / preserve ids when it merges adjacent lists.
         var newDoc = projection.document
-        newDoc.blocks.replaceSubrange(blockIndex...blockIndex, with: newBlocks)
+        let preservedId = newDoc.blockIds[blockIndex]
+        let replacementIds: [UUID] = [preservedId] + (0..<(newBlocks.count - 1)).map { _ in UUID() }
+        newDoc.replaceBlocks(blockIndex...blockIndex, with: newBlocks, ids: replacementIds)
+
+        // Normalization pass: coalesce adjacent compatible `.list` blocks.
+        // After a structural mutation (e.g. removing a paragraph that sat
+        // between two lists, or re-promoting an isolated paragraph back
+        // to a list inside an ordered context) two `.list` blocks may end
+        // up adjacent in the document array. The renderer treats those as
+        // separate lists and restarts ordered numbering at each, which
+        // breaks the user-visible "1. 2. 3. 4. 5." sequence on a list
+        // that conceptually never split. See Bug 22 in FSNotes++ Bugs 3.
+        let preCoalesceBlockCount = newDoc.blocks.count
+        newDoc = coalesceAdjacentLists(newDoc)
+        let coalesced = newDoc.blocks.count != preCoalesceBlockCount
 
         // Produce the new projection (full re-render).
         let newProjection = DocumentProjection(
@@ -1252,6 +1719,22 @@ public enum EditingOps {
         )
 
         let oldSpan = projection.blockSpans[blockIndex]
+
+        // If coalesce shrank the block count, the original splice math
+        // (which assumes the new doc still has `newBlocks.count` blocks
+        // at `blockIndex`) is no longer valid: a neighbor list got
+        // absorbed too. Fall back to a whole-document splice; narrowSplice
+        // performs a character-level prefix/suffix diff and will reduce
+        // the actual mutation to the minimum changed region.
+        if coalesced {
+            return narrowSplice(
+                oldAttributedString: projection.attributed,
+                oldRange: NSRange(location: 0, length: projection.attributed.length),
+                newReplacement: newProjection.attributed,
+                newProjection: newProjection
+            )
+        }
+
         let firstNewSpan = newProjection.blockSpans[blockIndex]
         let lastNewSpan = newProjection.blockSpans[blockIndex + newBlocks.count - 1]
         let newSpanStart = firstNewSpan.location
@@ -1268,6 +1751,80 @@ public enum EditingOps {
             newReplacement: replacement,
             newProjection: newProjection
         )
+    }
+
+    /// Walk `doc.blocks` and merge any two consecutive `.list` blocks
+    /// whose top-level items share marker style (both ordered, e.g.
+    /// "1.", "2)", or both unordered, e.g. "-", "*", "+"). Any block
+    /// type other than `.list` between two lists (including `.blankLine`)
+    /// blocks the merge — separation by a blank line in source is a
+    /// deliberate semantic choice the user wrote and we must preserve.
+    ///
+    /// When merging, `loose` is set to OR of the inputs (if either was
+    /// loose, the result is loose). Items are concatenated in order;
+    /// markers are preserved verbatim — the renderer's ordinal counter
+    /// produces the visible "1. 2. 3..." sequence regardless of the
+    /// underlying marker text.
+    public static func coalesceAdjacentLists(_ doc: Document) -> Document {
+        guard doc.blocks.count >= 2 else { return doc }
+        var out: [Block] = []
+        var outIds: [UUID] = []
+        out.reserveCapacity(doc.blocks.count)
+        outIds.reserveCapacity(doc.blocks.count)
+        for (i, block) in doc.blocks.enumerated() {
+            let id = doc.blockIds[i]
+            if case .list(let items, let loose) = block,
+               case .list(let prevItems, let prevLoose) = out.last,
+               canCoalesceLists(prevItems, items) {
+                // Merge `block` into the previous list. The merged-into
+                // slot keeps its id (preserved in `outIds.last`); the
+                // current block's id is dropped.
+                out.removeLast()
+                out.append(.list(items: prevItems + items,
+                                 loose: prevLoose || loose))
+                // outIds.last is unchanged — preserved identity.
+            } else {
+                out.append(block)
+                outIds.append(id)
+            }
+        }
+        if out.count == doc.blocks.count { return doc }
+        var merged = doc
+        merged.blocks = out
+        merged.blockIds = outIds
+        return merged
+    }
+
+    /// Two top-level item arrays can coalesce when their first items
+    /// share marker style (both ordered or both unordered) AND share
+    /// indent. Mixed styles do not merge: the user's source separated
+    /// them deliberately.
+    private static func canCoalesceLists(_ a: [ListItem], _ b: [ListItem]) -> Bool {
+        guard let first = a.first, let next = b.first else { return false }
+        guard first.indent == next.indent else { return false }
+        let firstOrdered = ListRenderer.isOrderedMarker(first.marker)
+        let nextOrdered = ListRenderer.isOrderedMarker(next.marker)
+        return firstOrdered == nextOrdered
+    }
+
+    /// When promoting a paragraph block back to a list, the new list
+    /// item should inherit the marker style (ordered vs unordered) of
+    /// any adjacent list — otherwise toggling between paragraph and
+    /// list inside an ordered context inserts a `-` bullet that breaks
+    /// the surrounding numbering. Returns a marker string suitable for
+    /// `ListItem.marker` ("1." for ordered, "-" for unordered) when a
+    /// neighbor list exists, or nil when there's no context to inherit
+    /// from. The literal text doesn't matter for ordered lists — the
+    /// renderer renumbers via its own ordinal counter — only the
+    /// ordered/unordered classification matters here.
+    static func inheritedListMarker(prev: Block?, next: Block?) -> String? {
+        func markerStyle(_ block: Block?) -> String? {
+            guard case .list(let items, _) = block, let first = items.first else {
+                return nil
+            }
+            return ListRenderer.isOrderedMarker(first.marker) ? "1." : "-"
+        }
+        return markerStyle(prev) ?? markerStyle(next)
     }
 
     /// Check whether two blocks have the same discriminator (kind)
@@ -1512,16 +2069,24 @@ public enum EditingOps {
                 replacementBlocks = [b]
             }
         case (.none, .none):
-            // Both blocks are fully consumed. If there are no blocks
-            // at all after removing [startBlock...endBlock], insert a
-            // blank line so the document is never empty.
-            let totalBlocks = projection.document.blocks.count
-            let removedCount = endBlock - startBlock + 1
-            if removedCount >= totalBlocks {
-                replacementBlocks = [.paragraph(inline: [.text("")])]
-            } else {
-                replacementBlocks = []
-            }
+            // Both boundary blocks are fully consumed. The "deletion"
+            // is therefore actually the inter-block separator(s) being
+            // removed between empty blocks (the most common case is a
+            // single backspace at the home of an empty paragraph that
+            // sits below another empty paragraph: A and B are both
+            // empty, so neither contributes surviving content).
+            //
+            // The user expects "remove ONE separator" semantics — i.e.
+            // the two empty blocks merge into a single empty block,
+            // and the cursor stays on it. The earlier behavior of
+            // returning [] removed BOTH empty blocks, which made the
+            // cursor visibly drop down onto the first non-empty block
+            // below (Bug 10 in FSNotes++ Bugs 3).
+            //
+            // We always preserve ONE empty paragraph here. If the
+            // entire document would otherwise become empty, the same
+            // single empty paragraph is what we want anyway.
+            replacementBlocks = [.paragraph(inline: [])]
         }
 
         // Build new document: remove blocks[startBlock...endBlock],
@@ -1530,7 +2095,23 @@ public enum EditingOps {
         // the replacement block).
         let effectiveStart = mergeIncludesPrevious ? startBlock - 1 : startBlock
         var newDoc = projection.document
-        newDoc.blocks.replaceSubrange(effectiveStart...endBlock, with: replacementBlocks)
+        // The effective-first block's id is preserved for the first
+        // replacement (this is a merge — the merged-into slot survives);
+        // any additional replacement blocks get fresh ids.
+        let preservedId = newDoc.blockIds[effectiveStart]
+        let replacementIds: [UUID] = [preservedId] + (0..<(replacementBlocks.count - 1)).map { _ in UUID() }
+        newDoc.replaceBlocks(effectiveStart...endBlock, with: replacementBlocks, ids: replacementIds)
+
+        // Normalization: coalesce adjacent compatible `.list` blocks.
+        // When a cross-block delete removes a block that sat between two
+        // compatible lists (e.g. a paragraph created by demoting a numbered
+        // list item), the two lists end up adjacent and must merge so the
+        // renderer's ordinal counter runs "1. 2. 3." continuously. Same
+        // post-edit invariant as replaceBlocksSlow. See Bug 38 in
+        // FSNotes++ Bugs 3.
+        let preCoalesceBlockCount = newDoc.blocks.count
+        newDoc = coalesceAdjacentLists(newDoc)
+        let coalesced = newDoc.blocks.count != preCoalesceBlockCount
 
         // Splice range: from start of the effective first block's span
         // to end of blockB's span.
@@ -1564,6 +2145,57 @@ public enum EditingOps {
             note: projection.note
         )
 
+        // Build the merge contract from observed delta. The merge surface
+        // is `effectiveStart` (== `startBlock - 1` when the preceding
+        // paragraph was consumed via `mergeIncludesPrevious`, else
+        // `startBlock`). `replaceBlocksSlow`-style id semantics: the id at
+        // `effectiveStart` is preserved; ids inside [effectiveStart+1,
+        // endBlock] are dropped; any additional replacement block ids are
+        // fresh. Contract shape (delta-based, same family as paste
+        // contracts):
+        //   actions = [.replaceBlock(at: effectiveStart)]
+        //   if delta < 0 → |delta| × .mergeAdjacent(firstIndex: effectiveStart)
+        //   if delta > 0 → delta   × .insertBlock(at: effectiveStart+1+k)
+        // The common case (cross-block delete → 1 merged block) produces
+        // delta = -(endBlock - effectiveStart), so exactly that many
+        // `.mergeAdjacent` declarations. `expectedDelta` in Invariants
+        // counts -1 per `.mergeAdjacent`, matching observed.
+        let mergedDocBlockCount = newDoc.blocks.count
+        let mergeDelta = mergedDocBlockCount - projection.document.blocks.count
+        var mergeActions: [EditAction] = [.replaceBlock(at: effectiveStart)]
+        if mergeDelta < 0 {
+            for _ in 0..<(-mergeDelta) {
+                mergeActions.append(.mergeAdjacent(firstIndex: effectiveStart))
+            }
+        } else if mergeDelta > 0 {
+            for step in 0..<mergeDelta {
+                mergeActions.append(.insertBlock(at: effectiveStart + 1 + step))
+            }
+        }
+
+        // When coalesce merged a neighboring list into the replacement
+        // block(s), the block-granular splice math is no longer valid —
+        // `effectiveStart + replacementBlocks.count - 1` may point at a
+        // different block (the merged list) or past the array end. Fall
+        // back to a whole-document splice; narrowSplice performs a
+        // character-level prefix/suffix diff and reduces the actual
+        // mutation to the minimum changed region. Same strategy as
+        // replaceBlocksSlow.
+        if coalesced {
+            var result = narrowSplice(
+                oldAttributedString: projection.attributed,
+                oldRange: NSRange(location: 0, length: projection.attributed.length),
+                newReplacement: newProjection.attributed,
+                newProjection: newProjection
+            )
+            result.contract = EditContract(
+                declaredActions: mergeActions,
+                postCursor: newProjection.cursor(atStorageIndex: result.newCursorPosition),
+                postSelectionLength: 0
+            )
+            return result
+        }
+
         // Extract the replacement content from the new projection.
         let replacement: NSAttributedString
         if replacementBlocks.isEmpty {
@@ -1580,12 +2212,18 @@ public enum EditingOps {
 
         // Narrow the splice to only the changed characters to avoid
         // NSLayoutManager scroll-on-large-replace.
-        return narrowSplice(
+        var result = narrowSplice(
             oldAttributedString: projection.attributed,
             oldRange: spliceRange,
             newReplacement: replacement,
             newProjection: newProjection
         )
+        result.contract = EditContract(
+            declaredActions: mergeActions,
+            postCursor: newProjection.cursor(atStorageIndex: result.newCursorPosition),
+            postSelectionLength: 0
+        )
+        return result
     }
 
     /// Extract the FIRST `keepCount` rendered characters of a block's
@@ -1895,6 +2533,14 @@ public enum EditingOps {
             return [.list(items: newItems, loose: loose)]
         }
 
+        // list + list → concatenate items into a single list. Preserves
+        // the left list's looseness. The renderer's ordinal counter runs
+        // over the combined items, so numbered lists re-number
+        // continuously (1, 2, 3, …) across the former split point.
+        if case .list(let aItems, let aLoose) = a, case .list(let bItems, _) = b {
+            return [.list(items: aItems + bItems, loose: aLoose)]
+        }
+
         // heading + heading → first heading with second's text appended.
         if case .heading(let aLevel, let aSuffix) = a,
            case .heading(_, let bSuffix) = b {
@@ -2031,6 +2677,9 @@ public enum EditingOps {
         case .strikethrough(let c): return inlinesToText(c)
         case .underline(let c): return inlinesToText(c)
         case .highlight(let c): return inlinesToText(c)
+        case .superscript(let c): return inlinesToText(c)
+        case .`subscript`(let c): return inlinesToText(c)
+        case .kbd(let c): return inlinesToText(c)
         case .math(let s): return s
         case .displayMath(let s): return s
         case .link(let text, _): return inlinesToText(text)
@@ -2413,17 +3062,42 @@ public enum EditingOps {
         // Current item keeps "before" text, new item gets "after" text.
         // New item inherits the same marker/indent but has no children
         // (children stay with the original item).
+        //
+        // Checkbox semantics: whichever half is EMPTY is the newly-created
+        // line the user is about to type into, and must always render as
+        // unchecked (you cannot complete a todo by pressing Return). The
+        // half that retains the existing content keeps the original
+        // checked state. When neither half is empty (Return in the middle
+        // of a checked todo), the new (after) line becomes unchecked —
+        // completion state stays on the original head of the split.
+        let originalCheckbox = entry.item.checkbox
+        let keptCheckbox: Checkbox?
+        let newCheckbox: Checkbox?
+        if let cb = originalCheckbox {
+            let unchecked = Checkbox(text: "[ ]", afterText: cb.afterText)
+            if isInlineEmpty(before) {
+                // Return pressed at HOME of a todo → empty line above,
+                // original content below. The empty new line is unchecked.
+                keptCheckbox = unchecked
+                newCheckbox = cb
+            } else {
+                // Return pressed at end or middle → original head keeps its
+                // state, new tail line is unchecked.
+                keptCheckbox = cb
+                newCheckbox = unchecked
+            }
+        } else {
+            keptCheckbox = nil
+            newCheckbox = nil
+        }
         let keptItem = ListItem(
             indent: entry.item.indent, marker: entry.item.marker,
-            afterMarker: entry.item.afterMarker, checkbox: entry.item.checkbox,
+            afterMarker: entry.item.afterMarker, checkbox: keptCheckbox,
             inline: before, children: entry.item.children
         )
         let newItem = ListItem(
             indent: entry.item.indent, marker: entry.item.marker,
-            afterMarker: entry.item.afterMarker,
-            checkbox: entry.item.checkbox.map { cb in
-                cb.isChecked ? Checkbox(text: "[ ]", afterText: cb.afterText) : cb
-            },
+            afterMarker: entry.item.afterMarker, checkbox: newCheckbox,
             inline: after, children: []
         )
 
@@ -2521,15 +3195,12 @@ public enum EditingOps {
                 let newInline = before + [.text(string)] + after
                 return .paragraph(inline: newInline)
             }
-            let runs = flatten(inline)
-            guard let (runIdx, off) = runAtInsertionPoint(runs, offset: offsetInBlock) else {
-                throw EditingError.unsupported(
-                    reason: "paragraph: offset \(offsetInBlock) out of inline bounds"
-                )
-            }
-            let leaf = runs[runIdx]
-            let newText = spliceString(leaf.text, at: off, replacing: 0, with: string)
-            let newInline = updateLeafText(inline, at: leaf.path, newText: newText)
+            // Honor fence semantics: insertion at end-of-bold produces a
+            // sibling, mid-bold extends the bold span. See
+            // `insertInlinesPreservingContainerContext` for details.
+            let newInline = insertInlinesPreservingContainerContext(
+                inline, at: offsetInBlock, inserting: [.text(string)]
+            )
             return .paragraph(inline: newInline)
 
         case .heading(let level, let suffix):
@@ -2566,7 +3237,12 @@ public enum EditingOps {
             // content is raw code; render offset == content offset
             // (no fence characters in the rendered output).
             let newContent = spliceString(content, at: offsetInBlock, replacing: 0, with: string)
-            return .codeBlock(language: language, content: newContent, fence: fence)
+            let spliced = Block.codeBlock(language: language, content: newContent, fence: fence)
+            // Bug #41: promote a no-language code block whose content is
+            // now a whitelisted diagram-language identifier on line 1 —
+            // the block-model WYSIWYG mode's equivalent of typing
+            // `\`\`\`mermaid` in source mode.
+            return maybePromoteDiagramLanguage(spliced)
 
         case .blankLine:
             // Typing into a blankLine converts it to a paragraph
@@ -3309,6 +3985,9 @@ public enum EditingOps {
         case .strikethrough(let c): return c.reduce(0) { $0 + inlineLength($1) }
         case .underline(let c): return c.reduce(0) { $0 + inlineLength($1) }
         case .highlight(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .superscript(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .`subscript`(let c): return c.reduce(0) { $0 + inlineLength($1) }
+        case .kbd(let c): return c.reduce(0) { $0 + inlineLength($1) }
         case .math(let s): return s.count
         case .displayMath(let s): return s.count
         case .link(let text, _): return text.reduce(0) { $0 + inlineLength($1) }
@@ -3408,6 +4087,18 @@ public enum EditingOps {
                     let (b, a) = splitInlines(children, at: localOffset)
                     before.append(.highlight(b))
                     after.append(.highlight(a))
+                case .superscript(let children):
+                    let (b, a) = splitInlines(children, at: localOffset)
+                    before.append(.superscript(b))
+                    after.append(.superscript(a))
+                case .`subscript`(let children):
+                    let (b, a) = splitInlines(children, at: localOffset)
+                    before.append(.`subscript`(b))
+                    after.append(.`subscript`(a))
+                case .kbd(let children):
+                    let (b, a) = splitInlines(children, at: localOffset)
+                    before.append(.kbd(b))
+                    after.append(.kbd(a))
                 case .math(let s):
                     let idx = s.index(s.startIndex, offsetBy: localOffset)
                     before.append(.math(String(s[..<idx])))
@@ -3463,6 +4154,125 @@ public enum EditingOps {
         return (before, after)
     }
 
+    /// Insert `newNodes` into `inlines` at `offset`, honoring fence
+    /// semantics: when the split point falls inside a formatting
+    /// container (bold/italic/etc), the new nodes are placed INSIDE
+    /// that container so it is preserved across the boundary. When the
+    /// split point falls AT a container's trailing edge (or is wholly
+    /// outside any container), the new nodes are placed as siblings.
+    /// This implements the standard markdown convention: typing at the
+    /// closing `**` produces text outside the bold span, while typing
+    /// in the middle of `**bold**` extends the bold.
+    static func insertInlinesPreservingContainerContext(
+        _ inlines: [Inline],
+        at offset: Int,
+        inserting newNodes: [Inline]
+    ) -> [Inline] {
+        let (before, after) = splitInlines(inlines, at: offset)
+        return joinAroundInsertion(before: before, newNodes: newNodes, after: after)
+    }
+
+    private static func joinAroundInsertion(
+        before: [Inline],
+        newNodes: [Inline],
+        after: [Inline]
+    ) -> [Inline] {
+        // Matching container (bold/italic/etc) split by the insertion —
+        // recurse inside the container so the new nodes stay wrapped.
+        if let last = before.last, let first = after.first,
+           let (kind, leftChildren, rightChildren) = matchingContainerChildren(last, first),
+           !leftChildren.isEmpty || !rightChildren.isEmpty {
+            let mergedChildren = joinAroundInsertion(
+                before: leftChildren, newNodes: newNodes, after: rightChildren
+            )
+            var result = Array(before.dropLast())
+            result.append(rewrapInContainer(kind, children: mergedChildren))
+            result.append(contentsOf: after.dropFirst())
+            return cleanInlines(result)
+        }
+        // Matching atomic leaves (code/math) split by the insertion —
+        // merge back into a single leaf with the new text folded in.
+        // Only applies when new nodes are all plain text.
+        if let last = before.last, let first = after.first,
+           let newText = plainTextOf(newNodes),
+           let merged = mergeAtomicLeaves(last, newText, first) {
+            var result = Array(before.dropLast())
+            result.append(merged)
+            result.append(contentsOf: after.dropFirst())
+            return cleanInlines(result)
+        }
+        return cleanInlines(before + newNodes + after)
+    }
+
+    /// If all nodes are `.text`, return the concatenated string. Else nil.
+    private static func plainTextOf(_ nodes: [Inline]) -> String? {
+        var s = ""
+        for n in nodes {
+            if case .text(let t) = n { s += t } else { return nil }
+        }
+        return s
+    }
+
+    /// If `a` and `b` are matching atomic leaves (both .code or both
+    /// .math / .displayMath), return a single merged leaf with `mid`
+    /// inserted between their contents. Nil otherwise.
+    private static func mergeAtomicLeaves(_ a: Inline, _ mid: String, _ b: Inline) -> Inline? {
+        switch (a, b) {
+        case (.code(let l), .code(let r)):
+            return .code(l + mid + r)
+        case (.math(let l), .math(let r)):
+            return .math(l + mid + r)
+        case (.displayMath(let l), .displayMath(let r)):
+            return .displayMath(l + mid + r)
+        default:
+            return nil
+        }
+    }
+
+    /// A container kind identifier used by `joinAroundInsertion` to
+    /// determine whether two adjacent containers can be merged.
+    private enum ContainerKind: Equatable {
+        case bold(EmphasisMarker)
+        case italic(EmphasisMarker)
+        case strikethrough
+        case underline
+        case highlight
+        case link(String)
+    }
+
+    private static func matchingContainerChildren(
+        _ a: Inline,
+        _ b: Inline
+    ) -> (ContainerKind, [Inline], [Inline])? {
+        switch (a, b) {
+        case (.bold(let l, let mA), .bold(let r, let mB)) where mA == mB:
+            return (.bold(mA), l, r)
+        case (.italic(let l, let mA), .italic(let r, let mB)) where mA == mB:
+            return (.italic(mA), l, r)
+        case (.strikethrough(let l), .strikethrough(let r)):
+            return (.strikethrough, l, r)
+        case (.underline(let l), .underline(let r)):
+            return (.underline, l, r)
+        case (.highlight(let l), .highlight(let r)):
+            return (.highlight, l, r)
+        case (.link(let l, let dA), .link(let r, let dB)) where dA == dB:
+            return (.link(dA), l, r)
+        default:
+            return nil
+        }
+    }
+
+    private static func rewrapInContainer(_ kind: ContainerKind, children: [Inline]) -> Inline {
+        switch kind {
+        case .bold(let m): return .bold(children, marker: m)
+        case .italic(let m): return .italic(children, marker: m)
+        case .strikethrough: return .strikethrough(children)
+        case .underline: return .underline(children)
+        case .highlight: return .highlight(children)
+        case .link(let dest): return .link(text: children, rawDestination: dest)
+        }
+    }
+
     // MARK: - Inline-tree navigation
 
     /// Path from the root of an `[Inline]` tree to a leaf node. Each
@@ -3509,6 +4319,12 @@ public enum EditingOps {
             case .underline(let children):
                 walkFlatten(children, path: &path, into: &runs)
             case .highlight(let children):
+                walkFlatten(children, path: &path, into: &runs)
+            case .superscript(let children):
+                walkFlatten(children, path: &path, into: &runs)
+            case .`subscript`(let children):
+                walkFlatten(children, path: &path, into: &runs)
+            case .kbd(let children):
                 walkFlatten(children, path: &path, into: &runs)
             case .math(let s):
                 runs.append(LeafRun(path: path, text: s, isCode: true))
@@ -3612,7 +4428,7 @@ public enum EditingOps {
             case .rawHTML: return .rawHTML(newText)
             case .entity: return .entity(newText)
             case .wikilink: return .text(newText)
-            case .bold, .italic, .strikethrough, .underline, .highlight, .link, .image, .math, .displayMath:
+            case .bold, .italic, .strikethrough, .underline, .highlight, .superscript, .`subscript`, .kbd, .link, .image, .math, .displayMath:
                 // Path exhausted on a container: should not happen
                 // when paths come from `flatten`. Leave unchanged.
                 return inline
@@ -3644,6 +4460,18 @@ public enum EditingOps {
             var c = children
             c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
             return .highlight(c)
+        case .superscript(let children):
+            var c = children
+            c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
+            return .superscript(c)
+        case .`subscript`(let children):
+            var c = children
+            c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
+            return .`subscript`(c)
+        case .kbd(let children):
+            var c = children
+            c[idx] = replaceLeafText(in: children[idx], path: rest, newText: newText)
+            return .kbd(c)
         case .link(let text, let dest):
             var c = text
             c[idx] = replaceLeafText(in: text[idx], path: rest, newText: newText)
@@ -3735,6 +4563,13 @@ public enum EditingOps {
     }
 
     /// Public wrapper around listEntryContaining for FSM usage.
+    /// MUST remain byte-equivalent to the private `listEntryContaining`
+    /// above (see ~line 3002). Divergence between the two has caused
+    /// user-facing bugs (Bug 21: cursor-before-bullet on Cmd+Left →
+    /// Return failed to exit-to-paragraph because isAtHomePosition
+    /// returned false). The `forInsertion` parameter is preserved for
+    /// call-site signature compatibility but is intentionally ignored
+    /// here, matching the private version.
     public static func listEntryContainingPublic(
         entries: [PublicFlatListEntry],
         offset: Int,
@@ -3743,14 +4578,22 @@ public enum EditingOps {
         for (i, entry) in entries.enumerated() {
             let inlineStart = entry.startOffset + entry.prefixLength
             let inlineEnd = inlineStart + entry.inlineLength
-            if forInsertion {
-                if offset >= inlineStart && offset <= inlineEnd {
-                    return (i, offset - inlineStart)
-                }
-            } else {
-                if offset >= inlineStart && offset < inlineEnd {
-                    return (i, offset - inlineStart)
-                }
+            // Both insertion and non-insertion use inclusive upper bound.
+            // At the boundary (offset == inlineEnd), the cursor belongs
+            // to this entry — it's "at the end of the item's text".
+            if offset >= inlineStart && offset <= inlineEnd {
+                return (i, offset - inlineStart)
+            }
+            // RC2 prefix-clamp: a cursor sitting ON the prefix attachment
+            // (bullet/number/checkbox) clamps to inline offset 0 of the
+            // entry. NSTextView's Cmd+Left places the caret before the
+            // attachment, so without this clamp isAtHomePosition returns
+            // false and Return/Delete/Shift-Tab fall through to split/
+            // delete instead of exitToBody.
+            if entry.prefixLength > 0,
+               offset >= entry.startOffset,
+               offset < inlineStart {
+                return (i, 0)
             }
         }
         return nil
@@ -3803,6 +4646,18 @@ public enum EditingOps {
             result.newCursorPosition = storageIndex
         }
 
+        // Contract: the list block is reindented in place. Coalesce could
+        // merge with an adjacent list, so adjust for observed delta.
+        let idDelta = result.newProjection.document.blocks.count
+            - projection.document.blocks.count
+        var idActions: [EditAction] = [.reindentList(range: blockIndex..<(blockIndex + 1))]
+        for _ in 0..<(-idDelta) {
+            idActions.append(.mergeAdjacent(firstIndex: blockIndex))
+        }
+        result.contract = EditContract(
+            declaredActions: idActions,
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -3848,6 +4703,16 @@ public enum EditingOps {
             result.newCursorPosition = storageIndex
         }
 
+        let uiDelta = result.newProjection.document.blocks.count
+            - projection.document.blocks.count
+        var uiActions: [EditAction] = [.reindentList(range: blockIndex..<(blockIndex + 1))]
+        for _ in 0..<(-uiDelta) {
+            uiActions.append(.mergeAdjacent(firstIndex: blockIndex))
+        }
+        result.contract = EditContract(
+            declaredActions: uiActions,
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -3887,11 +4752,21 @@ public enum EditingOps {
                 // List is now empty, replace with blank paragraph
                 var result = try replaceBlocks(atIndex: blockIndex, with: [.paragraph(inline: [])], in: projection)
                 result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
+                let emptyDelta = result.newProjection.document.blocks.count
+                    - projection.document.blocks.count
+                var emptyActions: [EditAction] = [.replaceBlock(at: blockIndex)]
+                for _ in 0..<(-emptyDelta) {
+                    emptyActions.append(.mergeAdjacent(firstIndex: blockIndex))
+                }
+                result.contract = EditContract(
+                    declaredActions: emptyActions,
+                    postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+                )
                 return result
             }
-            
+
             var result = try replaceBlocks(atIndex: blockIndex, with: [.list(items: newItems)], in: projection)
-            
+
             // Cursor goes to end of previous item (if any), or start of list
             if entryIdx > 0 {
                 let prevEntry = entries[entryIdx - 1]
@@ -3906,7 +4781,18 @@ public enum EditingOps {
             } else {
                 result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
             }
-            
+
+            // Same kind (list), item removed → inline-level change.
+            let rmDelta = result.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var rmActions: [EditAction] = [.modifyInline(blockIndex: blockIndex)]
+            for _ in 0..<(-rmDelta) {
+                rmActions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+            result.contract = EditContract(
+                declaredActions: rmActions,
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
         }
 
@@ -3958,6 +4844,24 @@ public enum EditingOps {
             result.newCursorPosition = result.newProjection.attributed.length
         }
 
+        // 1 list block → 1–3 new blocks (list? + paragraph + list?). Net
+        // delta = newBlocks.count - 1, before coalesce.
+        let exitDelta = result.newProjection.document.blocks.count
+            - projection.document.blocks.count
+        var exitActions: [EditAction] = [.replaceBlock(at: blockIndex)]
+        if exitDelta > 0 {
+            for step in 0..<exitDelta {
+                exitActions.append(.insertBlock(at: blockIndex + 1 + step))
+            }
+        } else if exitDelta < 0 {
+            for _ in 0..<(-exitDelta) {
+                exitActions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+        }
+        result.contract = EditContract(
+            declaredActions: exitActions,
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -3974,8 +4878,14 @@ public enum EditingOps {
         case .unindent:
             return try unindentListItem(at: storageIndex, in: projection)
         case .exitToBody:
-            // When exiting an empty item to body, don't create a paragraph - just remove it
-            return try exitListItem(at: storageIndex, in: projection, createParagraphForEmpty: false)
+            // Bug #21: Return on an empty top-level item exits the list and
+            // leaves an empty paragraph IN PLACE of the dropped marker, with
+            // the cursor on that paragraph. The earlier "remove + jump cursor
+            // to end of previous item" behavior collapsed the list and moved
+            // the cursor onto a different line — surprising and inconsistent
+            // with the non-empty Return-at-home path that produces a body
+            // paragraph. We always create the paragraph here.
+            return try exitListItem(at: storageIndex, in: projection, createParagraphForEmpty: true)
         default:
             // Shouldn't happen, but fall through to regular split.
             throw EditingError.unsupported(reason: "returnOnEmpty: unexpected transition \(transition)")
@@ -4235,13 +5145,20 @@ public enum EditingOps {
 
         case .paragraph(let inline):
             guard newLevel > 0 else {
-                // Already a paragraph, level 0 → no-op.
-                return EditResult(
+                // Already a paragraph, level 0 → no-op. Empty contract
+                // declares "nothing changed"; the harness will verify
+                // the projection diff is empty.
+                var noop = EditResult(
                     newProjection: projection,
                     spliceRange: NSRange(location: storageIndex, length: 0),
                     spliceReplacement: NSAttributedString(string: ""),
                     newCursorPosition: storageIndex
                 )
+                noop.contract = EditContract(
+                    declaredActions: [],
+                    postCursor: projection.cursor(atStorageIndex: storageIndex)
+                )
+                return noop
             }
             // Convert paragraph → heading. Content becomes the suffix.
             let text = inlinesToText(inline)
@@ -4261,6 +5178,13 @@ public enum EditingOps {
         // Place cursor at the end of the new block's content.
         let newSpan = result.newProjection.blockSpans[blockIndex]
         result.newCursorPosition = newSpan.location + newSpan.length
+        // Phase 1 contract: every non-no-op branch changed the block's
+        // kind in place — heading↔paragraph or heading level change.
+        // The block index is stable; no neighbors touched.
+        result.contract = EditContract(
+            declaredActions: [.changeBlockKind(at: blockIndex)],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -4294,6 +5218,9 @@ public enum EditingOps {
 
         // Replace the block by splitting at the offset and inserting the wrapped node.
         let newBlock: Block
+        // Track whether the block's kind changed — the only branch that
+        // does is blankLine → paragraph. All others keep the kind.
+        var kindChanged = false
         switch block {
         case .paragraph(let inline):
             let (before, after) = splitInlines(inline, at: offsetInBlock)
@@ -4338,12 +5265,19 @@ public enum EditingOps {
             newBlock = .blockquote(lines: newLines)
         case .blankLine:
             newBlock = .paragraph(inline: [node])
+            kindChanged = true
         default:
             throw EditingError.unsupported(reason: "insertWithTraits: unsupported block type")
         }
 
         var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
         result.newCursorPosition = storageIndex + string.count
+        result.contract = EditContract(
+            declaredActions: kindChanged
+                ? [.changeBlockKind(at: blockIndex)]
+                : [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -4368,12 +5302,17 @@ public enum EditingOps {
     ) throws -> EditResult {
         guard selectionRange.length > 0 else {
             // Zero-length selection: no-op (can't wrap nothing).
-            return EditResult(
+            var noop = EditResult(
                 newProjection: projection,
                 spliceRange: NSRange(location: selectionRange.location, length: 0),
                 spliceReplacement: NSAttributedString(string: ""),
                 newCursorPosition: selectionRange.location
             )
+            noop.contract = EditContract(
+                declaredActions: [],
+                postCursor: projection.cursor(atStorageIndex: selectionRange.location)
+            )
+            return noop
         }
 
         let startIdx = selectionRange.location
@@ -4461,6 +5400,13 @@ public enum EditingOps {
             newSpan.location + newSpan.length
         )
         result.newSelectionLength = selectionRange.length
+        // Inline-only change: block kind and count unchanged; inline
+        // tree of the block was wrapped/unwrapped in the trait.
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition),
+            postSelectionLength: selectionRange.length
+        )
         return result
     }
 
@@ -4640,17 +5586,73 @@ public enum EditingOps {
 
         switch block {
         case .paragraph(let inline):
-            // Wrap in a single-item list.
+            // Marker selection: prefer the marker style of an adjacent
+            // list block. This is the round-trip half of Bug 22 — when
+            // the user demotes an ordered-list item to paragraph and
+            // then re-promotes the paragraph back to a list, the new
+            // list item should inherit the surrounding ordered context
+            // so the post-coalesce result reads "1. 2. 3..." instead
+            // of inserting a `-` bullet in the middle of an ordered
+            // sequence. The literal marker text doesn't matter — the
+            // renderer renumbers ordered items via its own counter —
+            // we only need ORDERED vs UNORDERED to match.
+            let blocks = projection.document.blocks
+            let prev = blockIndex > 0 ? blocks[blockIndex - 1] : nil
+            let next = (blockIndex + 1) < blocks.count ? blocks[blockIndex + 1] : nil
+            let inheritedMarker = inheritedListMarker(prev: prev, next: next)
+                ?? marker
             let item = ListItem(
-                indent: "", marker: marker,
+                indent: "", marker: inheritedMarker,
                 afterMarker: " ", inline: inline,
                 children: []
             )
             let newBlock = Block.list(items: [item])
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
-            let newSpan = result.newProjection.blockSpans[blockIndex]
-            // Place cursor after bullet + space (start of text content).
-            result.newCursorPosition = newSpan.location + 1
+            // After replaceBlocksSlow's coalesce step, the surrounding
+            // ordered lists may have been merged in. The cursor target
+            // is the start of the inline content of the just-promoted
+            // item. Locate it by counting the items absorbed from the
+            // preceding list (if any) plus one bullet attachment.
+            let newProj = result.newProjection
+            let absorbedBefore: Int = {
+                guard let p = prev,
+                      case .list(let prevItems, _) = p,
+                      ListRenderer.isOrderedMarker(prevItems.first?.marker ?? "-")
+                        == ListRenderer.isOrderedMarker(inheritedMarker)
+                else { return 0 }
+                return prevItems.count
+            }()
+            let landingBlockIndex = (absorbedBefore > 0) ? (blockIndex - 1) : blockIndex
+            let landingBlockSpan = newProj.blockSpans[landingBlockIndex]
+            // Use flattenList to compute the rendered offset of the
+            // just-promoted item's inline content within the merged
+            // list block, then add the block's storage start offset.
+            if case .list(let mergedItems, _) = newProj.document.blocks[landingBlockIndex],
+               absorbedBefore < mergedItems.count {
+                let entries = flattenList(mergedItems)
+                // The item we wrapped sits at top-level index `absorbedBefore`.
+                if let entry = entries.first(where: { $0.path == [absorbedBefore] }) {
+                    result.newCursorPosition = landingBlockSpan.location
+                        + entry.startOffset + entry.prefixLength
+                } else {
+                    result.newCursorPosition = landingBlockSpan.location + 1
+                }
+            } else {
+                result.newCursorPosition = landingBlockSpan.location + 1
+            }
+            // Contract: paragraph→list is a block-kind change at blockIndex.
+            // replaceBlocksSlow's coalesce pass may absorb adjacent lists,
+            // shrinking the block count by 1 per absorbed neighbor. Declare
+            // the change plus N mergeAdjacent actions to account for it.
+            let listDelta = newProj.document.blocks.count - projection.document.blocks.count
+            var actions: [EditAction] = [.changeBlockKind(at: blockIndex)]
+            for _ in 0..<(-listDelta) {
+                actions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+            result.contract = EditContract(
+                declaredActions: actions,
+                postCursor: newProj.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
 
         case .list(let items, _):
@@ -4703,6 +5705,26 @@ public enum EditingOps {
             }
             var newResult = result
             newResult.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
+            // Contract: the list block is replaced; 0-2 new blocks are
+            // inserted around it (list halves before/after the split).
+            // Coalesce with pre-existing surrounding lists can shrink
+            // the block count further.
+            let demoteDelta = newResult.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var demoteActions: [EditAction] = [.replaceBlock(at: blockIndex)]
+            if demoteDelta > 0 {
+                for offset in 0..<demoteDelta {
+                    demoteActions.append(.insertBlock(at: blockIndex + 1 + offset))
+                }
+            } else if demoteDelta < 0 {
+                for _ in 0..<(-demoteDelta) {
+                    demoteActions.append(.mergeAdjacent(firstIndex: blockIndex))
+                }
+            }
+            newResult.contract = EditContract(
+                declaredActions: demoteActions,
+                postCursor: newResult.newProjection.cursor(atStorageIndex: newResult.newCursorPosition)
+            )
             return newResult
 
         case .blankLine:
@@ -4716,6 +5738,18 @@ public enum EditingOps {
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
             let newSpan = result.newProjection.blockSpans[blockIndex]
             result.newCursorPosition = newSpan.location + 1
+            // Contract: blankLine→list is a kind change; coalesce may merge
+            // with adjacent compatible lists.
+            let blankDelta = result.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var blankActions: [EditAction] = [.changeBlockKind(at: blockIndex)]
+            for _ in 0..<(-blankDelta) {
+                blankActions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+            result.contract = EditContract(
+                declaredActions: blankActions,
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
 
         default:
@@ -4723,6 +5757,151 @@ public enum EditingOps {
                 reason: "toggleList: not a paragraph or list"
             )
         }
+    }
+
+    /// Toggle list off across a selection that spans multiple items of a
+    /// single list block.
+    ///
+    /// When the user selects multiple items of an existing list and
+    /// presses the Bullet-List toolbar button, the expectation is that
+    /// ALL covered items convert to paragraphs — not just the one at
+    /// the cursor. The single-item `toggleList` primitive only handles
+    /// the cursor-at-one-entry case; this primitive is the multi-entry
+    /// complement.
+    ///
+    /// Handles mixed-depth selections. Each top-level subtree is
+    /// classified as:
+    /// - "all touched" → every entry in the subtree (item + all
+    ///   descendants) is touched; emits one paragraph per entry, in
+    ///   flat render order. The nested structure is flattened because
+    ///   paragraphs have no concept of indent depth.
+    /// - "none touched" → subtree is preserved intact as a list item.
+    /// - "mixed" → returns nil so the caller falls through to the
+    ///   single-item `toggleList` path. Unwrapping a partial subtree
+    ///   (e.g. unwrapping a parent but keeping its children) is not
+    ///   well-defined and is left to the user to do in two steps.
+    ///
+    /// Returns `nil` when this primitive doesn't apply so the caller
+    /// can fall back to the single-item path. Applicability rules:
+    /// - The selection must overlap exactly ONE list block.
+    /// - At least two entries of that list must be touched.
+    /// - No top-level subtree is "mixed" (partial-touch).
+    public static func toggleListRange(
+        selection storageRange: NSRange,
+        in projection: DocumentProjection
+    ) throws -> EditResult? {
+        let overlapping = projection.blockIndices(overlapping: storageRange)
+        guard overlapping.count == 1 else { return nil }
+        let blockIdx = overlapping[0]
+        guard case .list(let items, _) = projection.document.blocks[blockIdx] else {
+            return nil
+        }
+
+        let blockSpan = projection.blockSpans[blockIdx]
+        let offsetStart = storageRange.location - blockSpan.location
+        let offsetEnd = offsetStart + storageRange.length
+
+        let entries = flattenList(items)
+
+        // Touched = entries whose inline content range overlaps the
+        // selection. Prefix-only overlap (selection sits ON the bullet
+        // attachment without covering any inline chars) doesn't count
+        // — otherwise a cursor stranded on a bullet would unwrap a
+        // whole item the user didn't touch.
+        let touched = entries.filter { entry in
+            let inlineStart = entry.startOffset + entry.prefixLength
+            let inlineEnd = inlineStart + entry.inlineLength
+            return offsetStart <= inlineEnd && offsetEnd >= inlineStart
+        }
+        guard touched.count >= 2 else { return nil }
+
+        let touchedPaths = Set(touched.map { $0.path })
+
+        // Walk top-level items. Each subtree is either all-touched
+        // (→ emit paragraphs), none-touched (→ accumulate into the
+        // pending list-item run), or mixed (→ bail out).
+        var newBlocks: [Block] = []
+        var pendingKept: [ListItem] = []
+
+        func flushKept() {
+            if !pendingKept.isEmpty {
+                newBlocks.append(.list(items: pendingKept))
+                pendingKept = []
+            }
+        }
+
+        for (i, item) in items.enumerated() {
+            let subtreePaths = allPathsInSubtree(item: item, path: [i])
+            let touchedCount = subtreePaths.reduce(0) {
+                $0 + (touchedPaths.contains($1) ? 1 : 0)
+            }
+            if touchedCount == 0 {
+                pendingKept.append(item)
+            } else if touchedCount == subtreePaths.count {
+                flushKept()
+                // Flatten the subtree into paragraphs, one per entry,
+                // in render order.
+                for entry in flattenList([item]) {
+                    newBlocks.append(.paragraph(inline: entry.item.inline))
+                }
+            } else {
+                // Partial-touch subtree — not well-defined.
+                return nil
+            }
+        }
+        flushKept()
+
+        guard !newBlocks.isEmpty else { return nil }
+
+        let result = try replaceBlockRange(
+            blockIdx...blockIdx, with: newBlocks, in: projection
+        )
+
+        // Cursor lands at start of the first newly-created paragraph.
+        var firstParaOffset: Int? = nil
+        for (i, b) in newBlocks.enumerated() {
+            if case .paragraph = b {
+                firstParaOffset = i
+                break
+            }
+        }
+        var newResult = result
+        if let offset = firstParaOffset,
+           blockIdx + offset < result.newProjection.blockSpans.count {
+            newResult.newCursorPosition =
+                result.newProjection.blockSpans[blockIdx + offset].location
+        }
+        // Contract: 1 list block is replaced with M new blocks (a mix of
+        // list halves and paragraphs). Coalesce may further merge list
+        // halves with surrounding lists in the document.
+        let rangeDelta = newResult.newProjection.document.blocks.count
+            - projection.document.blocks.count
+        var rangeActions: [EditAction] = [.replaceBlock(at: blockIdx)]
+        if rangeDelta > 0 {
+            for step in 0..<rangeDelta {
+                rangeActions.append(.insertBlock(at: blockIdx + 1 + step))
+            }
+        } else if rangeDelta < 0 {
+            for _ in 0..<(-rangeDelta) {
+                rangeActions.append(.mergeAdjacent(firstIndex: blockIdx))
+            }
+        }
+        newResult.contract = EditContract(
+            declaredActions: rangeActions,
+            postCursor: newResult.newProjection.cursor(atStorageIndex: newResult.newCursorPosition)
+        )
+        return newResult
+    }
+
+    /// Collect every path in an item's subtree, including the item
+    /// itself. Used by `toggleListRange` to classify top-level subtrees
+    /// as all-touched / none-touched / mixed for multi-item unwrap.
+    private static func allPathsInSubtree(item: ListItem, path: [Int]) -> [[Int]] {
+        var paths: [[Int]] = [path]
+        for (i, child) in item.children.enumerated() {
+            paths.append(contentsOf: allPathsInSubtree(item: child, path: path + [i]))
+        }
+        return paths
     }
 
     /// Convert a paragraph to a blockquote, or a blockquote to a paragraph.
@@ -4742,6 +5921,10 @@ public enum EditingOps {
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
             let newSpan = result.newProjection.blockSpans[blockIndex]
             result.newCursorPosition = newSpan.location + newSpan.length
+            result.contract = EditContract(
+                declaredActions: [.changeBlockKind(at: blockIndex)],
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
 
         case .blockquote(let lines):
@@ -4751,6 +5934,10 @@ public enum EditingOps {
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
             let newSpan = result.newProjection.blockSpans[blockIndex]
             result.newCursorPosition = newSpan.location + newSpan.length
+            result.contract = EditContract(
+                declaredActions: [.changeBlockKind(at: blockIndex)],
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
 
         default:
@@ -4774,8 +5961,35 @@ public enum EditingOps {
         // become an H2 instead of paragraph + HR).
         var newDoc = projection.document
         let hrBlock = Block.horizontalRule(character: "-", length: 3)
-        newDoc.blocks.insert(.blankLine, at: blockIndex + 1)
-        newDoc.blocks.insert(hrBlock, at: blockIndex + 2)
+        let trailingParagraph = Block.paragraph(inline: [])
+        newDoc.insertBlock(.blankLine, at: blockIndex + 1)
+        newDoc.insertBlock(hrBlock, at: blockIndex + 2)
+        // Ensure a landing paragraph exists AFTER the HR so the cursor has
+        // somewhere to go. Only skip this when the very next original block
+        // is already a paragraph (where the cursor can land directly).
+        // Otherwise (blankLine, list, heading, EOF) the cursor would be
+        // stranded — insert an empty paragraph for it to rest in.
+        let needsTrailing: Bool = {
+            // Walk forward past any blankLines; if we find a paragraph or
+            // heading, the cursor can land there — no extra paragraph
+            // needed. Otherwise (EOF, list, code, quote, HR), insert one.
+            var i = blockIndex + 1
+            while i < projection.document.blocks.count {
+                switch projection.document.blocks[i] {
+                case .blankLine:
+                    i += 1
+                    continue
+                case .paragraph, .heading:
+                    return false
+                default:
+                    return true
+                }
+            }
+            return true
+        }()
+        if needsTrailing {
+            newDoc.insertBlock(trailingParagraph, at: blockIndex + 3)
+        }
 
         let newProjection = DocumentProjection(
             document: newDoc,
@@ -4784,11 +5998,13 @@ public enum EditingOps {
             note: projection.note
         )
 
-        // Splice covers from current block's end to the new HR's end.
+        // Splice covers from current block's end through the last inserted
+        // block so the rendered attributes land in storage.
         let oldSpan = projection.blockSpans[blockIndex]
-        let newHRSpan = newProjection.blockSpans[blockIndex + 2]
+        let lastNewBlockIdx = needsTrailing ? blockIndex + 3 : blockIndex + 2
+        let lastNewSpan = newProjection.blockSpans[lastNewBlockIdx]
         let spliceStart = oldSpan.location + oldSpan.length
-        let spliceEnd = NSMaxRange(newHRSpan)
+        let spliceEnd = NSMaxRange(lastNewSpan)
         let replacement = newProjection.attributed.attributedSubstring(
             from: NSRange(location: spliceStart, length: spliceEnd - spliceStart)
         )
@@ -4798,8 +6014,29 @@ public enum EditingOps {
             spliceRange: NSRange(location: spliceStart, length: 0),
             spliceReplacement: replacement
         )
-        // +1 to skip the inter-block separator "\n" that follows the HR.
-        result.newCursorPosition = NSMaxRange(newHRSpan) + 1
+        // Place cursor at the start of the block AFTER the HR (the
+        // trailing paragraph if we just inserted one, else the block
+        // already present post-HR).
+        let cursorBlockIdx = blockIndex + 3
+        if cursorBlockIdx < newProjection.blockSpans.count {
+            result.newCursorPosition = newProjection.blockSpans[cursorBlockIdx].location
+        } else {
+            result.newCursorPosition = NSMaxRange(lastNewSpan)
+        }
+        // Two or three blocks were inserted after the current block:
+        // always a blankLine separator + the HR, plus optionally a
+        // trailing paragraph when the next block can't host the cursor.
+        var actions: [EditAction] = [
+            .insertBlock(at: blockIndex + 1),   // blankLine
+            .insertBlock(at: blockIndex + 2)    // HR
+        ]
+        if needsTrailing {
+            actions.append(.insertBlock(at: blockIndex + 3))
+        }
+        result.contract = EditContract(
+            declaredActions: actions,
+            postCursor: newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -4846,6 +6083,15 @@ public enum EditingOps {
             // Position cursor inside the (empty) code block content area.
             let newCodeSpan = result.newProjection.blockSpans[blockIndex + 2]
             result.newCursorPosition = newCodeSpan.location
+            // The original block is preserved unchanged; two new blocks
+            // (blankLine + empty code block) are inserted after it.
+            result.contract = EditContract(
+                declaredActions: [
+                    .insertBlock(at: blockIndex + 1),
+                    .insertBlock(at: blockIndex + 2)
+                ],
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
         }
 
@@ -4934,7 +6180,83 @@ public enum EditingOps {
         let codeBlockIdx = firstIdx + codeBlockOffsetInReplacement
         let codeSpan = result.newProjection.blockSpans[codeBlockIdx]
         result.newCursorPosition = codeSpan.location
+        // Declare the edit as replace(firstIdx) + (N-1) deletes of the
+        // remaining originals + (M-1) inserts of the new blocks.
+        // Net delta = (M - N), which matches the block-count change.
+        let originalCount = lastIdx - firstIdx + 1
+        let newCount = replacementBlocks.count
+        var actions: [EditAction] = [.replaceBlock(at: firstIdx)]
+        if originalCount > 1 {
+            for _ in 1..<originalCount {
+                actions.append(.deleteBlock(at: firstIdx + 1))
+            }
+        }
+        if newCount > 1 {
+            for offset in 1..<newCount {
+                actions.append(.insertBlock(at: firstIdx + offset))
+            }
+        }
+        result.contract = EditContract(
+            declaredActions: actions,
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
+    }
+
+    /// Whitelisted diagram / math language identifiers. These are languages
+    /// that are (a) never useful to type as literal code content on their
+    /// own line, and (b) only render correctly in FSNotes++ via a specific
+    /// code-fence language marker (`mermaid`, `math`, etc. — see
+    /// `BlockRenderer` in the preview pipeline and the Mermaid cell in
+    /// `DocumentRenderer`). Promoting these is safe because there is no
+    /// reasonable scenario where a user would want "mermaid" alone as the
+    /// first line of a plain code block.
+    ///
+    /// Ordinary programming languages (`swift`, `python`, `javascript`,
+    /// etc.) are NOT on this list — users routinely have identifiers or
+    /// reserved words that coincide with a language name as the first line
+    /// of real code, so auto-promotion would be hazardous. For those, the
+    /// user must edit the fence via source-mode toggling (until a language
+    /// picker UI exists).
+    private static let diagramLanguageWhitelist: Set<String> = [
+        "mermaid", "math", "dot", "puml", "graphviz", "flowchart", "plantuml"
+    ]
+
+    /// If `block` is a no-language code block whose content is exactly a
+    /// whitelisted diagram-language identifier (possibly followed by a
+    /// newline and further content), promote the identifier into the
+    /// fence's language field and strip it from content. Returns the
+    /// input block unchanged in every other case.
+    ///
+    /// This powers Bug #41's fix: in block-model WYSIWYG mode the fence
+    /// line is not in storage, so users can't add a language the way they
+    /// would in source mode (`\`\`\`mermaid`). Instead, typing `mermaid`
+    /// + Return on line 1 of a freshly-inserted code block is the
+    /// keystroke gesture for "make this a mermaid block".
+    internal static func maybePromoteDiagramLanguage(_ block: Block) -> Block {
+        guard case .codeBlock(.none, let content, let fence) = block else {
+            return block
+        }
+        // Case A: content is exactly "<lang>\n<rest>". Promote to
+        // language = <lang>, content = <rest>.
+        if let nl = content.firstIndex(of: "\n") {
+            let firstLine = String(content[..<nl])
+            if diagramLanguageWhitelist.contains(firstLine.lowercased()) {
+                let rest = String(content[content.index(after: nl)...])
+                return .codeBlock(
+                    language: firstLine.lowercased(), content: rest, fence: fence
+                )
+            }
+        }
+        // Case B: content is exactly "<lang>" with no newline. Promote to
+        // language = <lang>, content = "" so the code block is ready for
+        // diagram input.
+        if diagramLanguageWhitelist.contains(content.lowercased()) {
+            return .codeBlock(
+                language: content.lowercased(), content: "", fence: fence
+            )
+        }
+        return block
     }
 
     /// Plain-text projection of a block's inline content, matching the
@@ -4998,7 +6320,7 @@ public enum EditingOps {
         let imageBlock = Block.paragraph(inline: [imageInline])
 
         var newDoc = projection.document
-        newDoc.blocks.insert(imageBlock, at: blockIndex + 1)
+        newDoc.insertBlock(imageBlock, at: blockIndex + 1)
 
         let newProjection = DocumentProjection(
             document: newDoc,
@@ -5024,6 +6346,12 @@ public enum EditingOps {
             spliceReplacement: replacement
         )
         result.newCursorPosition = NSMaxRange(newImageSpan)
+        // Contract: insert a single new paragraph block holding the image
+        // at blockIndex + 1. No other blocks change.
+        result.contract = EditContract(
+            declaredActions: [.insertBlock(at: blockIndex + 1)],
+            postCursor: newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -5075,7 +6403,7 @@ public enum EditingOps {
                 return nil
             case .bold(let c, _), .italic(let c, _),
                  .strikethrough(let c), .underline(let c),
-                 .highlight(let c):
+                 .highlight(let c), .kbd(let c):
                 // Descend into container. Children's offsets are
                 // relative to the container's start.
                 var childRunning = nodeStart
@@ -5140,7 +6468,14 @@ public enum EditingOps {
         }
 
         let newBlock = Block.paragraph(inline: newInline)
-        return try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+        var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
+        // Same kind (.paragraph), same count — only the image's width
+        // hint (and thus rawDestination) changed in the inline tree.
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
+        return result
     }
 
     /// Recursive helper: walk `inlines` to `path`, find the `.image`
@@ -5190,6 +6525,9 @@ public enum EditingOps {
         case .highlight(let c):
             guard let modified = setImageWidthAtPath(c, path: rest, newWidth: newWidth) else { return nil }
             result[idx] = .highlight(modified)
+        case .kbd(let c):
+            guard let modified = setImageWidthAtPath(c, path: rest, newWidth: newWidth) else { return nil }
+            result[idx] = .kbd(modified)
         case .link(let text, let dest):
             guard let modified = setImageWidthAtPath(text, path: rest, newWidth: newWidth) else { return nil }
             result[idx] = .link(text: modified, rawDestination: dest)
@@ -5232,10 +6570,10 @@ public enum EditingOps {
         in projection: DocumentProjection
     ) throws -> EditResult {
         var newDoc = projection.document
-        let blockA = newDoc.blocks[indexA]
-        let blockB = newDoc.blocks[indexB]
-        newDoc.blocks[indexA] = blockB
-        newDoc.blocks[indexB] = blockA
+        // Swap contents only. Slot identity is positional — each slot keeps
+        // its id so that `.replaceBlock(at: indexA)` / `.replaceBlock(at: indexB)`
+        // contract claims hold: each slot's content changed, identity preserved.
+        newDoc.swapBlocks(indexA, indexB)
 
         // Splice covers both blocks + the separator between them.
         let spanA = projection.blockSpans[indexA]
@@ -5259,11 +6597,180 @@ public enum EditingOps {
         let newRange = NSRange(location: newStart, length: newEnd - newStart)
         let replacement = newProjection.attributed.attributedSubstring(from: newRange)
 
-        return EditResult(
+        var result = EditResult(
             newProjection: newProjection,
             spliceRange: spliceRange,
             spliceReplacement: replacement
         )
+        // Contract: two adjacent positions are replaced with the other's
+        // content. Block count is preserved, kinds may or may not differ.
+        // `.replaceBlock` is the most general size-preserving action.
+        result.contract = EditContract(
+            declaredActions: [
+                .replaceBlock(at: indexA),
+                .replaceBlock(at: indexB)
+            ],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
+        return result
+    }
+
+    // MARK: - List item move (sibling swap within a list block)
+
+    /// Swap the list item at `storageIndex` with its preceding sibling
+    /// (same parent, same depth). If it is the first sibling, falls back
+    /// to swapping the containing list block with the previous block so
+    /// Move-Up on the first item still produces an outward motion.
+    public static func moveListItemOrBlockUp(
+        at storageIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        if let res = try? moveListItemUp(at: storageIndex, in: projection) {
+            return res
+        }
+        guard let (blockIndex, _) = projection.blockContaining(storageIndex: storageIndex) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+        return try moveBlockUp(blockIndex: blockIndex, in: projection)
+    }
+
+    public static func moveListItemOrBlockDown(
+        at storageIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        if let res = try? moveListItemDown(at: storageIndex, in: projection) {
+            return res
+        }
+        guard let (blockIndex, _) = projection.blockContaining(storageIndex: storageIndex) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+        return try moveBlockDown(blockIndex: blockIndex, in: projection)
+    }
+
+    /// Swap a list item with its previous sibling at the same depth.
+    /// Throws `unsupported` if there is no previous sibling (so callers
+    /// can fall back to block-level swap).
+    private static func moveListItemUp(
+        at storageIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+        guard case .list(let items, let loose) = projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(reason: "moveListItemUp: not a list block")
+        }
+        let entries = flattenList(items)
+        guard let (entryIdx, _) = listEntryContaining(
+            entries: entries, offset: offsetInBlock, forInsertion: true
+        ) else {
+            throw EditingError.unsupported(reason: "moveListItemUp: not in inline content")
+        }
+        let path = entries[entryIdx].path
+        guard let last = path.last, last > 0 else {
+            throw EditingError.unsupported(reason: "moveListItemUp: no previous sibling")
+        }
+        let newItems = swapSiblingsAtPath(items, path: path, withPrevious: true)
+        var newDoc = projection.document
+        newDoc.replaceBlock(at: blockIndex, with: .list(items: newItems, loose: loose))
+        return try rerenderSingleBlockSwap(
+            blockIndex: blockIndex, newDoc: newDoc, projection: projection
+        )
+    }
+
+    private static func moveListItemDown(
+        at storageIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+        guard case .list(let items, let loose) = projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(reason: "moveListItemDown: not a list block")
+        }
+        let entries = flattenList(items)
+        guard let (entryIdx, _) = listEntryContaining(
+            entries: entries, offset: offsetInBlock, forInsertion: true
+        ) else {
+            throw EditingError.unsupported(reason: "moveListItemDown: not in inline content")
+        }
+        let path = entries[entryIdx].path
+        // Check sibling count at the parent of this path.
+        let siblingCount = siblingCountAtParentOfPath(items, path: path)
+        guard let last = path.last, last < siblingCount - 1 else {
+            throw EditingError.unsupported(reason: "moveListItemDown: no next sibling")
+        }
+        let newItems = swapSiblingsAtPath(items, path: path, withPrevious: false)
+        var newDoc = projection.document
+        newDoc.replaceBlock(at: blockIndex, with: .list(items: newItems, loose: loose))
+        return try rerenderSingleBlockSwap(
+            blockIndex: blockIndex, newDoc: newDoc, projection: projection
+        )
+    }
+
+    /// Swap the item at `path` with its previous or next sibling.
+    private static func swapSiblingsAtPath(
+        _ items: [ListItem],
+        path: [Int],
+        withPrevious: Bool
+    ) -> [ListItem] {
+        guard let first = path.first else { return items }
+        var result = items
+        if path.count == 1 {
+            let target = first
+            let partner = withPrevious ? target - 1 : target + 1
+            guard partner >= 0, partner < result.count else { return items }
+            result.swapAt(target, partner)
+            return result
+        }
+        let parent = items[first]
+        let newChildren = swapSiblingsAtPath(
+            parent.children, path: Array(path.dropFirst()), withPrevious: withPrevious
+        )
+        result[first] = ListItem(
+            indent: parent.indent, marker: parent.marker,
+            afterMarker: parent.afterMarker, checkbox: parent.checkbox,
+            inline: parent.inline, children: newChildren
+        )
+        return result
+    }
+
+    /// Count of siblings at the parent level of `path` (i.e. the number
+    /// of items at path's depth under the same parent).
+    private static func siblingCountAtParentOfPath(
+        _ items: [ListItem], path: [Int]
+    ) -> Int {
+        guard path.count > 1 else { return items.count }
+        let first = path.first!
+        return siblingCountAtParentOfPath(items[first].children, path: Array(path.dropFirst()))
+    }
+
+    /// Splice the entire (re-rendered) list block back into storage.
+    private static func rerenderSingleBlockSwap(
+        blockIndex: Int, newDoc: Document, projection: DocumentProjection
+    ) throws -> EditResult {
+        let newProjection = DocumentProjection(
+            document: newDoc,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note
+        )
+        let oldSpan = projection.blockSpans[blockIndex]
+        let newSpan = newProjection.blockSpans[blockIndex]
+        let replacement = newProjection.attributed.attributedSubstring(from: newSpan)
+        var result = EditResult(
+            newProjection: newProjection,
+            spliceRange: oldSpan,
+            spliceReplacement: replacement
+        )
+        // Contract: only the list block at `blockIndex` mutates (sibling
+        // swap reorders items inside it). Block count and kind unchanged,
+        // but internal structure changed — `.replaceBlock` is the fit.
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
+        return result
     }
 
     // MARK: - Todo checkbox toggle
@@ -5323,6 +6830,13 @@ public enum EditingOps {
         let newBlock = Block.list(items: newItems)
         var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
         result.newCursorPosition = storageIndex
+        // Toggling a checkbox on an item doesn't change the block's
+        // kind (still .list) or count. It modifies one item's inline/
+        // checkbox state — `.modifyInline` is the closest action fit.
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
         return result
     }
 
@@ -5348,9 +6862,29 @@ public enum EditingOps {
             )
             let newBlock = Block.list(items: [item])
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
-            let newSpan = result.newProjection.blockSpans[blockIndex]
-            // Place cursor after checkbox + space (start of text content).
-            result.newCursorPosition = newSpan.location + 1
+            // Crash-fix (Apr 21 2026): replaceBlocksSlow runs
+            // coalesceAdjacentLists, which merges the new list with
+            // compatible neighbor lists. After the merge, the original
+            // blockIndex may be past blockSpans.count, AND the just-
+            // promoted item may sit in the middle of a merged list
+            // (not at blockIndex). Use the same prev-list-absorption
+            // logic as toggleList paragraph→list (above).
+            result.newCursorPosition = postPromoteTodoCursor(
+                originalBlockIndex: blockIndex,
+                originalBlocks: projection.document.blocks,
+                newProjection: result.newProjection,
+                fallback: storageIndex
+            )
+            let pDelta = result.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var pActions: [EditAction] = [.changeBlockKind(at: blockIndex)]
+            for _ in 0..<(-pDelta) {
+                pActions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+            result.contract = EditContract(
+                declaredActions: pActions,
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
 
         case .list(let items, _):
@@ -5364,6 +6898,23 @@ public enum EditingOps {
                 }
                 var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
                 result.newCursorPosition = result.newProjection.blockSpans[blockIndex].location
+                // 1 list block → N paragraph blocks. Net delta = N - 1.
+                let unwrapDelta = result.newProjection.document.blocks.count
+                    - projection.document.blocks.count
+                var unwrapActions: [EditAction] = [.replaceBlock(at: blockIndex)]
+                if unwrapDelta > 0 {
+                    for step in 0..<unwrapDelta {
+                        unwrapActions.append(.insertBlock(at: blockIndex + 1 + step))
+                    }
+                } else if unwrapDelta < 0 {
+                    for _ in 0..<(-unwrapDelta) {
+                        unwrapActions.append(.mergeAdjacent(firstIndex: blockIndex))
+                    }
+                }
+                result.contract = EditContract(
+                    declaredActions: unwrapActions,
+                    postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+                )
                 return result
             } else {
                 let newItems = items.map { item in
@@ -5378,6 +6929,19 @@ public enum EditingOps {
                 let newBlock = Block.list(items: newItems)
                 var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
                 result.newCursorPosition = storageIndex
+                // Same list kind, same count; only inline-level changes
+                // (added checkboxes). Coalesce with same-style neighbors
+                // is possible in edge cases.
+                let addDelta = result.newProjection.document.blocks.count
+                    - projection.document.blocks.count
+                var addActions: [EditAction] = [.modifyInline(blockIndex: blockIndex)]
+                for _ in 0..<(-addDelta) {
+                    addActions.append(.mergeAdjacent(firstIndex: blockIndex))
+                }
+                result.contract = EditContract(
+                    declaredActions: addActions,
+                    postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+                )
                 return result
             }
 
@@ -5391,9 +6955,23 @@ public enum EditingOps {
             )
             let newBlock = Block.list(items: [item])
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
-            let newSpan = result.newProjection.blockSpans[blockIndex]
-            // Place cursor after checkbox + space (start of text content).
-            result.newCursorPosition = newSpan.location + 1
+            // Same coalesce-safety as the paragraph branch.
+            result.newCursorPosition = postPromoteTodoCursor(
+                originalBlockIndex: blockIndex,
+                originalBlocks: projection.document.blocks,
+                newProjection: result.newProjection,
+                fallback: storageIndex
+            )
+            let bDelta = result.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var bActions: [EditAction] = [.changeBlockKind(at: blockIndex)]
+            for _ in 0..<(-bDelta) {
+                bActions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+            result.contract = EditContract(
+                declaredActions: bActions,
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
 
         case .heading(_, let suffix):
@@ -5408,9 +6986,23 @@ public enum EditingOps {
             )
             let newBlock = Block.list(items: [item])
             var result = try replaceBlock(atIndex: blockIndex, with: newBlock, in: projection)
-            let newSpan = result.newProjection.blockSpans[blockIndex]
-            // Place cursor after checkbox + space (start of text content).
-            result.newCursorPosition = newSpan.location + 1
+            // Same coalesce-safety as the paragraph branch.
+            result.newCursorPosition = postPromoteTodoCursor(
+                originalBlockIndex: blockIndex,
+                originalBlocks: projection.document.blocks,
+                newProjection: result.newProjection,
+                fallback: storageIndex
+            )
+            let hDelta = result.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var hActions: [EditAction] = [.changeBlockKind(at: blockIndex)]
+            for _ in 0..<(-hDelta) {
+                hActions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+            result.contract = EditContract(
+                declaredActions: hActions,
+                postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+            )
             return result
 
         default:
@@ -5418,6 +7010,56 @@ public enum EditingOps {
                 reason: "toggleTodoList: unsupported block type"
             )
         }
+    }
+
+    /// After paragraph/blankLine/heading → todo-list promotion, locate
+    /// where the just-promoted item lives in the new projection and
+    /// return the cursor position at the start of its inline content.
+    ///
+    /// `replaceBlocksSlow` runs `coalesceAdjacentLists`, which merges the
+    /// new list block with adjacent compatible lists (same marker style:
+    /// `-` here). After the merge, the original `blockIndex` may be past
+    /// `newProjection.blockSpans.count`, OR it may point at a merged-list
+    /// block that contains MORE items than just the new one. This helper
+    /// computes the correct landing position by:
+    ///   1. Counting how many items were absorbed from a preceding `-`
+    ///      list (each such item shifts our item index inside the merged
+    ///      block).
+    ///   2. Locating the block that contains the merged list — either
+    ///      `blockIndex - 1` (if a previous list absorbed us) or
+    ///      `blockIndex` (if it didn't).
+    ///   3. Using `flattenList` to find our item's prefix length and
+    ///      computing the absolute cursor position.
+    /// Falls back to `fallback` if anything is unexpected.
+    private static func postPromoteTodoCursor(
+        originalBlockIndex blockIndex: Int,
+        originalBlocks: [Block],
+        newProjection: DocumentProjection,
+        fallback: Int
+    ) -> Int {
+        let prev = blockIndex > 0 ? originalBlocks[blockIndex - 1] : nil
+        let absorbedBefore: Int = {
+            guard let p = prev,
+                  case .list(let prevItems, _) = p,
+                  // todo lists use "-" markers; absorb only if prev is unordered.
+                  !ListRenderer.isOrderedMarker(prevItems.first?.marker ?? "-")
+            else { return 0 }
+            return prevItems.count
+        }()
+        let landingBlockIndex = (absorbedBefore > 0) ? (blockIndex - 1) : blockIndex
+        guard landingBlockIndex >= 0,
+              landingBlockIndex < newProjection.blockSpans.count else {
+            return fallback
+        }
+        let landingBlockSpan = newProjection.blockSpans[landingBlockIndex]
+        if case .list(let mergedItems, _) = newProjection.document.blocks[landingBlockIndex],
+           absorbedBefore < mergedItems.count {
+            let entries = flattenList(mergedItems)
+            if let entry = entries.first(where: { $0.path == [absorbedBefore] }) {
+                return landingBlockSpan.location + entry.startOffset + entry.prefixLength
+            }
+        }
+        return landingBlockSpan.location + 1
     }
 
     // MARK: - Inline trait toggle internals
@@ -5511,6 +7153,7 @@ public enum EditingOps {
                 case .strikethrough(let c): current = c
                 case .underline(let c): current = c
                 case .highlight(let c): current = c
+                case .kbd(let c): current = c
                 case .link(let text, _): current = text
                 case .image(let alt, _, _): current = alt
                 default: return false
@@ -5650,6 +7293,22 @@ public enum EditingOps {
                 return splitAndUnwrap(children, wrapWith: { .highlight($0) }, from: clampedFrom, to: clampedTo)
             }
             return [.highlight(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
+        case .superscript(let children):
+            // sup/sub aren't InlineTrait cases — recurse to unwrap any
+            // inner trait (bold, italic, etc.) but keep the sup wrapper.
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
+            return [.superscript(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
+        case .`subscript`(let children):
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
+            return [.`subscript`(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
+        case .kbd(let children):
+            // kbd isn't an InlineTrait case — recurse to unwrap any
+            // inner trait (bold, italic, etc.) but keep the kbd wrapper.
+            let len = inlinesLength(children)
+            let clampedTo = min(to, len)
+            return [.kbd(unwrapTrait(children, trait: trait, from: clampedFrom, to: clampedTo))]
         case .link(let text, let dest):
             let len = inlinesLength(text)
             let clampedTo = min(to, len)
@@ -5729,23 +7388,72 @@ public enum EditingOps {
             case .bold(let children, let marker):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
-                result.append(.bold(cleaned, marker: marker))
+                // Merge with previous bold if directly adjacent (same marker).
+                // Prevents fragmented bold runs when user types char-by-char
+                // with pending-trait bold active — each insertWithTraits call
+                // produces a new bold sibling; without this coalescing, the
+                // serializer emits `**b****o****l****d**` instead of `**bold**`.
+                if case .bold(let prev, let prevMarker) = result.last, prevMarker == marker {
+                    result[result.count - 1] = .bold(cleanInlines(prev + cleaned), marker: marker)
+                } else {
+                    result.append(.bold(cleaned, marker: marker))
+                }
             case .italic(let children, let marker):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
-                result.append(.italic(cleaned, marker: marker))
+                if case .italic(let prev, let prevMarker) = result.last, prevMarker == marker {
+                    result[result.count - 1] = .italic(cleanInlines(prev + cleaned), marker: marker)
+                } else {
+                    result.append(.italic(cleaned, marker: marker))
+                }
             case .strikethrough(let children):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
-                result.append(.strikethrough(cleaned))
+                if case .strikethrough(let prev) = result.last {
+                    result[result.count - 1] = .strikethrough(cleanInlines(prev + cleaned))
+                } else {
+                    result.append(.strikethrough(cleaned))
+                }
             case .underline(let children):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
-                result.append(.underline(cleaned))
+                if case .underline(let prev) = result.last {
+                    result[result.count - 1] = .underline(cleanInlines(prev + cleaned))
+                } else {
+                    result.append(.underline(cleaned))
+                }
             case .highlight(let children):
                 let cleaned = cleanInlines(children)
                 if cleaned.isEmpty { continue }
-                result.append(.highlight(cleaned))
+                if case .highlight(let prev) = result.last {
+                    result[result.count - 1] = .highlight(cleanInlines(prev + cleaned))
+                } else {
+                    result.append(.highlight(cleaned))
+                }
+            case .superscript(let children):
+                let cleaned = cleanInlines(children)
+                if cleaned.isEmpty { continue }
+                if case .superscript(let prev) = result.last {
+                    result[result.count - 1] = .superscript(cleanInlines(prev + cleaned))
+                } else {
+                    result.append(.superscript(cleaned))
+                }
+            case .`subscript`(let children):
+                let cleaned = cleanInlines(children)
+                if cleaned.isEmpty { continue }
+                if case .`subscript`(let prev) = result.last {
+                    result[result.count - 1] = .`subscript`(cleanInlines(prev + cleaned))
+                } else {
+                    result.append(.`subscript`(cleaned))
+                }
+            case .kbd(let children):
+                let cleaned = cleanInlines(children)
+                if cleaned.isEmpty { continue }
+                if case .kbd(let prev) = result.last {
+                    result[result.count - 1] = .kbd(cleanInlines(prev + cleaned))
+                } else {
+                    result.append(.kbd(cleaned))
+                }
             case .link(let text, let dest):
                 let cleaned = cleanInlines(text)
                 if cleaned.isEmpty { continue }
@@ -5864,7 +7572,13 @@ public enum EditingOps {
             return nil
         }
 
-        return try replaceBlock(atIndex: blockIndex, with: reParsedBlock, in: projection)
+        var result = try replaceBlock(atIndex: blockIndex, with: reParsedBlock, in: projection)
+        // Block kind is unchanged; only the inline tree was re-parsed.
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
+        return result
     }
 
     /// Recursively re-parse inlines in list children.
@@ -6027,9 +7741,24 @@ public enum EditingOps {
             header: newHeader, alignments: alignments,
             rows: newRows, raw: newRaw
         )
-        return try replaceBlock(
+        var result = try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection
         )
+        // Contract: exactly one cell's inline content mutated. Row is
+        // encoded as -1 for the header, or the 0-indexed body row.
+        // Block count and kind are preserved (size-preserving).
+        let (rowIdx, colIdx): (Int, Int)
+        switch location {
+        case .header(let col):              (rowIdx, colIdx) = (-1, col)
+        case .body(let row, let col):       (rowIdx, colIdx) = (row, col)
+        }
+        result.contract = EditContract(
+            declaredActions: [.replaceTableCell(
+                blockIndex: blockIndex, rowIndex: rowIdx, colIndex: colIdx
+            )],
+            postCursor: result.newProjection.cursor(atStorageIndex: result.newCursorPosition)
+        )
+        return result
     }
 
     /// Rebuild a canonical pipe-delimited representation of a table

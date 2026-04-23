@@ -57,9 +57,9 @@ extension EditTextView {
             if filtered.count != countAllItems(items) {
                 modified = true
                 if filtered.isEmpty {
-                    newDoc.blocks.remove(at: i)
+                    newDoc.removeBlock(at: i)
                 } else {
-                    newDoc.blocks[i] = .list(items: filtered)
+                    newDoc.replaceBlock(at: i, with: .list(items: filtered))
                 }
             }
         }

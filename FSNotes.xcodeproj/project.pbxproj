@@ -24,10 +24,12 @@
 		1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8852B50A2749E42226C8379 /* EditorPreferences.swift */; };
 		C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */; };
 		C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */; };
+		GOVL0000000000000000000B1 /* GutterOverlayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = GOVL0000000000000000000F1 /* GutterOverlayTests.swift */; };
 		432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 568C7270DF4C1784CFDD100B /* NoteSerializer.swift */; };
 		DOC0000000000000000000B1 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = DOC0000000000000000000F1 /* Document.swift */; };
 		E2255B899F5A2E6F221D930E /* ListEditingFSM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */; };
 		DDC1196B5E689F71A0A4E357 /* EditingOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F23911779AD1E5392251BC /* EditingOperations.swift */; };
+		EDCT0000000000000000000B1 /* EditContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDCT0000000000000000000F1 /* EditContract.swift */; };
 		0DDDF90E3C3157BC2E504ED2 /* DocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09ADE04F6A3FBE2644A12083 /* DocumentRenderer.swift */; };
 		B75D6B02DEB6DB7341164AD6 /* DocumentProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91EBCEC7290C7A6BBA01C89 /* DocumentProjection.swift */; };
 		MDP0000000000000000000B1 /* MarkdownParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = MDP0000000000000000000F1 /* MarkdownParser.swift */; };
@@ -46,6 +48,17 @@
 		TTR0000000000000000000B1 /* TableTextRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = TTR0000000000000000000F1 /* TableTextRenderer.swift */; };
 		HRX0000000000000000000B1 /* HorizontalRuleRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRX0000000000000000000F1 /* HorizontalRuleRoundTripTests.swift */; };
 		BQR0000000000000000000B1 /* BlockquoteRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQR0000000000000000000F1 /* BlockquoteRenderer.swift */; };
+		BME0000000000000000000B1 /* BlockModelElements.swift in Sources */ = {isa = PBXBuildFile; fileRef = BME0000000000000000000F1 /* BlockModelElements.swift */; };
+		HRLF000000000000000000B1 /* HorizontalRuleLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRLF000000000000000000F1 /* HorizontalRuleLayoutFragment.swift */; };
+		BQLF000000000000000000B1 /* BlockquoteLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQLF000000000000000000F1 /* BlockquoteLayoutFragment.swift */; };
+		HDLF000000000000000000B1 /* HeadingLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = HDLF000000000000000000F1 /* HeadingLayoutFragment.swift */; };
+		MMLF000000000000000000B1 /* MermaidLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = MMLF000000000000000000F1 /* MermaidLayoutFragment.swift */; };
+		MTLF000000000000000000B1 /* MathLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = MTLF000000000000000000F1 /* MathLayoutFragment.swift */; };
+		DMLF000000000000000000B1 /* DisplayMathLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */; };
+		CBLF000000000000000000B1 /* CodeBlockLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */; };
+		KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */; };
+		BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */; };
+		FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */; };
 		BQT0000000000000000000B1 /* BlockquoteRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */; };
 		INR0000000000000000000B1 /* InlineRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = INR0000000000000000000F1 /* InlineRenderer.swift */; };
 		HRT0000000000000000000B1 /* HeadingRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */; };
@@ -61,6 +74,7 @@
 		641131524153165094364521 /* TablePasteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002317541358038191007833 /* TablePasteTests.swift */; };
 		TCR0000000000000000000B1 /* TableCellEditingRefactorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCR0000000000000000000F1 /* TableCellEditingRefactorTests.swift */; };
 		AS20000000000000000000B1 /* AttributedStringToInlineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AS20000000000000000000F1 /* AttributedStringToInlineTests.swift */; };
+		SUP000000000000000000B17 /* SuperscriptSubscriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SUP000000000000000000F17 /* SuperscriptSubscriptTests.swift */; };
 		4B8F17CEB746492878496ADF /* InlineTagRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */; };
 		A55520A7B95E5FE26FE360A8 /* BlockProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593E5F031A986B6F265DD161 /* BlockProcessor.swift */; };
 		8DD5A19ACC1F3603CFB8A270 /* InlineTagRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */; };
@@ -645,6 +659,7 @@
 		BB1234560001000100010001 /* InlineTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010002 /* InlineTableView.swift */; };
 		BB1234560001000100010021 /* InlinePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010020 /* InlinePDFView.swift */; };
 		BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010030 /* InlineQuickLookView.swift */; };
+		IILF000000000000000000B1 /* InlineImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = IILF000000000000000000F1 /* InlineImageView.swift */; };
 		23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */; };
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
 		23EAB390742AF720CE975FB6 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8C /* AIService.swift */; };
@@ -933,6 +948,23 @@
 		D7FFD09C1FF677ED0064CBA6 /* NotesTextProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7F95F391FF2759300E2A447 /* NotesTextProcessor.swift */; };
 		TEST00000000000000000004 /* RendererComparisonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TEST00000000000000000002 /* RendererComparisonTests.swift */; };
 		EOT0000000000000000000B1 /* EditingOperationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EOT0000000000000000000F1 /* EditingOperationsTests.swift */; };
+		EHN0000000000000000000B1 /* EditorHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = EHN0000000000000000000F1 /* EditorHarness.swift */; };
+		PDFX000000000000000000B1 /* PDFExporterMeasurementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */; };
+		DHR0000000000000000000B1 /* DocumentHTMLRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DHR0000000000000000000F1 /* DocumentHTMLRenderer.swift */; };
+		INV0000000000000000000B1 /* Invariants.swift in Sources */ = {isa = PBXBuildFile; fileRef = INV0000000000000000000F1 /* Invariants.swift */; };
+		REFHW000000000000000000B1 /* ReferenceHTMLWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = REFHW000000000000000000F1 /* ReferenceHTMLWriter.swift */; };
+		BDT0000000000000000000B1 /* BugDrivenHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDT0000000000000000000F1 /* BugDrivenHarnessTests.swift */; };
+		TK2FS000000000000000000B1 /* TextKit2FinderSpikeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TK2FS000000000000000000F1 /* TextKit2FinderSpikeTests.swift */; };
+		ECT0000000000000000000B1 /* EditContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECT0000000000000000000F1 /* EditContractTests.swift */; };
+		HCCT000000000000000000B1 /* HarnessContractCoverageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HCCT000000000000000000F1 /* HarnessContractCoverageTests.swift */; };
+		TK2B000000000000000000B1 /* TextKit2BaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TK2B000000000000000000F1 /* TextKit2BaselineTests.swift */; };
+		SPOS000000000000000000B1 /* ScrollPositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPOS000000000000000000F1 /* ScrollPositionTests.swift */; };
+		TK2E000000000000000000B1 /* TextKit2ElementDispatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TK2E000000000000000000F1 /* TextKit2ElementDispatchTests.swift */; };
+		TK2F000000000000000000B1 /* TextKit2FragmentDispatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TK2F000000000000000000F1 /* TextKit2FragmentDispatchTests.swift */; };
+		TDLC000000000000000000B1 /* TodoListColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TDLC000000000000000000F1 /* TodoListColorTests.swift */; };
+		BG3N000000000000000000B1 /* Bugs3NoteColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */; };
+		LHOV000000000000000000B1 /* LinkHoverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LHOV000000000000000000F1 /* LinkHoverTests.swift */; };
+		CORPUS00000000000000000B1 /* Corpus in Resources */ = {isa = PBXBuildFile; fileRef = CORPUS00000000000000000F1 /* Corpus */; };
 		LFT0000000000000000000B1 /* ListEditingFSMTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LFT0000000000000000000F1 /* ListEditingFSMTests.swift */; };
 		RCT0000000000000000000B1 /* RenderingCorrectnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */; };
 		SIT0000000000000000000B1 /* SystemIntegrityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SIT0000000000000000000F1 /* SystemIntegrityTests.swift */; };
@@ -1057,6 +1089,7 @@
 		DOC0000000000000000000F1 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListEditingFSM.swift; sourceTree = "<group>"; };
 		A7F23911779AD1E5392251BC /* EditingOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingOperations.swift; sourceTree = "<group>"; };
+		EDCT0000000000000000000F1 /* EditContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditContract.swift; sourceTree = "<group>"; };
 		09ADE04F6A3FBE2644A12083 /* DocumentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentRenderer.swift; sourceTree = "<group>"; };
 		A91EBCEC7290C7A6BBA01C89 /* DocumentProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentProjection.swift; sourceTree = "<group>"; };
 		MDP0000000000000000000F1 /* MarkdownParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownParser.swift; sourceTree = "<group>"; };
@@ -1075,6 +1108,17 @@
 		TTR0000000000000000000F1 /* TableTextRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableTextRenderer.swift; sourceTree = "<group>"; };
 		HRX0000000000000000000F1 /* HorizontalRuleRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleRoundTripTests.swift; sourceTree = "<group>"; };
 		BQR0000000000000000000F1 /* BlockquoteRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteRenderer.swift; sourceTree = "<group>"; };
+		BME0000000000000000000F1 /* BlockModelElements.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockModelElements.swift; sourceTree = "<group>"; };
+		HRLF000000000000000000F1 /* HorizontalRuleLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/HorizontalRuleLayoutFragment.swift; sourceTree = "<group>"; };
+		BQLF000000000000000000F1 /* BlockquoteLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/BlockquoteLayoutFragment.swift; sourceTree = "<group>"; };
+		HDLF000000000000000000F1 /* HeadingLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/HeadingLayoutFragment.swift; sourceTree = "<group>"; };
+		MMLF000000000000000000F1 /* MermaidLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/MermaidLayoutFragment.swift; sourceTree = "<group>"; };
+		MTLF000000000000000000F1 /* MathLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/MathLayoutFragment.swift; sourceTree = "<group>"; };
+		DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/DisplayMathLayoutFragment.swift; sourceTree = "<group>"; };
+		CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/CodeBlockLayoutFragment.swift; sourceTree = "<group>"; };
+		KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/KbdBoxParagraphLayoutFragment.swift; sourceTree = "<group>"; };
+		BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/BlockModelLayoutManagerDelegate.swift; sourceTree = "<group>"; };
+		FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/FoldedLayoutFragment.swift; sourceTree = "<group>"; };
 		BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteRoundTripTests.swift; sourceTree = "<group>"; };
 		INR0000000000000000000F1 /* InlineRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineRenderer.swift; sourceTree = "<group>"; };
 		HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadingRoundTripTests.swift; sourceTree = "<group>"; };
@@ -1090,6 +1134,7 @@
 		002317541358038191007833 /* TablePasteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TablePasteTests.swift; sourceTree = "<group>"; };
 		TCR0000000000000000000F1 /* TableCellEditingRefactorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellEditingRefactorTests.swift; sourceTree = "<group>"; };
 		AS20000000000000000000F1 /* AttributedStringToInlineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributedStringToInlineTests.swift; sourceTree = "<group>"; };
+		SUP000000000000000000F17 /* SuperscriptSubscriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuperscriptSubscriptTests.swift; sourceTree = "<group>"; };
 		C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTagRegistry.swift; sourceTree = "<group>"; };
 		593E5F031A986B6F265DD161 /* BlockProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockProcessor.swift; sourceTree = "<group>"; };
 		B9DD6CD3649430363B82C8FE /* AttributeDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributeDrawer.swift; sourceTree = "<group>"; };
@@ -1365,6 +1410,7 @@
 		BB1234560001000100010002 /* InlineTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTableView.swift; sourceTree = "<group>"; };
 		BB1234560001000100010020 /* InlinePDFView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlinePDFView.swift; sourceTree = "<group>"; };
 		BB1234560001000100010030 /* InlineQuickLookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineQuickLookView.swift; sourceTree = "<group>"; };
+		IILF000000000000000000F1 /* InlineImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineImageView.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRenderer.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8C /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
@@ -1489,8 +1535,26 @@
 		EF024607824ECBF0AE378D65 /* Pods-FSNotes (iCloud).release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-FSNotes (iCloud).release.xcconfig"; path = "Target Support Files/Pods-FSNotes (iCloud)/Pods-FSNotes (iCloud).release.xcconfig"; sourceTree = "<group>"; };
 		F616385FF783029192B97DF6 /* Pods_FSNotes.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_FSNotes.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderFoldingTests.swift; sourceTree = "<group>"; };
+		GOVL0000000000000000000F1 /* GutterOverlayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GutterOverlayTests.swift; sourceTree = "<group>"; };
 		TEST00000000000000000002 /* RendererComparisonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererComparisonTests.swift; sourceTree = "<group>"; };
 		EOT0000000000000000000F1 /* EditingOperationsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingOperationsTests.swift; sourceTree = "<group>"; };
+		EHN0000000000000000000F1 /* EditorHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorHarness.swift; sourceTree = "<group>"; };
+		PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFExporterMeasurementTests.swift; sourceTree = "<group>"; };
+		DHR0000000000000000000F1 /* DocumentHTMLRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentHTMLRenderer.swift; sourceTree = "<group>"; };
+		INV0000000000000000000F1 /* Invariants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Invariants.swift; sourceTree = "<group>"; };
+		REFHW000000000000000000F1 /* ReferenceHTMLWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceHTMLWriter.swift; sourceTree = "<group>"; };
+		BDT0000000000000000000F1 /* BugDrivenHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugDrivenHarnessTests.swift; sourceTree = "<group>"; };
+		TK2FS000000000000000000F1 /* TextKit2FinderSpikeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextKit2FinderSpikeTests.swift; sourceTree = "<group>"; };
+		ECT0000000000000000000F1 /* EditContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditContractTests.swift; sourceTree = "<group>"; };
+		HCCT000000000000000000F1 /* HarnessContractCoverageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessContractCoverageTests.swift; sourceTree = "<group>"; };
+		TK2B000000000000000000F1 /* TextKit2BaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextKit2BaselineTests.swift; sourceTree = "<group>"; };
+		SPOS000000000000000000F1 /* ScrollPositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollPositionTests.swift; sourceTree = "<group>"; };
+		TK2E000000000000000000F1 /* TextKit2ElementDispatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextKit2ElementDispatchTests.swift; sourceTree = "<group>"; };
+		TK2F000000000000000000F1 /* TextKit2FragmentDispatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextKit2FragmentDispatchTests.swift; sourceTree = "<group>"; };
+		TDLC000000000000000000F1 /* TodoListColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoListColorTests.swift; sourceTree = "<group>"; };
+		BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bugs3NoteColorTests.swift; sourceTree = "<group>"; };
+		LHOV000000000000000000F1 /* LinkHoverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkHoverTests.swift; sourceTree = "<group>"; };
+		CORPUS00000000000000000F1 /* Corpus */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Corpus; sourceTree = "<group>"; };
 		LFT0000000000000000000F1 /* ListEditingFSMTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListEditingFSMTests.swift; sourceTree = "<group>"; };
 		SIT0000000000000000000F1 /* SystemIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemIntegrityTests.swift; sourceTree = "<group>"; };
 		RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderingCorrectnessTests.swift; sourceTree = "<group>"; };
@@ -1565,6 +1629,7 @@
 				DOC0000000000000000000F1 /* Document.swift */,
 				6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */,
 				A7F23911779AD1E5392251BC /* EditingOperations.swift */,
+				EDCT0000000000000000000F1 /* EditContract.swift */,
 				09ADE04F6A3FBE2644A12083 /* DocumentRenderer.swift */,
 				A91EBCEC7290C7A6BBA01C89 /* DocumentProjection.swift */,
 				MDP0000000000000000000F1 /* MarkdownParser.swift */,
@@ -1577,6 +1642,17 @@
 				HRR0000000000000000000F1 /* HorizontalRuleRenderer.swift */,
 				TTR0000000000000000000F1 /* TableTextRenderer.swift */,
 				BQR0000000000000000000F1 /* BlockquoteRenderer.swift */,
+				BME0000000000000000000F1 /* BlockModelElements.swift */,
+				HRLF000000000000000000F1 /* HorizontalRuleLayoutFragment.swift */,
+				BQLF000000000000000000F1 /* BlockquoteLayoutFragment.swift */,
+				HDLF000000000000000000F1 /* HeadingLayoutFragment.swift */,
+				MMLF000000000000000000F1 /* MermaidLayoutFragment.swift */,
+				MTLF000000000000000000F1 /* MathLayoutFragment.swift */,
+				DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */,
+				CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */,
+				KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */,
+				BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */,
+				FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
 				AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */,
 				ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */,
@@ -2223,6 +2299,7 @@
 				BB1234560001000100010002 /* InlineTableView.swift */,
 				BB1234560001000100010020 /* InlinePDFView.swift */,
 				BB1234560001000100010030 /* InlineQuickLookView.swift */,
+				IILF000000000000000000F1 /* InlineImageView.swift */,
 				9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */,
 				9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */,
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
@@ -2345,6 +2422,7 @@
 			isa = PBXGroup;
 			children = (
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
+				GOVL0000000000000000000F1 /* GutterOverlayTests.swift */,
 				RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */,
 				EHP0000000000000000000F1 /* EditorHTMLParityTests.swift */,
 				IMGSZ00000000000000000F1 /* ImageSizeTitleTests.swift */,
@@ -2376,12 +2454,30 @@
 				002317541358038191007833 /* TablePasteTests.swift */,
 				TCR0000000000000000000F1 /* TableCellEditingRefactorTests.swift */,
 				AS20000000000000000000F1 /* AttributedStringToInlineTests.swift */,
+				SUP000000000000000000F17 /* SuperscriptSubscriptTests.swift */,
 				ED2243EA0CA248C189F28C7A /* NewLineTransitionTests.swift */,
 				EOT0000000000000000000F1 /* EditingOperationsTests.swift */,
 				LFT0000000000000000000F1 /* ListEditingFSMTests.swift */,
 				SIT0000000000000000000F1 /* SystemIntegrityTests.swift */,
 				DPT0000000000000000000F1 /* DocumentProjectionTests.swift */,
 				CRT0000000000000000000F1 /* ComprehensiveRoundTripTests.swift */,
+				EHN0000000000000000000F1 /* EditorHarness.swift */,
+				PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */,
+				DHR0000000000000000000F1 /* DocumentHTMLRenderer.swift */,
+				INV0000000000000000000F1 /* Invariants.swift */,
+				REFHW000000000000000000F1 /* ReferenceHTMLWriter.swift */,
+				BDT0000000000000000000F1 /* BugDrivenHarnessTests.swift */,
+				TK2FS000000000000000000F1 /* TextKit2FinderSpikeTests.swift */,
+				ECT0000000000000000000F1 /* EditContractTests.swift */,
+				HCCT000000000000000000F1 /* HarnessContractCoverageTests.swift */,
+				TK2B000000000000000000F1 /* TextKit2BaselineTests.swift */,
+				SPOS000000000000000000F1 /* ScrollPositionTests.swift */,
+				TK2E000000000000000000F1 /* TextKit2ElementDispatchTests.swift */,
+				TK2F000000000000000000F1 /* TextKit2FragmentDispatchTests.swift */,
+				TDLC000000000000000000F1 /* TodoListColorTests.swift */,
+				BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */,
+				LHOV000000000000000000F1 /* LinkHoverTests.swift */,
+				CORPUS00000000000000000F1 /* Corpus */,
 				CMARK000000000000000005 /* CommonMark */,
 			);
 			path = Tests;
@@ -2771,6 +2867,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CORPUS00000000000000000B1 /* Corpus in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3240,6 +3337,7 @@
 				DOC0000000000000000000B1 /* Document.swift in Sources */,
 				E2255B899F5A2E6F221D930E /* ListEditingFSM.swift in Sources */,
 				DDC1196B5E689F71A0A4E357 /* EditingOperations.swift in Sources */,
+				EDCT0000000000000000000B1 /* EditContract.swift in Sources */,
 				0DDDF90E3C3157BC2E504ED2 /* DocumentRenderer.swift in Sources */,
 				B75D6B02DEB6DB7341164AD6 /* DocumentProjection.swift in Sources */,
 				MDP0000000000000000000B1 /* MarkdownParser.swift in Sources */,
@@ -3252,6 +3350,17 @@
 				HRR0000000000000000000B1 /* HorizontalRuleRenderer.swift in Sources */,
 				TTR0000000000000000000B1 /* TableTextRenderer.swift in Sources */,
 				BQR0000000000000000000B1 /* BlockquoteRenderer.swift in Sources */,
+				BME0000000000000000000B1 /* BlockModelElements.swift in Sources */,
+				HRLF000000000000000000B1 /* HorizontalRuleLayoutFragment.swift in Sources */,
+				BQLF000000000000000000B1 /* BlockquoteLayoutFragment.swift in Sources */,
+				HDLF000000000000000000B1 /* HeadingLayoutFragment.swift in Sources */,
+				MMLF000000000000000000B1 /* MermaidLayoutFragment.swift in Sources */,
+				MTLF000000000000000000B1 /* MathLayoutFragment.swift in Sources */,
+				DMLF000000000000000000B1 /* DisplayMathLayoutFragment.swift in Sources */,
+				CBLF000000000000000000B1 /* CodeBlockLayoutFragment.swift in Sources */,
+				KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */,
+				BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */,
+				FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */,
 				AE6D47605A4C62BABAE54290 /* Note+FileOps.swift in Sources */,
 				2B39BCAF9051872BCE028441 /* SyncPreferences.swift in Sources */,
 				613B083A6587CA8FA9EF6729 /* UIPreferences.swift in Sources */,
@@ -3451,6 +3560,7 @@
 				BB1234560001000100010001 /* InlineTableView.swift in Sources */,
 				BB1234560001000100010021 /* InlinePDFView.swift in Sources */,
 				BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */,
+				IILF000000000000000000B1 /* InlineImageView.swift in Sources */,
 				23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */,
 				23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */,
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,
@@ -3781,6 +3891,7 @@
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
 				40111EF2FC1CA108D2E96E72 /* FoldVisibilityTests.swift in Sources */,
 				C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */,
+				GOVL0000000000000000000B1 /* GutterOverlayTests.swift in Sources */,
 				C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */,
 				1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */,
 				CBT0000000000000000000B1 /* CodeBlockRoundTripTests.swift in Sources */,
@@ -3802,6 +3913,7 @@
 				641131524153165094364521 /* TablePasteTests.swift in Sources */,
 				TCR0000000000000000000B1 /* TableCellEditingRefactorTests.swift in Sources */,
 				AS20000000000000000000B1 /* AttributedStringToInlineTests.swift in Sources */,
+				SUP000000000000000000B17 /* SuperscriptSubscriptTests.swift in Sources */,
 				84D63040A3134E8F95408F64 /* NewLineTransitionTests.swift in Sources */,
 				TEST00000000000000000004 /* RendererComparisonTests.swift in Sources */,
 				EOT0000000000000000000B1 /* EditingOperationsTests.swift in Sources */,
@@ -3817,6 +3929,22 @@
 				IMGSZ00000000000000000B2 /* MarkdownParserImageSizeTests.swift in Sources */,
 				IMGSZ00000000000000000B3 /* MarkdownSerializerImageSizeTests.swift in Sources */,
 				IMGSZ00000000000000000B4 /* EditingOpsSetImageSizeTests.swift in Sources */,
+				EHN0000000000000000000B1 /* EditorHarness.swift in Sources */,
+				PDFX000000000000000000B1 /* PDFExporterMeasurementTests.swift in Sources */,
+				DHR0000000000000000000B1 /* DocumentHTMLRenderer.swift in Sources */,
+				INV0000000000000000000B1 /* Invariants.swift in Sources */,
+				REFHW000000000000000000B1 /* ReferenceHTMLWriter.swift in Sources */,
+				BDT0000000000000000000B1 /* BugDrivenHarnessTests.swift in Sources */,
+				TK2FS000000000000000000B1 /* TextKit2FinderSpikeTests.swift in Sources */,
+				ECT0000000000000000000B1 /* EditContractTests.swift in Sources */,
+				HCCT000000000000000000B1 /* HarnessContractCoverageTests.swift in Sources */,
+				TK2B000000000000000000B1 /* TextKit2BaselineTests.swift in Sources */,
+				SPOS000000000000000000B1 /* ScrollPositionTests.swift in Sources */,
+				TK2E000000000000000000B1 /* TextKit2ElementDispatchTests.swift in Sources */,
+				TK2F000000000000000000B1 /* TextKit2FragmentDispatchTests.swift in Sources */,
+				TDLC000000000000000000B1 /* TodoListColorTests.swift in Sources */,
+				BG3N000000000000000000B1 /* Bugs3NoteColorTests.swift in Sources */,
+				LHOV000000000000000000B1 /* LinkHoverTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -4063,7 +4191,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 12.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -4123,7 +4251,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 12.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -4156,7 +4284,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
 				PRODUCT_MODULE_NAME = FSNotes;
 				PRODUCT_NAME = "FSNotes++";
@@ -4193,7 +4321,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
 				PRODUCT_MODULE_NAME = FSNotes;
@@ -4232,7 +4360,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 7.1.1;
 				OTHER_SWIFT_FLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
@@ -4274,7 +4402,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 7.1.1;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
@@ -4310,7 +4438,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = "$(inherited)";
 				OTHER_SWIFT_FLAGS = "$(inherited)";
@@ -4343,7 +4471,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 12.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotesTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

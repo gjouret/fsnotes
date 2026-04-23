@@ -234,40 +234,52 @@ class EditingOperationsTests: XCTestCase {
                       "Heading should survive merge with paragraph's text appended (got: \(serialized))")
     }
 
-    func test_insert_unsupportedBlockType_throws() {
+    func test_insert_atomicBlock_createsParagraphSibling() throws {
         let p = project("---\n")
-        // Block 0 is horizontalRule. Rendered as glyph line. Span includes
-        // the glyphs; inserting anywhere in that span should throw .unsupported.
-        XCTAssertThrowsError(try EditingOps.insert("X", at: 0, in: p)) { err in
-            guard case EditingError.unsupported = err else {
-                XCTFail("expected unsupported, got \(err)"); return
-            }
-        }
+        // Block 0 is horizontalRule (atomic attachment). Inserting at offset 0
+        // creates a paragraph SIBLING before the HR (new UX contract — see
+        // insertAroundAtomicBlock). HR is preserved; the new text lives in a
+        // new paragraph block.
+        let r = try EditingOps.insert("X", at: 0, in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("X"), "inserted text must appear (got: \(serialized))")
+        XCTAssertTrue(serialized.contains("---"), "HR must be preserved (got: \(serialized))")
     }
 
     // MARK: - Inline-tree navigation (Inline navigation)
 
     func test_insert_intoBold() throws {
         // "a **b** c\n" → rendered "a b c\n", paragraph has
-        // [text("a "), bold([text("b")]), text(" c")]
-        // Block rendered length = 5, storage spans [0,5).
+        // [text("a "), bold([text("b")]), text(" c")].
+        // Offset 3 is the CLOSING fence of **b** (end-of-bold boundary).
+        // Per markdown fence semantics, typing past the closing `**` is
+        // OUTSIDE bold → plain sibling.
         let p = project("a **b** c\n")
         XCTAssertEqual(p.attributed.string, "a b c\n")
-        // Insert 'X' at offset 3 → inside bold leaf "b" at offset 1.
-        // Expected rendered: "a bX c\n". Serialized: "a **bX** c\n".
         let r = try EditingOps.insert("X", at: 3, in: p)
         XCTAssertEqual(r.newProjection.attributed.string, "a bX c\n")
-        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "a **bX** c\n")
+        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "a **b**X c\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
     func test_insert_intoItalic() throws {
-        // "a *b* c\n" → rendered "a b c\n"
+        // "a *b* c\n" → rendered "a b c\n". Offset 3 = closing-fence
+        // boundary. New char becomes a plain sibling outside italic.
         let p = project("a *b* c\n")
         XCTAssertEqual(p.attributed.string, "a b c\n")
         let r = try EditingOps.insert("X", at: 3, in: p)
         XCTAssertEqual(r.newProjection.attributed.string, "a bX c\n")
-        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "a *bX* c\n")
+        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "a *b*X c\n")
+        assertSpliceInvariant(old: p, result: r)
+    }
+
+    /// Inserting STRICTLY inside a multi-char bold span extends the span.
+    func test_insert_trulyInsideBold_extendsSpan() throws {
+        let p = project("a **bold** c\n")
+        // Rendered "a bold c". Offset 4 = between 'o' and 'l'.
+        let r = try EditingOps.insert("X", at: 4, in: p)
+        XCTAssertEqual(r.newProjection.attributed.string, "a boXld c\n")
+        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "a **boXld** c\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -297,12 +309,14 @@ class EditingOperationsTests: XCTestCase {
     func test_insert_intoNestedBoldItalic() throws {
         // "**a *b* c**\n" parses as bold containing [text, italic, text].
         // Rendered "a b c\n" (5 chars visible).
+        // Offset 3 is the CLOSING-fence boundary of the inner italic
+        // *b* — still inside the outer bold. Expected: bold preserved,
+        // italic NOT extended; new char is a plain sibling inside bold.
         let p = project("**a *b* c**\n")
         XCTAssertEqual(p.attributed.string, "a b c\n")
-        // Insert at offset 3 — inside italic leaf "b" at offset 1.
         let r = try EditingOps.insert("X", at: 3, in: p)
         XCTAssertEqual(r.newProjection.attributed.string, "a bX c\n")
-        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "**a *bX* c**\n")
+        XCTAssertEqual(MarkdownSerializer.serialize(r.newProjection.document), "**a *b*X c**\n")
         assertSpliceInvariant(old: p, result: r)
     }
 
@@ -1123,14 +1137,14 @@ class EditingOperationsTests: XCTestCase {
 
     // MARK: - Horizontal rule editing
 
-    func test_insert_horizontalRule_throws() throws {
+    func test_insert_horizontalRule_createsParagraphSibling() throws {
         let p = project("---\n")
-        // HR is read-only. Inserting should throw.
-        XCTAssertThrowsError(try EditingOps.insert("X", at: 0, in: p)) { err in
-            guard case EditingError.unsupported = err else {
-                XCTFail("expected unsupported, got \(err)"); return
-            }
-        }
+        // HR is atomic; inserting creates a paragraph sibling around it rather
+        // than throwing. Content preservation + new text presence is the contract.
+        let r = try EditingOps.insert("X", at: 0, in: p)
+        let serialized = MarkdownSerializer.serialize(r.newProjection.document)
+        XCTAssertTrue(serialized.contains("X"), "inserted text must appear (got: \(serialized))")
+        XCTAssertTrue(serialized.contains("---"), "HR must be preserved (got: \(serialized))")
     }
 
     func test_delete_horizontalRule_fullSpan_removesBlock() throws {
@@ -1266,36 +1280,46 @@ class EditingOperationsTests: XCTestCase {
 
     // MARK: - Bug fixes for list editing
 
-    /// Bug: When Return is pressed at end of line 2, then Delete is pressed
-    /// to remove the newly created empty line 3, cursor should go back to
-    /// end of line 2, not to end of the document.
-    func test_deleteEmptyListItem_cursorGoesToPreviousItem() throws {
+    /// Bug #21: Return on an empty middle list item must split the list
+    /// into [items before] + empty paragraph + [items after] and put the
+    /// cursor on the new paragraph. The earlier behavior collapsed the
+    /// list and jumped the cursor to the end of the previous item, which
+    /// is surprising and inconsistent with the non-empty Return path.
+    func test_bug21_returnOnEmptyMiddleItem_producesEmptyParagraph() throws {
         let p = project("- one\n- two\n- three\n- four\n- five\n")
         let inl1 = listInlineStart(in: p, itemIndex: 1) // "two"
-        
-        // Press Return at end of "two" (3 chars)
+
+        // Press Return at end of "two" (3 chars) → creates empty item at index 2
         let r1 = try EditingOps.insert("\n", at: inl1 + 3, in: p)
         let serialized1 = MarkdownSerializer.serialize(r1.newProjection.document)
         XCTAssertEqual(serialized1, "- one\n- two\n- \n- three\n- four\n- five\n")
-        
-        // New empty item is at index 2
+
         let newEmptyInl = listInlineStart(in: r1.newProjection, itemIndex: 2)
         XCTAssertEqual(r1.newCursorPosition, newEmptyInl)
-        
-        // Now press Delete at the empty item's home position
-        // This should exit the empty item and cursor should go to end of "two"
+
+        // Press Return on the empty item — Bug #21 contract: produce an
+        // empty paragraph in place, cursor on the paragraph, list split.
         let r2 = try EditingOps.returnOnEmptyListItem(at: r1.newCursorPosition, in: r1.newProjection)
         let serialized2 = MarkdownSerializer.serialize(r2.newProjection.document)
-        
-        // After exiting empty item, list should be: one, two, three, four, five
-        // and cursor should be at end of "two"
-        XCTAssertEqual(serialized2, "- one\n- two\n- three\n- four\n- five\n")
-        
-        // Cursor should be at end of item 1 ("two"), not at end of list
-        let inl1After = listInlineStart(in: r2.newProjection, itemIndex: 1)
-        let endOfItem1 = inl1After + 3 // "two" = 3 chars
-        XCTAssertEqual(r2.newCursorPosition, endOfItem1,
-            "Cursor should be at end of previous item (line 2), not at end of document")
+
+        // Expect: list("one","two") + paragraph(empty) + list("three","four","five").
+        // The empty paragraph contributes no characters; MarkdownSerializer
+        // emits a single blank-line separator between the two lists.
+        XCTAssertEqual(serialized2, "- one\n- two\n\n- three\n- four\n- five\n")
+
+        // Document structure: 3 blocks (list + paragraph + list).
+        XCTAssertEqual(r2.newProjection.document.blocks.count, 3,
+                       "expected [list, paragraph, list]; got \(r2.newProjection.document.blocks)")
+        guard case .paragraph(let inlines) = r2.newProjection.document.blocks[1] else {
+            XCTFail("middle block must be a paragraph; got \(r2.newProjection.document.blocks[1])")
+            return
+        }
+        XCTAssertTrue(inlines.isEmpty, "middle paragraph must be empty (the dropped marker)")
+
+        // Cursor sits at the start of the new empty paragraph.
+        let paraSpan = r2.newProjection.blockSpans[1]
+        XCTAssertEqual(r2.newCursorPosition, paraSpan.location,
+            "Cursor must land on the new empty paragraph, not jump back to the previous item")
     }
 
     /// Bug: When creating a new todo item with Return, the new item should

@@ -1832,9 +1832,11 @@ class InlineTableView: NSView, NSTextFieldDelegate {
     /// Tell the parent NSTextView's layout manager that this attachment changed size.
     /// This forces NSTextView to re-query cellSize() and re-layout the text around it.
     private func invalidateAttachmentLayout() {
-        guard let textView = superview as? NSTextView,
+        // Phase 2a: table attachment invalidation is TK1-only. Tables
+        // under TK2 do not render yet (accepted 2a regression).
+        guard let textView = superview as? EditTextView,
               let storage = textView.textStorage,
-              let layoutManager = textView.layoutManager else { return }
+              let layoutManager = textView.layoutManagerIfTK1 else { return }
 
         // Find our attachment character in the text storage
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
@@ -2257,6 +2259,12 @@ class InlineTableAttachmentCell: NSTextAttachmentCell, TableAttachmentHosting {
 
     let inlineTableView: InlineTableView
     private let desiredSize: NSSize
+
+    /// `TableAttachmentHosting` conformance — exposes the live widget
+    /// to `TableBlockAttachment.viewProvider(...)` as a plain `NSView`
+    /// so the core layer can vend it to TK2 without a cross-module type
+    /// dependency.
+    var hostedView: NSView { inlineTableView }
 
     init(tableView: InlineTableView, size: NSSize) {
         self.inlineTableView = tableView

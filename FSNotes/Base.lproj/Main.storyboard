@@ -142,7 +142,7 @@ CA
                                                 <action selector="duplicate:" target="Ady-hI-5gd" id="9eI-Pe-IRx"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Rename Note…" image="pencil" catalog="system" keyEquivalent="r" mirroring="NO" identifier="fileMenu.rename" id="jLq-8F-n0X">
+                                        <menuItem title="Rename…" image="pencil" catalog="system" keyEquivalent="r" mirroring="NO" identifier="fileMenu.rename" id="jLq-8F-n0X">
                                             <connections>
                                                 <action selector="fsRenameItem:" target="Ady-hI-5gd" id="nob-G6-CIE"/>
                                             </connections>

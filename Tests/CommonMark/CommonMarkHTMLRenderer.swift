@@ -395,6 +395,12 @@ struct CommonMarkHTMLRenderer {
                 let encoded = target.addingPercentEncoding(
                     withAllowedCharacters: .urlPathAllowed) ?? target
                 output += "<a href=\"wiki:\(escapeHTML(encoded))\">\(escapeHTML(visible))</a>"
+            case .superscript(let children):
+                output += "<sup>\(renderInlines(children))</sup>"
+            case .`subscript`(let children):
+                output += "<sub>\(renderInlines(children))</sub>"
+            case .kbd(let children):
+                output += "<kbd>\(renderInlines(children))</kbd>"
             }
         }
         return output
@@ -548,7 +554,9 @@ struct CommonMarkHTMLRenderer {
                 result += t
             case .bold(let children, _), .italic(let children, _),
                  .strikethrough(let children),
-                 .underline(let children), .highlight(let children):
+                 .underline(let children), .highlight(let children),
+                 .superscript(let children), .`subscript`(let children),
+                 .kbd(let children):
                 result += plainText(from: children)
             case .code(let t):
                 result += t

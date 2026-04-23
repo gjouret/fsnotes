@@ -23,13 +23,25 @@ import AppKit
 // MARK: - File-based diagnostic logging
 
 /// Diagnostic log file for the block-model pipeline.
-/// Uses NSHomeDirectory() which works in both sandboxed and unsandboxed modes.
-/// In sandbox: ~/Library/Containers/co.fluder.FSNotes/Data/
-/// Without sandbox: ~/
+///
+/// Debug-only developer aid. Writes to `<project-root>/logs/block-model.log`
+/// so the user's `~/Documents/` is not polluted by a log that only exists
+/// to debug the block-model pipeline on this developer's machine. The
+/// project root is derived at compile time from `#filePath` — this file
+/// lives at `<project-root>/FSNotes/View/EditTextView+BlockModel.swift`,
+/// three levels deep. Release builds should never hit this path (bmLog
+/// is only called from diagnostic probes), but even if they did, the
+/// compile-time path is stable and the `logs/` directory is gitignored.
 let blockModelLogURL: URL = {
-    let home = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        ?? URL(fileURLWithPath: NSHomeDirectory())
-    return home.appendingPathComponent("block-model.log")
+    let sourceFile = URL(fileURLWithPath: #filePath)
+    let projectRoot = sourceFile
+        .deletingLastPathComponent()  // .../FSNotes/View/
+        .deletingLastPathComponent()  // .../FSNotes/
+        .deletingLastPathComponent()  // .../<project root>/
+    let logsDir = projectRoot.appendingPathComponent("logs")
+    try? FileManager.default.createDirectory(
+        at: logsDir, withIntermediateDirectories: true)
+    return logsDir.appendingPathComponent("block-model.log")
 }()
 
 private let bmLogDateFormatter: DateFormatter = {
@@ -75,6 +87,43 @@ extension EditTextView {
         static var suppressTraitClear = 2
         static var coalescedLayoutPending = 3
         static var explicitlyOffTraits = 4
+        static var lastEditContract = 5
+        static var preEditProjection = 6
+    }
+
+    /// The `EditContract` from the most recent `applyEditResultWithUndo`
+    /// call. Used by `EditorHarness` (and by live-pipeline invariant
+    /// tests) to assert that the contract the primitive declared
+    /// matches what actually happened to the projection. Nil when the
+    /// primitive did not declare a contract (pre-Batch-H paths) or when
+    /// no edit has fired yet.
+    ///
+    /// Phase 1 exit criterion ("Harness runs contracts as invariants"):
+    /// Bucket B/C tests that drive the live editor through
+    /// `EditorHarness` pick this up automatically — every scripted
+    /// input records its contract here, and the harness's assertion
+    /// helper verifies the pre/post projection pair against it.
+    var lastEditContract: EditContract? {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.lastEditContract) as? EditContract
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.lastEditContract, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+
+    /// Snapshot of the projection as it was just before the most recent
+    /// `applyEditResultWithUndo`. Paired with `lastEditContract` so the
+    /// harness can call `Invariants.assertContract(before:after:contract:)`
+    /// without threading a pre/post pair manually through every scripted
+    /// input.
+    var preEditProjection: DocumentProjection? {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.preEditProjection) as? DocumentProjection
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.preEditProjection, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
     }
 
     /// Inline traits the user JUST toggled OFF on an empty selection.
@@ -116,7 +165,12 @@ extension EditTextView {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.coalescedLayoutPending = false
-            if let lm = self.layoutManager, let storage = self.textStorage {
+            // Phase 2a: do NOT read `self.layoutManager` under TextKit 2.
+            // AppKit silently instantiates a TK1 shim on first access,
+            // permanently tearing down `textLayoutManager`.
+            if self.textLayoutManager == nil,
+               let lm = self.layoutManager,
+               let storage = self.textStorage {
                 let fullRange = NSRange(location: 0, length: storage.length)
                 lm.ensureLayout(forCharacterRange: fullRange)
             }
@@ -227,10 +281,21 @@ extension EditTextView {
         // Set the rendered attributed string into textStorage.
         // Use isRendering to prevent the source-mode pipeline from
         // processing this setAttributedString.
+        //
+        // On TK2, wrap the replacement in `performEditingTransaction` on
+        // the NSTextContentStorage. Without the transaction, TK2's
+        // layout fragments can be built from a stale view of the
+        // storage on first paint — producing a correctly-attributed
+        // but invisibly-rendered list block (the todo "white text on
+        // load" bug). Any subsequent splice goes through
+        // replaceCharacters which drives the content storage's own
+        // change notifications, so the second render is correct. The
+        // transaction makes the initial fill take the same fast path
+        // the splice would.
         textStorageProcessor?.isRendering = true
         storage.setAttributedString(projection.attributed)
         textStorageProcessor?.isRendering = false
-        
+
         // Verify storage matches projection after setting
         bmLog("✅ AFTER setAttributedString: storage.length=\(storage.length), projection.length=\(projection.attributed.length)")
 
@@ -246,6 +311,7 @@ extension EditTextView {
         }
 
         bmLog("✅ fillViaBlockModel complete: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")
+
         return true
     }
 
@@ -269,11 +335,30 @@ extension EditTextView {
         }
 
         // Capture state for undo BEFORE mutating.
-        guard let oldProjection = documentProjection else { 
+        guard let oldProjection = documentProjection else {
             bmLog("⛔ applyEditResultWithUndo: no documentProjection")
-            return 
+            return
         }
         let oldCursorRange = selectedRange()
+
+        // Snapshot the pre-edit projection + the declared contract for
+        // harness-level invariant checks. `EditorHarness` reads these
+        // after each scripted input to enforce the Phase 1 contract
+        // against the live editor's post-edit state. Nil `contract` is
+        // preserved as-is (some edit paths predate Batch H or explicitly
+        // skip the harness assertion).
+        self.preEditProjection = oldProjection
+        self.lastEditContract = result.contract
+
+        // Snapshot pending inline traits so ANY selectionDidChange fired
+        // during this edit cycle (setSelectedRange below + any layout-
+        // driven cursor updates) cannot clear them. The previous
+        // consume-once `suppressPendingTraitClear` flag failed when
+        // more than one selectionDidChange fired: the first consumed
+        // the flag, and a follow-up clear wiped the pending trait, so
+        // only the FIRST typed character after Cmd+B was bold.
+        let savedPendingTraits = pendingInlineTraits
+        let savedOffTraits = explicitlyOffTraits
 
         // Detailed logging for splice application
         bmLog("🔧 applyEditResultWithUndo BEFORE: storage.length=\(storage.length), storage.string='\(storage.string)'")
@@ -311,6 +396,9 @@ extension EditTextView {
                 setSelectedRange(NSRange(location: cursorPos, length: selLen),
                                  affinity: .downstream, stillSelecting: false)
                 syncTypingAttributesToCursorBlock()
+                // Restore pending traits (see end-of-function for rationale).
+                pendingInlineTraits = savedPendingTraits
+                explicitlyOffTraits = savedOffTraits
                 return
             }
         }
@@ -350,6 +438,15 @@ extension EditTextView {
             in: result.spliceRange, of: storage
         )
 
+        // Suppress NSTextView's automatic undo registration during the
+        // splice. Without this, AppKit registers a TEXT-level undo that
+        // replaces only the raw characters (losing rendered attributes
+        // from the attributed projection). When the user fires undo,
+        // that registration plus our own block-model undo run in the
+        // wrong order, stripping all formatting from the note. We
+        // register our own structural undo at the end of this function.
+        let umSplice = self.undoManager ?? editorViewController?.editorUndoManager
+        umSplice?.disableUndoRegistration()
         textStorageProcessor?.isRendering = true
         storage.beginEditing()
         storage.replaceCharacters(
@@ -357,6 +454,7 @@ extension EditTextView {
             with: result.spliceReplacement
         )
         storage.endEditing()
+        umSplice?.enableUndoRegistration()
 
         let postSpliceAttachmentCount = countAttachmentCharacters(
             in: result.spliceReplacement
@@ -468,6 +566,42 @@ extension EditTextView {
         // updates, the display refreshes, and the delegate saves.
         didChangeText()
 
+        // Re-hydrate attachments in the splice replacement.
+        //
+        // When narrowSplice cannot narrow around attachments (because
+        // the attachment COUNT differs between old and new — e.g. a
+        // multi-paragraph selection that contained an inline image got
+        // wrapped into a list, adding 1 bullet attachment per item
+        // while the image attachment is re-rendered mid-splice), the
+        // splice replaces the live attachment object with a fresh
+        // placeholder emitted by InlineRenderer.makeImageAttachment.
+        // That placeholder carries `.attachmentUrl`/`.attachmentPath`
+        // metadata but has no loaded image data, no PDFView, no
+        // QLPreviewView — so the user sees a 1x1 empty cell where
+        // their Numbers/PDF/image preview used to be.
+        //
+        // The three hydrators are idempotent: each skips attachments
+        // whose attachmentCell is already the correct type. Calling
+        // them after every splice that introduces attachment chars
+        // restores the preview without affecting attachments that
+        // were preserved in-place by narrowSplice.
+        //
+        // Gate: only run when the splice replacement contains
+        // attachment characters. Pure-text edits (the hot path for
+        // typing) skip the hydrator walk entirely.
+        if postSpliceAttachmentCount > 0 {
+            let containerWidth = self.textContainer?.size.width ?? self.frame.width
+            if let note = self.note {
+                PDFAttachmentProcessor.renderPDFAttachments(
+                    in: storage, note: note, containerWidth: containerWidth
+                )
+            }
+            ImageAttachmentHydrator.hydrate(textStorage: storage, editor: self)
+            QuickLookAttachmentProcessor.renderQuickLookAttachments(
+                in: storage, containerWidth: containerWidth
+            )
+        }
+
         // Invalidate ONLY the spliced region (the characters that
         // actually changed). The previous implementation invalidated
         // from splice.location to end of storage AND called
@@ -488,7 +622,16 @@ extension EditTextView {
         // invalidate the new region so it repaints. Lazy layout
         // handles the rest as the user scrolls or as AppKit
         // decides to re-measure.
-        if let lm = layoutManager {
+        // Narrow display invalidation for the spliced range.
+        //
+        // IMPORTANT (Phase 2a): do NOT read `self.layoutManager` under
+        // TextKit 2. AppKit's NSTextView lazily instantiates a TK1
+        // `NSLayoutManager` compatibility shim on first access to the
+        // `layoutManager` property, which permanently tears down the
+        // TK2 wiring (`textLayoutManager` becomes nil). That's a silent
+        // fallback with no API to detect it after the fact. Gate every
+        // TK1-API call on `textLayoutManager == nil`.
+        if textLayoutManager == nil, let lm = layoutManager {
             let invalidatedRange = NSRange(
                 location: result.spliceRange.location,
                 length: result.spliceReplacement.length
@@ -519,17 +662,18 @@ extension EditTextView {
         isScrollPositionSaverLocked = false
         needsDisplay = true
 
-        // Clean up orphaned inline PDF / QuickLook / table subviews
-        // ONLY when the splice actually removed attachment
-        // characters. The common per-keystroke cell edit has a
-        // splice that doesn't touch any attachment, so this gate
-        // skips an O(subviews + storage.length) walk on the hot
-        // path. Widgets get added as direct subviews by their
-        // attachment cell's draw() method and the splice does not
-        // automatically tear them out when the attachment disappears.
+        // Clean up orphaned inline table subviews ONLY when the splice
+        // actually removed attachment characters. The common per-
+        // keystroke cell edit has a splice that doesn't touch any
+        // attachment, so this gate skips an O(subviews + storage.length)
+        // walk on the hot path. `InlineTableView` still uses the legacy
+        // `NSTextAttachmentCell.draw(...)` pattern and is added as a
+        // direct subview by the cell's draw method — the splice does
+        // not automatically tear it out when the attachment disappears.
+        // `InlinePDFView` and `InlineQuickLookView` now use the TK2
+        // `NSTextAttachmentViewProvider` pattern, so AppKit handles
+        // their lifecycle automatically.
         if postSpliceAttachmentCount < preSpliceAttachmentCount {
-            removeOrphanedInlinePDFViews()
-            removeOrphanedInlineQuickLookViews()
             removeOrphanedInlineTableViews()
         }
 
@@ -550,6 +694,15 @@ extension EditTextView {
             }
             um.setActionName(actionName)
         }
+
+        // Restore pending inline traits. Any selectionDidChange that
+        // fired during the edit may have cleared them (consume-once
+        // suppress flag can't guard against >1 fire). Snapshot taken
+        // at entry; caller-side logic that intentionally clears traits
+        // (e.g. newline case) does so BEFORE calling apply, so the
+        // snapshot already reflects the intended post-edit state.
+        pendingInlineTraits = savedPendingTraits
+        explicitlyOffTraits = savedOffTraits
     }
 
     /// Count U+FFFC attachment characters in the given range of a
@@ -594,11 +747,16 @@ extension EditTextView {
         // Use setAttributedString for a clean full replacement —
         // replaceCharacters can produce garbled output when replacing
         // the entire storage with an attributed string.
+        // Suppress NSTextView's automatic undo registration during the
+        // full-storage replacement (same reasoning as applyEditResult).
+        let umRestore = self.undoManager ?? editorViewController?.editorUndoManager
+        umRestore?.disableUndoRegistration()
         textStorageProcessor?.isRendering = true
         storage.beginEditing()
         storage.setAttributedString(projection.attributed)
         storage.endEditing()
         textStorageProcessor?.isRendering = false
+        umRestore?.enableUndoRegistration()
 
         // Restore projection and cursor.
         documentProjection = projection
@@ -610,14 +768,19 @@ extension EditTextView {
         setSelectedRange(safeCursor)
         scrollRangeToVisible(safeCursor)
 
-        if let lm = layoutManager, let tc = textContainer {
+        // Phase 2a: do NOT read `self.layoutManager` under TextKit 2.
+        if textLayoutManager == nil,
+           let lm = layoutManager,
+           let tc = textContainer {
             let glyphRange = lm.glyphRange(for: tc)
             lm.invalidateDisplay(forGlyphRange: glyphRange)
         }
         needsDisplay = true
 
-        removeOrphanedInlinePDFViews()
-        removeOrphanedInlineQuickLookViews()
+        // `InlinePDFView` / `InlineQuickLookView` use TK2 view providers
+        // and are managed by AppKit — no manual orphan cleanup needed
+        // here. Only the legacy-cell-backed `InlineTableView` still
+        // requires it.
         removeOrphanedInlineTableViews()
 
         note?.cacheHash = nil
@@ -692,6 +855,35 @@ extension EditTextView {
                     result = try EditingOps.insertWithTraits(replacement, traits: [], at: range.location, in: projection)
                 } else {
                     bmLog("➡️ Calling EditingOps.insert('\(replacement)', at: \(range.location))")
+                    // Bug #21 diagnostic: when inserting a newline, log the
+                    // containing block type and (for lists) the FSM state so
+                    // we can tell if Return-at-home is reaching the exitListItem
+                    // routing branch.
+                    if replacement == "\n" {
+                        if let (bIdx, offsetInBlock) = projection.blockContaining(storageIndex: range.location) {
+                            let block = projection.document.blocks[bIdx]
+                            let blockKind: String
+                            switch block {
+                            case .paragraph: blockKind = "paragraph"
+                            case .heading: blockKind = "heading"
+                            case .codeBlock: blockKind = "codeBlock"
+                            case .list: blockKind = "list"
+                            case .blockquote: blockKind = "blockquote"
+                            case .horizontalRule: blockKind = "horizontalRule"
+                            case .blankLine: blockKind = "blankLine"
+                            case .table: blockKind = "table"
+                            case .htmlBlock: blockKind = "htmlBlock"
+                            }
+                            bmLog("🔍 RETURN diag: block[\(bIdx)]=\(blockKind), offsetInBlock=\(offsetInBlock)")
+                            if case .list = block {
+                                let atHome = ListEditingFSM.isAtHomePosition(storageIndex: range.location, in: projection)
+                                let state = ListEditingFSM.detectState(storageIndex: range.location, in: projection)
+                                bmLog("🔍 RETURN diag (list): isAtHomePosition=\(atHome), detectState=\(state)")
+                            }
+                        } else {
+                            bmLog("🔍 RETURN diag: blockContaining returned nil for storageIndex=\(range.location)")
+                        }
+                    }
                     result = try EditingOps.insert(replacement, at: range.location, in: projection)
                     // Clear pending traits on newline.
                     if replacement == "\n" {
@@ -700,16 +892,8 @@ extension EditTextView {
                     }
                 }
             } else if range.length > 0 && replacement.isEmpty {
-                // DEBUG: Log all delete operations using NSLog
-                NSLog("=== DELETE OPERATION === range: %@", NSStringFromRange(range))
-                
                 // Check for delete-at-home in a list item (FSM intercept).
-                let handled = handleDeleteAtHomeInList(range: range, in: projection)
-                
-                // DEBUG: Log result
-                NSLog("handleDeleteAtHomeInList returned: %@", handled ? "true" : "false")
-                
-                if handled {
+                if handleDeleteAtHomeInList(range: range, in: projection) {
                     return true
                 }
                 // Check for delete-at-home in a heading (convert to paragraph).
@@ -917,31 +1101,13 @@ extension EditTextView {
         in projection: DocumentProjection
     ) -> Bool {
         let cursorPos = range.location + range.length
-        
-        // DEBUG using NSLog
-        NSLog("=== handleDeleteAtHomeInList === range: %@, cursorPos: %d", NSStringFromRange(range), cursorPos)
-        
-        // Check if we're at the "home" position (start of inline content in a list item)
-        let isAtHome = ListEditingFSM.isAtHomePosition(storageIndex: cursorPos, in: projection)
-        
-        NSLog("isAtHome: %@", isAtHome ? "true" : "false")
-        
-        guard isAtHome else {
-            NSLog("GUARD FAILED: not at home position")
+        guard ListEditingFSM.isAtHomePosition(storageIndex: cursorPos, in: projection) else {
             return false
         }
-
         let state = ListEditingFSM.detectState(storageIndex: cursorPos, in: projection)
-        
-        NSLog("state: %@", String(describing: state))
-        
-        guard case .listItem = state else {
-            NSLog("GUARD FAILED: not in list item")
-            return false
-        }
+        guard case .listItem = state else { return false }
 
         let transition = ListEditingFSM.transition(state: state, action: .deleteAtHome)
-        
         // Use standard handler for all transitions (exitListItem now always creates a paragraph)
         return handleListTransition(transition, at: cursorPos)
     }
@@ -1310,7 +1476,7 @@ extension EditTextView {
         }
 
         var newDoc = projection.document
-        newDoc.blocks[blockIndex] = newBlock
+        newDoc.replaceBlock(at: blockIndex, with: newBlock)
         let newProjection = DocumentProjection(
             document: newDoc,
             bodyFont: projection.bodyFont,
@@ -1590,32 +1756,20 @@ extension EditTextView {
         guard var projection = documentProjection else { return false }
         let sel = selectedRange()
 
-        // DEBUG - write to file
-        let debugLog = """
-            === applyToggleAcrossSelection ===
-            actionName: \(actionName)
-            sel: \(sel)
-            storage.length: \(textStorage?.length ?? -1)
-            blockSpans: \(projection.blockSpans)
-            blocks: \(projection.document.blocks.map { String(describing: $0) })
-            """
-        let logPath = "/tmp/fsnotes_debug.log"
-        try? debugLog.write(toFile: logPath, atomically: true, encoding: .utf8)
-
         do {
-            let indices = projection.blockIndices(overlapping: sel).filter { idx in
+            // Filter blankLine blocks out — but only when there's at
+            // least one non-blank block in the selection. When the
+            // cursor is on a solitary blank paragraph (common: user
+            // presses Return twice then Cmd+T for a new todo), we still
+            // want to transform that block, otherwise the caller falls
+            // through to source-mode `formatter.todo()` which inserts
+            // literal `- [ ]` text into the block-model storage.
+            let overlapping = projection.blockIndices(overlapping: sel)
+            let nonBlank = overlapping.filter { idx in
                 if case .blankLine = projection.document.blocks[idx] { return false }
                 return true
             }
-            
-            // Append to debug log
-            let indicesLog = "\nindices after filter: \(indices)"
-            if let handle = FileHandle(forWritingAtPath: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(indicesLog.data(using: .utf8)!)
-                handle.closeFile()
-            }
-            
+            let indices = nonBlank.isEmpty ? overlapping : nonBlank
             guard !indices.isEmpty else { return false }
 
             for blockIdx in indices.reversed() {
@@ -1634,19 +1788,50 @@ extension EditTextView {
 
     /// Toggle list via the block model.
     ///
-    /// Single-block or cursor-only selection delegates to the existing
-    /// single-block primitive. Multi-block selection collapses every
-    /// overlapped non-blank block into ONE list block (one item per
-    /// block), dropping blank lines between them — otherwise the
-    /// serializer would emit N separate `<ul>` blocks with visible
-    /// gaps, which is almost never what the user wanted when they
-    /// highlighted three paragraphs and clicked the list button.
+    /// Three dispatch paths, tried in order:
+    ///  1. Selection spans ≥2 blocks of paragraphs/blank lines →
+    ///     `wrapSelectionInSingleList` collapses them into one list.
+    ///  2. Selection spans ≥2 items within a single existing list
+    ///     block → `EditingOps.toggleListRange` unwraps ALL touched
+    ///     items to paragraphs (bug #59: previously only the first
+    ///     item was unwrapped because a whole list is a single block,
+    ///     so `applyToggleAcrossSelection` iterated once and ran the
+    ///     single-item primitive at the head of the selection).
+    ///  3. Otherwise (cursor in a paragraph, or cursor in one list
+    ///     item) → `applyToggleAcrossSelection` runs the single-item
+    ///     `EditingOps.toggleList` primitive per overlapped block.
     func toggleListViaBlockModel(marker: String = "-") -> Bool {
         if wrapSelectionInSingleList(marker: marker, checkbox: nil) {
             return true
         }
+        if unwrapListRangeIfNeeded(marker: marker) {
+            return true
+        }
         return applyToggleAcrossSelection(actionName: "List") { proj, loc in
             try EditingOps.toggleList(marker: marker, at: loc, in: proj)
+        }
+    }
+
+    /// Multi-item list-unwrap path (bug #59). Returns true when the
+    /// selection spans 2+ items within a single existing list block and
+    /// the pure primitive succeeded in converting them all to
+    /// paragraphs. Returns false for every other shape — including a
+    /// cursor inside a single item — so the caller falls back to the
+    /// single-item `toggleList` primitive for those cases.
+    private func unwrapListRangeIfNeeded(marker: String) -> Bool {
+        guard let projection = documentProjection else { return false }
+        let sel = selectedRange()
+        do {
+            guard let result = try EditingOps.toggleListRange(
+                selection: sel, in: projection
+            ) else {
+                return false
+            }
+            applyBlockModelResult(result, actionName: "List")
+            return true
+        } catch {
+            bmLog("⚠️ toggleListRange failed: \(error)")
+            return false
         }
     }
 
@@ -1718,8 +1903,42 @@ extension EditTextView {
             let result = try EditingOps.insertHorizontalRule(
                 at: cursorPos, in: projection
             )
-            bmLog("➖ insertHorizontalRule: splice \(result.spliceRange)")
+            // Bug #38 diagnostic: log splice replacement bytes (hex) so we can
+            // detect any hidden characters between blocks, and log the resulting
+            // cursor position + typing attributes after splice settles.
+            let replStr = result.spliceReplacement.string
+            let hex = replStr.unicodeScalars.map { String(format: "U+%04X", $0.value) }.joined(separator: " ")
+            bmLog("➖ insertHR diag: cursor=\(cursorPos), splice=\(result.spliceRange) → \(replStr.count) chars [\(hex)], newCursor=\(result.newCursorPosition)")
             applyBlockModelResult(result, actionName: "Horizontal Rule")
+            // Inspect storage around the landed cursor.
+            if let storage = textStorage {
+                let landed = result.newCursorPosition
+                let s = storage.string as NSString
+                let lo = max(0, landed - 4)
+                let hi = min(s.length, landed + 4)
+                var ctxHex = ""
+                for i in lo..<hi {
+                    let ch = s.character(at: i)
+                    let marker = (i == landed) ? "▶" : ""
+                    ctxHex += "\(marker)U+\(String(format: "%04X", ch)) "
+                }
+                bmLog("➖ insertHR diag (post): storage[\(lo)..<\(hi)] = \(ctxHex.trimmingCharacters(in: .whitespaces))")
+                // Log paragraph style at landed cursor
+                if landed < storage.length {
+                    let attrs = storage.attributes(at: landed, effectiveRange: nil)
+                    if let pStyle = attrs[.paragraphStyle] as? NSParagraphStyle {
+                        bmLog("➖ insertHR diag (post): paragraphStyle.firstLineHeadIndent=\(pStyle.firstLineHeadIndent), headIndent=\(pStyle.headIndent)")
+                    } else {
+                        bmLog("➖ insertHR diag (post): no paragraphStyle at landed cursor")
+                    }
+                }
+                // Log typing attributes after sync
+                if let tStyle = typingAttributes[.paragraphStyle] as? NSParagraphStyle {
+                    bmLog("➖ insertHR diag (post): typingAttrs.firstLineHeadIndent=\(tStyle.firstLineHeadIndent), headIndent=\(tStyle.headIndent)")
+                } else {
+                    bmLog("➖ insertHR diag (post): no paragraphStyle in typingAttributes")
+                }
+            }
             return true
         } catch {
             bmLog("⚠️ insertHorizontalRule failed: \(error)")
@@ -1732,12 +1951,36 @@ extension EditTextView {
     /// checkbox item per non-blank block (see `wrapSelectionInSingleList`).
     func toggleTodoViaBlockModel() -> Bool {
         let checkbox = Checkbox(text: "[ ]", afterText: " ")
+        guard let proj = documentProjection else {
+            bmLog("☑ toggleTodoViaBlockModel: documentProjection==nil, bailing")
+            return false
+        }
+        let sel = selectedRange()
+        let overlapping = proj.blockIndices(overlapping: sel)
+        let types = overlapping.map { idx -> String in
+            switch proj.document.blocks[idx] {
+            case .paragraph: return "paragraph"
+            case .blankLine: return "blankLine"
+            case .list: return "list"
+            case .heading: return "heading"
+            case .blockquote: return "blockquote"
+            case .codeBlock: return "code"
+            case .horizontalRule: return "hr"
+            case .table: return "table"
+            case .htmlBlock: return "html"
+            }
+        }
+        bmLog("☑ toggleTodoViaBlockModel: sel=\(sel) overlapping=\(overlapping) types=\(types)")
         if wrapSelectionInSingleList(marker: "-", checkbox: checkbox) {
+            bmLog("☑ toggleTodoViaBlockModel: wrapSelectionInSingleList SUCCEEDED")
             return true
         }
-        return applyToggleAcrossSelection(actionName: "Todo List") { proj, loc in
+        bmLog("☑ toggleTodoViaBlockModel: wrapSelectionInSingleList returned false, trying applyToggleAcrossSelection")
+        let result = applyToggleAcrossSelection(actionName: "Todo List") { proj, loc in
             try EditingOps.toggleTodoList(at: loc, in: proj)
         }
+        bmLog("☑ toggleTodoViaBlockModel: applyToggleAcrossSelection returned \(result)")
+        return result
     }
 
     /// Toggle a specific todo checkbox (checked ↔ unchecked) via the block model.
@@ -1783,162 +2026,36 @@ extension EditTextView {
         fill(note: note)
     }
 
-    // MARK: - Mermaid / MathJax rendering for block model
+    // MARK: - Math rendering for block model
+    //
+    // Phase 2d: block-level mermaid and block-level math code blocks
+    // (```mermaid / ```math / ```latex) are no longer replaced with
+    // NSTextAttachment here. Their paragraph ranges are tagged with
+    // `.blockModelKind = "mermaid" / "math"` by DocumentRenderer, and
+    // the content-storage delegate hands the range to MermaidElement
+    // / MathElement → MermaidLayoutFragment / MathLayoutFragment,
+    // which call BlockRenderer internally and draw the image over the
+    // (still-searchable) source text. No character-stream splice
+    // happens for mermaid / math code blocks under TK2.
+    //
+    // Inline math ($...$) and display math ($$...$$) remain on the
+    // attachment path for now — they live at a different layer
+    // (inline-within-paragraph and a separate document shape) and
+    // are not in 2d's non-table-block-level scope. They will migrate
+    // in a follow-up slice.
 
-    /// Set of block indices already rendered or pending render (prevents double-rendering).
-    private static var _renderedBlockIndices: Set<Int> = []
-
-    /// Render mermaid/math code blocks to inline images using the Document model.
-    /// Called during fill when the block-model pipeline is active.
+    /// Render inline/display math via the block-model pipeline.
+    /// Called during fill when block-model is active.
     func renderSpecialBlocksViaBlockModel() {
-        // Clear stale indices from previous notes — prevents blocks at
-        // the same index from being skipped when switching notes.
-        EditTextView._renderedBlockIndices.removeAll()
-
-        guard let projection = documentProjection,
-              let storage = textStorage else { return }
-
-        let doc = projection.document
-        let spans = projection.blockSpans
-
-        bmLog("🎭 renderSpecialBlocksViaBlockModel: \(doc.blocks.count) blocks")
-        for (i, block) in doc.blocks.enumerated() {
-            guard case .codeBlock(let language, let content, _) = block else {
-                continue
-            }
-            guard let lang = language?.lowercased(),
-                  i < spans.count else {
-                bmLog("🎭 block[\(i)] codeBlock lang=\(language ?? "nil") — skipped (no lang or out of span range)")
-                continue
-            }
-
-            let blockType: BlockRenderer.BlockType
-            if lang == "mermaid" {
-                blockType = .mermaid
-            } else if lang == "math" || lang == "latex" {
-                blockType = .math
-            } else {
-                bmLog("🎭 block[\(i)] codeBlock lang='\(lang)' — skipped (not mermaid/math)")
-                continue
-            }
-
-            let source = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !source.isEmpty else {
-                bmLog("🎭 block[\(i)] \(lang) — skipped (empty source)")
-                continue
-            }
-
-            // Skip already-rendered blocks
-            if EditTextView._renderedBlockIndices.contains(i) {
-                bmLog("🎭 block[\(i)] \(lang) — skipped (already rendered)")
-                continue
-            }
-            EditTextView._renderedBlockIndices.insert(i)
-            bmLog("🎭 block[\(i)] \(lang) — starting render, source='\(source.prefix(50))...'")
-
-            let codeRange = spans[i]
-            let maxWidth = textContainer?.containerSize.width ?? 480
-
-            BlockRenderer.render(source: source, type: blockType, maxWidth: maxWidth) { [weak self] image in
-                bmLog("🎭 block[\(i)] render callback: image=\(image != nil ? "\(image!.size)" : "nil")")
-                guard let self = self, let image = image, let storage = self.textStorage else {
-                    bmLog("🎭 block[\(i)] render failed: self=\(self != nil), image=\(image != nil)")
-                    EditTextView._renderedBlockIndices.remove(i)
-                    return
-                }
-
-                DispatchQueue.main.async {
-                    defer { EditTextView._renderedBlockIndices.remove(i) }
-
-                    // Re-verify projection hasn't changed and range is valid.
-                    guard let currentProjection = self.documentProjection,
-                          i < currentProjection.blockSpans.count else {
-                        bmLog("🎭 block[\(i)] replacement SKIPPED: projection gone or index out of range")
-                        return
-                    }
-                    let currentSpan = currentProjection.blockSpans[i]
-                    guard currentSpan.location < storage.length,
-                          NSMaxRange(currentSpan) <= storage.length else {
-                        bmLog("🎭 block[\(i)] replacement SKIPPED: span \(currentSpan) out of storage range \(storage.length)")
-                        return
-                    }
-
-                    bmLog("🎭 block[\(i)] replacing span \(currentSpan) with \(image.size) attachment")
-                    let scale = min(maxWidth / image.size.width, 1.0)
-                    let scaledSize = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-
-                    let attachment = NSTextAttachment()
-                    let cell = CenteredImageCell(image: image, imageSize: scaledSize, containerWidth: maxWidth)
-                    attachment.attachmentCell = cell
-
-                    let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
-                    let attRange = NSRange(location: 0, length: attachmentString.length)
-                    attachmentString.addAttributes([
-                        .renderedBlockSource: source,
-                        .renderedBlockType: (blockType == .mermaid ? RenderedBlockType.mermaid : RenderedBlockType.math).rawValue,
-                    ], range: attRange)
-
-                    // Replace the code block text with the rendered image.
-                    self.textStorageProcessor?.isRendering = true
-                    storage.beginEditing()
-                    storage.replaceCharacters(in: currentSpan, with: attachmentString)
-                    storage.endEditing()
-                    self.textStorageProcessor?.isRendering = false
-
-                    // Invalidate layout only for the replaced span. The
-                    // actual ensureLayout is deferred to a single coalesced
-                    // call after all replacements complete.
-                    if let lm = self.layoutManager {
-                        let replacedRange = NSRange(
-                            location: currentSpan.location,
-                            length: attachmentString.length
-                        )
-                        lm.invalidateGlyphs(forCharacterRange: replacedRange, changeInLength: 0, actualCharacterRange: nil)
-                        lm.invalidateLayout(forCharacterRange: replacedRange, actualCharacterRange: nil)
-                    }
-                    self.scheduleCoalescedLayout()
-
-                    // Rebuild projection so subsequent edits see correct spans.
-                    // The document model is unchanged (still .codeBlock) — only the
-                    // rendered attributed string in the projection needs updating.
-                    let lengthDelta = attachmentString.length - currentSpan.length
-                    let patchedAttr = NSMutableAttributedString(attributedString: currentProjection.attributed)
-                    patchedAttr.replaceCharacters(in: currentSpan, with: attachmentString)
-                    var patchedSpans = currentProjection.blockSpans
-                    patchedSpans[i] = NSRange(location: currentSpan.location, length: attachmentString.length)
-                    for j in (i + 1)..<patchedSpans.count {
-                        patchedSpans[j] = NSRange(
-                            location: patchedSpans[j].location + lengthDelta,
-                            length: patchedSpans[j].length
-                        )
-                    }
-                    let renderedDoc = RenderedDocument(
-                        document: currentProjection.document,
-                        attributed: patchedAttr,
-                        blockSpans: patchedSpans
-                    )
-                    let newProjection = DocumentProjection(
-                        rendered: renderedDoc,
-                        bodyFont: currentProjection.bodyFont,
-                        codeFont: currentProjection.codeFont,
-                        note: currentProjection.note
-                    )
-                    self.documentProjection = newProjection
-
-                    // Re-sync blocks so LayoutManager draws gray backgrounds
-                    // for regular code blocks at their updated (post-replacement) ranges.
-                    self.textStorageProcessor?.syncBlocksFromProjection(newProjection)
-
-                    self.needsDisplay = true
-                }
-            }
-        }
-
         // --- Inline math ($...$): render inline with text ---
         renderInlineMathViaBlockModel()
 
-        // --- Display math ($$...$$): render as centered block image ---
-        renderDisplayMathViaBlockModel()
+        // --- Display math ($$...$$): now migrated to DisplayMathLayoutFragment.
+        // The TK2 layout-manager delegate dispatches `DisplayMathElement` ->
+        // `DisplayMathLayoutFragment`, which reads `.renderedBlockSource`
+        // (tagged by DocumentRenderer) and renders the centered bitmap in
+        // place of the source text — no storage replacement, no attachment.
+        // `renderDisplayMathViaBlockModel()` is no longer called.
     }
 
     /// Compute the range of characters whose paragraphStyle attribute
@@ -2160,7 +2277,8 @@ extension EditTextView {
 
                     // Invalidate layout only for the replaced range;
                     // ensureLayout deferred to coalesced call.
-                    if let lm = self.layoutManager {
+                    // Phase 2a: gate on textLayoutManager == nil.
+                    if self.textLayoutManager == nil, let lm = self.layoutManager {
                         let replacedRange = NSRange(
                             location: range.location,
                             length: attachmentString.length
@@ -2215,6 +2333,13 @@ extension EditTextView {
 
     /// Render display math ($$...$$) as centered block images — like mermaid
     /// but without the gray frame. Uses BlockRenderer with display mode (\[...\]).
+    ///
+    /// Vestigial as of the DisplayMathLayoutFragment migration: paragraphs
+    /// whose sole inline is `Inline.displayMath` now render via the TK2
+    /// `DisplayMathLayoutFragment` (source text stays in storage, bitmap
+    /// drawn over). This function is no longer invoked from
+    /// `renderSpecialBlocksViaBlockModel()`. Retained for reference and
+    /// for future mixed-content-paragraph handling if ever needed.
     private func renderDisplayMathViaBlockModel() {
         guard let storage = textStorage else { return }
 
@@ -2274,11 +2399,9 @@ extension EditTextView {
 
                     bmLog("🎭 displayMath: replacing \(range) with \(scaledSize) attachment")
 
-                    // Use CenteredImageCell for centered display, like mermaid.
                     let attachment = NSTextAttachment()
                     let cell = CenteredImageCell(image: image, imageSize: scaledSize, containerWidth: maxWidth)
                     attachment.attachmentCell = cell
-
                     let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
                     attachmentString.addAttributes([
                         .renderedBlockSource: source,
@@ -2297,7 +2420,8 @@ extension EditTextView {
                     // re-measured every line and caused cumulative scroll
                     // drift on every edit. Narrow invalidation + coalesced
                     // deferred layout is sufficient.
-                    if let lm = self.layoutManager {
+                    // Phase 2a: gate on textLayoutManager == nil.
+                    if self.textLayoutManager == nil, let lm = self.layoutManager {
                         let replacedRange = NSRange(
                             location: range.location,
                             length: attachmentString.length
@@ -2342,5 +2466,94 @@ extension EditTextView {
                 }
             }
         }
+    }
+
+    // MARK: - Image resize commit (Slice 4 — TK2 view-provider path)
+
+    /// Commit a new width for an image attachment through the block-model
+    /// pipeline. Called from `InlineImageView`'s `onResizeCommit` closure
+    /// (which is wired up by `ImageAttachmentViewProvider.loadView()`).
+    ///
+    /// Resolves the attachment's storage character index by scanning
+    /// `textStorage`, maps that into `(blockIndex, inlineOffset)` via the
+    /// live projection, locates the image inline path, and routes the
+    /// size update through `EditingOps.setImageSize` and
+    /// `applyEditResultWithUndo` — the standard block-model mutation
+    /// path. After the splice lands, the hydrator is re-run so the
+    /// freshly-rendered placeholder attachment gets its image loaded +
+    /// sized according to the new width hint.
+    ///
+    /// No-op if the attachment can no longer be located in storage, the
+    /// projection is nil, the block is not a paragraph containing an
+    /// image at the offset, or the setImageSize primitive throws.
+    ///
+    /// - Parameters:
+    ///   - attachment: The `NSTextAttachment` whose view just finished
+    ///     being dragged. Must still be present in `textStorage`.
+    ///   - newWidth: New width in points (will be rounded to `Int` for
+    ///     the markdown width hint).
+    public func commitImageResize(
+        attachment: NSTextAttachment,
+        newWidth: CGFloat
+    ) {
+        guard let storage = textStorage,
+              let projection = documentProjection
+        else { return }
+
+        // Locate the attachment in storage by identity. O(n) scan, but
+        // only runs once per mouseUp — not on the per-drag hot path.
+        var location: Int? = nil
+        storage.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, range, stop in
+            if let att = value as? NSTextAttachment, att === attachment {
+                location = range.location
+                stop.pointee = true
+            }
+        }
+        guard let storageIndex = location else {
+            bmLog("⚠️ commitImageResize: attachment not found in storage")
+            return
+        }
+
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(
+            storageIndex: storageIndex
+        ) else {
+            bmLog("⚠️ commitImageResize: no block at storage index \(storageIndex)")
+            return
+        }
+
+        let block = projection.document.blocks[blockIndex]
+        guard case .paragraph(let inline) = block,
+              let inlinePath = EditingOps.findImageInlinePath(
+                in: inline, at: offsetInBlock
+              )
+        else {
+            bmLog("⚠️ commitImageResize: no image inline at block=\(blockIndex) offset=\(offsetInBlock)")
+            return
+        }
+
+        breakUndoCoalescing()
+        do {
+            let result = try EditingOps.setImageSize(
+                blockIndex: blockIndex,
+                inlinePath: inlinePath,
+                newWidth: Int(newWidth.rounded()),
+                in: projection
+            )
+            applyEditResultWithUndo(result, actionName: "Resize Image")
+
+            // After the splice, the freshly-rendered attachment is a
+            // placeholder (1×1, no cell). Re-hydrate so the image loads
+            // at the new size from the width hint just written to the
+            // markdown. Mirror of the TK1 path in
+            // `EditTextView+Interaction.swift`.
+            ImageAttachmentHydrator.hydrate(textStorage: storage, editor: self)
+        } catch {
+            bmLog("⚠️ commitImageResize: setImageSize failed: \(error)")
+        }
+        breakUndoCoalescing()
     }
 }

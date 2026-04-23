@@ -213,7 +213,7 @@ extension ViewController {
                 return projectSelected || tagSelected
             }
             
-            menuItem.title = NSLocalizedString("Rename", comment: "File Menu")
+            menuItem.title = NSLocalizedString("Rename Note…", comment: "File Menu")
             return isOne && isFirstResponder || (isFirstEditor && !isOpenedWindow)
             
         case "\(menuId).delete":

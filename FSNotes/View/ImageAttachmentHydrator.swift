@@ -165,22 +165,20 @@ enum ImageAttachmentHydrator {
                 }
 
                 DispatchQueue.main.async {
-                    guard let manager = editor.layoutManager,
-                          let container = editor.textContainer else { return }
                     guard range.location + range.length <= textStorage.length else { return }
                     guard let storedAttachment = textStorage.attribute(
                         .attachment, at: range.location, effectiveRange: nil
                     ) as? NSTextAttachment,
                           storedAttachment === attachment else { return }
 
-                    let cell = FSNTextAttachmentCell(textContainer: container, image: image)
-                    cell.image?.size = loadedSize
-                    attachment.image = nil
-                    attachment.attachmentCell = cell
-                    attachment.bounds = NSRect(x: 0, y: 0, width: loadedSize.width, height: loadedSize.height)
-
-                    textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
-                    manager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+                    installLoadedImage(
+                        attachment: attachment,
+                        image: image,
+                        loadedSize: loadedSize,
+                        range: range,
+                        textStorage: textStorage,
+                        editor: editor
+                    )
                 }
             }
             task.resume()
@@ -219,8 +217,6 @@ enum ImageAttachmentHydrator {
 
             DispatchQueue.main.async {
                 guard let editor = editor,
-                      let manager = editor.layoutManager,
-                      let container = editor.textContainer,
                       let loadedImage = image,
                       let loadedSize = size else { return }
 
@@ -230,18 +226,110 @@ enum ImageAttachmentHydrator {
                 ) as? NSTextAttachment,
                       storedAttachment === attachment else { return }
 
-                let cell = FSNTextAttachmentCell(textContainer: container, image: loadedImage)
-                cell.image?.size = loadedSize
-                attachment.image = nil
-                attachment.attachmentCell = cell
-                attachment.bounds = NSRect(
-                    x: 0, y: 0,
-                    width: loadedSize.width, height: loadedSize.height
+                installLoadedImage(
+                    attachment: attachment,
+                    image: loadedImage,
+                    loadedSize: loadedSize,
+                    range: range,
+                    textStorage: textStorage,
+                    editor: editor
                 )
-
-                textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
-                manager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
             }
         }
+    }
+
+    /// Phase 2a completion — attach the loaded image to the placeholder
+    /// `NSTextAttachment` and invalidate layout. Branches on TK1 vs TK2:
+    ///
+    /// - **TK1 (source-mode / non-markdown):** keep the legacy
+    ///   `FSNTextAttachmentCell` path. The cell owns the image, its
+    ///   `draw(withFrame:in:characterIndex:layoutManager:)` override
+    ///   handles folded-region suppression, and layout invalidation
+    ///   goes through `NSLayoutManager.invalidateLayout`.
+    /// - **TK2 (block-model WYSIWYG):** attachments are created by
+    ///   `InlineRenderer` as `ImageNSTextAttachment` — an
+    ///   `NSTextAttachment` subclass that carries a `hostedImage`
+    ///   property. The paired `ImageAttachmentViewProvider.loadView()`
+    ///   reads `hostedImage` and vends an `InlineImageView` (an
+    ///   `NSImageView` subclass) to TK2, which then manages view
+    ///   lifecycle and viewport visibility automatically. Feeding the
+    ///   loaded image into `hostedImage` here is what makes the view
+    ///   provider render the actual bytes rather than a placeholder.
+    ///
+    ///   `attachment.image = image` is still set as a backward-
+    ///   compatibility safety net so a plain `NSTextAttachment` (one
+    ///   that didn't come through the `InlineRenderer` subclass path)
+    ///   can still render via TK2's default attachment contract
+    ///   (`image(forBounds:textContainer:characterIndex:)`), though
+    ///   the image may appear at a wrong size in that legacy path.
+    ///   Layout invalidation happens on the `NSTextLayoutManager` via
+    ///   a converted `NSTextRange`.
+    ///
+    /// Folded-region suppression is intentionally not carried over to
+    /// the TK2 branch — TK2 folding uses a different mechanism
+    /// (paragraph-level visibility) and is an orthogonal concern.
+    private static func installLoadedImage(
+        attachment: NSTextAttachment,
+        image: PlatformImage,
+        loadedSize: CGSize,
+        range: NSRange,
+        textStorage: NSTextStorage,
+        editor: EditTextView
+    ) {
+        if let tk1Manager = editor.layoutManagerIfTK1,
+           let container = editor.textContainer {
+            let cell = FSNTextAttachmentCell(textContainer: container, image: image)
+            cell.image?.size = loadedSize
+            attachment.image = nil
+            attachment.attachmentCell = cell
+            attachment.bounds = NSRect(x: 0, y: 0, width: loadedSize.width, height: loadedSize.height)
+
+            textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
+            tk1Manager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+            return
+        }
+
+        // TK2 path.
+        image.size = loadedSize
+        attachment.attachmentCell = nil
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0, y: 0, width: loadedSize.width, height: loadedSize.height)
+
+        // Slice 1 (image-resize TK2 migration): when the placeholder
+        // attachment was created by InlineRenderer as an
+        // `ImageNSTextAttachment`, feed the loaded image into the subclass
+        // so `ImageAttachmentViewProvider.loadView()` hands TK2 an
+        // `InlineImageView` with the bytes drawn. For plain `NSTextAttachment`
+        // the `.image` setter above is all TK2 has to go on — this is the
+        // legacy path and may render invisibly under some TK2 contexts.
+        if let imageAttachment = attachment as? ImageNSTextAttachment {
+            imageAttachment.hostedImage = image
+        }
+
+        textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
+
+        if let tlm = editor.textLayoutManager,
+           let tcs = tlm.textContentManager as? NSTextContentStorage,
+           let textRange = tk2TextRange(for: range, in: tcs) {
+            tlm.invalidateLayout(for: textRange)
+        }
+    }
+
+    /// Convert an `NSRange` over the bridged `NSTextStorage` to an
+    /// `NSTextRange` in the TK2 `NSTextContentStorage`'s coordinate
+    /// space. Uses the content storage's documentRange origin +
+    /// per-location offset arithmetic; returns nil if the endpoints
+    /// fall outside the document (e.g. a race between hydration and a
+    /// splice that shortened the storage).
+    private static func tk2TextRange(
+        for range: NSRange,
+        in tcs: NSTextContentStorage
+    ) -> NSTextRange? {
+        let docStart = tcs.documentRange.location
+        guard let startLocation = tcs.location(docStart, offsetBy: range.location),
+              let endLocation = tcs.location(startLocation, offsetBy: range.length) else {
+            return nil
+        }
+        return NSTextRange(location: startLocation, end: endLocation)
     }
 }

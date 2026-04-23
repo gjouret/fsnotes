@@ -240,7 +240,16 @@ extension EditTextView {
 
     @IBAction func todo(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
-        if toggleTodoViaBlockModel() { updateToolbarAfterFormatting(); return }
+        let sel = selectedRange()
+        let hasProj = (documentProjection != nil)
+        let bmActive = textStorageProcessor?.blockModelActive ?? false
+        bmLog("☑ CMD+T diag: sel=\(sel) hasProj=\(hasProj) bmActive=\(bmActive) noteType=\(note.type) isMarkdown=\(note.isMarkdown())")
+        if toggleTodoViaBlockModel() {
+            bmLog("☑ CMD+T diag: block-model path succeeded")
+            updateToolbarAfterFormatting()
+            return
+        }
+        bmLog("☑ CMD+T diag: block-model path FAILED — falling through to source-mode formatter.todo() (this is the bug #20 source of literal '- [ ]')")
         clearBlockModelAndRefill()
         let formatter = TextFormatter(textView: self, note: note)
         formatter.todo()
@@ -371,7 +380,7 @@ extension EditTextView {
                 raw: tableMarkdown
             )
             var newDoc = projection.document
-            newDoc.blocks.insert(tableBlock, at: blockIndex + 1)
+            newDoc.insertBlock(tableBlock, at: blockIndex + 1)
 
             // Persist the new markdown to disk BEFORE calling fill(), and
             // populate `cachedDocument` so fillViaBlockModel uses the new

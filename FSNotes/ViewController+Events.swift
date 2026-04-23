@@ -302,7 +302,10 @@ extension ViewController {
 
             editor.note?.setSelectedRange(range: textView.selectedRange())
 
-            if let layoutManager = textView.layoutManager as? LayoutManager {
+            // Phase 2a: TK1-only — the custom LayoutManager subclass is
+            // not wired on TK2 yet, so skip gutter cursor tracking there.
+            if let editView = textView as? EditTextView,
+               let layoutManager = editView.layoutManagerIfTK1 as? LayoutManager {
                 let oldCursor = layoutManager.cursorCharIndex
                 let newCursor = textView.selectedRange().location
                 layoutManager.cursorCharIndex = newCursor

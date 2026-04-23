@@ -18,7 +18,12 @@ extension EditTextView {
     }
 
     public var editorLayoutManager: NSLayoutManager? {
-        return self.layoutManager
+        // Phase 2a: TK1-safe accessor — returns nil on TK2 views. The
+        // TextStorageProcessor source-mode pipeline is skipped when the
+        // block model is active (which is always true for markdown
+        // WYSIWYG), so Core sites that still read this will treat nil
+        // as "skip the TK1 code path".
+        return self.layoutManagerIfTK1
     }
 
     public var editorTextContainer: NSTextContainer? {

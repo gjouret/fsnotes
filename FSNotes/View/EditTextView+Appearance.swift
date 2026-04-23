@@ -12,8 +12,10 @@ extension EditTextView {
         var newRect = rect
         newRect.size.width = caretWidth
 
+        // Phase 2a: caret-height tweak uses the TK1 custom layout
+        // manager. On TK2 we fall back to the default caret rect.
         if let textStorage = self.textStorage,
-           let layoutManager = self.layoutManager as? LayoutManager {
+           let layoutManager = self.layoutManagerIfTK1 as? LayoutManager {
             let insertionPoint = self.selectedRange().location
 
             if insertionPoint == textStorage.length, insertionPoint > 0 {
@@ -162,7 +164,20 @@ extension EditTextView {
     ///    layout here re-triggers it so wide diagrams scale to fit.
     public func reflowAttachmentsForWidthChange() {
         tableController.reflowTablesForWidthChange()
-        if let storage = textStorage, let lm = layoutManager {
+        // Phase 2a TK2-safety (2026-04-22): bare `layoutManager` was an
+        // implicit `self.layoutManager` read. On a TK2-wired NSTextView
+        // that accessor lazy-instantiates a TK1 NSLayoutManager and
+        // permanently nils `textLayoutManager`. This method is called
+        // from `EditorSplitView.splitViewDidResizeSubviews` during the
+        // initial window layout, which happens AFTER `initTextStorage()`
+        // and BEFORE the first `fillViaBlockModel`. Trip it there and
+        // TK2 is dead before any block-model fragment delegate can run —
+        // which is exactly the regression that kept Phase 2c HR rules
+        // from rendering. Route through `layoutManagerIfTK1` so the
+        // TK1 invalidation is a no-op under TK2 (TK2 fragments are
+        // width-independent for HR / text-flow blocks; table + rendered-
+        // attachment width reflow happens above in tableController).
+        if let storage = textStorage, let lm = layoutManagerIfTK1 {
             let fullRange = NSRange(location: 0, length: storage.length)
             lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
         }

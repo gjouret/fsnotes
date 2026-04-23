@@ -1,0 +1,4 @@
+- [ ] Write the harness round-trip test
+- [ ] Wire the corpus into the test target
+- [x] Create the Corpus directory
+- [ ] Verify all byte counts match expectations

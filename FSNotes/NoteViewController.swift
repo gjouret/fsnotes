@@ -28,7 +28,15 @@ class NoteViewController: EditorViewController, NSWindowDelegate {
         view.window?.backgroundColor = NSColor(named: "background_win")
         view.window?.delegate = self
         view.window?.setFrameOriginToPositionWindowInCenterOfScreen()
-        
+
+        // Phase 2a: swap the storyboard-decoded TK1 editor for a
+        // programmatic TK2 editor before any wiring runs. The scroll
+        // view retains the new instance, so the weak outlet stays live.
+        self.editor = EditTextView.migrateNibEditorToTextKit2(
+            oldEditor: editor,
+            scrollView: editorScrollView
+        )
+
         editor.initTextStorage()
         editor.editorViewController = self
         editor.configure()
@@ -55,8 +63,10 @@ class NoteViewController: EditorViewController, NSWindowDelegate {
             note.setSelectedRange(range: textView.selectedRange())
         }
 
-        // Update gutter cursor tracking
-        if let layoutManager = textView.layoutManager as? LayoutManager {
+        // Update gutter cursor tracking (TK1-only; the custom
+        // LayoutManager subclass does not exist on TK2 yet — see
+        // Phase 2a deferred regressions in REFACTOR_PLAN.md).
+        if let layoutManager = textView.layoutManagerIfTK1 as? LayoutManager {
             let oldCursor = layoutManager.cursorCharIndex
             let newCursor = textView.selectedRange().location
             layoutManager.cursorCharIndex = newCursor

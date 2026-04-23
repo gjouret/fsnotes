@@ -49,7 +49,7 @@ public enum DocumentRenderer {
 
     // MARK: - Debug Logging
     
-    private static let logFilePath = NSHomeDirectory() + "/Documents/render-debug.log"
+    private static let logFilePath = NSHomeDirectory() + "/log/render-debug.log"
     
     private static func logAttributes(_ label: String, range: NSRange, style: NSParagraphStyle, font: PlatformFont) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
@@ -154,14 +154,96 @@ public enum DocumentRenderer {
                     baseSize: bodyFont.pointSize,
                     lineSpacing: lineSpacing
                 )
+
+                // Phase 2b: tag the block's range with its
+                // `BlockModelKind`. The TK2 content-storage delegate
+                // reads this attribute to dispatch on `NSTextParagraph`
+                // subclass (see `BlockModelElements.swift`). Tables
+                // are intentionally omitted here — they still flow
+                // through the NSTextAttachment path until Phase 2e.
+                if let kind = blockModelKind(for: block) {
+                    // Phase 2d: upgrade `.paragraph` to `.paragraphWithKbd`
+                    // when the rendered paragraph contains any `.kbdTag`
+                    // runs. `InlineRenderer` emits `.kbdTag = true` on
+                    // the inner content of each `Inline.kbd`. The upgrade
+                    // routes this paragraph to `KbdBoxParagraphLayoutFragment`
+                    // via the content-storage delegate, which draws the
+                    // rounded kbd boxes behind each tagged run. Paragraphs
+                    // with no kbd tags stay on the default fragment.
+                    let effectiveKind: BlockModelKind
+                    if kind == .paragraph,
+                       paragraphContainsKbdTag(in: out, range: blockRange) {
+                        effectiveKind = .paragraphWithKbd
+                    } else {
+                        effectiveKind = kind
+                    }
+                    out.addAttribute(
+                        .blockModelKind,
+                        value: effectiveKind.rawValue,
+                        range: blockRange
+                    )
+                    // Phase 2c: for headings, also tag the level so
+                    // `HeadingLayoutFragment` can decide whether to
+                    // paint the H1/H2 bottom hairline. Keeping the
+                    // level on the attributed-string range (not only
+                    // in the block model) lets the TK2 fragment read
+                    // it off `NSTextParagraph.attributedString` at
+                    // draw time without needing a back-reference to
+                    // the Document.
+                    if case .heading(let level, _) = block {
+                        out.addAttribute(
+                            .headingLevel,
+                            value: level,
+                            range: blockRange
+                        )
+                    }
+                    // Phase 2c: for mermaid/math code blocks, tag the
+                    // block range with the raw source text so the
+                    // MermaidLayoutFragment / MathLayoutFragment can
+                    // read it via a single attribute lookup at draw
+                    // time without reaching back into the Document.
+                    if (kind == .mermaid || kind == .math),
+                       case .codeBlock(_, let content, _) = block {
+                        out.addAttribute(
+                            .renderedBlockSource,
+                            value: content,
+                            range: blockRange
+                        )
+                    }
+                    // Display math: tag the paragraph range with the
+                    // raw LaTeX source from the sole `.displayMath`
+                    // inline so `DisplayMathLayoutFragment` can read
+                    // it via a single attribute lookup at draw time.
+                    // Structurally parallel to the fenced-math branch
+                    // above — the only difference is where the source
+                    // string comes from (inline payload vs. code-block
+                    // content).
+                    if kind == .displayMath,
+                       case .paragraph(let inline) = block,
+                       inline.count == 1,
+                       case .displayMath(let content) = inline[0] {
+                        out.addAttribute(
+                            .renderedBlockSource,
+                            value: content,
+                            range: blockRange
+                        )
+                    }
+                }
             }
 
             // Inter-block separator: a single "\n" between consecutive
             // blocks. NOT included in the block's span.
             if i < document.blocks.count - 1 {
-                // For blank lines, use paragraph spacing (not the previous block's spacing)
-                // to ensure consistent visual appearance when they convert to paragraphs.
                 let nextBlock = document.blocks[i + 1]
+                // When the NEXT block renders to zero content (blank line
+                // or empty paragraph produced by exit-list / delete-line),
+                // NSTextView draws the cursor on that empty line using
+                // the style of whatever character precedes it. If we
+                // leave the separator styled with THIS block's paragraph
+                // style, the cursor on the empty line inherits (e.g.)
+                // the list's hanging indent or heading's font/spacing.
+                // Apply a plain paragraph style to the separator in that
+                // case so the empty line renders as a body-text line.
                 if case .blankLine = nextBlock {
                     let paraStyle = paragraphStyle(
                         for: .paragraph(inline: []), isFirst: false,
@@ -170,6 +252,20 @@ public enum DocumentRenderer {
                     var blankLineSepAttrs = separatorAttrs
                     blankLineSepAttrs[.paragraphStyle] = paraStyle
                     out.append(NSAttributedString(string: "\n", attributes: blankLineSepAttrs))
+                } else if isEmptyParagraph(nextBlock) {
+                    // Empty paragraph (e.g. the block produced when the
+                    // user exits a list via Delete-at-home, or enters a
+                    // new paragraph between two existing paragraphs).
+                    // Style the separator with the empty paragraph's
+                    // own paragraph style so the cursor lands at the
+                    // body-text left margin with correct line spacing.
+                    let paraStyle = paragraphStyle(
+                        for: nextBlock, isFirst: (i + 1 == 0),
+                        baseSize: bodyFont.pointSize, lineSpacing: lineSpacing
+                    )
+                    var emptyParaSepAttrs = separatorAttrs
+                    emptyParaSepAttrs[.paragraphStyle] = paraStyle
+                    out.append(NSAttributedString(string: "\n", attributes: emptyParaSepAttrs))
                 } else {
                     // For other blocks, apply the block's paragraph style to the separator.
                     let blockStyle = paragraphStyle(
@@ -439,6 +535,80 @@ public enum DocumentRenderer {
             // Note: No paragraph style is applied to the separator for
             // blank lines to avoid visual jumps when they become paragraphs.
             return NSAttributedString(string: "", attributes: [:])
+        }
+    }
+
+    /// Phase 2d: does the paragraph's rendered attributed string
+    /// contain any `.kbdTag` runs? Used to upgrade `.blockModelKind`
+    /// from `.paragraph` to `.paragraphWithKbd` so the content-storage
+    /// delegate routes the element to `KbdBoxParagraphLayoutFragment`.
+    /// One enumerate over the paragraph range — O(runs). Short-circuits
+    /// on the first match.
+    fileprivate static func paragraphContainsKbdTag(
+        in attributed: NSAttributedString,
+        range: NSRange
+    ) -> Bool {
+        let clampedLength = min(range.length, attributed.length - range.location)
+        guard clampedLength > 0 else { return false }
+        let scanRange = NSRange(location: range.location, length: clampedLength)
+        var found = false
+        attributed.enumerateAttribute(
+            .kbdTag,
+            in: scanRange,
+            options: []
+        ) { value, _, stop in
+            if value != nil {
+                found = true
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
+    /// Detect whether a block renders to zero content length.
+    /// Used to style the separator before an empty block so the
+    /// cursor lands with the right paragraph attributes on the empty line.
+    fileprivate static func isEmptyParagraph(_ block: Block) -> Bool {
+        guard case .paragraph(let inline) = block else { return false }
+        if inline.isEmpty { return true }
+        // A single empty text node also counts as empty.
+        if inline.count == 1, case .text(let s) = inline[0], s.isEmpty {
+            return true
+        }
+        return false
+    }
+
+    /// Map a `Block` case to the `BlockModelKind` used for TK2 element
+    /// dispatch. Returns nil for blocks that stay on the NSTextAttachment
+    /// path (tables — Phase 2e) or render to zero content (blank lines).
+    /// `htmlBlock` is grouped with `codeBlock` because both render via
+    /// the code-block renderer and layout identically.
+    fileprivate static func blockModelKind(for block: Block) -> BlockModelKind? {
+        switch block {
+        case .paragraph(let inline):
+            // A paragraph whose sole inline is `.displayMath` is
+            // rendered as a centered pseudo-block equation via
+            // `DisplayMathLayoutFragment`. Paragraphs containing
+            // display math PLUS other content fall through to
+            // `.paragraph` (the display-math attachment path is
+            // retained for mixed-content paragraphs).
+            if inline.count == 1, case .displayMath = inline[0] {
+                return .displayMath
+            }
+            return .paragraph  // upgraded to .paragraphWithKbd in tagging pass if needed
+        case .heading: return .heading
+        case .list: return .list
+        case .blockquote: return .blockquote
+        case .codeBlock(let language, _, _):
+            switch language?.lowercased() {
+            case "mermaid": return .mermaid
+            case "math", "latex": return .math
+            default: return .codeBlock
+            }
+        case .htmlBlock: return .codeBlock
+        case .horizontalRule: return .horizontalRule
+        case .table: return nil
+        case .blankLine: return nil
         }
     }
 }

@@ -13,6 +13,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var editorViewController: EditorViewController?
     public var textStorageProcessor: TextStorageProcessor?
 
+    /// Phase 2b — strong reference to the `NSTextContentStorage` delegate
+    /// that maps `.blockModelKind` attributes onto `BlockModelElement`
+    /// subclasses. `NSTextContentStorage.delegate` is weak, so the editor
+    /// must retain it for the lifetime of the view.
+    public var blockModelContentDelegate: BlockModelContentStorageDelegate?
+
+    /// Phase 2c — strong reference to the `NSTextLayoutManager` delegate
+    /// that maps `BlockModelElement` subclasses onto custom
+    /// `NSTextLayoutFragment` subclasses. `NSTextLayoutManager.delegate`
+    /// is weak; the editor owns the lifetime.
+    public var blockModelLayoutDelegate: BlockModelLayoutManagerDelegate?
+
     /// Explicit save boundary for the editor. Reading the storage remains pure;
     /// no view-state materialization happens here.
     ///
@@ -43,7 +55,41 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
             storage.updateParagraphStyle(range: range)
         }
 
-        layoutManager?.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        // Phase 2a: use TK1-safe accessor (reading .layoutManager on
+        // a TK2 view silently tears down the TK2 wiring).
+        layoutManagerIfTK1?.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+    }
+
+    /// Phase 2f.1 — TK2 layout invalidation for a character range.
+    ///
+    /// Used when a storage-level attribute change needs TK2 to re-dispatch
+    /// its content-storage elements and rebuild layout fragments (the
+    /// concrete case: `TextStorageProcessor.toggleFold` toggling
+    /// `.foldedContent`, where the content-storage delegate must
+    /// re-substitute `FoldedElement` ↔ normal block elements based on
+    /// the new attribute value).
+    ///
+    /// Converts the NSRange to an NSTextRange and asks the layout manager
+    /// to invalidate. Under TK1 `textLayoutManager` is nil and this is a
+    /// no-op — callers remain responsible for TK1 invalidation via
+    /// `layoutManagers.first`.
+    public func invalidateTextKit2Layout(forCharacterRange range: NSRange) {
+        guard let tlm = textLayoutManager,
+              let contentManager = tlm.textContentManager else { return }
+        let docLength = textStorage?.length ?? 0
+        let safeStart = max(0, min(range.location, docLength))
+        let safeEnd = max(safeStart, min(NSMaxRange(range), docLength))
+        guard let startLoc = contentManager.location(
+            contentManager.documentRange.location,
+            offsetBy: safeStart
+        ), let endLoc = contentManager.location(
+            contentManager.documentRange.location,
+            offsetBy: safeEnd
+        ), let textRange = NSTextRange(
+            location: startLoc, end: endLoc
+        ) else { return }
+        tlm.invalidateLayout(for: textRange)
+        needsDisplay = true
     }
 
     public var note: Note?
@@ -135,7 +181,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// descent + leading below the glyph, which would draw the
     /// selection ring's bottom edge under the image.
     public func imageAttachmentRect(forRange range: NSRange) -> NSRect? {
-        guard let lm = layoutManager,
+        // Phase 2a: TK1-only glyph query. Returns nil under TK2 —
+        // callers (image selection handle drawing) tolerate nil and
+        // fall through to no-op. TK2 image hit-test lands in 2c/2d.
+        guard let lm = layoutManagerIfTK1,
               let tc = textContainer,
               let storage = textStorage,
               range.location < storage.length,
@@ -172,7 +221,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// bounding rect, expanded by the handle half-size so stale corner
     /// handles get repainted cleanly.
     private func invalidateImageSelectionHandles(for range: NSRange) {
-        guard let lm = layoutManager, let tc = textContainer else { return }
+        // Phase 2a: TK1-only. TK2 image selection handling is a 2c/2d item.
+        guard let lm = layoutManagerIfTK1, let tc = textContainer else { return }
         let glyphRange = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         var rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
         rect.origin.x += textContainerOrigin.x
@@ -236,8 +286,14 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         guard UserDefaultsManagement.inlineTags else { return }
 
         if #available(OSX 10.16, *) {
+            // Phase 2a: inline-tag chip drawing is TK1-only. Under TK2 the
+            // draw() path skips chip rendering entirely — the tags still
+            // render as inline attributed text (foreground color + font),
+            // just without the rounded chip background. Full TK2 inline
+            // chip drawing will be reinstated in 2c/2d via a custom
+            // NSTextLayoutFragment / NSTextViewportLayoutController hook.
             guard let textStorage = self.textStorage,
-                  let layoutManager = self.layoutManager
+                  let layoutManager = self.layoutManagerIfTK1
             else { return }
 
             let fullRange = NSRange(location: 0, length: textStorage.length)
@@ -310,46 +366,214 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         }
     }
 
+    /// Phase 2a: Safe accessor for the TextKit 1 `NSLayoutManager`. Returns
+    /// `nil` when the view is wired to TextKit 2 (i.e. `textLayoutManager`
+    /// is non-nil). Reading `NSTextView.layoutManager` directly on a
+    /// TK2 view lazily instantiates a TK1 compatibility shim, which
+    /// PERMANENTLY tears down `textLayoutManager` with no way to recover.
+    /// Every call site that needs `NSLayoutManager` in order to use a
+    /// TK1-only API must go through this accessor and treat `nil` as
+    /// "we are on TK2 — skip the TK1 codepath". This property is the
+    /// only place `self.layoutManager` may legitimately be read inside
+    /// the app. Grep for `self.layoutManager` / `layoutManager?.` to
+    /// audit new uses.
+    var layoutManagerIfTK1: NSLayoutManager? {
+        return textLayoutManager == nil ? layoutManager : nil
+    }
+
+    /// Phase 2a: build a text container pre-bound to an
+    /// `NSTextLayoutManager` + `NSTextContentStorage` pair. NSTextView
+    /// adopts TextKit 2 when it is constructed with a container already
+    /// bound to `NSTextLayoutManager` (see the Phase 2 kickoff spike
+    /// in `TextKit2FinderSpikeTests` for the proof). A runtime swap via
+    /// `replaceTextContainer(_:)` does NOT flip an already-TK1 view —
+    /// so we intercept at every designated initializer to ensure the
+    /// view is born on TK2.
+    private static func makeTextKit2Container(size: CGSize) -> NSTextContainer {
+        let contentStorage = NSTextContentStorage()
+        let textLayoutManager = NSTextLayoutManager()
+        contentStorage.addTextLayoutManager(textLayoutManager)
+        let container = NSTextContainer(size: size)
+        textLayoutManager.textContainer = container
+        return container
+    }
+
+    /// Designated initializer for programmatic construction (tests,
+    /// harness, any runtime `EditTextView(frame:)` call). Routes
+    /// through `init(frame:textContainer:)` with a TK2-bound container
+    /// so the view adopts TextKit 2 from birth.
+    override init(frame frameRect: NSRect) {
+        let container = EditTextView.makeTextKit2Container(
+            size: CGSize(width: frameRect.width, height: 1e7)
+        )
+        super.init(frame: frameRect, textContainer: container)
+    }
+
+    /// Explicit-container path. Pass-through to super — callers that
+    /// already hand us a TK2-bound container get TK2; callers that
+    /// hand a TK1 container (old `HeaderTests` helper) get the pre-
+    /// Phase 2a behaviour. `adoptTextKit2PostDecode()` is NOT called
+    /// here: respect caller intent.
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+    }
+
+    /// Nib-load path. The storyboard decodes a TK1 NSTextView here.
+    /// We do NOT try to flip this view in place — AppKit binds the
+    /// TextKit version at init time, and `replaceTextContainer(_:)`
+    /// does not override that decision. The view controller is
+    /// responsible for calling `migrateNibEditorToTextKit2(...)` during
+    /// setup to replace this instance with a programmatic TK2 editor.
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    /// Phase 2a: swap a nib-decoded TK1 editor for a programmatically
+    /// constructed TK2 editor, in place inside its scroll view. Copies
+    /// the NSTextView knobs the storyboard configured. Returns the new
+    /// editor — callers must reassign their `editor` outlet to it.
+    ///
+    /// If `oldEditor` is already on TK2 (e.g. someone re-entered this
+    /// path), the function is a no-op and returns `oldEditor`.
+    ///
+    /// NSTextView.autoresizingMask, isRichText, importsGraphics, etc.
+    /// are copied explicitly — we don't clone the whole object because
+    /// the only reliable way to instantiate a TK2 EditTextView is
+    /// `init(frame:)`, which builds its own container.
+    @discardableResult
+    static func migrateNibEditorToTextKit2(
+        oldEditor: EditTextView,
+        scrollView: NSScrollView
+    ) -> EditTextView {
+        guard oldEditor.textLayoutManager == nil else {
+            return oldEditor
+        }
+
+        let newEditor = EditTextView(frame: oldEditor.frame)
+
+        // Nib-configured NSTextView knobs we care about. If the
+        // storyboard ever adds a new attribute, mirror it here.
+        newEditor.autoresizingMask = oldEditor.autoresizingMask
+        newEditor.isRichText = oldEditor.isRichText
+        newEditor.importsGraphics = oldEditor.importsGraphics
+        newEditor.isEditable = oldEditor.isEditable
+        newEditor.isSelectable = oldEditor.isSelectable
+        newEditor.allowsUndo = oldEditor.allowsUndo
+        newEditor.usesFindBar = oldEditor.usesFindBar
+        newEditor.usesFontPanel = oldEditor.usesFontPanel
+        newEditor.usesRuler = oldEditor.usesRuler
+        newEditor.allowsImageEditing = oldEditor.allowsImageEditing
+        newEditor.allowsDocumentBackgroundColorChange =
+            oldEditor.allowsDocumentBackgroundColorChange
+        newEditor.smartInsertDeleteEnabled = oldEditor.smartInsertDeleteEnabled
+        newEditor.isAutomaticQuoteSubstitutionEnabled =
+            oldEditor.isAutomaticQuoteSubstitutionEnabled
+        newEditor.isAutomaticDashSubstitutionEnabled =
+            oldEditor.isAutomaticDashSubstitutionEnabled
+        newEditor.isAutomaticTextReplacementEnabled =
+            oldEditor.isAutomaticTextReplacementEnabled
+        newEditor.isAutomaticLinkDetectionEnabled =
+            oldEditor.isAutomaticLinkDetectionEnabled
+        newEditor.isAutomaticSpellingCorrectionEnabled =
+            oldEditor.isAutomaticSpellingCorrectionEnabled
+        newEditor.isContinuousSpellCheckingEnabled =
+            oldEditor.isContinuousSpellCheckingEnabled
+        newEditor.isVerticallyResizable = oldEditor.isVerticallyResizable
+        newEditor.isHorizontallyResizable = oldEditor.isHorizontallyResizable
+        newEditor.textContainerInset = oldEditor.textContainerInset
+        // Resize bounds: required for the view to grow with content so
+        // the scroll view has something to scroll. Without these the TK2
+        // editor stays at its init frame height forever — long notes
+        // just clip at the bottom of the visible area.
+        newEditor.minSize = oldEditor.minSize
+        newEditor.maxSize = oldEditor.maxSize
+        if let font = oldEditor.font {
+            newEditor.font = font
+        }
+
+        // Mirror the NSTextContainer geometry the storyboard configured.
+        // `widthTracksTextView = true` makes wrapping follow the view
+        // width; `heightTracksTextView = false` lets the view grow past
+        // its initial frame so scrolling works on long notes.
+        if let oldContainer = oldEditor.textContainer,
+           let newContainer = newEditor.textContainer {
+            newContainer.widthTracksTextView = oldContainer.widthTracksTextView
+            newContainer.heightTracksTextView = oldContainer.heightTracksTextView
+            newContainer.lineFragmentPadding = oldContainer.lineFragmentPadding
+            // Use the old container's size as a starting point (height
+            // stays huge so vertical growth isn't capped).
+            newContainer.size = NSSize(
+                width: oldContainer.size.width,
+                height: max(oldContainer.size.height, 1e7)
+            )
+        }
+
+        scrollView.documentView = newEditor
+        return newEditor
+    }
+
+    /// Phase 2a: wire the `TextStorageProcessor` as delegate of the
+    /// compatibility `NSTextStorage` that `NSTextContentStorage` exposes
+    /// back through `NSTextView.textStorage`. The TK2 layout stack is
+    /// already installed via the initializers above — this function
+    /// only hooks the processor into the edit-callback chain.
+    ///
+    /// Accepted 2a regressions (deferred to 2c/2d): the custom
+    /// `LayoutManager.drawBackground` visuals (bullets, HR lines,
+    /// blockquote borders, kbd boxes) no longer fire under TK2. All
+    /// other editing behaviour (typing, selection, Find, scroll,
+    /// copy/paste) rides the default TK2 paragraph-element path.
     public func initTextStorage() {
         let processor = TextStorageProcessor()
         processor.editor = self
-        
         textStorageProcessor = processor
         textStorage?.delegate = processor
 
-        guard let textStorage = self.textStorage,
-              let oldLayoutManager = self.layoutManager,
-              let textContainer = self.textContainer else { return }
-        
-        textStorage.removeLayoutManager(oldLayoutManager)
+        // Phase 2b: install the content-storage delegate so TK2 hands
+        // block-tagged paragraphs back as `BlockModelElement` subclasses.
+        // Safe on TK1 (where `textLayoutManager` is nil) — we just skip.
+        if let contentStorage =
+            textLayoutManager?.textContentManager as? NSTextContentStorage {
+            let delegate = BlockModelContentStorageDelegate()
+            blockModelContentDelegate = delegate
+            contentStorage.delegate = delegate
+        }
 
-        let customLayoutManager = LayoutManager()
-        customLayoutManager.addTextContainer(textContainer)
-        customLayoutManager.delegate = customLayoutManager
-        
-        customLayoutManager.processor = processor
-        
-        textStorage.addLayoutManager(customLayoutManager)
+        // Phase 2c: install the layout-manager delegate so
+        // `BlockModelElement` subclasses get routed to their custom
+        // `NSTextLayoutFragment` subclasses (e.g. horizontal rule →
+        // `HorizontalRuleLayoutFragment`). TK1-safe: skipped when
+        // `textLayoutManager` is nil.
+        if let layoutManager = textLayoutManager {
+            let delegate = BlockModelLayoutManagerDelegate()
+            blockModelLayoutDelegate = delegate
+            layoutManager.delegate = delegate
+        }
+
     }
     
     public func configure() {
         DispatchQueue.main.async {
             self.updateTextContainerInset()
         }
-            
+
         attributesCachingQueue.qualityOfService = .background
         textContainerInset.height = 10
         isEditable = false
 
         let isOpenedWindow = window?.contentViewController as? NoteViewController != nil
-        
-        layoutManager?.allowsNonContiguousLayout =
+
+        // Phase 2a: TK1-only knobs. TK2's NSTextLayoutManager manages its
+        // own viewport-based layout and doesn't expose these. The TK2
+        // equivalents live on `textLayoutManager` directly; for now we
+        // accept default TK2 behaviour in those paths.
+        layoutManagerIfTK1?.allowsNonContiguousLayout =
             isOpenedWindow
                 ? false
                 : UserDefaultsManagement.nonContiguousLayout
 
-        layoutManager?.defaultAttachmentScaling = .scaleProportionallyDown
-        
+        layoutManagerIfTK1?.defaultAttachmentScaling = .scaleProportionallyDown
+
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = CGFloat(UserDefaultsManagement.editorLineSpacing)
         defaultParagraphStyle = paragraphStyle
@@ -358,9 +582,18 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     }
 
     public func invalidateLayout() {
-        if let length = self.textStorage?.length {
-            self.textStorage?.layoutManagers.first?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: length), actualCharacterRange: nil)
-        }
+        // Phase 2a: route through the TK1-safe accessor. Previously this
+        // read `textStorage.layoutManagers.first`, which under TK2 is
+        // empty (no TK1 NSLayoutManager attached) — safe, but relying on
+        // that empty-collection quirk was fragile. TK2 viewport layout
+        // invalidation is an NSTextViewportLayoutController concern and
+        // lands in 2c.
+        guard let lm = layoutManagerIfTK1,
+              let length = self.textStorage?.length else { return }
+        lm.invalidateLayout(
+            forCharacterRange: NSRange(location: 0, length: length),
+            actualCharacterRange: nil
+        )
     }
 
     private var lastLayoutWidth: CGFloat = 0
@@ -377,7 +610,10 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     /// Force NSLayoutManager to re-query cellFrame(for:...) on rendered block
     /// attachments (mermaid/math images) after a width change so they can shrink/grow.
     private func invalidateRenderedBlockAttachmentLayout() {
-        guard let storage = textStorage, let lm = layoutManager else { return }
+        // Phase 2a: rendered block attachment layout invalidation is
+        // TK1-only. TK2 attachment re-layout on width change lands in
+        // 2d with the NSTextLayoutFragment override path.
+        guard let storage = textStorage, let lm = layoutManagerIfTK1 else { return }
         let full = NSRange(location: 0, length: storage.length)
         storage.enumerateAttribute(.attachment, in: full, options: []) { value, range, _ in
             guard value is NSTextAttachment else { return }
@@ -529,6 +765,47 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         // causes a scroll jump. The block-model edit path handles
         // cursor positioning itself — no scrolling is needed.
         if textStorageProcessor?.isRendering == true { return }
+
+        // DIAGNOSTIC: log caller stack whenever scrollRangeToVisible
+        // fires while a table cell's field editor owns focus. This
+        // captures the "Space-scrolls-note" root cause.
+        if let window = self.window,
+           let fe = window.fieldEditor(false, for: nil) as? NSTextView,
+           fe !== self,
+           fe.delegate is NSTextField {
+            // Phase 2a: diagnostic-only; under TK2 this simply logs .zero.
+            let rect = layoutManagerIfTK1?.boundingRect(
+                forGlyphRange: layoutManagerIfTK1?.glyphRange(
+                    forCharacterRange: range, actualCharacterRange: nil
+                ) ?? NSRange(location: 0, length: 0),
+                in: textContainer!
+            ) ?? .zero
+            let visible = visibleRect
+            let logDir = URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("log")
+            try? FileManager.default.createDirectory(
+                at: logDir, withIntermediateDirectories: true
+            )
+            let logURL = logDir.appendingPathComponent("scroll-debug.log")
+            let entry = """
+            [scrollRangeToVisible] range=\(range) \
+            rect=\(rect) visible=\(visible)
+            stack:
+            \(Thread.callStackSymbols.prefix(20).joined(separator: "\n"))
+            -----
+
+            """
+            if let data = entry.data(using: .utf8) {
+                if let handle = try? FileHandle(forWritingTo: logURL) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    try? handle.close()
+                } else {
+                    try? data.write(to: logURL)
+                }
+            }
+        }
+
         super.scrollRangeToVisible(range)
     }
 

@@ -815,6 +815,9 @@ public enum MarkdownParser {
     private static let knownTagPairs: [(open: String, close: String, wrap: ([Inline]) -> Inline)] = [
         ("<u>", "</u>", { .underline($0) }),
         ("<mark>", "</mark>", { .highlight($0) }),
+        ("<sup>", "</sup>", { .superscript($0) }),
+        ("<sub>", "</sub>", { .`subscript`($0) }),
+        ("<kbd>", "</kbd>", { .kbd($0) }),
     ]
 
     private static func resolveHTMLTagPairs(_ inlines: [Inline]) -> [Inline] {
@@ -887,6 +890,12 @@ public enum MarkdownParser {
             return .underline(resolveTagPair(children, open: open, close: close, wrap: wrap))
         case .highlight(let children):
             return .highlight(resolveTagPair(children, open: open, close: close, wrap: wrap))
+        case .superscript(let children):
+            return .superscript(resolveTagPair(children, open: open, close: close, wrap: wrap))
+        case .`subscript`(let children):
+            return .`subscript`(resolveTagPair(children, open: open, close: close, wrap: wrap))
+        case .kbd(let children):
+            return .kbd(resolveTagPair(children, open: open, close: close, wrap: wrap))
         default:
             return inline
         }

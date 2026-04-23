@@ -181,45 +181,6 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
-        #if DEBUG
-        // One-shot diagnostic: log draw-time attributes for fence chars
-        if LayoutManager.logFrameCounter < 8, let ts = textStorage, ts.length > 600 {
-            LayoutManager.logFrameCounter += 1
-            let frameNum = LayoutManager.logFrameCounter
-            // Scan whole storage, not just the current glyph range
-            let nsStr = ts.string as NSString
-            var i = 0
-            let end = ts.length
-            var inFence = false
-            var lines: [String] = []
-            while i < end - 2 {
-                if nsStr.character(at: i) == 0x60 && nsStr.character(at: i+1) == 0x60 && nsStr.character(at: i+2) == 0x60 {
-                    inFence = true
-                    let lineRange = nsStr.paragraphRange(for: NSRange(location: i, length: 0))
-                    lines.append("=== fence line at \(i) range=\(lineRange) ===")
-                    for j in 0..<lineRange.length {
-                        let idx = lineRange.location + j
-                        guard idx < ts.length else { break }
-                        let ch = nsStr.character(at: idx)
-                        let font = ts.attribute(.font, at: idx, effectiveRange: nil) as? NSFont
-                        let kern = ts.attribute(.kern, at: idx, effectiveRange: nil) as? CGFloat
-                        let fg = ts.attribute(.foregroundColor, at: idx, effectiveRange: nil) as? NSColor
-                        lines.append("  [\(idx)] ch=0x\(String(ch, radix: 16)) font=\(font?.fontName ?? "nil")/\(font?.pointSize ?? 0) kern=\(kern.map { String(format: "%.2f", $0) } ?? "nil") fg=\(fg?.description ?? "nil")")
-                    }
-                    i = NSMaxRange(lineRange)
-                    continue
-                }
-                i += 1
-            }
-            if inFence {
-                let header = "\n### FRAME \(frameNum) glyphsToShow=\(glyphsToShow) ###\n"
-                if let data = (header + lines.joined(separator: "\n") + "\n").data(using: .utf8) {
-                    let p = NSHomeDirectory() + "/draw-diag.log"
-                    if let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: p)) { h.seekToEndOfFile(); h.write(data); try? h.close() } else { try? data.write(to: URL(fileURLWithPath: p)) }
-                }
-            }
-        }
-        #endif
         for range in unfoldedRanges(in: glyphsToShow) {
             guard range.length > 0,
                   NSMaxRange(range) <= numberOfGlyphs else { continue }
@@ -244,9 +205,7 @@ class LayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
     }
 
-    #if DEBUG
     static var logFrameCounter = 0
-    #endif
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         guard let ts = textStorage, glyphsToShow.location + glyphsToShow.length <= numberOfGlyphs,

@@ -35,10 +35,29 @@ class GutterController {
         let gutterLeft = gutterRight - gutterWidth
         guard point.x >= gutterLeft, point.x < gutterRight else { return false }
 
-        guard let manager = textView.layoutManager,
-              let container = textView.textContainer,
-              let storage = textView.textStorage,
+        guard let storage = textView.textStorage,
               let processor = textView.textStorageProcessor else { return false }
+
+        // Phase 2f.2 — TK2 gutter click path. Under TK2 the TK1 layout
+        // manager is nil and `characterIndex(for:inContainer:)` is
+        // unavailable; instead we iterate the visible `HeadingLayoutFragment`s
+        // to locate the heading whose y-range contains the click.
+        if textView.layoutManagerIfTK1 == nil {
+            if let blockIdx = headerBlockIndexForClickYTK2(clickY: point.y) {
+                processor.toggleFold(headerBlockIndex: blockIdx, textStorage: storage)
+                textView.needsDisplay = true
+                return true
+            }
+            // Code-block copy hit-testing under TK2: scan visible code
+            // block fragments for a vertical hit on the first-line band.
+            if handleCodeBlockCopyTK2(clickY: point.y) { return true }
+            // Table copy hit-testing under TK2.
+            if handleTableCopyTK2(clickY: point.y) { return true }
+            return false
+        }
+
+        guard let manager = textView.layoutManagerIfTK1,
+              let container = textView.textContainer else { return false }
 
         let textPoint = NSPoint(x: textView.textContainerInset.width + 1, y: point.y)
         let charIndex = manager.characterIndex(for: textPoint, in: container,
@@ -124,9 +143,21 @@ class GutterController {
     // MARK: - Drawing
 
     func drawIcons(in dirtyRect: NSRect) {
-        guard let textView = textView,
-              let storage = textView.textStorage,
-              let lm = textView.layoutManager as? LayoutManager,
+        guard let textView = textView else { return }
+
+        // Phase 2f.2 — TK2 gutter draw path. TK1 draw logic (below) uses
+        // `LayoutManager`-specific APIs (glyphRange, lineFragmentRect) that
+        // don't exist under TK2. For TK2 we iterate
+        // `HeadingLayoutFragment`s via `enumerateTextLayoutFragments` and
+        // draw fold carets only. H-level badges and code/table copy icons
+        // are TBD for TK2.
+        if textView.layoutManagerIfTK1 == nil {
+            drawIconsTK2(in: dirtyRect)
+            return
+        }
+
+        guard let storage = textView.textStorage,
+              let lm = textView.layoutManagerIfTK1 as? LayoutManager,
               let container = textView.textContainer,
               let processor = textView.textStorageProcessor else { return }
         guard !processor.blocks.isEmpty else { return }
@@ -176,13 +207,23 @@ class GutterController {
             let midY = usedRect.midY + origin.y
 
             // Fold caret — only on hover or when collapsed
+            // Bug #47 (partial): use a dynamic color so the caret keeps
+            // the same perceived tone in both light and dark mode. The
+            // previous fixed `calibratedWhite: 0.55` is NOT
+            // appearance-aware — it's a bit dim against the editor
+            // canvas in dark mode and was the color the user
+            // referenced when asking for the ellipsis chip (bug #47)
+            // to match the "gutter-triangle grey." Switching both to
+            // a semantic color keeps them visually consistent AND
+            // adapts to appearance changes.
+            let gutterAccent = NSColor.tertiaryLabelColor
             let isCollapsed = block.collapsed
             if isMouseInGutter || isCollapsed {
                 let caretStr = isCollapsed ? "▶" : "▼"
                 let caretFont = NSFont.systemFont(ofSize: 16, weight: .regular)
                 let caretAttrs: [NSAttributedString.Key: Any] = [
                     .font: caretFont,
-                    .foregroundColor: NSColor(calibratedWhite: 0.55, alpha: 1.0)
+                    .foregroundColor: gutterAccent
                 ]
                 let caretSize = (caretStr as NSString).size(withAttributes: caretAttrs)
                 let caretX = gutterRight - caretSize.width - 4
@@ -204,16 +245,45 @@ class GutterController {
             }
 
             // "⋯" after collapsed header
+            // Bug #7: strip the leading space from the ellipsis string.
+            // The background-color fill of an attributed NSString run
+            // covers the ENTIRE typeset string including leading
+            // whitespace, so " ⋯ " used to render a chip with visible
+            // left-side padding between the header's last glyph and
+            // the `⋯`. Keeping only the trailing space leaves one
+            // unit of visual breathing room on the right but makes
+            // the chip's left edge flush with the header text.
+            //
+            // Bug #7 (width): also switch the X anchor from
+            // `lineFragmentUsedRect.maxX` (which over-extends past
+            // the last glyph's advance into the line fragment's
+            // trailing whitespace / typesetter padding) to
+            // `boundingRect(forGlyphRange:in:).maxX` which uses the
+            // true glyph extents.
+            //
+            // Bug #47: render the chip in a dynamic grey that tracks
+            // `NSAppearance` so the fill doesn't look near-white on a
+            // dark canvas. Foreground matches the gutter triangle
+            // tone (semantic tertiary-label), background is a soft
+            // chip derived from the same tone at reduced alpha.
             if isCollapsed {
-                let ellipsis = " ⋯ "
+                let ellipsis = "⋯ "
                 let ellipsisAttrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 20, weight: .medium),
-                    .foregroundColor: NSColor(calibratedWhite: 0.5, alpha: 1.0),
-                    .backgroundColor: NSColor(calibratedWhite: 0.92, alpha: 1.0)
+                    .foregroundColor: gutterAccent,
+                    .backgroundColor: gutterAccent.withAlphaComponent(0.18)
                 ]
-                let usedRect = lm.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+                let tightExtent = lm.boundingRect(
+                    forGlyphRange: glyphRange, in: container
+                )
                 let ellipsisSize = (ellipsis as NSString).size(withAttributes: ellipsisAttrs)
-                (ellipsis as NSString).draw(at: NSPoint(x: usedRect.maxX + origin.x + 4, y: midY - ellipsisSize.height / 2), withAttributes: ellipsisAttrs)
+                (ellipsis as NSString).draw(
+                    at: NSPoint(
+                        x: tightExtent.maxX + origin.x,
+                        y: midY - ellipsisSize.height / 2
+                    ),
+                    withAttributes: ellipsisAttrs
+                )
             }
         }
 
@@ -276,6 +346,500 @@ class GutterController {
         NSGraphicsContext.current?.restoreGraphicsState()
     }
 
+    // MARK: - TextKit 2 Gutter Support (Phase 2f.2)
+
+    /// Per-heading visible-fragment record computed under TK2. `midY` is
+    /// in the `textView`'s coordinate space (already has
+    /// `textContainerOrigin.y` added), so draw code and hit-testing can
+    /// use it directly without extra conversion.
+    struct VisibleHeadingTK2 {
+        /// Heading fragment's top in view coords.
+        let minY: CGFloat
+        /// Heading fragment's bottom in view coords.
+        let maxY: CGFloat
+        /// Heading fragment's vertical midpoint in view coords.
+        let midY: CGFloat
+        /// Character index into `NSTextStorage` at the start of the
+        /// heading element. This is the index we feed to
+        /// `TextStorageProcessor.headerBlockIndex(at:)` to map from a
+        /// visible fragment back to a `processor.blocks` index.
+        let charIndex: Int
+    }
+
+    /// Enumerate `HeadingLayoutFragment`s and return a record per
+    /// heading, in document order. Used by both `drawIconsTK2` and
+    /// `headerBlockIndexForClickYTK2`. Returns an empty array if the
+    /// view is TK1 or if content storage / layout manager aren't wired.
+    func visibleHeadingsTK2() -> [VisibleHeadingTK2] {
+        guard let textView = textView,
+              let tlm = textView.textLayoutManager,
+              let tcs = tlm.textContentManager as? NSTextContentStorage else {
+            return []
+        }
+        let docStart = tcs.documentRange.location
+        let originY = textView.textContainerOrigin.y
+        var result: [VisibleHeadingTK2] = []
+
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { fragment in
+            guard fragment is HeadingLayoutFragment else { return true }
+            guard let element = fragment.textElement,
+                  let elementRange = element.elementRange else { return true }
+
+            // Map TK2 NSTextLocation -> NSTextStorage character offset.
+            let charIndex = tcs.offset(from: docStart, to: elementRange.location)
+            guard charIndex >= 0 else { return true }
+
+            let frame = fragment.layoutFragmentFrame
+            let minY = frame.minY + originY
+            let maxY = frame.maxY + originY
+            let midY = frame.midY + originY
+
+            result.append(VisibleHeadingTK2(
+                minY: minY, maxY: maxY, midY: midY,
+                charIndex: charIndex
+            ))
+            return true
+        }
+        return result
+    }
+
+    /// Draw fold carets, H-level badges, code-block copy icons and
+    /// table copy icons under TK2. Fold carets show when the mouse is
+    /// in the gutter OR the heading is collapsed. H-badges show on
+    /// gutter hover (or when the cursor is parked on that heading and
+    /// the editor is first responder). Code-block and table copy icons
+    /// show on gutter hover.
+    private func drawIconsTK2(in dirtyRect: NSRect) {
+        guard let textView = textView,
+              let storage = textView.textStorage,
+              let processor = textView.textStorageProcessor else { return }
+
+        let origin = textView.textContainerOrigin
+        let gutterWidth = EditTextView.gutterWidth
+        let gutterRight = origin.x
+        let gutterLeft = gutterRight - gutterWidth
+
+        NSGraphicsContext.current?.saveGraphicsState()
+        NSBezierPath(rect: textView.bounds).setClip()
+
+        // Gutter accent matches TK1 (tertiary label for appearance
+        // adaptation — see bug #47 notes in TK1 draw path above).
+        let gutterAccent = NSColor.tertiaryLabelColor
+
+        // --- Headings: fold carets + H-level badges ---
+
+        let cursorParagraphRange: NSRange? = {
+            let idx = textView.selectedRange().location
+            guard idx >= 0, idx < storage.length else { return nil }
+            return (storage.string as NSString).paragraphRange(
+                for: NSRange(location: idx, length: 0)
+            )
+        }()
+        let isEditing = textView.window?.firstResponder === textView
+
+        for heading in visibleHeadingsTK2() {
+            // Find the matching block so we can read `collapsed`. The
+            // processor's block array is source-of-truth for fold state
+            // regardless of TK version.
+            guard heading.charIndex < storage.length else { continue }
+
+            // Skip if this heading is itself inside a folded range.
+            if storage.attribute(.foldedContent,
+                                 at: heading.charIndex,
+                                 effectiveRange: nil) != nil {
+                continue
+            }
+
+            guard let blockIdx = processor.headerBlockIndex(at: heading.charIndex) else {
+                continue
+            }
+            let block = processor.blocks[blockIdx]
+            let isCollapsed = block.collapsed
+
+            // Fold caret
+            if isMouseInGutter || isCollapsed {
+                let caretStr = isCollapsed ? "▶" : "▼"
+                let caretFont = NSFont.systemFont(ofSize: 16, weight: .regular)
+                let caretAttrs: [NSAttributedString.Key: Any] = [
+                    .font: caretFont,
+                    .foregroundColor: gutterAccent
+                ]
+                let caretSize = (caretStr as NSString).size(withAttributes: caretAttrs)
+                let caretX = gutterRight - caretSize.width - 4
+                let caretY = heading.midY - caretSize.height / 2
+                (caretStr as NSString).draw(
+                    at: NSPoint(x: caretX, y: caretY),
+                    withAttributes: caretAttrs
+                )
+            }
+
+            // H-level badge on hover or when the cursor is parked on
+            // this heading. Level read off the `.headingLevel`
+            // attribute stamped by `DocumentRenderer` (same attribute
+            // `HeadingLayoutFragment` reads for its hairline decision),
+            // with fallback to `processor.blocks[blockIdx].type` —
+            // the block array always carries the level.
+            let level: Int = {
+                if let v = storage.attribute(
+                    .headingLevel, at: heading.charIndex, effectiveRange: nil
+                ) as? Int, v >= 1, v <= 6 {
+                    return v
+                }
+                switch block.type {
+                case .heading(let l): return l
+                case .headingSetext(let l): return l
+                default: return 0
+                }
+            }()
+            let cursorOnThisLine = cursorParagraphRange.map {
+                heading.charIndex >= $0.location &&
+                heading.charIndex <= NSMaxRange($0)
+            } ?? false
+            if level >= 1, level <= 6,
+               isMouseInGutter || (cursorOnThisLine && isEditing) {
+                let badge = "H\(level)"
+                let badgeAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+                    .foregroundColor: NSColor.gray
+                ]
+                let badgeSize = (badge as NSString).size(
+                    withAttributes: badgeAttrs
+                )
+                (badge as NSString).draw(
+                    at: NSPoint(
+                        x: gutterLeft + 2,
+                        y: heading.midY - badgeSize.height / 2
+                    ),
+                    withAttributes: badgeAttrs
+                )
+            }
+        }
+
+        // --- Code-block copy icons ---
+
+        if isMouseInGutter {
+            for codeBlock in visibleCodeBlocksTK2() {
+                let isCopied = (copiedCodeBlockLocation == codeBlock.range.location)
+                let iconStr = isCopied ? "\u{2713}" : "\u{2398}" // ✓ or ⎘
+                let iconAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 26, weight: .regular),
+                    .foregroundColor: NSColor(calibratedWhite: 0.55, alpha: 1.0)
+                ]
+                let iconSize = (iconStr as NSString).size(withAttributes: iconAttrs)
+                let iconX = gutterRight - iconSize.width - 4
+                let iconY = codeBlock.firstLineMidY - iconSize.height / 2
+                (iconStr as NSString).draw(
+                    at: NSPoint(x: iconX, y: iconY),
+                    withAttributes: iconAttrs
+                )
+            }
+        }
+
+        // --- Table copy icons ---
+
+        if isMouseInGutter {
+            for table in visibleTablesTK2() {
+                let isCopied = (copiedTableLocation == table.range.location)
+                let iconStr = isCopied ? "\u{2713}" : "\u{2398}" // ✓ or ⎘
+                let iconAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 26, weight: .regular),
+                    .foregroundColor: NSColor(calibratedWhite: 0.55, alpha: 1.0)
+                ]
+                let iconSize = (iconStr as NSString).size(withAttributes: iconAttrs)
+                let iconX = gutterRight - iconSize.width - 4
+                let iconY = table.topY + 4
+                (iconStr as NSString).draw(
+                    at: NSPoint(x: iconX, y: iconY),
+                    withAttributes: iconAttrs
+                )
+            }
+        }
+
+        NSGraphicsContext.current?.restoreGraphicsState()
+    }
+
+    // MARK: - Code Block Fragment Discovery (TK2)
+
+    /// Record of a visible code block under TK2. Multi-line code blocks
+    /// arrive as multiple adjacent `CodeBlockLayoutFragment`s (TK2
+    /// paragraph-splits on `\n`) — callers want ONE icon per logical
+    /// block, so `visibleCodeBlocksTK2()` collapses adjacent runs and
+    /// anchors the record at the FIRST fragment (matching TK1's
+    /// "icon on the first line" placement).
+    struct VisibleCodeBlockTK2 {
+        /// First fragment's y-midpoint in view coords.
+        let firstLineMidY: CGFloat
+        /// First fragment's minimum y in view coords.
+        let firstLineMinY: CGFloat
+        /// First fragment's maximum y in view coords.
+        let firstLineMaxY: CGFloat
+        /// `processor.blocks`-style `range` (covers the entire block,
+        /// fences included). Used as the stable identity for "copied"
+        /// feedback.
+        let range: NSRange
+        /// `processor.blocks`-style `contentRange` — the text between
+        /// the fences. This is what the copy button puts on the
+        /// pasteboard.
+        let contentRange: NSRange
+    }
+
+    /// Enumerate `CodeBlockLayoutFragment`s and return one record per
+    /// logical code block. Adjacent fragments belonging to the same
+    /// `processor.blocks` entry collapse into a single record — that
+    /// record's y values anchor at the first fragment.
+    func visibleCodeBlocksTK2() -> [VisibleCodeBlockTK2] {
+        guard let textView = textView,
+              let tlm = textView.textLayoutManager,
+              let tcs = tlm.textContentManager as? NSTextContentStorage,
+              let processor = textView.textStorageProcessor else {
+            return []
+        }
+        let docStart = tcs.documentRange.location
+        let originY = textView.textContainerOrigin.y
+        var result: [VisibleCodeBlockTK2] = []
+        var lastSeenBlockStart: Int = -1
+
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { fragment in
+            guard fragment is CodeBlockLayoutFragment else { return true }
+            guard let element = fragment.textElement,
+                  let elementRange = element.elementRange else { return true }
+
+            let charIndex = tcs.offset(from: docStart, to: elementRange.location)
+            guard charIndex >= 0 else { return true }
+
+            // Look up the processor block whose range contains this
+            // fragment's first character. Multi-paragraph code blocks
+            // produce multiple fragments that all map to the SAME
+            // `processor.blocks` entry — dedupe on `block.range.location`.
+            guard let block = processor.blocks.first(where: {
+                if case .codeBlock = $0.type {
+                    return NSLocationInRange(charIndex, $0.range)
+                }
+                return false
+            }) else { return true }
+
+            if block.range.location == lastSeenBlockStart {
+                // Already recorded this block from its first fragment.
+                return true
+            }
+            lastSeenBlockStart = block.range.location
+
+            let frame = fragment.layoutFragmentFrame
+            result.append(VisibleCodeBlockTK2(
+                firstLineMidY: frame.midY + originY,
+                firstLineMinY: frame.minY + originY,
+                firstLineMaxY: frame.maxY + originY,
+                range: block.range,
+                contentRange: block.contentRange
+            ))
+            return true
+        }
+        return result
+    }
+
+    // MARK: - Table Fragment Discovery (TK2)
+
+    /// Record of a visible table under TK2. Tables are rendered as a
+    /// single-character `NSTextAttachment` tagged with
+    /// `.renderedBlockType == "table"` and
+    /// `.renderedBlockOriginalMarkdown = <markdown>`. Under TK2 each
+    /// attachment lives in its own paragraph/fragment; enumerating
+    /// fragments and peeking at the attribute on the fragment's first
+    /// character is the TK2 equivalent of TK1's `storage.enumerateAttribute`.
+    struct VisibleTableTK2 {
+        /// Top of the attachment's fragment in view coords. Matches
+        /// TK1's `iconTopY = lineFragRect.minY + origin.y` baseline
+        /// (`+ 4` padding is applied at the draw site to match TK1).
+        let topY: CGFloat
+        /// Character range covered by the attachment attribute run
+        /// (typically length 1). Used as the stable identity for
+        /// "copied" feedback AND as the key off which the raw
+        /// markdown attribute is read during click handling.
+        let range: NSRange
+    }
+
+    /// Enumerate text layout fragments and return one record per table
+    /// attachment found in the document. Handlers re-read the original
+    /// markdown from storage at `range.location`, so the record stays
+    /// small.
+    func visibleTablesTK2() -> [VisibleTableTK2] {
+        guard let textView = textView,
+              let tlm = textView.textLayoutManager,
+              let tcs = tlm.textContentManager as? NSTextContentStorage,
+              let storage = textView.textStorage else {
+            return []
+        }
+        let docStart = tcs.documentRange.location
+        let originY = textView.textContainerOrigin.y
+        let tableTypeValue = RenderedBlockType.table.rawValue
+        var result: [VisibleTableTK2] = []
+
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { fragment in
+            guard let element = fragment.textElement,
+                  let elementRange = element.elementRange else { return true }
+
+            let charIndex = tcs.offset(from: docStart, to: elementRange.location)
+            guard charIndex >= 0, charIndex < storage.length else { return true }
+
+            // Non-table fragments skip in one attribute lookup.
+            guard let type = storage.attribute(
+                .renderedBlockType, at: charIndex, effectiveRange: nil
+            ) as? String, type == tableTypeValue else {
+                return true
+            }
+
+            // Expand to the attribute's effective range so
+            // `range.location` matches TK1's `effective.location`.
+            var effective = NSRange(location: 0, length: 0)
+            _ = storage.attribute(
+                .renderedBlockType, at: charIndex, effectiveRange: &effective
+            )
+
+            let frame = fragment.layoutFragmentFrame
+            result.append(VisibleTableTK2(
+                topY: frame.minY + originY,
+                range: effective
+            ))
+            return true
+        }
+        return result
+    }
+
+    // MARK: - TK2 Click Handlers (code block + table copy)
+
+    /// TK2 code-block copy hit test: iterate visible code blocks, find
+    /// one whose first-line band contains `clickY`, copy its content
+    /// to the pasteboard, and set "copied" feedback.
+    func handleCodeBlockCopyTK2(clickY: CGFloat) -> Bool {
+        guard let textView = textView,
+              let storage = textView.textStorage else { return false }
+
+        for codeBlock in visibleCodeBlocksTK2() {
+            guard clickY >= codeBlock.firstLineMinY,
+                  clickY <= codeBlock.firstLineMaxY else { continue }
+
+            let maxLen = storage.length
+            let loc = min(codeBlock.contentRange.location, maxLen)
+            let len = min(codeBlock.contentRange.length, maxLen - loc)
+            let safeRange = NSRange(location: loc, length: len)
+            let codeText = (storage.string as NSString).substring(with: safeRange)
+
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(codeText, forType: .string)
+
+            copiedCodeBlockLocation = codeBlock.range.location
+            textView.needsDisplay = true
+            copiedFeedbackTimer?.invalidate()
+            copiedFeedbackTimer = Timer.scheduledTimer(
+                withTimeInterval: 1.5, repeats: false
+            ) { [weak self] _ in
+                self?.copiedCodeBlockLocation = nil
+                self?.textView?.needsDisplay = true
+            }
+            return true
+        }
+        return false
+    }
+
+    /// TK2 table copy hit test: iterate visible tables, find one whose
+    /// top-anchor band contains `clickY`, copy its markdown to the
+    /// pasteboard as TSV + HTML, and set "copied" feedback.
+    func handleTableCopyTK2(clickY: CGFloat) -> Bool {
+        guard let textView = textView,
+              let storage = textView.textStorage else { return false }
+
+        for table in visibleTablesTK2() {
+            // ~30-pixel tall hitbox around the icon, matching the TK1
+            // contract in `handleTableCopy`.
+            guard clickY >= table.topY - 4,
+                  clickY <= table.topY + 30 else { continue }
+
+            guard table.range.location < storage.length,
+                  let markdown = storage.attribute(
+                    .renderedBlockOriginalMarkdown,
+                    at: table.range.location,
+                    effectiveRange: nil
+                  ) as? String,
+                  let data = TableUtility.parse(markdown: markdown) else {
+                continue
+            }
+
+            // Build TSV
+            var tsvLines: [String] = [data.headers.joined(separator: "\t")]
+            for row in data.rows { tsvLines.append(row.joined(separator: "\t")) }
+            let tsv = tsvLines.joined(separator: "\n")
+
+            // Build HTML
+            func escape(_ s: String) -> String {
+                return s.replacingOccurrences(of: "&", with: "&amp;")
+                        .replacingOccurrences(of: "<", with: "&lt;")
+                        .replacingOccurrences(of: ">", with: "&gt;")
+            }
+            var html = "<table>"
+            html += "<thead><tr>" + data.headers.map {
+                "<th>" + escape($0) + "</th>"
+            }.joined() + "</tr></thead>"
+            html += "<tbody>"
+            for row in data.rows {
+                html += "<tr>" + row.map {
+                    "<td>" + escape($0) + "</td>"
+                }.joined() + "</tr>"
+            }
+            html += "</tbody></table>"
+
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(tsv, forType: .string)
+            NSPasteboard.general.setString(
+                tsv,
+                forType: NSPasteboard.PasteboardType(
+                    rawValue: "public.utf8-tab-separated-values-text"
+                )
+            )
+            NSPasteboard.general.setString(html, forType: .html)
+
+            copiedTableLocation = table.range.location
+            textView.needsDisplay = true
+            copiedFeedbackTimer?.invalidate()
+            copiedFeedbackTimer = Timer.scheduledTimer(
+                withTimeInterval: 1.5, repeats: false
+            ) { [weak self] _ in
+                self?.copiedTableLocation = nil
+                self?.textView?.needsDisplay = true
+            }
+            return true
+        }
+        return false
+    }
+
+    /// Given a y-coordinate in the text view's coordinate space (i.e.
+    /// `textView.convert(event.locationInWindow, from: nil).y`), return
+    /// the `processor.blocks` index of the heading whose vertical band
+    /// contains that y, or `nil` if no heading matches. Used by the TK2
+    /// `handleClick` path since TK2 has no equivalent to TK1's
+    /// `characterIndex(for:in:)` for points outside the text container.
+    func headerBlockIndexForClickYTK2(clickY: CGFloat) -> Int? {
+        guard let textView = textView,
+              let processor = textView.textStorageProcessor else { return nil }
+
+        for heading in visibleHeadingsTK2() {
+            if clickY >= heading.minY && clickY <= heading.maxY {
+                if let idx = processor.headerBlockIndex(at: heading.charIndex) {
+                    return idx
+                }
+            }
+        }
+        return nil
+    }
+
     // MARK: - Code Block Copy
 
     func handleCodeBlockCopy(_ event: NSEvent) -> Bool {
@@ -287,7 +851,7 @@ class GutterController {
         let gutterLeft = gutterRight - gutterWidth
         guard point.x >= gutterLeft, point.x < gutterRight else { return false }
 
-        guard let manager = textView.layoutManager,
+        guard let manager = textView.layoutManagerIfTK1,
               let container = textView.textContainer,
               let storage = textView.textStorage,
               let processor = textView.textStorageProcessor else { return false }
@@ -343,7 +907,7 @@ class GutterController {
         let gutterLeft = gutterRight - gutterWidth
         guard point.x >= gutterLeft, point.x < gutterRight else { return false }
 
-        guard let manager = textView.layoutManager,
+        guard let manager = textView.layoutManagerIfTK1,
               let container = textView.textContainer,
               let storage = textView.textStorage else { return false }
 

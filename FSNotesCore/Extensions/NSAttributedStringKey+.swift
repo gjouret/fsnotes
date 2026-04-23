@@ -42,4 +42,47 @@ public extension NSAttributedString.Key {
     /// Absent = use natural size clamped to container width.
     /// Value: NSNumber wrapping an Int (points).
     static let renderedImageWidth = NSAttributedString.Key(rawValue: "es.fsnot.rendered.image.width")
+
+    /// Phase 2b: identifies the block-model kind of a paragraph range.
+    /// Set by each block renderer in `DocumentRenderer`. Read by the
+    /// `NSTextContentStorageDelegate` to dispatch on `NSTextParagraph`
+    /// subclass per block type. Value: `BlockModelKind.rawValue` (String).
+    static let blockModelKind = NSAttributedString.Key(rawValue: "es.fsnot.blockmodel.kind")
+
+    /// Phase 2c: heading level (1...6) for `.heading` block-model ranges.
+    /// Set by `DocumentRenderer` alongside `.blockModelKind = .heading`.
+    /// Read by `HeadingLayoutFragment` to decide whether to draw the
+    /// H1/H2 bottom hairline. Value: `Int` (1-indexed, matches
+    /// `Block.heading(level:suffix:)`).
+    static let headingLevel = NSAttributedString.Key(rawValue: "es.fsnot.heading.level")
+}
+
+/// Phase 2b: enumeration of block-model block types carried on
+/// rendered attributed string ranges via the `.blockModelKind`
+/// attribute. The TK2 content-storage delegate uses this to pick the
+/// right `NSTextParagraph` subclass per block, which in turn lets
+/// Phase 2c's layout fragments route their drawing.
+///
+/// `table` is intentionally absent — tables still render through the
+/// `NSTextAttachment` path until Phase 2e. Mermaid and math are
+/// distinct kinds (not just code blocks with a language marker)
+/// because their Phase 2c layout fragments reserve bitmap space and
+/// draw a rendered image over the source text, which the plain
+/// code-block fragment doesn't do.
+public enum BlockModelKind: String {
+    case paragraph
+    case paragraphWithKbd  // paragraph containing one or more .kbdTag runs
+    case heading
+    case list
+    case blockquote
+    case codeBlock
+    case horizontalRule
+    case mermaid
+    case math
+    /// Paragraph whose sole inline is `Inline.displayMath` — rendered
+    /// as a centered pseudo-block equation via `DisplayMathLayoutFragment`.
+    /// Paragraphs containing display math PLUS other content do NOT use
+    /// this kind; they fall through to `.paragraph` and the display
+    /// math stays on the inline attachment path.
+    case displayMath
 }

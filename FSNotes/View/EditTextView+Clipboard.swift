@@ -116,7 +116,16 @@ extension EditTextView {
     override func paste(_ sender: Any?) {
         guard let note = self.note else { return }
 
-        if let rtfdData = NSPasteboard.general.data(forType: NSPasteboard.attributed),
+        // When the block model is active we MUST route paste through the
+        // markdown string (pasteboard also carries it) so the Document is
+        // kept in sync. Dropping a raw RTFD containing block-model
+        // attachments (checkboxes, bullets, PDFs, image placeholders)
+        // directly into storage produces attachments that don't map to
+        // any list item in the Document — the very next edit or save
+        // crashes on the divergence. Let the plain-string path below
+        // (which runs through insertText → block-model splice) handle it.
+        if documentProjection == nil,
+           let rtfdData = NSPasteboard.general.data(forType: NSPasteboard.attributed),
            let attributed = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(rtfdData) as? NSAttributedString {
             breakUndoCoalescing()
             insertText(attributed, replacementRange: selectedRange())
@@ -154,7 +163,7 @@ extension EditTextView {
                 let parsed = MarkdownParser.parse(markdown)
                 var newDoc = projection.document
                 for (offset, block) in parsed.blocks.enumerated() {
-                    newDoc.blocks.insert(block, at: blockIndex + 1 + offset)
+                    newDoc.insertBlock(block, at: blockIndex + 1 + offset)
                 }
 
                 note.content = NSMutableAttributedString(
@@ -284,7 +293,16 @@ extension EditTextView {
            let paragraph = attributedSubstring(forProposedRange: paragraphRange, actualRange: nil) {
             let pasteboard = NSPasteboard.general
             pasteboard.declareTypes([.string], owner: nil)
-            pasteboard.setString(paragraph.string.trim().removeLastNewLine(), forType: .string)
+            // Prefer the block-model markdown extractor so list items,
+            // formatting, etc. survive the cut. Fall back to plain
+            // rendered text only when no projection is available.
+            let mdString: String
+            if let md = copyAsMarkdownViaBlockModel() {
+                mdString = md
+            } else {
+                mdString = paragraph.string.trim().removeLastNewLine()
+            }
+            pasteboard.setString(mdString, forType: .string)
 
             // Route through block model if active to keep Document in sync.
             if documentProjection != nil {
@@ -298,13 +316,17 @@ extension EditTextView {
         // For selections, copy to clipboard then delete via block model.
         if documentProjection != nil, selectedRange().length > 0 {
             let range = selectedRange()
-            if let text = attributedSubstring(forProposedRange: range, actualRange: nil) {
-                let pasteboard = NSPasteboard.general
-                pasteboard.declareTypes([NSPasteboard.attributed, .string], owner: nil)
-                if let rtfd = try? text.data(from: NSRange(location: 0, length: text.length),
-                                             documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]) {
-                    pasteboard.setData(rtfd, forType: NSPasteboard.attributed)
-                }
+            let pasteboard = NSPasteboard.general
+            pasteboard.declareTypes([NSPasteboard.attributed, .string], owner: nil)
+            if let text = attributedSubstring(forProposedRange: range, actualRange: nil),
+               let rtfd = try? text.data(from: NSRange(location: 0, length: text.length),
+                                         documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]) {
+                pasteboard.setData(rtfd, forType: NSPasteboard.attributed)
+            }
+            // Markdown path so paste reconstructs structure + formatting.
+            if let md = copyAsMarkdownViaBlockModel() {
+                pasteboard.setString(md, forType: .string)
+            } else if let text = attributedSubstring(forProposedRange: range, actualRange: nil) {
                 pasteboard.setString(text.string, forType: .string)
             }
             _ = handleEditViaBlockModel(in: range, replacementString: "")
@@ -458,7 +480,15 @@ extension EditTextView {
         } else {
             return nil
         }
+        return Self.markdownForCopy(projection: projection, range: range)
+    }
 
+    /// Pure helper: serialize the markdown for a textStorage range
+    /// against a projection. Extracted from `copyAsMarkdownViaBlockModel`
+    /// so it can be unit-tested without an editor instance.
+    static func markdownForCopy(
+        projection: DocumentProjection, range: NSRange
+    ) -> String? {
         let indices = projection.blockIndices(overlapping: range)
         guard !indices.isEmpty else { return nil }
 
@@ -483,7 +513,8 @@ extension EditTextView {
                 parts.append(MarkdownSerializer.serialize(singleBlockDoc))
             } else {
                 parts.append(partialBlockMarkdown(
-                    block, from: inBlockStart, to: inBlockEnd
+                    block, from: inBlockStart, to: inBlockEnd,
+                    projection: projection, blockSpan: span
                 ))
             }
         }
@@ -492,20 +523,69 @@ extension EditTextView {
     }
 
     /// Serialize a partial slice of a block to markdown. Paragraphs
-    /// and list items with plain paragraphs use `splitInlines` + the
-    /// inline serializer so formatting survives. Other block types
-    /// fall back to plain-text overlap (no markers preserved).
-    private func partialBlockMarkdown(
-        _ block: Block, from: Int, to: Int
+    /// use `splitInlines` + the inline serializer so formatting
+    /// survives. Lists locate the rendered line covering [from, to]
+    /// and serialize that single ListItem as a one-item list — this
+    /// is the common "copy a list line" case (bug: copy of a bold
+    /// list line landed empty on the pasteboard).
+    static func partialBlockMarkdown(
+        _ block: Block, from: Int, to: Int,
+        projection: DocumentProjection, blockSpan: NSRange
     ) -> String {
         switch block {
         case .paragraph(let inline):
             let (_, rest) = EditingOps.splitInlines(inline, at: from)
             let (middle, _) = EditingOps.splitInlines(rest, at: to - from)
             return MarkdownSerializer.serializeInlines(middle)
+        case .list(let items, _):
+            // Find which rendered line of the list the partial range
+            // starts in. Each rendered line in the list block maps to
+            // exactly one ListItem in depth-first order: top-level
+            // item → its children → next top-level item, etc.
+            let s = projection.attributed.string as NSString
+            let blockStart = blockSpan.location
+            let absFrom = blockStart + from
+            var lineIdx = 0
+            let scanEnd = min(absFrom, s.length)
+            var i = blockStart
+            while i < scanEnd {
+                if s.character(at: i) == 0x000A { lineIdx += 1 }
+                i += 1
+            }
+            let flat = flattenListItemsInRenderOrder(items)
+            guard lineIdx < flat.count else { return "" }
+            let item = flat[lineIdx]
+            // Reset indent + drop children so the copied item pastes
+            // as a top-level item in the destination context.
+            let normalized = ListItem(
+                indent: "",
+                marker: item.marker,
+                afterMarker: item.afterMarker.isEmpty ? " " : item.afterMarker,
+                checkbox: item.checkbox,
+                inline: item.inline,
+                children: [],
+                blankLineBefore: false
+            )
+            let doc = Document(
+                blocks: [.list(items: [normalized], loose: false)],
+                trailingNewline: false
+            )
+            return MarkdownSerializer.serialize(doc)
         default:
             return ""
         }
+    }
+
+    /// Flatten a list-item tree into the depth-first order produced
+    /// by ListRenderer. Used by `partialBlockMarkdown` to map a
+    /// rendered-line index back to a specific ListItem.
+    static func flattenListItemsInRenderOrder(_ items: [ListItem]) -> [ListItem] {
+        var result: [ListItem] = []
+        for item in items {
+            result.append(item)
+            result.append(contentsOf: flattenListItemsInRenderOrder(item.children))
+        }
+        return result
     }
 
     func deleteUnusedImages(checkRange: NSRange) {

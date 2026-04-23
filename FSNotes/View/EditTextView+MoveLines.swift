@@ -13,19 +13,47 @@ extension EditTextView {
         // Block-model path: swap blocks in the document model.
         if let proj = documentProjection {
             let cursorLoc = selectedRange().location
-            guard let info = proj.blockContaining(storageIndex: cursorLoc), info.blockIndex > 0 else {
+            guard let info = proj.blockContaining(storageIndex: cursorLoc) else {
+                NSSound.beep()
+                return
+            }
+            // Inside a list? Try item-level sibling swap first; fall back
+            // to block swap only if we're on the first sibling at every
+            // depth (handled inside moveListItemOrBlockUp).
+            let isList: Bool = {
+                if case .list = proj.document.blocks[info.blockIndex] { return true }
+                return false
+            }()
+            if !isList, info.blockIndex == 0 {
                 NSSound.beep()
                 return
             }
             let blockIdx = info.blockIndex
             do {
-                let result = try EditingOps.moveBlockUp(blockIndex: blockIdx, in: proj)
-                // Calculate new cursor position: offset within the block is preserved,
-                // but the block is now at the position of the previous block.
+                let result: EditResult
+                if isList {
+                    result = try EditingOps.moveListItemOrBlockUp(at: cursorLoc, in: proj)
+                } else {
+                    result = try EditingOps.moveBlockUp(blockIndex: blockIdx, in: proj)
+                }
+                // Preserve offset within the block so the cursor stays on
+                // the moved line (which now lives in the same block for
+                // sibling swaps, or at blockIdx-1 for block-level moves).
                 let oldSpan = proj.blockSpans[blockIdx]
                 let offsetInBlock = cursorLoc - oldSpan.location
-                let newSpan = result.newProjection.blockSpans[blockIdx - 1]
-                let newCursor = newSpan.location + min(offsetInBlock, newSpan.length)
+                let destBlockIdx = isList ? blockIdx : blockIdx - 1
+                let newSpan = result.newProjection.blockSpans[destBlockIdx]
+                let newCursor: Int
+                if isList {
+                    // For sibling swaps inside a list, the cursor's
+                    // offset-in-block shifts; we can't reuse the old
+                    // offset. Place it at the start of the item that
+                    // moved — by re-finding the item path. As a simple
+                    // approximation, clamp to the block's new length.
+                    newCursor = min(cursorLoc, newSpan.location + newSpan.length)
+                } else {
+                    newCursor = newSpan.location + min(offsetInBlock, newSpan.length)
+                }
                 applyBlockModelResult(result, actionName: "Move")
                 setSelectedRange(NSRange(location: newCursor, length: 0))
                 scrollRangeToVisible(selectedRange())
@@ -108,18 +136,36 @@ extension EditTextView {
         // Block-model path: swap blocks in the document model.
         if let proj = documentProjection {
             let cursorLoc = selectedRange().location
-            guard let info = proj.blockContaining(storageIndex: cursorLoc),
-                  info.blockIndex < proj.document.blocks.count - 1 else {
+            guard let info = proj.blockContaining(storageIndex: cursorLoc) else {
+                NSSound.beep()
+                return
+            }
+            let isList: Bool = {
+                if case .list = proj.document.blocks[info.blockIndex] { return true }
+                return false
+            }()
+            if !isList, info.blockIndex >= proj.document.blocks.count - 1 {
                 NSSound.beep()
                 return
             }
             let blockIdx = info.blockIndex
             do {
-                let result = try EditingOps.moveBlockDown(blockIndex: blockIdx, in: proj)
+                let result: EditResult
+                if isList {
+                    result = try EditingOps.moveListItemOrBlockDown(at: cursorLoc, in: proj)
+                } else {
+                    result = try EditingOps.moveBlockDown(blockIndex: blockIdx, in: proj)
+                }
                 let oldSpan = proj.blockSpans[blockIdx]
                 let offsetInBlock = cursorLoc - oldSpan.location
-                let newSpan = result.newProjection.blockSpans[blockIdx + 1]
-                let newCursor = newSpan.location + min(offsetInBlock, newSpan.length)
+                let destBlockIdx = isList ? blockIdx : blockIdx + 1
+                let newSpan = result.newProjection.blockSpans[destBlockIdx]
+                let newCursor: Int
+                if isList {
+                    newCursor = min(cursorLoc + 1, newSpan.location + newSpan.length)
+                } else {
+                    newCursor = newSpan.location + min(offsetInBlock, newSpan.length)
+                }
                 applyBlockModelResult(result, actionName: "Move")
                 setSelectedRange(NSRange(location: newCursor, length: 0))
                 scrollRangeToVisible(selectedRange())

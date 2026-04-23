@@ -167,6 +167,12 @@ public enum MarkdownSerializer {
                 out += "<u>" + serializeInlines(children) + "</u>"
             case .highlight(let children):
                 out += "<mark>" + serializeInlines(children) + "</mark>"
+            case .superscript(let children):
+                out += "<sup>" + serializeInlines(children) + "</sup>"
+            case .`subscript`(let children):
+                out += "<sub>" + serializeInlines(children) + "</sub>"
+            case .kbd(let children):
+                out += "<kbd>" + serializeInlines(children) + "</kbd>"
             case .math(let content):
                 out += "$" + content + "$"
             case .displayMath(let content):

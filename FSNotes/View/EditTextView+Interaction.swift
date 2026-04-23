@@ -42,6 +42,14 @@ extension EditTextView {
             let charIndex = characterIndexForInsertion(at: point)
             if charIndex >= 0 && charIndex < storage.length {
                 if let link = storage.attribute(.link, at: charIndex, effectiveRange: nil) {
+                    // Wikilinks (`wiki:<target>`) must be resolved against
+                    // the local note store — never dispatched to
+                    // NSWorkspace, which would surface the system
+                    // "no application set to open URL wiki:..." dialog.
+                    // Run this check BEFORE the generic URL dispatch
+                    // so clicking a wikilink in WYSIWYG mode opens the
+                    // matching note instead of escaping to the OS.
+                    if handleWikiLink(link) { return }
                     if let urlString = link as? String {
                         if urlString.isValidEmail(), let mail = URL(string: "mailto:\(urlString)") {
                             NSWorkspace.shared.open(mail)
@@ -166,47 +174,130 @@ extension EditTextView {
             y: point.y - textContainerInset.height
         )
 
-        guard let container = self.textContainer,
-              let manager = self.layoutManager,
-              let textStorage = self.textStorage else { return }
+        // Phase 2a: TK1-only cursor hit-testing. The TK2 equivalent is
+        // `NSTextLayoutManager.textLayoutFragment(for:)` — see
+        // `characterIndexTK2(at:)` below for the TK2 fallback branch.
+        if let container = self.textContainer,
+           let manager = self.layoutManagerIfTK1,
+           let textStorage = self.textStorage {
+            let index = manager.characterIndex(for: properPoint, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
 
-        let index = manager.characterIndex(for: properPoint, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+            guard index < textStorage.length else { return }
 
-        guard index < textStorage.length else { return }
+            let glyphRect = manager.boundingRect(forGlyphRange: NSRange(location: index, length: 1), in: container)
 
-        let glyphRect = manager.boundingRect(forGlyphRange: NSRange(location: index, length: 1), in: container)
-
-        if glyphRect.contains(properPoint), self.isTodo(index) || self.hasAttachment(at: index) {
-            NSCursor.pointingHand.set()
-            return
-        }
-
-        if glyphRect.contains(properPoint),
-           let link = textStorage.attribute(.link, at: index, effectiveRange: nil) {
-            if textStorage.attribute(.tag, at: index, effectiveRange: nil) != nil {
+            if glyphRect.contains(properPoint), self.isTodo(index) || self.hasAttachment(at: index) {
                 NSCursor.pointingHand.set()
                 return
             }
 
-            if NotesTextProcessor.hideSyntax {
-                NSCursor.pointingHand.set()
-                return
-            }
-
-            if link as? URL != nil {
-                if UserDefaultsManagement.clickableLinks
-                    || event.modifierFlags.contains(.command)
-                    || event.modifierFlags.contains(.shift) {
+            if glyphRect.contains(properPoint),
+               let link = textStorage.attribute(.link, at: index, effectiveRange: nil) {
+                if textStorage.attribute(.tag, at: index, effectiveRange: nil) != nil {
                     NSCursor.pointingHand.set()
                     return
                 }
 
-                NSCursor.iBeam.set()
+                if NotesTextProcessor.hideSyntax {
+                    NSCursor.pointingHand.set()
+                    return
+                }
+
+                if link as? URL != nil {
+                    if UserDefaultsManagement.clickableLinks
+                        || event.modifierFlags.contains(.command)
+                        || event.modifierFlags.contains(.shift) {
+                        NSCursor.pointingHand.set()
+                        return
+                    }
+
+                    NSCursor.iBeam.set()
+                    return
+                }
+            }
+
+            super.mouseMoved(with: event)
+            return
+        }
+
+        // Phase 2f.3: TK2 fallback — use NSTextLayoutManager to
+        // resolve the point to a character index, then read the
+        // `.link` / `.tag` / checkbox attributes off the text storage
+        // just like the TK1 branch above. Glyph-rect containment
+        // checks are skipped because TK2 doesn't expose a glyph bbox
+        // API — `textLayoutFragment(for:)` already guarantees the
+        // point falls inside a layout fragment, and
+        // `characterIndex(for:)` on the line fragment resolves the
+        // exact character the cursor is over.
+        if let textStorage = self.textStorage,
+           let index = characterIndexTK2(at: properPoint),
+           index < textStorage.length {
+
+            if self.isTodo(index) || self.hasAttachment(at: index) {
+                NSCursor.pointingHand.set()
                 return
+            }
+
+            if let link = textStorage.attribute(.link, at: index, effectiveRange: nil) {
+                if textStorage.attribute(.tag, at: index, effectiveRange: nil) != nil {
+                    NSCursor.pointingHand.set()
+                    return
+                }
+
+                if NotesTextProcessor.hideSyntax {
+                    NSCursor.pointingHand.set()
+                    return
+                }
+
+                if link as? URL != nil {
+                    if UserDefaultsManagement.clickableLinks
+                        || event.modifierFlags.contains(.command)
+                        || event.modifierFlags.contains(.shift) {
+                        NSCursor.pointingHand.set()
+                        return
+                    }
+
+                    NSCursor.iBeam.set()
+                    return
+                }
             }
         }
 
         super.mouseMoved(with: event)
+    }
+
+    /// Phase 2f.3: TK2-equivalent of
+    /// `NSLayoutManager.characterIndex(for:in:fractionOfDistanceBetweenInsertionPoints:)`.
+    ///
+    /// Resolves a point in text-container coordinates to a character
+    /// offset into `textStorage`. Returns `nil` when the view is not
+    /// on TK2, when no layout fragment exists at that y-band, or
+    /// when the point falls between line fragments.
+    ///
+    /// Under TK1 the caller should go through the `layoutManagerIfTK1`
+    /// path — this helper is the TK2 fallback only.
+    func characterIndexTK2(at point: NSPoint) -> Int? {
+        guard let tlm = self.textLayoutManager,
+              let fragment = tlm.textLayoutFragment(for: point) else {
+            return nil
+        }
+        let localPoint = CGPoint(
+            x: point.x - fragment.layoutFragmentFrame.origin.x,
+            y: point.y - fragment.layoutFragmentFrame.origin.y
+        )
+        guard let lineFragment = fragment.textLineFragments.first(where: { line in
+            line.typographicBounds.contains(localPoint)
+        }) else {
+            return nil
+        }
+        let charOffsetInElement = lineFragment.characterIndex(for: localPoint)
+        guard let contentStorage = tlm.textContentManager as? NSTextContentStorage,
+              let elementRange = fragment.textElement?.elementRange else {
+            return nil
+        }
+        let docStart = contentStorage.documentRange.location
+        let elementStart = contentStorage.offset(from: docStart, to: elementRange.location)
+        return elementStart + charOffsetInElement
     }
 
     override func flagsChanged(with event: NSEvent) {
@@ -218,23 +309,56 @@ extension EditTextView {
     }
 
     private func updateCursorForMouse(at event: NSEvent) {
-        guard let container = self.textContainer,
-              let manager = self.layoutManager,
-              let textStorage = self.textStorage else { return }
-
         let pointInView = self.convert(event.locationInWindow, from: nil)
-        let pointInContainer = NSPoint(
+
+        // Phase 2a: TK1 link-hover cursor detection.
+        if let container = self.textContainer,
+           let manager = self.layoutManagerIfTK1,
+           let textStorage = self.textStorage {
+            let pointInContainer = NSPoint(
+                x: pointInView.x - textContainerInset.width,
+                y: (self.bounds.size.height - pointInView.y) - textContainerInset.height
+            )
+
+            let index = manager.characterIndex(
+                for: pointInContainer,
+                in: container,
+                fractionOfDistanceBetweenInsertionPoints: nil
+            )
+
+            guard index < textStorage.length else {
+                NSCursor.iBeam.set()
+                return
+            }
+
+            if let link = textStorage.attribute(.link, at: index, effectiveRange: nil) {
+                if textStorage.attribute(.tag, at: index, effectiveRange: nil) != nil {
+                    NSCursor.pointingHand.set()
+                } else if link as? URL != nil {
+                    if UserDefaultsManagement.clickableLinks
+                        || NSEvent.modifierFlags.contains(.command)
+                        || NSEvent.modifierFlags.contains(.shift) {
+                        NSCursor.pointingHand.set()
+                    } else {
+                        NSCursor.iBeam.set()
+                    }
+                }
+            } else {
+                NSCursor.iBeam.set()
+            }
+            return
+        }
+
+        // Phase 2f.3: TK2 fallback — resolve via NSTextLayoutManager.
+        // `characterIndexTK2` expects a point in text-container coords
+        // (NOT flipped), matching the `mouseMoved` entry point above.
+        guard let textStorage = self.textStorage else { return }
+        let properPoint = NSPoint(
             x: pointInView.x - textContainerInset.width,
-            y: (self.bounds.size.height - pointInView.y) - textContainerInset.height
+            y: pointInView.y - textContainerInset.height
         )
-
-        let index = manager.characterIndex(
-            for: pointInContainer,
-            in: container,
-            fractionOfDistanceBetweenInsertionPoints: nil
-        )
-
-        guard index < textStorage.length else {
+        guard let index = characterIndexTK2(at: properPoint),
+              index < textStorage.length else {
             NSCursor.iBeam.set()
             return
         }
@@ -323,9 +447,11 @@ extension EditTextView {
     }
 
     private func handleRenderedBlockClick(_ event: NSEvent) -> Bool {
+        // Phase 2a: rendered-block click hit-testing is TK1-only. Block
+        // attachments don't render under TK2 yet (accepted 2a regression).
         guard let storage = textStorage,
               let container = self.textContainer,
-              let manager = self.layoutManager else { return false }
+              let manager = self.layoutManagerIfTK1 else { return false }
 
         let point = self.convert(event.locationInWindow, from: nil)
         let properPoint = NSPoint(x: point.x - textContainerInset.width, y: point.y)
@@ -411,7 +537,7 @@ extension EditTextView {
 
     private func handleTodo(_ event: NSEvent) -> Bool {
         guard let container = self.textContainer,
-              let manager = self.layoutManager else { return false }
+              let manager = self.layoutManagerIfTK1 else { return false }
 
         let point = self.convert(event.locationInWindow, from: nil)
         let properPoint = NSPoint(x: point.x - textContainerInset.width, y: point.y)
@@ -443,8 +569,12 @@ extension EditTextView {
     }
 
     private func handleClick(_ event: NSEvent) {
+        // Phase 2a: click hit-testing uses TK1 API. The basic text
+        // caret positioning is handled by NSTextView's default mouse
+        // handling under TK2 — this function only runs for specialized
+        // hit-testing (attachments, todos, links) which is TK1-only.
         guard let container = self.textContainer,
-              let manager = self.layoutManager else { return }
+              let manager = self.layoutManagerIfTK1 else { return }
 
         let point = self.convert(event.locationInWindow, from: nil)
         let properPoint = NSPoint(x: point.x - textContainerInset.width, y: point.y)
@@ -577,10 +707,20 @@ extension EditTextView {
             super.mouseDragged(with: event)
             return
         }
+        // Phase 2a TK2-safety (2026-04-22): bare `layoutManager` was an
+        // implicit `self.layoutManager` read that silently downgrades
+        // TK2 → TK1 on TK2-wired views (see `reflowAttachmentsForWidthChange`
+        // for the full rationale). Route through `layoutManagerIfTK1`
+        // so a TK2 view short-circuits the TK1 glyph-invalidation dance
+        // below. Image resize drag is TK1-only today — TK2 needs a
+        // separate invalidation path using NSTextLayoutManager APIs,
+        // and landing that is a later phase. Until then, under TK2 the
+        // drag bails out here and the user's mouse movement has no
+        // visual effect.
         guard let storage = textStorage,
               drag.range.location < storage.length,
               let attachment = storage.attribute(.attachment, at: drag.range.location, effectiveRange: nil) as? NSTextAttachment,
-              let lm = layoutManager
+              let lm = layoutManagerIfTK1
         else { return }
 
         let point = convert(event.locationInWindow, from: nil)

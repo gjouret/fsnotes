@@ -150,6 +150,51 @@ public enum InlineRenderer {
             var attrs = baseAttributes
             attrs[.backgroundColor] = Self.highlightColor
             return render(children, baseAttributes: attrs, note: note)
+        case .superscript(let children):
+            // Bug #17: <sup>…</sup>. NSAttributedString.Key.superscript
+            // takes an Int; positive = superscript, negative = subscript.
+            // Shrink the font to ~75% and shift baseline up so the glyph
+            // sits above the baseline (AppKit's .superscript attribute
+            // alone does not resize the glyph).
+            var attrs = baseAttributes
+            attrs[.superscript] = 1
+            if let baseFont = attrs[.font] as? PlatformFont {
+                attrs[.font] = PlatformFont.systemFont(ofSize: baseFont.pointSize * 0.75)
+                attrs[.baselineOffset] = baseFont.pointSize * 0.35
+            }
+            return render(children, baseAttributes: attrs, note: note)
+        case .`subscript`(let children):
+            // Bug #17: <sub>…</sub>. Mirror of superscript — negative
+            // `.superscript` int + negative baseline offset.
+            var attrs = baseAttributes
+            attrs[.superscript] = -1
+            if let baseFont = attrs[.font] as? PlatformFont {
+                attrs[.font] = PlatformFont.systemFont(ofSize: baseFont.pointSize * 0.75)
+                attrs[.baselineOffset] = -baseFont.pointSize * 0.15
+            }
+            return render(children, baseAttributes: attrs, note: note)
+        case .kbd(let children):
+            // <kbd>…</kbd> — keyboard-key styling.
+            //
+            // Apply the same content attributes that source-mode emits
+            // via `InlineTagRegistry.buildInlineTagDefinitions` (the kbd
+            // entry): monospaced 0.85× font + a dark-gray foreground.
+            // Tag the rendered range with `.kbdTag = true` so
+            // `DocumentRenderer` can detect paragraphs that need the
+            // `KbdBoxParagraphLayoutFragment` dispatch, and so the
+            // fragment itself can find the run at draw time.
+            var attrs = baseAttributes
+            if let baseFont = attrs[.font] as? PlatformFont {
+                attrs[.font] = PlatformFont.monospacedSystemFont(
+                    ofSize: baseFont.pointSize * 0.85,
+                    weight: .medium
+                )
+            }
+            attrs[.foregroundColor] = PlatformColor(
+                red: 0.333, green: 0.333, blue: 0.333, alpha: 1.0
+            )
+            attrs[.kbdTag] = true
+            return render(children, baseAttributes: attrs, note: note)
         case .wikilink(let target, let display):
             // Wikilink renders as styled clickable text (no [[ ]]
             // brackets in the output). The .link attribute uses the
@@ -218,8 +263,7 @@ public enum InlineRenderer {
         if destination.hasPrefix("http://") || destination.hasPrefix("https://") {
             guard let url = URL(string: destination) else { return nil }
 
-            let attachment = NSTextAttachment()
-            attachment.bounds = NSRect(origin: .zero, size: imageAttachmentPlaceholderSize)
+            let attachment = ImageNSTextAttachment(image: nil, size: imageAttachmentPlaceholderSize)
 
             let altText = plainText(alt)
             let originalMarkdown = "![\(altText)](\(destination))"
@@ -251,11 +295,13 @@ public enum InlineRenderer {
             return nil
         }
 
-        let attachment = NSTextAttachment()
-        attachment.bounds = NSRect(
-            origin: .zero,
-            size: imageAttachmentPlaceholderSize
-        )
+        let attachment: NSTextAttachment
+        if isImage {
+            attachment = ImageNSTextAttachment(image: nil, size: imageAttachmentPlaceholderSize)
+        } else {
+            attachment = NSTextAttachment()
+            attachment.bounds = NSRect(origin: .zero, size: imageAttachmentPlaceholderSize)
+        }
 
         let altText = plainText(alt)
         let originalMarkdown = "![\(altText)](\(destination))"
@@ -305,6 +351,9 @@ public enum InlineRenderer {
         case .entity(let s):             out += s
         case .underline(let c):          c.forEach { plainTextAppend($0, into: &out) }
         case .highlight(let c):          c.forEach { plainTextAppend($0, into: &out) }
+        case .superscript(let c):        c.forEach { plainTextAppend($0, into: &out) }
+        case .`subscript`(let c):        c.forEach { plainTextAppend($0, into: &out) }
+        case .kbd(let c):                c.forEach { plainTextAppend($0, into: &out) }
         case .math(let s):               out += s
         case .displayMath(let s):        out += s
         case .wikilink(let t, let d):    out += d ?? t
@@ -433,6 +482,10 @@ public enum InlineRenderer {
         var highlight: Bool = false
         var code: Bool = false
         var link: URL? = nil
+        /// +1 for <sup>, -1 for <sub>, 0 for neither. Matches the
+        /// value of NSAttributedString.Key.superscript which the
+        /// render path emits on `.superscript` / `.subscript` nodes.
+        var superscriptLevel: Int = 0
     }
 
     /// Convert a segment that contains no newline characters into an
@@ -513,6 +566,9 @@ public enum InlineRenderer {
         if let url = attrs[.link] as? URL {
             t.link = url
         }
+        if let sup = attrs[.superscript] as? Int, sup != 0 {
+            t.superscriptLevel = sup > 0 ? 1 : -1
+        }
         return t
     }
 
@@ -571,14 +627,18 @@ public enum InlineRenderer {
             let innerNode = inlineFromSpan(text: text, traits: inner)
             return .link(text: [innerNode], rawDestination: url.absoluteString)
         }
-        // Canonical wrapping order: bold outer, then italic, strike,
-        // underline, highlight. Innermost is `.text(text)`.
+        // Canonical wrapping order: sup/sub outermost (HTML tag), then
+        // bold, italic, strike, underline, highlight. Innermost is
+        // `.text(text)`. Ordering sup/sub outside bold matches markdown
+        // conventions like `<sup>**x**</sup>`.
         var node: Inline = .text(text)
         if traits.highlight     { node = .highlight([node]) }
         if traits.underline     { node = .underline([node]) }
         if traits.strikethrough { node = .strikethrough([node]) }
         if traits.italic        { node = .italic([node]) }
         if traits.bold          { node = .bold([node]) }
+        if traits.superscriptLevel ==  1 { node = .superscript([node]) }
+        if traits.superscriptLevel == -1 { node = .`subscript`([node]) }
         return node
     }
 
@@ -619,6 +679,10 @@ public enum InlineRenderer {
             return .underline(fuseAdjacent(ac + bc))
         case (.highlight(let ac), .highlight(let bc)):
             return .highlight(fuseAdjacent(ac + bc))
+        case (.superscript(let ac), .superscript(let bc)):
+            return .superscript(fuseAdjacent(ac + bc))
+        case (.`subscript`(let ac), .`subscript`(let bc)):
+            return .`subscript`(fuseAdjacent(ac + bc))
         case (.text(let a1), .text(let a2)):
             return .text(a1 + a2)
         default:

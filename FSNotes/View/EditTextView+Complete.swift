@@ -400,36 +400,99 @@ extension EditTextView {
     private func insertTagCompletion(_ word: String, startPos: Int) {
         let currentPos = selectedRange().location
         let replaceRange = NSRange(location: startPos + 1, length: currentPos - startPos - 1)
-        
+        let finalPos = startPos + 1 + word.count + 1   // past word + trailing space
+        let completion = word + " "
+
+        // Bug #33 (tag variant): route through block-model when active
+        // so the projection stays in sync with storage. The raw
+        // replaceCharacters + didChangeText path below bypasses the
+        // block-model pipeline and leaves the rendered attributed
+        // string out of sync.
+        if let projection = documentProjection {
+            do {
+                let result: EditResult
+                if replaceRange.length > 0 {
+                    result = try EditingOps.replace(
+                        range: replaceRange, with: completion, in: projection
+                    )
+                } else {
+                    result = try EditingOps.insert(
+                        completion, at: replaceRange.location, in: projection
+                    )
+                }
+                suppressCompletion = true
+                applyBlockModelResult(result, actionName: "Tag Completion")
+                setSelectedRange(NSRange(location: finalPos, length: 0))
+                return
+            } catch {
+                bmLog("⚠️ insertTagCompletion block-model path failed: \(error) — falling back to source-mode path")
+                // fall through
+            }
+        }
+
+        suppressCompletion = true
+
         if shouldChangeText(in: replaceRange, replacementString: word) {
             replaceCharacters(in: replaceRange, with: word)
-            
+
             let spacePos = startPos + 1 + word.count
             if shouldChangeText(in: NSRange(location: spacePos, length: 0), replacementString: " ") {
                 replaceCharacters(in: NSRange(location: spacePos, length: 0), with: " ")
             }
-            
+
             didChangeText()
-            
-            let newPos = startPos + 1 + word.count + 1
-            setSelectedRange(NSRange(location: newPos, length: 0))
+
+            setSelectedRange(NSRange(location: finalPos, length: 0))
         }
     }
     
     private func insertWikiCompletion(_ word: String, startPos: Int) {
         let text = string as NSString
         let currentPos = selectedRange().location
-        
+
         let hasClosingBrackets = checkForClosingBrackets(at: currentPos, in: text)
         let replaceRange = NSRange(location: startPos, length: currentPos - startPos)
         let completion = hasClosingBrackets ? word : "\(word)]]"
-        
+        let newCursorPos = hasClosingBrackets
+            ? startPos + word.count + 2   // past the existing ]]
+            : startPos + completion.count  // right after inserted word+]]
+
+        // Bug #33: route through the block-model pipeline when active.
+        // The raw `replaceCharacters` + `didChangeText()` path below
+        // bypasses the block-model projection, so the rendered
+        // attributed string goes out of sync with storage and the
+        // cursor visually lands on a new line after the link. When
+        // `documentProjection` exists (markdown WYSIWYG mode),
+        // `EditingOps.replace` / `.insert` produces a fresh projection
+        // and `applyBlockModelResult` wires it into the live storage.
+        if let projection = documentProjection {
+            do {
+                let result: EditResult
+                if replaceRange.length > 0 {
+                    result = try EditingOps.replace(
+                        range: replaceRange, with: completion, in: projection
+                    )
+                } else {
+                    result = try EditingOps.insert(
+                        completion, at: startPos, in: projection
+                    )
+                }
+                suppressCompletion = true
+                applyBlockModelResult(result, actionName: "Wiki Link Completion")
+                setSelectedRange(NSRange(location: newCursorPos, length: 0))
+                return
+            } catch {
+                bmLog("⚠️ insertWikiCompletion block-model path failed: \(error) — falling back to source-mode path")
+                // fall through
+            }
+        }
+
+        suppressCompletion = true
+
         if shouldChangeText(in: replaceRange, replacementString: completion) {
             replaceCharacters(in: replaceRange, with: completion)
             didChangeText()
-            
-            let newPos = hasClosingBrackets ? startPos + word.count + 2 : startPos + completion.count
-            setSelectedRange(NSRange(location: newPos, length: 0))
+            setSelectedRange(NSRange(location: newCursorPos, length: 0))
         }
     }
     

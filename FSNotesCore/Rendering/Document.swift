@@ -29,15 +29,116 @@ public struct Document: Equatable {
     /// Not compared for Equatable — structural equality is block-based.
     public var refDefs: [String: (url: String, title: String?)]
 
+    /// Per-block stable identities, aligned 1:1 with `blocks`. Auto-populated
+    /// to fresh UUIDs when `blocks` is set via the initializer; callers that
+    /// mutate `blocks` directly must keep this in sync via the mutation
+    /// helpers below.
+    ///
+    /// Identities are **ephemeral**: the parser mints new UUIDs on every
+    /// parse and they are never serialized to disk — they exist purely to
+    /// give the `EditContract` harness a way to verify identity-preserving
+    /// operations (a `.replaceBlock` primitive that drops the slot id is a
+    /// contract violation).
+    ///
+    /// Identity is a property of the *slot*, not the content: `replaceBlock`
+    /// preserves the id at the affected index; `insertBlock` mints a fresh
+    /// id; `deleteBlock` drops the id. Swap preserves both slot ids
+    /// in place (contents swap, ids don't travel).
+    ///
+    /// `Document.==` ignores `blockIds` — equality is content-based.
+    public var blockIds: [UUID]
+
     public init(blocks: [Block] = [], trailingNewline: Bool = true,
-                refDefs: [String: (url: String, title: String?)] = [:]) {
+                refDefs: [String: (url: String, title: String?)] = [:],
+                blockIds: [UUID]? = nil) {
         self.blocks = blocks
         self.trailingNewline = trailingNewline
         self.refDefs = refDefs
+        if let blockIds = blockIds {
+            precondition(blockIds.count == blocks.count,
+                         "Document.init: blockIds.count (\(blockIds.count)) must match blocks.count (\(blocks.count))")
+            self.blockIds = blockIds
+        } else {
+            self.blockIds = blocks.map { _ in UUID() }
+        }
     }
 
     public static func == (lhs: Document, rhs: Document) -> Bool {
         lhs.blocks == rhs.blocks && lhs.trailingNewline == rhs.trailingNewline
+    }
+
+    // MARK: - Identity-aware mutations
+    //
+    // All structural mutations on `Document.blocks` must go through these
+    // helpers so that `blockIds` stays aligned. Direct mutation of `blocks`
+    // (e.g. `doc.blocks.append(b)`) is a latent bug — it produces a
+    // drifted side-table and the `assertContract` invariants will fire.
+    //
+    // Semantics (see the `blockIds` comment above for the slot-identity
+    // model):
+    //   - `replaceBlock(at:with:)`    preserves the id at `at`.
+    //   - `insertBlock(_:at:id:)`     inserts a fresh id at `at`.
+    //   - `appendBlock(_:id:)`        appends a fresh id.
+    //   - `removeBlock(at:)`          drops the id at `at`.
+    //   - `replaceBlocks(_:with:ids:) replaces the ids in `range` too;
+    //                                 fresh ids are minted unless supplied.
+    //   - `swapBlocks(_:_:)`          swaps contents only; slot ids stay.
+    //   - `mutateBlock(at:_:)`        in-place closure mutation; id preserved.
+
+    /// Replace the block at `index`, preserving its slot identity.
+    public mutating func replaceBlock(at index: Int, with block: Block) {
+        blocks[index] = block
+        // blockIds[index] unchanged — slot identity preserved.
+    }
+
+    /// Insert a block at `index`, minting a fresh slot id (or using the
+    /// supplied one — primitives that split a block pass the split-half's
+    /// precomputed id here).
+    public mutating func insertBlock(_ block: Block, at index: Int, id: UUID = UUID()) {
+        blocks.insert(block, at: index)
+        blockIds.insert(id, at: index)
+    }
+
+    /// Append a block, minting a fresh slot id.
+    public mutating func appendBlock(_ block: Block, id: UUID = UUID()) {
+        blocks.append(block)
+        blockIds.append(id)
+    }
+
+    /// Remove the block at `index`, dropping its slot identity.
+    public mutating func removeBlock(at index: Int) {
+        blocks.remove(at: index)
+        blockIds.remove(at: index)
+    }
+
+    /// Replace a contiguous range of blocks with a new array. Existing
+    /// slot identities in `range` are dropped; the replacement blocks
+    /// receive fresh ids unless `ids` is supplied.
+    public mutating func replaceBlocks<R: RangeExpression>(
+        _ range: R, with newBlocks: [Block], ids: [UUID]? = nil
+    ) where R.Bound == Int {
+        let ids = ids ?? newBlocks.map { _ in UUID() }
+        precondition(ids.count == newBlocks.count,
+                     "Document.replaceBlocks: ids.count (\(ids.count)) must match newBlocks.count (\(newBlocks.count))")
+        blocks.replaceSubrange(range, with: newBlocks)
+        blockIds.replaceSubrange(range, with: ids)
+    }
+
+    /// Swap two block slots. Each slot keeps its id; contents swap.
+    public mutating func swapBlocks(_ i: Int, _ j: Int) {
+        blocks.swapAt(i, j)
+        // blockIds left in place — slot identity is positional.
+    }
+
+    /// In-place mutation of a single block. Preserves slot identity.
+    public mutating func mutateBlock(at index: Int, _ mutate: (inout Block) -> Void) {
+        mutate(&blocks[index])
+    }
+
+    /// Debug invariant: blockIds and blocks must align 1:1. Call sites
+    /// can use this in precondition/assert contexts to localize a drift.
+    public var isIdAligned: Bool {
+        return blockIds.count == blocks.count
     }
 }
 
@@ -310,6 +411,9 @@ public indirect enum Inline: Equatable {
     case entity(String)                // &amp; &#123; &#x1F; — raw entity text
     case underline([Inline])           // <u>…</u>
     case highlight([Inline])           // <mark>…</mark>
+    case `superscript`([Inline])       // <sup>…</sup> — Bug #17
+    case `subscript`([Inline])         // <sub>…</sub> — Bug #17
+    case kbd([Inline])                 // <kbd>…</kbd> — keyboard-key box
     case math(String)                  // $…$ — inline LaTeX math
     case displayMath(String)           // $$…$$ — display LaTeX math
     /// A wikilink: `[[target]]` or `[[target|display]]`. The target is

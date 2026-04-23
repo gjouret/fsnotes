@@ -767,7 +767,8 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             case .text(let str):
                 return total + str.count
             case .bold(let inner, _), .italic(let inner, _), .strikethrough(let inner),
-                 .underline(let inner), .highlight(let inner):
+                 .underline(let inner), .highlight(let inner),
+                 .superscript(let inner), .`subscript`(let inner), .kbd(let inner):
                 return total + inlineTextLength(inner)
             case .code(let str):
                 return total + str.count

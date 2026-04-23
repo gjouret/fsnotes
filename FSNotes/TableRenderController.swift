@@ -72,6 +72,12 @@ class TableRenderController {
 
             let cell = InlineTableAttachmentCell(tableView: tableView, size: tableView.intrinsicContentSize)
             tableAtt.attachmentCell = cell
+            // TK2 view-provider handoff — `TableBlockAttachment` exposes
+            // `liveHostedView` as a weak NSView pointer that
+            // `TableAttachmentViewProvider.loadView()` reads. Under TK1
+            // this is ignored (cell.draw() still positions the widget);
+            // under TK2 this is the path that makes the table visible.
+            tableAtt.liveHostedView = tableView
             tableAtt.bounds = NSRect(origin: .zero, size: tableView.intrinsicContentSize)
 
             // Tag the attachment character with block-type metadata so
@@ -95,7 +101,9 @@ class TableRenderController {
             if let tableView = subview as? InlineTableView {
                 tableView.focusState = .editing
                 tableView.focusFirstCell()
-                if let storage = textView.textStorage, let lm = textView.layoutManager {
+                // Phase 2a: table rendering is an accepted 2a regression
+                // under TK2 — the TK1 invalidate call is skipped there.
+                if let storage = textView.textStorage, let lm = textView.layoutManagerIfTK1 {
                     lm.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
                 }
                 break
@@ -428,9 +436,10 @@ class TableRenderController {
     /// tables — `renderTables()` configures cells once and skips any
     /// attachment that already has an InlineTableAttachmentCell.
     func reflowTablesForWidthChange() {
+        // Phase 2a: table reflow is an accepted 2a regression under TK2.
         guard let textView = textView,
               let storage = textView.textStorage,
-              let lm = textView.layoutManager else { return }
+              let lm = textView.layoutManagerIfTK1 else { return }
 
         let newWidth = getTableMaxWidth()
         guard newWidth > 0 else { return }

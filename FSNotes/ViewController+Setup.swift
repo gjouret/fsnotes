@@ -145,7 +145,21 @@ extension ViewController {
     func configureLayout() {
         dropTitle()
 
-        editor.configure()
+        // Phase 2a fix (2026-04-22): the TK2 migration and content-storage
+        // delegate install are BOTH deferred to the end of this method, AFTER
+        // all autosaveName / setPosition / scrollerStyle work that would
+        // otherwise trigger a layout cascade into the editor text container.
+        //
+        // Why: `NSSplitView.autosaveName = ...` synchronously restores the
+        // saved divider position from UserDefaults, which resizes subviews
+        // and cascades layout to descendants. During that cascade AppKit
+        // internally reads `.layoutManager` (TK1 API) on the text container,
+        // which lazily instantiates NSLayoutManager and permanently nils
+        // `textLayoutManager`. If we migrate to TK2 before autosaveName
+        // fires, TK2 gets torn down before initTextStorage() can install
+        // `BlockModelContentStorageDelegate`. By migrating last, the cascade
+        // happens on the storyboard-decoded TK1 editor (already TK1, nothing
+        // to tear down); the swap to TK2 is the final step.
         notesTableView.setDraggingSourceOperationMask(.every, forLocal: false)
 
         if UserDefaultsManagement.horizontalOrientation {
@@ -174,6 +188,19 @@ extension ViewController {
 
         notesScrollView.scrollerStyle = .overlay
         sidebarScrollView.scrollerStyle = .overlay
+
+        // Swap the storyboard-decoded TK1 editor for a programmatic TK2
+        // editor. Then immediately run configure() and initTextStorage()
+        // so the content-storage delegate is installed while TK2 is
+        // still live. Anything after this point must not trigger a
+        // layout cascade that reads `.layoutManager` on the text
+        // container — see comment at the top of this method.
+        self.editor = EditTextView.migrateNibEditorToTextKit2(
+            oldEditor: editor,
+            scrollView: editAreaScroll
+        )
+        editor.configure()
+        editor.initTextStorage()
 
         if let cell = search.cell as? NSSearchFieldCell {
             cell.searchButtonCell?.target = self
@@ -244,7 +271,9 @@ extension ViewController {
         self.editor.usesFindBar = true
         self.editor.isIncrementalSearchingEnabled = true
 
-        editor.initTextStorage()
+        // initTextStorage() moved to the end of configureLayout() so it
+        // runs while TK2 is live. See comment in configureLayout for the
+        // full rationale (sidebarSplitView.autosaveName cascade).
         editor.editorViewController = self
         self.editor.viewDelegate = self
 

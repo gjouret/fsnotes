@@ -187,10 +187,15 @@ class InlineQuickLookView: NSView {
     }
 }
 
-// MARK: - QuickLookAttachmentCell
+// MARK: - QuickLookAttachmentCell (DEPRECATED — TK1 only)
 
-/// Custom NSTextAttachmentCell that hosts an InlineQuickLookView as a
-/// live subview of the text view. Mirrors PDFAttachmentCell.
+/// Legacy TK1 NSTextAttachmentCell. Under TK2, the
+/// `draw(withFrame:in:characterIndex:layoutManager:)` method is never
+/// called — Apple replaced it with `NSTextAttachmentViewProvider`. See
+/// `QuickLookAttachmentViewProvider` / `QuickLookNSTextAttachment` below.
+///
+/// Kept during TK1-fallback period; remove when TK1 source-mode is
+/// deleted (Phase 4).
 class QuickLookAttachmentCell: NSTextAttachmentCell {
 
     let inlineView: InlineQuickLookView
@@ -213,35 +218,68 @@ class QuickLookAttachmentCell: NSTextAttachmentCell {
     override func cellBaselineOffset() -> NSPoint {
         return NSPoint(x: 0, y: -2)
     }
+}
 
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
-        // No-op: wait for the characterIndex variant.
+// MARK: - QuickLookAttachmentViewProvider (TK2)
+
+/// TK2-idiomatic view provider that vends the live `InlineQuickLookView`
+/// for rendering in the text layout. Apple handles positioning via the
+/// view provider; we just return the pre-built NSView.
+///
+/// See: https://developer.apple.com/documentation/appkit/nstextattachmentviewprovider
+final class QuickLookAttachmentViewProvider: NSTextAttachmentViewProvider {
+
+    let inlineView: InlineQuickLookView
+
+    init(inlineView: InlineQuickLookView,
+         textAttachment: NSTextAttachment,
+         parentView: NSView?,
+         textLayoutManager: NSTextLayoutManager?,
+         location: NSTextLocation) {
+        self.inlineView = inlineView
+        super.init(textAttachment: textAttachment,
+                   parentView: parentView,
+                   textLayoutManager: textLayoutManager,
+                   location: location)
+        self.tracksTextAttachmentViewBounds = true
     }
 
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?,
-                       characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
-        // Don't draw if inside a folded region
-        if let ts = layoutManager.textStorage,
-           charIndex < ts.length,
-           ts.attribute(.foldedContent, at: charIndex, effectiveRange: nil) != nil {
-            inlineView.isHidden = true
-            return
-        }
-        guard let textView = controlView as? NSTextView else { return }
+    override func loadView() {
+        // Attach the live view the processor built. Apple positions it.
+        self.view = inlineView
+    }
+}
 
-        // Guard against invalid frames from non-contiguous layout
-        let hasContentBefore = charIndex > 10
-        let frameNearTop = cellFrame.origin.y < 50
-        if hasContentBefore && frameNearTop {
-            return
-        }
+// MARK: - QuickLookNSTextAttachment (TK2)
 
-        // Position the live QuickLook view and make it visible
-        inlineView.frame = cellFrame
-        inlineView.isHidden = false
-        if inlineView.superview !== textView {
-            textView.addSubview(inlineView)
-        }
+/// NSTextAttachment subclass that carries a live `InlineQuickLookView`
+/// and vends a `QuickLookAttachmentViewProvider` for TK2 layout.
+///
+/// See: https://developer.apple.com/documentation/appkit/nstextattachment/3773879-viewprovider
+final class QuickLookNSTextAttachment: NSTextAttachment {
+
+    let inlineView: InlineQuickLookView
+
+    init(inlineView: InlineQuickLookView, size: NSSize) {
+        self.inlineView = inlineView
+        super.init(data: nil, ofType: nil)
+        self.bounds = NSRect(origin: .zero, size: size)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewProvider(for parentView: NSView?,
+                               location: NSTextLocation,
+                               textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
+        return QuickLookAttachmentViewProvider(
+            inlineView: inlineView,
+            textAttachment: self,
+            parentView: parentView,
+            textLayoutManager: textContainer?.textLayoutManager,
+            location: location
+        )
     }
 }
 
@@ -279,7 +317,8 @@ enum QuickLookAttachmentProcessor {
             guard let attachment = value as? NSTextAttachment else { return }
             attachmentCount += 1
 
-            // Skip if already rendered as a QuickLook or PDF cell
+            // Skip if already rendered as a QuickLook or PDF attachment
+            if attachment is QuickLookNSTextAttachment { return }
             if attachment.attachmentCell is QuickLookAttachmentCell { return }
             if attachment.attachmentCell is PDFAttachmentCell { return }
 
@@ -299,10 +338,7 @@ enum QuickLookAttachmentProcessor {
             let size = qlView.computeSize(forWidth: containerWidth)
             qlView.frame = NSRect(origin: .zero, size: size)
 
-            let newAttachment = NSTextAttachment()
-            let cell = QuickLookAttachmentCell(quickLookView: qlView, size: size)
-            newAttachment.attachmentCell = cell
-            newAttachment.bounds = NSRect(origin: .zero, size: size)
+            let newAttachment = QuickLookNSTextAttachment(inlineView: qlView, size: size)
 
             bmLog("📎   PENDING @\(range.location): \(url.lastPathComponent)")
             replacements.append((range, newAttachment))

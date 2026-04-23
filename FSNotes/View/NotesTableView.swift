@@ -651,9 +651,18 @@ class NotesTableView: NSTableView,
     }
     
     private func performReload(note: Note) {
-        guard let i = self.noteList.firstIndex(of: note) else { return }
+        // Race guard: reloadRow dispatches through a background queue
+        // (invalidateCache / loadPreviewInfo) before hopping back to
+        // main. Between firstIndex(of:) and view(atColumn:row:), the
+        // user can switch projects / filter sidebar / dismiss the note,
+        // which mutates noteList. If the new firstIndex >= numberOfRows
+        // (because reloadData hasn't fired yet), view(atColumn:row:)
+        // raises NSRangeException → SIGABRT. Bounds-check vs numberOfRows
+        // (the same guard `reloadDate` already uses on line 669).
+        guard let i = self.noteList.firstIndex(of: note),
+              i < self.numberOfRows else { return }
         let urls = note.imageUrl
-        
+
         if let cell = self.view(atColumn: 0, row: i, makeIfNecessary: false) as? NoteCellView {
             cell.date.stringValue = note.getDateForLabel()
             cell.loadImagesPreview(position: i, urls: urls)
@@ -666,10 +675,14 @@ class NotesTableView: NSTableView,
     
     public func reloadDate(note: Note) {
         DispatchQueue.main.async {
-            if self.numberOfRows > 0, let i = self.noteList.firstIndex(of: note) {
-                if let cell = self.view(atColumn: 0, row: i, makeIfNecessary: false) as? NoteCellView {
-                    cell.date.stringValue = note.getDateForLabel()
-                }
+            // Same race-guard as performReload: noteList.firstIndex can
+            // outpace the table view's numberOfRows during reload. Bounds-
+            // check i < numberOfRows before view(atColumn:row:) — bare
+            // `numberOfRows > 0` doesn't catch the i ≥ numberOfRows case.
+            if let i = self.noteList.firstIndex(of: note),
+               i < self.numberOfRows,
+               let cell = self.view(atColumn: 0, row: i, makeIfNecessary: false) as? NoteCellView {
+                cell.date.stringValue = note.getDateForLabel()
             }
         }
     }
