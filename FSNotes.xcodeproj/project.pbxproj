@@ -63,6 +63,10 @@
 		BSTT000000000000000000B1 /* BlockStyleThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */; };
 		THMT000000000000000000B1 /* ThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THMT000000000000000000F1 /* ThemeTests.swift */; };
 		THM7200000000000000000B1 /* ThemeAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = THM7200000000000000000F1 /* ThemeAccess.swift */; };
+		THM7400000000000000000B1 /* ThemeDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = THM7400000000000000000F1 /* ThemeDiscovery.swift */; };
+		ETVT000000000000000000B1 /* EditTextView+ThemeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */; };
+		ETVT000000000000000000B2 /* EditTextView+ThemeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */; };
+		THMDT00000000000000000B1 /* ThemeDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THMDT00000000000000000F1 /* ThemeDiscoveryTests.swift */; };
 		TWRT000000000000000000B1 /* ThemeWiredRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TWRT000000000000000000F1 /* ThemeWiredRenderingTests.swift */; };
 		BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */; };
 		FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */; };
@@ -1145,6 +1149,9 @@
 		BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockStyleThemeTests.swift; sourceTree = "<group>"; };
 		THMT000000000000000000F1 /* ThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeTests.swift; sourceTree = "<group>"; };
 		THM7200000000000000000F1 /* ThemeAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeAccess.swift; sourceTree = "<group>"; };
+		THM7400000000000000000F1 /* ThemeDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeDiscovery.swift; sourceTree = "<group>"; };
+		ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+ThemeObserver.swift"; sourceTree = "<group>"; };
+		THMDT00000000000000000F1 /* ThemeDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeDiscoveryTests.swift; sourceTree = "<group>"; };
 		TWRT000000000000000000F1 /* ThemeWiredRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeWiredRenderingTests.swift; sourceTree = "<group>"; };
 		BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/BlockModelLayoutManagerDelegate.swift; sourceTree = "<group>"; };
 		FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/FoldedLayoutFragment.swift; sourceTree = "<group>"; };
@@ -1704,6 +1711,7 @@
 				BSTH000000000000000000F1 /* BlockStyleTheme.swift */,
 				THM7000000000000000000F1 /* ThemeSchema.swift */,
 				THM7200000000000000000F1 /* ThemeAccess.swift */,
+				THM7400000000000000000F1 /* ThemeDiscovery.swift */,
 				DEA0000000000000000000F1 /* DocumentEditApplier.swift */,
 				BREF000000000000000000F1 /* BlockRef.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
@@ -2303,6 +2311,7 @@
 				11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */,
 				FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */,
 				11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */,
+				ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */,
 				11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */,
 				11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */,
 				11F5A1E02F1A600100AAA001 /* EditTextView+Clipboard.swift */,
@@ -2542,6 +2551,7 @@
 				LHOV000000000000000000F1 /* LinkHoverTests.swift */,
 				BSTT000000000000000000F1 /* BlockStyleThemeTests.swift */,
 				THMT000000000000000000F1 /* ThemeTests.swift */,
+				THMDT00000000000000000F1 /* ThemeDiscoveryTests.swift */,
 				TWRT000000000000000000F1 /* ThemeWiredRenderingTests.swift */,
 				CORPUS00000000000000000F1 /* Corpus */,
 				CMARK000000000000000005 /* CommonMark */,
@@ -3429,6 +3439,7 @@
 				BSTH000000000000000000B1 /* BlockStyleTheme.swift in Sources */,
 				THM7000000000000000000B1 /* ThemeSchema.swift in Sources */,
 				THM7200000000000000000B1 /* ThemeAccess.swift in Sources */,
+				THM7400000000000000000B1 /* ThemeDiscovery.swift in Sources */,
 				BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */,
 				FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */,
 				TELE000000000000000000B1 /* TableElement.swift in Sources */,
@@ -3593,6 +3604,7 @@
 				11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
 				41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */,
 				11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
+				ETVT000000000000000000B1 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C22F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
 				11F5A1D22F1A600100AAA001 /* EditTextView+Interaction.swift in Sources */,
 				11F5A1E22F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */,
@@ -3856,6 +3868,7 @@
 				11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
 				C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */,
 				11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
+				ETVT000000000000000000B2 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C12F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
 				11F5A1D12F1A600100AAA001 /* EditTextView+Interaction.swift in Sources */,
 				11F5A1E12F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */,
@@ -4032,6 +4045,7 @@
 				LHOV000000000000000000B1 /* LinkHoverTests.swift in Sources */,
 				BSTT000000000000000000B1 /* BlockStyleThemeTests.swift in Sources */,
 				THMT000000000000000000B1 /* ThemeTests.swift in Sources */,
+				THMDT00000000000000000B1 /* ThemeDiscoveryTests.swift in Sources */,
 				TWRT000000000000000000B1 /* ThemeWiredRenderingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

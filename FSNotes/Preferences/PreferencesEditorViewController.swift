@@ -23,17 +23,23 @@ class PreferencesEditorViewController: NSViewController {
     @IBOutlet weak var marginSize: NSSlider!
     @IBOutlet weak var inlineTags: NSButton!
     @IBOutlet weak var clickableLinks: NSButton!
-    
+
     @IBOutlet weak var italicAsterisk: NSButton!
     @IBOutlet weak var italicUnderscore: NSButton!
-    
+
     @IBOutlet weak var boldAsterisk: NSButton!
     @IBOutlet weak var boldUnderscore: NSButton!
-    
-    
+
+    // Phase 7.4 — Theme section (programmatic, appended below the
+    // storyboard-defined content). Kept as stored properties so the
+    // appear pass can refresh the popup selection without rebuilding.
+    private var themeSectionBuilt = false
+    private var themePopUp: NSPopUpButton?
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        preferredContentSize = NSSize(width: 550, height: 495)
+        // Bumped height by the Theme section (48pt: label row + controls row).
+        preferredContentSize = NSSize(width: 550, height: 560)
     }
 
     override func viewDidAppear() {
@@ -64,9 +70,181 @@ class PreferencesEditorViewController: NSViewController {
         
         italicAsterisk.state = UserDefaultsManagement.italic == "*" ? .on : .off
         italicUnderscore.state = UserDefaultsManagement.italic == "_" ? .on : .off
-        
+
         boldAsterisk.state = UserDefaultsManagement.bold == "**" ? .on : .off
         boldUnderscore.state = UserDefaultsManagement.bold == "__" ? .on : .off
+
+        // Phase 7.4 — build (once) + refresh the Theme section.
+        buildThemeSectionIfNeeded()
+        refreshThemePopup()
+    }
+
+    // MARK: - Phase 7.4: Theme section
+
+    /// Construct the programmatic Theme section and append it to the
+    /// VC's view. Idempotent — called once per VC lifetime. The
+    /// section is laid out below the existing storyboard content so
+    /// it doesn't disturb any existing frames or constraints.
+    private func buildThemeSectionIfNeeded() {
+        guard !themeSectionBuilt else { return }
+        themeSectionBuilt = true
+
+        let container = self.view
+
+        // Separator + header
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(separator)
+
+        let header = NSTextField(labelWithString: NSLocalizedString("Theme", comment: "Editor preferences theme section header"))
+        header.font = NSFont.boldSystemFont(ofSize: 13)
+        header.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(header)
+
+        let label = NSTextField(labelWithString: NSLocalizedString("Active:", comment: "Preferences: active theme label"))
+        label.alignment = .right
+        label.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(label)
+
+        let popup = NSPopUpButton()
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popup.target = self
+        popup.action = #selector(themeDidChange(_:))
+        container.addSubview(popup)
+        self.themePopUp = popup
+
+        let importButton = NSButton(
+            title: NSLocalizedString("Import…", comment: "Preferences: import theme button"),
+            target: self,
+            action: #selector(importTheme(_:))
+        )
+        importButton.bezelStyle = .rounded
+        importButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(importButton)
+
+        let revealButton = NSButton(
+            title: NSLocalizedString("Reveal in Finder", comment: "Preferences: reveal themes folder button"),
+            target: self,
+            action: #selector(revealThemesFolder(_:))
+        )
+        revealButton.bezelStyle = .rounded
+        revealButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(revealButton)
+
+        // Layout — the VC view is 550×560 (after bump). Attach to
+        // bottom-left with fixed offsets so the section sits below
+        // the storyboard content without touching existing frames.
+        NSLayoutConstraint.activate([
+            separator.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            separator.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            separator.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -60),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+
+            header.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 33),
+            header.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 10),
+
+            label.trailingAnchor.constraint(equalTo: popup.leadingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: popup.centerYAnchor),
+
+            popup.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 145),
+            popup.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+
+            importButton.leadingAnchor.constraint(equalTo: popup.trailingAnchor, constant: 8),
+            importButton.centerYAnchor.constraint(equalTo: popup.centerYAnchor),
+
+            revealButton.leadingAnchor.constraint(equalTo: importButton.trailingAnchor, constant: 8),
+            revealButton.centerYAnchor.constraint(equalTo: popup.centerYAnchor)
+        ])
+    }
+
+    /// Repopulate the theme popup from the current available-themes
+    /// enumeration and select the active entry. Called from
+    /// `viewDidAppear` and after Import finishes.
+    private func refreshThemePopup() {
+        guard let popup = themePopUp else { return }
+        popup.removeAllItems()
+
+        let descriptors = Theme.availableThemes()
+        for descriptor in descriptors {
+            let suffix = descriptor.isBuiltIn ? "" : " (user)"
+            popup.addItem(withTitle: descriptor.name + suffix)
+            popup.lastItem?.representedObject = descriptor
+        }
+
+        let activeName = UserDefaultsManagement.currentThemeName ?? Theme.defaultThemeName
+        for item in popup.itemArray {
+            if let d = item.representedObject as? ThemeDescriptor,
+               d.name.caseInsensitiveCompare(activeName) == .orderedSame {
+                popup.select(item)
+                break
+            }
+        }
+    }
+
+    @IBAction func themeDidChange(_ sender: NSPopUpButton) {
+        guard let item = sender.selectedItem,
+              let descriptor = item.representedObject as? ThemeDescriptor else {
+            return
+        }
+        UserDefaultsManagement.currentThemeName = descriptor.name
+        Theme.shared = Theme.load(named: descriptor.name)
+        NotificationCenter.default.post(
+            name: Theme.didChangeNotification, object: nil
+        )
+    }
+
+    @IBAction func importTheme(_ sender: NSButton) {
+        let panel = NSOpenPanel()
+        panel.title = NSLocalizedString(
+            "Import Theme",
+            comment: "Preferences: open-panel title for theme import"
+        )
+        panel.allowedFileTypes = ["json"]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+
+        panel.beginSheetModal(for: self.view.window ?? NSWindow()) { [weak self] response in
+            guard response == .OK, let source = panel.url else { return }
+            self?.installUserTheme(from: source)
+        }
+    }
+
+    private func installUserTheme(from source: URL) {
+        let destDir = Theme.defaultUserThemesDirectory()
+        do {
+            try FileManager.default.createDirectory(
+                at: destDir,
+                withIntermediateDirectories: true
+            )
+            let dest = destDir.appendingPathComponent(source.lastPathComponent)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.copyItem(at: source, to: dest)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString(
+                "Theme import failed",
+                comment: "Preferences: theme import error alert title"
+            )
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
+        refreshThemePopup()
+    }
+
+    @IBAction func revealThemesFolder(_ sender: NSButton) {
+        let dir = Theme.defaultUserThemesDirectory()
+        try? FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+        NSWorkspace.shared.activateFileViewerSelecting([dir])
     }
 
     //MARK: global variables

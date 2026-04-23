@@ -549,6 +549,29 @@ public class UserDefaultsManagement {
         }
     }
 
+    // Phase 7.4 — user-selected theme name (nil = bundled default).
+    //
+    // Stored as a plain string so the plist is human-readable. The
+    // matching JSON file is resolved at read time via
+    // `Theme.load(named:)`; if the user deletes or renames the file
+    // the loader falls back to the bundled default without crashing.
+    public static var currentThemeName: String? {
+        get {
+            if let name = shared?.string(forKey: "currentThemeName"),
+               !name.isEmpty {
+                return name
+            }
+            return nil
+        }
+        set {
+            if let newValue = newValue {
+                shared?.set(newValue, forKey: "currentThemeName")
+            } else {
+                shared?.removeObject(forKey: "currentThemeName")
+            }
+        }
+    }
+
     static var lastSelectedURL: URL? {
         get {
             if let url = shared?.url(forKey: Constants.LastSelectedPath) {

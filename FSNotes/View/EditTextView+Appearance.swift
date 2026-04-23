@@ -127,6 +127,10 @@ extension EditTextView {
         selectedTextAttributes = [
             .backgroundColor: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.6)
         ]
+
+        // Phase 7.4 — observe theme swaps so the editor re-renders
+        // with the new Theme.shared without needing an app restart.
+        installThemeChangeObserverIfNeeded()
     }
 
     override func viewDidChangeEffectiveAppearance() {

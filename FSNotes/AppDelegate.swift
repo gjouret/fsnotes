@@ -56,6 +56,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // left open when the app quit.
         NSFontManager.shared.fontPanel(false)?.orderOut(self)
 
+        // Phase 7.4 — resolve the user-selected theme before any editor
+        // is instantiated so `Theme.shared` reflects the pick from the
+        // first render. `load(named:)` falls back to the bundled
+        // default on unknown/corrupt themes without crashing.
+        Theme.shared = Theme.load(
+            named: UserDefaultsManagement.currentThemeName ?? Theme.defaultThemeName
+        )
+
         applyAppearance()
 
         #if CLOUD_RELATED_BLOCK
