@@ -8,11 +8,13 @@ Read `ARCHITECTURE.md` in this same directory for the full technical architectur
 
 These are facts about the post-refactor codebase. The earlier iteration of this file phrased them as defensive rules against bugs that had shipped; the refactor has since made the violations either architecturally impossible or automatically caught. Read these before editing — they tell you what the code now guarantees so you don't write defensive patches against conditions that can't arise.
 
-### A. Single write path into `NSTextContentStorage`
+### A. Single write path into `NSTextContentStorage` — ⚠️ design intent; mechanical enforcement deferred
 
-`DocumentEditApplier.applyDocumentEdit(priorDoc:newDoc:contentStorage:…)` (`FSNotesCore/Rendering/DocumentEditApplier.swift`) is the one function that mutates TK2 content storage for WYSIWYG edits. It consumes two `Document` values and emits a minimal element-bounded splice inside `performEditingTransaction`. Phase 5a lands a `#if DEBUG` assertion trapping any `NSTextContentStorage` character write outside this function and the fill paths — the only documented exemption is the composition-session window (Phase 5e IME / marked-text handling) which is gated on `compositionSession.isActive && range ⊂ markedRange`.
+`DocumentEditApplier.applyDocumentEdit(priorDoc:newDoc:contentStorage:…)` (`FSNotesCore/Rendering/DocumentEditApplier.swift`) is designed as the one function that mutates TK2 content storage for WYSIWYG edits. It consumes two `Document` values and emits a minimal element-bounded splice inside `performEditingTransaction`. The fill paths (`EditTextView.fillViaBlockModel` / `fillViaSourceRenderer`) are the other authorized writers (initial-load, not edit-time).
 
-Consequence: you cannot route an edit around the block model by reaching into storage directly. If a new editing feature tempts you to do so, build the `EditingOps` primitive and let the applier deliver it.
+**Current enforcement: architectural only.** Phase 5a will add a `#if DEBUG` assertion trapping any `NSTextContentStorage` character write outside these entry points; the assertion has not yet landed (deferred after a Batch-N+7 env interaction wiped the work). Today the invariant holds by design, but a new direct `performEditingTransaction` call outside the applier / fill paths would compile and run without a runtime trap. Direct-caller sites exist at `EditTextView+BlockModel.swift:327,573,3074` and `CodeBlockEditToggleOverlay.swift:138`; these ARE authorized paths, but nothing mechanically verifies the set. Phase 5a closes that gap. The only post-5a exemption will be the Phase 5e composition-session window, gated on `compositionSession.isActive && range ⊂ markedRange`.
+
+Consequence: you cannot route an edit around the block model by reaching into storage directly *without a reviewer or Phase-5a assertion catching you*. If a new editing feature tempts you to, build the `EditingOps` primitive and let the applier deliver it.
 
 ### B. One layout primitive per block type
 
@@ -34,7 +36,7 @@ WYSIWYG storage contains only displayed characters — markdown markers (`**`, `
 
 ### E. Views read data; views never write data
 
-The projection → renderer → element → fragment chain is one-way. Views capture user intent (clicks, keystrokes, selections) and call a pure `EditingOps.*` primitive that returns a new `Document`; `applyDocumentEdit` delivers the minimal splice. The Phase 5a debug assertion catches the storage-write half of any bidirectional-flow mistake; the rule-7 gate catches the view-read half via banned patterns for `headers[…] = …stringValue` / `rows[…][…] = …stringValue`.
+The projection → renderer → element → fragment chain is one-way. Views capture user intent (clicks, keystrokes, selections) and call a pure `EditingOps.*` primitive that returns a new `Document`; `applyDocumentEdit` delivers the minimal splice. The rule-7 gate catches the view-read half via banned patterns for `headers[…] = …stringValue` / `rows[…][…] = …stringValue`. The storage-write half will be caught by Phase 5a's debug assertion — **not yet landed**, same caveat as Invariant A above.
 
 The `InlineTableView` / `TableRenderController` widget files that historically violated this (mutable `rows`/`headers`/`alignments` state, `collectCellData` reading `cell.stringValue` back into the model, `serializeViaBlockModel` walking live attachments at save time) were deleted on 2026-04-23 in Phase 2e T2-h (commit `de1f146`, ~4,524 LoC removed). They are the cautionary tale in the Historical Record below, not live code.
 

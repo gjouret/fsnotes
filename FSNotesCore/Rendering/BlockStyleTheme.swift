@@ -236,7 +236,8 @@ public struct BlockStyleTheme: Codable, Equatable {
     // MARK: - Blockquote indent
 
     /// Compute the left indentation needed to clear the vertical bars
-    /// drawn by BlockquoteBorderDrawer for a given nesting depth.
+    /// drawn by `BlockquoteLayoutFragment` for a given nesting depth.
+    /// (Pre-TK2 this was `BlockquoteBorderDrawer`, deleted Batch N+7.)
     public func blockquoteLeftIndent(for level: Int) -> CGFloat {
         guard level > 0 else { return 0 }
         return blockquoteBarInitialOffset

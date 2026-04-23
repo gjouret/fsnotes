@@ -7,7 +7,7 @@
 //  ARCHITECTURAL CONTRACT:
 //  - Input: [BlockquoteLine] + body font.
 //  - Output: newline-separated lines where each line has:
-//    (a) .blockquote attribute = nesting depth (for LayoutManager bar drawing)
+//    (a) .blockquote attribute = nesting depth (consumed by BlockquoteLayoutFragment bar drawing)
 //    (b) .paragraphStyle with left indentation to clear the vertical bars
 //    Source `>` markers are CONSUMED by the parser and NEVER
 //    reach the rendered output.
@@ -24,8 +24,9 @@ import UIKit
 public enum BlockquoteRenderer {
 
     /// Compute the left indentation needed to clear the vertical bars
-    /// drawn by `BlockquoteLayoutFragment` / `BlockquoteBorderDrawer`
-    /// for a given nesting depth.
+    /// drawn by `BlockquoteLayoutFragment` for a given nesting depth.
+    /// (The legacy TK1 `BlockquoteBorderDrawer` was deleted in Batch
+    /// N+7; the geometry contract below is what the TK2 fragment reads.)
     ///
     /// Phase 7.3: bar geometry reads from `theme.chrome.*` (same fields
     /// consumed by `BlockquoteLayoutFragment`). Default-theme values
@@ -62,9 +63,9 @@ public enum BlockquoteRenderer {
             out.append(InlineRenderer.render(qLine.inline, baseAttributes: attrs, note: note, theme: theme))
             let lineEnd = out.length
 
-            // Tag the rendered line with .blockquote = nesting depth so that
-            // BlockquoteBorderDrawer in LayoutManager draws the vertical bars.
-            // Also set a paragraph style with left indentation to clear the bars.
+            // Tag the rendered line with .blockquote = nesting depth so
+            // `BlockquoteLayoutFragment` draws the vertical bars. Also
+            // set a paragraph style with left indentation to clear them.
             if lineEnd > lineStart {
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
                 out.addAttribute(.blockquote, value: qLine.level, range: lineRange)
