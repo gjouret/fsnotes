@@ -197,15 +197,6 @@ class FormattingToolbar: NSView {
     }
 
     func updateButtonStates(for editor: EditTextView) {
-        // If the field editor is currently inside a table cell, reflect
-        // the cell's formatting at the cursor rather than the outer
-        // editor's. Table cells store raw markdown while editing, so we
-        // scan for surrounding `**`, `*`, `~~`, `<u>`, `<mark>`,
-        // `` ` ``, or `[...]()` markers around the caret.
-        if updateButtonStatesForTableCell(editor: editor) {
-            return
-        }
-
         guard let storage = editor.textStorage, storage.length > 0 else {
             resetAllButtons()
             return
@@ -363,92 +354,6 @@ class FormattingToolbar: NSView {
         setButtonState("bulletList", active: isBulletList || paragraphText.hasPrefix("- ") || paragraphText.hasPrefix("* ") || paragraphText.hasPrefix("+ "))
         setButtonState("numberedList", active: isNumberedList || paragraphText.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil)
         setButtonState("checkbox", active: isCheckbox || paragraphText.hasPrefix("- [ ]") || paragraphText.hasPrefix("- [x]"))
-    }
-
-    /// If a field editor inside an InlineTableView cell is first
-    /// responder, introspect its text around the caret and toggle the
-    /// bold/italic/strike/underline/highlight/code/link buttons to match
-    /// the surrounding markdown markers. Returns true if the toolbar was
-    /// updated via this path (so the caller should skip the outer-editor
-    /// path).
-    private func updateButtonStatesForTableCell(editor: EditTextView) -> Bool {
-        guard let fieldEditor = editor.window?.fieldEditor(false, for: nil),
-              let cell = fieldEditor.delegate as? NSTextField else { return false }
-        // Walk up to verify the cell is inside an InlineTableView.
-        var v: NSView? = cell.superview
-        var inTable = false
-        while let current = v {
-            if current is InlineTableView { inTable = true; break }
-            v = current.superview
-        }
-        guard inTable else { return false }
-
-        let text = fieldEditor.string as NSString
-        let caret = fieldEditor.selectedRange.location
-        guard caret <= text.length else {
-            resetAllButtons()
-            return true
-        }
-
-        // For each format, check whether the caret sits between its
-        // open/close markers on a surrounding-match basis.
-        func wrapped(open: String, close: String) -> Bool {
-            // Scan backwards for the nearest `open` not already paired by a
-            // matching `close` before the caret.
-            var searchStart = 0
-            var lastOpenLoc = -1
-            while searchStart <= caret {
-                let r = text.range(of: open, options: [],
-                                   range: NSRange(location: searchStart, length: max(0, caret - searchStart)))
-                if r.location == NSNotFound { break }
-                lastOpenLoc = r.location
-                searchStart = r.location + r.length
-            }
-            guard lastOpenLoc >= 0 else { return false }
-            let contentStart = lastOpenLoc + (open as NSString).length
-            // A matching `close` must exist at or after the caret.
-            let rest = NSRange(location: caret, length: text.length - caret)
-            let closeR = text.range(of: close, options: [], range: rest)
-            guard closeR.location != NSNotFound else { return false }
-            // And there must be NO intervening `close` between contentStart
-            // and caret (otherwise the caret is outside the wrap).
-            let midRange = NSRange(location: contentStart, length: max(0, caret - contentStart))
-            if midRange.length > 0 {
-                let midClose = text.range(of: close, options: [], range: midRange)
-                if midClose.location != NSNotFound { return false }
-            }
-            return true
-        }
-
-        let isBold = wrapped(open: "**", close: "**")
-        // For italic, `**` also starts with `*` — guard against treating bold as italic.
-        // Simple heuristic: italic means a lone `*` pair, not `**`.
-        let isItalic: Bool = {
-            if isBold { return false }
-            return wrapped(open: "*", close: "*")
-        }()
-        let isStrike = wrapped(open: "~~", close: "~~")
-        let isUnderline = wrapped(open: "<u>", close: "</u>")
-        let isHighlight = wrapped(open: "<mark>", close: "</mark>")
-        let isCode = wrapped(open: "`", close: "`")
-
-        setButtonState("bold", active: isBold)
-        setButtonState("italic", active: isItalic)
-        setButtonState("strikethrough", active: isStrike)
-        setButtonState("underline", active: isUnderline)
-        setButtonState("highlight", active: isHighlight)
-        // Heading/list/quote/checkbox don't apply inside a cell.
-        setButtonState("h1", active: false)
-        setButtonState("h2", active: false)
-        setButtonState("h3", active: false)
-        setButtonState("quote", active: false)
-        setButtonState("bulletList", active: false)
-        setButtonState("numberedList", active: false)
-        setButtonState("checkbox", active: false)
-        // There's no dedicated "code span" toolbar button, but log it for
-        // future use by any caller that introspects current state.
-        _ = isCode
-        return true
     }
 
     private func setButtonState(_ id: String, active: Bool) {

@@ -3,7 +3,7 @@
 //  FSNotes
 //
 //  Phase 2e-T2-g — hover-handle controller for native-cell tables
-//  (`TableLayoutFragment` under `FeatureFlag.nativeTableElements`).
+//  (`TableLayoutFragment`).
 //
 //  Parallel to `CodeBlockEditToggleOverlay`: owns a pool of lightweight
 //  `TableHandleView` subviews of the text view, one per visible
@@ -123,8 +123,7 @@ final class TableHandleOverlay {
     /// attach / move a `TableHandleView` per fragment.
     func reposition() {
         guard let editor = editor,
-              editor.textLayoutManager != nil,
-              FeatureFlag.nativeTableElements else {
+              editor.textLayoutManager != nil else {
             hideAll()
             return
         }

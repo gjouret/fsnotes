@@ -148,7 +148,6 @@ extension EditTextView {
             breakUndoCoalescing()
             insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
             breakUndoCoalescing()
-            if NotesTextProcessor.hideSyntax { renderTables() }
             return
         }
 
@@ -176,7 +175,6 @@ extension EditTextView {
                 breakUndoCoalescing()
                 insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
                 breakUndoCoalescing()
-                if NotesTextProcessor.hideSyntax { renderTables() }
             }
             return
         }

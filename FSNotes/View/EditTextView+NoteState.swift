@@ -230,8 +230,12 @@ extension EditTextView {
         // Clear block-model state BEFORE touching textStorage.
         // This prevents any textDidChange triggered by the
         // storage-clearing below from seeing stale block-model state.
+        // Phase 4.3 — also reset the non-markdown gate so a switch from
+        // a `.txt` note back into a markdown note doesn't carry over
+        // the suppressed-highlight state.
         documentProjection = nil
         textStorageProcessor?.blockModelActive = false
+        textStorageProcessor?.nonMarkdownActive = false
         textStorageProcessor?.blocks = []
 
         if !note.isLoaded {
@@ -293,7 +297,6 @@ extension EditTextView {
 
         if note.isMarkdown(), let content = note.content.mutableCopy() as? NSMutableAttributedString {
             pendingRenderBlockRange = nil
-            removeAllInlineTableViews()
             removeAllInlinePDFViews()
             removeAllInlineQuickLookViews()
 
@@ -303,8 +306,25 @@ extension EditTextView {
                 storage.setAttributedString(content)
             }
         } else {
+            // Phase 4.3: non-markdown notes (.txt / .rtf) route through
+            // the dedicated TK2 renderer. No markdown parsing, no block
+            // model, no `NotesTextProcessor.highlight` call — just body
+            // font + theme foreground. `note.content` was populated by
+            // `Note.getContent()` which reads the file as plain text;
+            // for `.rtf` bytes the user's styling survives on the
+            // `NSAttributedString` already. We normalize everything
+            // through `NonMarkdownRenderer.render(content:)` so the
+            // editor sees the configured body font. `nonMarkdownActive`
+            // gates `TextStorageProcessor.process()` so markdown
+            // highlighting doesn't fire on subsequent edits.
             documentProjection = nil
-            storage.setAttributedString(note.content)
+            textStorageProcessor?.blockModelActive = false
+            textStorageProcessor?.nonMarkdownActive = true
+            let rendered = NonMarkdownRenderer.render(
+                content: note.content.string,
+                bodyFont: UserDefaultsManagement.noteFont
+            )
+            storage.setAttributedString(rendered)
         }
 
         if highlight {
@@ -330,7 +350,6 @@ extension EditTextView {
                     if !codeRanges.isEmpty {
                         processor.renderSpecialCodeBlocks(textStorage: storage, codeBlockRanges: codeRanges)
                     }
-                    self.renderTables()
                     self.renderPDFsAndRestoreScroll(note: note)
                 }
             } else {
@@ -484,26 +503,6 @@ extension EditTextView {
         return false
     }
 
-    func unfocusAllInlineTableViews() {
-        tableController.unfocusAllInlineTableViews()
-    }
-
-    func removeAllInlineTableViews() {
-        // Widget state is always in sync with the Document via Stage 3
-        // of the table refactor — every cell edit flushes through
-        // `EditingOps.replaceTableCellInline`. No pre-removal data
-        // collection needed.
-        for subview in subviews {
-            if subview is InlineTableView {
-                subview.removeFromSuperview()
-            }
-        }
-    }
-
-    func renderTables() {
-        tableController.renderTables()
-    }
-
     func removeAllInlinePDFViews() {
         for subview in subviews {
             if subview is InlinePDFView {
@@ -520,40 +519,6 @@ extension EditTextView {
         }
     }
 
-    /// Remove subviews of `View` type whose backing attachment cell
-    /// is no longer hosted by any attachment character in the text
-    /// storage. `ViewType` and `CellType` are the specific view and
-    /// attachment-cell classes; `hostedView` extracts the view
-    /// instance from a given cell.
-    ///
-    /// Attachment-backed widgets (`InlinePDFView`, `InlineQuickLookView`,
-    /// `InlineTableView`) are added as direct subviews of the
-    /// NSTextView by their attachment cell's `draw(withFrame:…)`
-    /// method. When a splice removes an attachment character, the
-    /// layout manager stops calling `draw` but does NOT remove the
-    /// subview — this helper cleans up the orphans while leaving
-    /// still-valid widgets in place so they don't flicker.
-    private func removeOrphanedInlineViews<CellType: NSTextAttachmentCell, ViewType: NSView>(
-        cellType: CellType.Type,
-        viewType: ViewType.Type,
-        hostedView: (CellType) -> ViewType
-    ) {
-        guard let storage = textStorage else { return }
-        var liveViews = Set<ObjectIdentifier>()
-        let fullRange = NSRange(location: 0, length: storage.length)
-        storage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
-            guard let attachment = value as? NSTextAttachment,
-                  let cell = attachment.attachmentCell as? CellType else { return }
-            liveViews.insert(ObjectIdentifier(hostedView(cell)))
-        }
-        for subview in subviews {
-            guard let view = subview as? ViewType else { continue }
-            if !liveViews.contains(ObjectIdentifier(view)) {
-                view.removeFromSuperview()
-            }
-        }
-    }
-
     // Note: `removeOrphanedInlinePDFViews` and
     // `removeOrphanedInlineQuickLookViews` were deleted when
     // `InlinePDFView` / `InlineQuickLookView` migrated from the
@@ -562,17 +527,8 @@ extension EditTextView {
     // AppKit owns the view lifecycle — views are added and removed
     // automatically as attachments enter/leave the viewport, so
     // manual orphan cleanup is no longer necessary (and could race
-    // with views Apple just attached). `InlineTableView` still uses
-    // the legacy cell pattern, so its orphan cleanup remains below.
-
-    /// Remove `InlineTableView` subviews whose backing attachment has
-    /// been spliced out of storage.
-    func removeOrphanedInlineTableViews() {
-        guard textStorage != nil else { removeAllInlineTableViews(); return }
-        removeOrphanedInlineViews(
-            cellType: InlineTableAttachmentCell.self,
-            viewType: InlineTableView.self,
-            hostedView: { $0.inlineTableView }
-        )
-    }
+    // with views Apple just attached). The legacy `InlineTableView`
+    // widget that used the cell pattern was deleted in Phase 2e-T2-h;
+    // tables now render via `TableLayoutFragment`, which has no
+    // attachment / subview lifecycle to manage.
 }

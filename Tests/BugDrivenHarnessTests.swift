@@ -30,15 +30,10 @@ final class BugDrivenHarnessTests: XCTestCase {
     /// construction — table cell text is now real content in
     /// NSTextContentStorage. NSTextFinder walks it natively."
     ///
-    /// **Phase 2e-T2-f (2026-04-23):** `FeatureFlag.nativeTableElements`
-    /// default flipped to `true`. Cell text is emitted directly into
-    /// `NSTextContentStorage` as a flat, separator-encoded string
-    /// (`TableTextRenderer.renderNative`), so
-    /// `NSTextFinderClient.string` (which `NSTextView` forwards from
-    /// `textStorage.string`) now contains "findmeinside". This test
-    /// has flipped from FAIL to PASS — the "expected failure" marker
-    /// in the assertion message is retained as a historical note
-    /// until T2-h deletes the legacy path.
+    /// Cell text is emitted directly into `NSTextContentStorage` as a
+    /// flat, separator-encoded string (`TableTextRenderer.renderNative`),
+    /// so `NSTextFinderClient.string` (which `NSTextView` forwards from
+    /// `textStorage.string`) contains "findmeinside".
     func test_bug60_findAcrossTableCells() throws {
         let markdown = """
         | Name | Note |

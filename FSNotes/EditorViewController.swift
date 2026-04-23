@@ -537,11 +537,6 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
         editor.documentProjection = nil
         editor.textStorageProcessor?.blockModelActive = false
 
-        // When switching to source mode, remove inline table views.
-        if !NotesTextProcessor.hideSyntax {
-            editor.removeAllInlineTableViews()
-        }
-
         // Re-fill the note from disk content. This is the single path for
         // both directions:
         //   → WYSIWYG: fill() calls fillViaBlockModel(), which parses

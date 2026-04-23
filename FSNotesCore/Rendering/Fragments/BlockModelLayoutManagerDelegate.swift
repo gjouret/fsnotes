@@ -104,12 +104,8 @@ public final class BlockModelLayoutManagerDelegate: NSObject, NSTextLayoutManage
             )
         }
 
-        // Phase 2e-T2-b: native-cell-text table element. Dispatched to
-        // `TableLayoutFragment` so 2e-T2-c has a hook for grid rendering.
-        // The fragment is stubbed today (overrides defer to `super`),
-        // so flipping `FeatureFlag.nativeTableElements = true` today
-        // paints the separator-encoded text as a single flowed line
-        // until 2e-T2-c replaces the draw path.
+        // Native-cell-text table element: dispatch to `TableLayoutFragment`
+        // for grid rendering.
         if textElement is TableElement {
             return TableLayoutFragment(
                 textElement: textElement,

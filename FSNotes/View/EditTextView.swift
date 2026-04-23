@@ -122,8 +122,8 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
     public var imagesLoaderQueue = OperationQueue.init()
     public var attributesCachingQueue = OperationQueue.init()
     public lazy var gutterController = GutterController(textView: self)
-    public lazy var tableController = TableRenderController(textView: self)
-    
+
+
     public var isScrollPositionSaverLocked = false
     public var skipLoadSelectedRange = false
     var dragDetected = false

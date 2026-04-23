@@ -60,7 +60,7 @@ final class TableCellEditingTests: XCTestCase {
     | c10 | c11 |
     """
 
-    /// Drive a harness seeded with the 2x2 markdown under flag ON.
+    /// Drive a harness seeded with the 2x2 markdown.
     /// Returns nil if the TK2 content-storage invariants aren't met.
     private func makeHarness() -> (
         harness: EditorHarness,
@@ -68,7 +68,6 @@ final class TableCellEditingTests: XCTestCase {
         elementStart: Int,
         offsetFor: (Int, Int) -> Int
     )? {
-        FeatureFlag.nativeTableElements = true
         let harness = EditorHarness(markdown: Self.markdown2x2)
         guard let tlm = harness.editor.textLayoutManager,
               let cs = tlm.textContentManager as? NSTextContentStorage else {
@@ -105,12 +104,6 @@ final class TableCellEditingTests: XCTestCase {
         return (harness, element, foundStart, offsetFor)
     }
 
-    private func restoreFlag() {
-        // Phase 2e-T2-f: default is now `true`. Restore to the new
-        // default.
-        FeatureFlag.nativeTableElements = true
-    }
-
     /// Extract the `Block.table` at the given index from the harness's
     /// current Document.
     private func table(
@@ -135,7 +128,6 @@ final class TableCellEditingTests: XCTestCase {
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         // The table is the FIRST block in this document; the harness's
@@ -188,7 +180,6 @@ final class TableCellEditingTests: XCTestCase {
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         let tableBlockIndex = 0
@@ -216,7 +207,6 @@ final class TableCellEditingTests: XCTestCase {
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         let tableBlockIndex = 0
@@ -245,7 +235,6 @@ final class TableCellEditingTests: XCTestCase {
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         let tableBlockIndex = 0
@@ -299,7 +288,6 @@ final class TableCellEditingTests: XCTestCase {
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         let tableBlockIndex = 0
@@ -356,9 +344,6 @@ final class TableCellEditingTests: XCTestCase {
     /// end-to-end plumbing: source markdown → TableTextRenderer →
     /// attribute → delegate → TableElement → fragment.
     func test_T2e_alignmentsPropagateToFragment() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { restoreFlag() }
-
         // center / right / left via the CommonMark separator row.
         let markdown = """
         | A | B | C |
@@ -399,57 +384,4 @@ final class TableCellEditingTests: XCTestCase {
         )
     }
 
-    // MARK: - 7. Flag-off: no TableElement, no tableAuthoritativeBlock
-
-    /// Invariant: with the flag OFF (legacy path, retained for A/B
-    /// coverage until T2-h), storage must contain zero
-    /// `.tableAuthoritativeBlock` attributes and no `TableElement`
-    /// fragments. Confirms T2-e changes are entirely flag-gated — the
-    /// widget path remains byte-identical under flag-off.
-    func test_T2e_flagOff_noAuthoritativeBlockAttribute() throws {
-        FeatureFlag.nativeTableElements = false
-        // Phase 2e-T2-f: default is now `true`. Restore to default on
-        // exit so subsequent tests see the new shipping behaviour.
-        defer { FeatureFlag.nativeTableElements = true }
-
-        let harness = EditorHarness(markdown: Self.markdown2x2)
-        defer { harness.teardown() }
-
-        guard let storage = harness.editor.textStorage else {
-            XCTFail("No textStorage")
-            return
-        }
-        let fullRange = NSRange(location: 0, length: storage.length)
-        var sawAuth = false
-        storage.enumerateAttribute(
-            .tableAuthoritativeBlock, in: fullRange, options: []
-        ) { value, _, _ in
-            if value != nil { sawAuth = true }
-        }
-        XCTAssertFalse(
-            sawAuth,
-            "Flag-off storage must carry no .tableAuthoritativeBlock " +
-            "attributes (T2-e is flag-gated)"
-        )
-
-        // And the flag-off path must produce no TableElement fragments.
-        if let tlm = harness.editor.textLayoutManager {
-            tlm.ensureLayout(for: tlm.documentRange)
-            var sawElement = false
-            tlm.enumerateTextLayoutFragments(
-                from: tlm.documentRange.location,
-                options: [.ensuresLayout]
-            ) { fragment in
-                if fragment.textElement is TableElement {
-                    sawElement = true
-                    return false
-                }
-                return true
-            }
-            XCTAssertFalse(
-                sawElement,
-                "Flag-off storage must produce zero TableElement fragments"
-            )
-        }
-    }
 }

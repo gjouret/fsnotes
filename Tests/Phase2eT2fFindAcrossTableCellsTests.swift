@@ -2,11 +2,9 @@
 //  Phase2eT2fFindAcrossTableCellsTests.swift
 //  FSNotesTests
 //
-//  Phase 2e-T2-f — Bug #60 verification under default flag-ON.
+//  Bug #60 verification — find across table cells.
 //
-//  T2-f flipped `FeatureFlag.nativeTableElements` from `false` to `true`
-//  as the shipping default. This file pins the end-to-end Bug #60
-//  invariant: with the flag at its default, searching for text that
+//  Pins the end-to-end Bug #60 invariant: searching for text that
 //  spans adjacent cells succeeds because cell content lives in
 //  `NSTextContentStorage` as real characters, not behind an
 //  `NSTextAttachment` placeholder.
@@ -17,9 +15,6 @@
 //  `textStorage.string`) sees those characters natively — it would
 //  have to explicitly filter out the separators to miss cell content,
 //  which it does not.
-//
-//  These tests DO NOT flip the flag. They assert the default behaviour
-//  as it ships after T2-f.
 //
 
 import XCTest
@@ -37,22 +32,7 @@ final class Phase2eT2fFindAcrossTableCellsTests: XCTestCase {
     | Bob   | plain        |
     """
 
-    // MARK: - 1. Default flag state
-
-    /// Pins the shipping default. If this test fails, someone flipped
-    /// the flag back to `false` without updating the T2-f line in
-    /// REFACTOR_PLAN.md — the symptom would be Bug #60 quietly
-    /// regressing.
-    func test_phase2eT2f_defaultFlagIsOn() {
-        XCTAssertTrue(
-            FeatureFlag.nativeTableElements,
-            "Phase 2e-T2-f: default must be ON. Legacy attachment path " +
-            "is retained behind explicit flag-off in specific tests, " +
-            "but ships OFF by default."
-        )
-    }
-
-    // MARK: - 2. Bug #60 — searchable text contains cell content
+    // MARK: - 1. Bug #60 — searchable text contains cell content
 
     /// The canonical Bug #60 assertion: `textStorage.string` —
     /// which `NSTextFinder` walks via `NSTextFinderClient.string` —

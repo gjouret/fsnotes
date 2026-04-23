@@ -12,7 +12,6 @@ extension EditTextView {
     @IBAction func boldMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if applyInlineTableCellFormatting("**") { return }
         if toggleBoldViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -27,7 +26,6 @@ extension EditTextView {
     @IBAction func italicMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if applyInlineTableCellFormatting("*") { return }
         if toggleItalicViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -39,21 +37,8 @@ extension EditTextView {
         updateToolbarAfterFormatting()
     }
 
-    func applyInlineTableCellFormatting(_ marker: String) -> Bool {
-        return tableController.applyInlineTableCellFormatting(marker)
-    }
-
-    func applyInlineTableCellFormat(_ format: TableRenderController.InlineCellFormat) -> Bool {
-        return tableController.applyInlineTableCellFormat(format)
-    }
-
     @IBAction func linkMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
-
-        // In-cell path: if a table cell is being edited, honor the same
-        // clipboard-URL shortcut but wrap the cell's field-editor
-        // selection instead of the outer text view's selection.
-        if tryLinkInTableCell() { return }
 
         if let clipboardString = NSPasteboard.general.string(forType: .string) {
             let normalized = clipboardString.normalizedAsURL()
@@ -69,37 +54,6 @@ extension EditTextView {
         }
 
         showLinkDialog()
-    }
-
-    /// If the field editor currently belongs to a table cell, wrap the
-    /// cell's selection as a markdown link. Pulls a URL from the
-    /// clipboard when possible (matching the outer editor's shortcut);
-    /// falls back to a placeholder URL otherwise.
-    private func tryLinkInTableCell() -> Bool {
-        guard let fieldEditor = window?.fieldEditor(false, for: nil),
-              let cell = fieldEditor.delegate as? NSTextField,
-              cell.window != nil else { return false }
-        // Confirm the cell lives inside an InlineTableView; if not,
-        // this is some other field editor (e.g. sidebar) and we should
-        // fall through to the outer-editor path.
-        var v: NSView? = cell.superview
-        var inTable = false
-        while let current = v {
-            if current is InlineTableView { inTable = true; break }
-            v = current.superview
-        }
-        guard inTable else { return false }
-
-        var url = "https://"
-        if let clipboardString = NSPasteboard.general.string(forType: .string) {
-            let normalized = clipboardString.normalizedAsURL()
-            if let parsed = URL(string: normalized),
-               let scheme = parsed.scheme,
-               ["http", "https", "ftp", "ftps", "mailto"].contains(scheme.lowercased()) {
-                url = normalized
-            }
-        }
-        return applyInlineTableCellFormat(.link(url: url))
     }
 
     private func showLinkDialog() {
@@ -153,7 +107,6 @@ extension EditTextView {
     @IBAction func underlineMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if applyInlineTableCellFormat(.underline) { return }
         if toggleUnderlineViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -168,7 +121,6 @@ extension EditTextView {
     @IBAction func strikeMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if applyInlineTableCellFormatting("~~") { return }
         if toggleStrikethroughViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -183,7 +135,6 @@ extension EditTextView {
     @IBAction func highlightMenu(_ sender: Any) {
         guard let note = self.note, isEditable, note.isMarkdown() else { return }
 
-        if applyInlineTableCellFormat(.highlight) { return }
         if toggleHighlightViaBlockModel() {
             updateToolbarAfterFormatting()
             return
@@ -397,26 +348,18 @@ extension EditTextView {
             note.cachedDocument = newDoc
             hasUserEdits = false
             fill(note: note)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                self?.focusFirstInlineTableCell()
-            }
+            // Native path: TK2's default hit-testing places the caret in
+            // the first table cell on the next user click. No widget
+            // focus handoff is needed; the legacy
+            // `focusFirstInlineTableCell` routine was deleted in T2-h.
         } else {
-            // Source-mode path.
+            // Source-mode path. Tables only render live in block-model
+            // mode; in source mode the raw markdown is inserted and the
+            // user sees it as plain text (still round-trips correctly).
             let insertRange = selectedRange()
             let prefix = insertRange.location > 0 ? "\n" : ""
             insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
-
-            if NotesTextProcessor.hideSyntax {
-                renderTables()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                    self?.focusFirstInlineTableCell()
-                }
-            }
         }
-    }
-
-    private func focusFirstInlineTableCell() {
-        tableController.focusFirstInlineTableCell()
     }
 
     @IBAction func horizontalRuleMenu(_ sender: Any) {
@@ -495,8 +438,6 @@ extension EditTextView {
 
     @IBAction func insertCodeSpan(_ sender: NSMenuItem) {
         guard isEditable else { return }
-
-        if applyInlineTableCellFormat(.code) { return }
 
         let currentRange = selectedRange()
 

@@ -2,27 +2,18 @@
 //  TableElementEmissionTests.swift
 //  FSNotesTests
 //
-//  Phase 2e-T2-b — Proves the native-cell-text table rendering path
-//  emits a flat, separator-encoded attributed string when
-//  `FeatureFlag.nativeTableElements == true`, and that the legacy
-//  NSTextAttachment path is unchanged when the flag is off (default).
+//  Proves the native-cell-text table rendering path emits a flat,
+//  separator-encoded attributed string.
 //
-//  The tests lock in five contracts:
-//    1. Flag OFF → storage is a single U+FFFC backed by
-//       `TableBlockAttachment`; `.string` carries no cell text.
-//    2. Flag ON → storage's `.string` carries cell text in
-//       header-then-body order, separated by U+001F (cells) and U+001E
-//       (rows). Zero U+FFFC characters.
-//    3. Flag ON → Bug #60's search-across-cells assertion passes (the
-//       main deliverable of 2e-T2-b).
-//    4. Flag ON → the rendered range carries
-//       `.blockModelKind = .table.rawValue`.
-//    5. Flag ON → the TK2 content-storage delegate returns a
-//       `TableElement` for the tagged range.
-//
-//  The tests toggle the flag inside each function with a `defer`
-//  restore so a crash mid-test cannot leak the flag state into the
-//  rest of the suite.
+//  The tests lock in four contracts:
+//    1. Storage's `.string` carries cell text in header-then-body
+//       order, separated by U+001F (cells) and U+001E (rows). Zero
+//       U+FFFC characters.
+//    2. Bug #60's search-across-cells assertion passes (the main
+//       deliverable of 2e-T2-b).
+//    3. The rendered range carries `.blockModelKind = .table.rawValue`.
+//    4. The TK2 content-storage delegate returns a `TableElement` for
+//       the tagged range.
 //
 
 import XCTest
@@ -46,53 +37,12 @@ final class TableElementEmissionTests: XCTestCase {
     | Bob   | plain |
     """
 
-    // MARK: - Flag OFF (legacy attachment path, retained for A/B)
-
-    func test_phase2eT2b_flagOff_emitsAttachment() throws {
-        // Phase 2e-T2-f flipped the default to `true`; this test pins
-        // the legacy path explicitly so the attachment emission contract
-        // stays regression-covered until T2-h deletes the legacy path.
-        FeatureFlag.nativeTableElements = false
-        defer { FeatureFlag.nativeTableElements = true }
-
-        let harness = EditorHarness(markdown: Self.harnessMarkdown)
-        defer { harness.teardown() }
-
-        guard let storage = harness.editor.textStorage else {
-            XCTFail("Editor has no textStorage.")
-            return
-        }
-
-        // Exactly one U+FFFC character in the whole storage (the
-        // table attachment character).
-        let string = storage.string
-        let ffffCount = string.filter { $0 == "\u{FFFC}" }.count
-        XCTAssertEqual(
-            ffffCount, 1,
-            "Flag OFF must emit exactly one U+FFFC attachment character for the table."
-        )
-
-        // Cell text MUST NOT appear in the searchable string — that's
-        // the entire live Bug #60 symptom. If it does appear here,
-        // something has gone wrong before we even enable the flag.
-        XCTAssertFalse(
-            string.contains("Alice"),
-            "Flag OFF: cell text must be hidden behind the attachment, not present in .string."
-        )
-        XCTAssertFalse(
-            string.contains("findmeinside"),
-            "Flag OFF: cell text must be hidden behind the attachment."
-        )
-    }
-
-    // MARK: - Flag ON (native-cell-text path)
+    // MARK: - Native cell-text path
 
     /// Verify the emitted storage's `.string` contains cell text with
     /// U+001F between cells and U+001E between rows, in header-then-body
     /// order.
     func test_phase2eT2b_flagOn_emitsFlatCellText() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -145,8 +95,6 @@ final class TableElementEmissionTests: XCTestCase {
     /// Rule-7 grep gate: zero U+FFFC attachment characters inside any
     /// `.blockModelKind = .table` range.
     func test_phase2eT2b_flagOn_tableRangeContainsNoObjectReplacement() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -178,8 +126,6 @@ final class TableElementEmissionTests: XCTestCase {
     /// content. This is the **main deliverable** of slice 2e-T2-b —
     /// the flag flip is what enables NSTextFinder to see across cells.
     func test_phase2eT2b_flagOn_bug60_findAcrossTableCells() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -196,8 +142,6 @@ final class TableElementEmissionTests: XCTestCase {
     /// The rendered range covering the table carries
     /// `.blockModelKind = .table.rawValue`.
     func test_phase2eT2b_flagOn_blockModelKindIsTable() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }
@@ -231,8 +175,6 @@ final class TableElementEmissionTests: XCTestCase {
     /// the tagged range. Mirrors the `TextKit2ElementDispatchTests`
     /// pattern.
     func test_phase2eT2b_flagOn_delegateReturnsTableElement() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
 
         let harness = EditorHarness(markdown: Self.harnessMarkdown)
         defer { harness.teardown() }

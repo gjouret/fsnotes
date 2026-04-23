@@ -184,9 +184,9 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// The backing `TableElement`. The content-storage delegate is the
     /// sole construction path (see `BlockModelContentStorageDelegate
     /// .textContentStorage(_:textParagraphWith:)`), so `textElement`
-    /// is always a `TableElement` when `FeatureFlag.nativeTableElements`
-    /// is on. A nil return here means we were dispatched in error —
-    /// fall through to zero-sized draw so we never paint garbage.
+    /// is always a `TableElement` when dispatched here. A nil return
+    /// means we were dispatched in error — fall through to zero-sized
+    /// draw so we never paint garbage.
     ///
     /// 2e-T2-c limitation flagged for 2e-T2-e: the `block` payload on
     /// this element is the decoded placeholder synthesized from the flat

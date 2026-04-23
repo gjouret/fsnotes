@@ -104,6 +104,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// process() pipeline must not run — it would apply syntax colors,
     /// kern, and clear-foreground to storage that has no markdown markers.
     public var blockModelActive = false
+    /// Phase 4.3 — when true, the current note is non-markdown
+    /// (`.txt` / `.rtf`). The legacy `process()` pipeline must not run:
+    /// it would apply markdown syntax highlighting to content that has
+    /// no markdown structure. Non-markdown fill uses `NonMarkdownRenderer`
+    /// for the initial paint; subsequent edits don't need any post-
+    /// processing — plain text stays plain.
+    public var nonMarkdownActive = false
 
     // MARK: - Source-Mode Block Array
 
@@ -438,14 +445,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
             isRendering = false
             // Hide live subviews — they draw independently of LayoutManager.
-            // Both InlineTableView and InlinePDFView render outside of
-            // LayoutManager's fold gate, so they must be hidden explicitly.
+            // InlinePDFView renders outside LayoutManager's fold gate, so
+            // it must be hidden explicitly. (Native tables render via
+            // TK2 `TableLayoutFragment`, which is fold-aware — no
+            // separate subview hiding needed.)
             if let textView = editor {
                 for subview in textView.subviews {
-                    if let tv = subview as? InlineTableView, !tv.isHidden {
-                        tv.isHidden = true
-                    } else if !subview.isHidden,
-                              String(describing: type(of: subview)) == "InlinePDFView" {
+                    if !subview.isHidden,
+                       String(describing: type(of: subview)) == "InlinePDFView" {
                         subview.isHidden = true
                     }
                 }
@@ -604,14 +611,26 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 #endif
 
     /// Legacy rendering pipeline. Runs ONLY when blockModelActive==false
-    /// (source mode, non-markdown notes). When blockModelActive==true,
-    /// all rendering is handled by DocumentRenderer + EditingOps.
+    /// and nonMarkdownActive==false (markdown source mode). When
+    /// blockModelActive==true, rendering is handled by DocumentRenderer +
+    /// EditingOps. When nonMarkdownActive==true, `NonMarkdownRenderer`
+    /// rendered the initial paint and no post-processing is needed —
+    /// plain text stays plain.
     private func process(textStorage: NSTextStorage, range editedRange: NSRange, changeInLength delta: Int) {
         guard let note = editor?.note, textStorage.length > 0 else { return }
         guard !isRendering else { return }
 
         // Block-model pipeline owns rendering — bail out entirely.
         if blockModelActive {
+            return
+        }
+
+        // Phase 4.3 — non-markdown notes (.txt / .rtf) don't want ANY
+        // markdown highlighting. `NonMarkdownRenderer` handled the
+        // initial paint; editing a plain-text note shouldn't trigger
+        // `NotesTextProcessor.highlightMarkdown`, which would apply
+        // heading fonts, kern, etc. to what the user typed as prose.
+        if nonMarkdownActive {
             return
         }
 

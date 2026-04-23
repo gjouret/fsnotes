@@ -73,16 +73,14 @@ public extension NSAttributedString.Key {
 /// right `NSTextParagraph` subclass per block, which in turn lets
 /// Phase 2c's layout fragments route their drawing.
 ///
-/// `table` was added in Phase 2e-T2-b for the native-cell table
-/// path. Tables still render through the `NSTextAttachment` widget
-/// path when `FeatureFlag.nativeTableElements == false` (the default);
-/// when the flag is `true`, `TableTextRenderer` emits a flat,
-/// separator-encoded attributed string tagged with this kind, and the
-/// TK2 content-storage delegate returns a `TableElement`. Mermaid and
-/// math are distinct kinds (not just code blocks with a language marker)
-/// because their Phase 2c layout fragments reserve bitmap space and
-/// draw a rendered image over the source text, which the plain
-/// code-block fragment doesn't do.
+/// `table` was added in Phase 2e-T2-b for the native-cell table path.
+/// `TableTextRenderer` emits a flat, separator-encoded attributed
+/// string tagged with this kind; the TK2 content-storage delegate
+/// returns a `TableElement`. Mermaid and math are distinct kinds
+/// (not just code blocks with a language marker) because their
+/// Phase 2c layout fragments reserve bitmap space and draw a
+/// rendered image over the source text, which the plain code-block
+/// fragment doesn't do.
 public enum BlockModelKind: String {
     case paragraph
     case paragraphWithKbd  // paragraph containing one or more .kbdTag runs
@@ -101,9 +99,7 @@ public enum BlockModelKind: String {
     case displayMath
     /// Phase 2e-T2-b: block-model table rendered as a single flat
     /// attributed string of cell text joined by U+001F / U+001E
-    /// separators. Only emitted when `FeatureFlag.nativeTableElements`
-    /// is `true` — otherwise tables keep flowing through the
-    /// NSTextAttachment widget path (no `.blockModelKind` tag).
+    /// separators.
     case table
 
     /// Phase 4.1 (dormant): paragraph-shaped range rendered by

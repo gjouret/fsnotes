@@ -79,8 +79,6 @@ final class TableLayoutFragmentRenderTests: XCTestCase {
     /// tolerance covers any future re-rounding). Width must equal the
     /// container's usable width.
     func test_T2c_fragmentFrame_matchesTableGeometry() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
 
         let markdown = """
         | Name | City | Role |
@@ -148,8 +146,6 @@ final class TableLayoutFragmentRenderTests: XCTestCase {
     /// miscounts rows, the grid will paint the wrong number of stripes
     /// and this test catches it before the user does.
     func test_T2c_rowCount_matchesTableGeometry() throws {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
 
         // (columns, bodyRows) shapes: 1x5, 4x1, 3x2, the standard 2x3.
         // Each is an independent harness instance so the fragment cache

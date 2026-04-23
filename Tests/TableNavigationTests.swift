@@ -41,9 +41,6 @@ final class TableNavigationTests: XCTestCase {
         cols: Int,
         bodyRows: Int
     ) -> TableElement {
-        FeatureFlag.nativeTableElements = true
-        defer { FeatureFlag.nativeTableElements = true }
-
         let header = (0..<cols).map { TableCell.parsing("H\($0)") }
         let rows: [[TableCell]] = (0..<bodyRows).map { r in
             (0..<cols).map { c in TableCell.parsing("r\(r)c\(c)") }
@@ -211,18 +208,14 @@ final class TableNavigationTests: XCTestCase {
     | c10 | c11 |
     """
 
-    /// Seed an editor with the 2×2 table, feature flag on, and return
-    /// the (harness, tableElement, elementStart, rowColOffsetFn).
-    /// The flag is restored after the test via a deferred teardown.
-    private func makeHarnessWith2x2Table(
-        flagResetter: XCTestCase
-    ) -> (
+    /// Seed an editor with the 2×2 table and return the (harness,
+    /// tableElement, elementStart, rowColOffsetFn).
+    private func makeHarnessWith2x2Table() -> (
         harness: EditorHarness,
         element: TableElement,
         elementStart: Int,
         offset: (Int, Int) -> Int
     )? {
-        FeatureFlag.nativeTableElements = true
         let harness = EditorHarness(markdown: Self.markdown2x2)
         guard let tlm = harness.editor.textLayoutManager,
               let cs = tlm.textContentManager as? NSTextContentStorage else {
@@ -260,23 +253,16 @@ final class TableNavigationTests: XCTestCase {
         return (harness, element, foundStart, offsetFn)
     }
 
-    private func restoreFlag() {
-        // Phase 2e-T2-f: default is now `true`. Restore to the new
-        // default so tests don't leak flag state.
-        FeatureFlag.nativeTableElements = true
-    }
-
     // MARK: - 4. Tab moves to next cell
 
     func test_T2d_tabKey_movesToNextCell() throws {
-        guard let ctx = makeHarnessWith2x2Table(flagResetter: self) else {
+        guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         // Park cursor at cell (0,0).
@@ -296,14 +282,13 @@ final class TableNavigationTests: XCTestCase {
     // MARK: - 5. Tab wraps to next row
 
     func test_T2d_tabKey_wrapsToNextRow() throws {
-        guard let ctx = makeHarnessWith2x2Table(flagResetter: self) else {
+        guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         // Park cursor at cell (0,1) — the last header cell.
@@ -322,14 +307,13 @@ final class TableNavigationTests: XCTestCase {
     // MARK: - 6. Shift-Tab moves to previous cell
 
     func test_T2d_shiftTabKey_movesToPreviousCell() throws {
-        guard let ctx = makeHarnessWith2x2Table(flagResetter: self) else {
+        guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         // Park cursor at cell (0,1).
@@ -348,14 +332,13 @@ final class TableNavigationTests: XCTestCase {
     // MARK: - 7. Right-arrow at cell end moves to next cell
 
     func test_T2d_arrowRight_atCellEnd_movesToNextCell() throws {
-        guard let ctx = makeHarnessWith2x2Table(flagResetter: self) else {
+        guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         // Find the END of cell (0,0): its start + its text length.
@@ -379,14 +362,13 @@ final class TableNavigationTests: XCTestCase {
     // MARK: - 8. Down-arrow moves vertically
 
     func test_T2d_arrowDown_movesVertically() throws {
-        guard let ctx = makeHarnessWith2x2Table(flagResetter: self) else {
+        guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         // Cursor at cell (0,0) → down-arrow → cell (1,0).
@@ -412,14 +394,13 @@ final class TableNavigationTests: XCTestCase {
     // include `<br>` inside the cell.
 
     func test_T2d_returnKey_inCell_insertsBr() throws {
-        guard let ctx = makeHarnessWith2x2Table(flagResetter: self) else {
+        guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
         let harness = ctx.harness
         defer {
             harness.teardown()
-            restoreFlag()
         }
 
         // Snapshot the Document before the Return.

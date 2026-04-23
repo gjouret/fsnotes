@@ -2,19 +2,16 @@
 //  EditTextViewFillRenderSyncTests.swift
 //  FSNotesTests
 //
-//  Phase 2e-T2-f (Batch N+2) — Bug #2: async-render flash.
+//  Bug #2: async-render flash.
 //
 //  Pins the invariant that after `EditTextView.fillViaBlockModel(note:)`
 //  returns synchronously, the initial TK2 layout pass has completed
-//  before first paint. Previously `renderTables()` and the first
-//  layout pass were deferred via `DispatchQueue.main.async`, causing:
-//   • ~500ms generic-document icon flash on table attachments (legacy
-//     attachment path).
-//   • Checkbox / view-provider attachments not drawing until the user
-//     scrolled, because TK2's view-provider integration needs a
-//     layout pass to wire the hosted views (TK2 native path).
+//  before first paint. Previously the first layout pass was deferred
+//  via `DispatchQueue.main.async`, causing checkbox / view-provider
+//  attachments not to draw until the user scrolled (TK2's view-
+//  provider integration needs a layout pass to wire the hosted views).
 //
-//  Fix: `fillViaBlockModel` now calls `renderTables()` and
+//  Fix: `fillViaBlockModel` now calls
 //  `textLayoutManager.ensureLayout(for: documentRange)` synchronously
 //  before returning. Heavier async work (mermaid/math bitmap
 //  generation, PDF hydration, image load) stays async.
@@ -47,7 +44,6 @@ final class EditTextViewFillRenderSyncTests: XCTestCase {
     ///   (b) at least one fragment has non-zero height (layout
     ///       actually completed, not merely enumerated placeholders).
     func test_ensureLayoutSync_producesLaidOutFragments() {
-        FeatureFlag.nativeTableElements = true
         let md = """
         - [ ] unchecked
         - [x] checked
@@ -95,50 +91,4 @@ final class EditTextViewFillRenderSyncTests: XCTestCase {
         )
     }
 
-    /// Legacy-path sanity check: under `nativeTableElements = false`,
-    /// `renderTables()` is what replaces the generic-document-icon
-    /// placeholder with the live `InlineTableAttachmentCell`. The
-    /// production fix moves this call inline (synchronous) in
-    /// `fillViaBlockModel`. This test only verifies that
-    /// `tableController.renderTables()` does not crash when called
-    /// synchronously on a freshly-seeded harness — the real live-cell
-    /// binding contract depends on a fully-realized window geometry
-    /// that the harness does not reliably reproduce, so we assert
-    /// only the no-crash post-condition here and pin the full
-    /// geometric contract via manual QA / snapshot tests.
-    func test_renderTablesSync_legacyPath_doesNotCrash() {
-        let prevFlag = FeatureFlag.nativeTableElements
-        FeatureFlag.nativeTableElements = false
-        defer { FeatureFlag.nativeTableElements = prevFlag }
-
-        let md = """
-        | A | B |
-        |---|---|
-        | x | y |
-        """
-        let harness = EditorHarness(markdown: md)
-        defer { harness.teardown() }
-
-        // Should not crash.
-        harness.editor.renderTables()
-
-        // The attachment exists in storage regardless of whether the
-        // live cell was successfully configured — the storage is set
-        // up in seed(). This exercises the full renderTables walk.
-        guard let storage = harness.editor.textStorage else {
-            XCTFail("Editor has no textStorage")
-            return
-        }
-        var foundTableAttachment = false
-        storage.enumerateAttribute(
-            .attachment,
-            in: NSRange(location: 0, length: storage.length),
-            options: []
-        ) { value, _, _ in
-            if value is TableBlockAttachment {
-                foundTableAttachment = true
-            }
-        }
-        XCTAssertTrue(foundTableAttachment, "Legacy-path seed must produce at least one TableBlockAttachment.")
-    }
 }

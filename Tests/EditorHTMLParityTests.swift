@@ -1455,32 +1455,35 @@ class EditorHTMLParityTests: XCTestCase {
         // The fix: EditingOps.delete now uses blockIndices(overlapping:) to
         // detect when an atomic block (table, HR) is fully covered by selection.
         //
-        // Phase 2e-T2-f: this test pins the legacy attachment path
-        // because it locates the table via U+FFFC — the native path
-        // (flag ON default) renders cell text as live content, so
-        // U+FFFC is not present. A native-path equivalent lives as
-        // `test_phase2eT2f_deleteSelectedTable_nativePath` below.
-        FeatureFlag.nativeTableElements = false
-        defer { FeatureFlag.nativeTableElements = true }
-
+        // Native-path version (post-T2-h): native tables render as
+        // separator-encoded live text, not a U+FFFC attachment. Locate
+        // the table via the block-model projection (the Document's
+        // table block) and select the storage span that covers it.
         let editor = makeEditor()
         fill(editor, "before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nafter")
 
-        // Find the table attachment character (U+FFFC) in storage
-        let s = editor.textStorage?.string ?? ""
-        let nsString = s as NSString
-        let tableRange = nsString.range(of: "\u{FFFC}")
-        guard tableRange.location != NSNotFound else {
-            XCTFail("table attachment character not found in storage")
+        // Locate the table block in the projection and resolve its
+        // storage span.
+        guard let projection = editor.documentProjection else {
+            XCTFail("No block-model projection")
+            return
+        }
+        var tableRange: NSRange?
+        for (idx, block) in projection.document.blocks.enumerated() {
+            if case .table = block {
+                tableRange = projection.blockSpans[idx]
+                break
+            }
+        }
+        guard let tableRange = tableRange else {
+            XCTFail("Table block not found in projection")
             return
         }
 
-        // Select exactly the table attachment character
-        editor.setSelectedRange(NSRange(location: tableRange.location, length: 1))
+        editor.setSelectedRange(tableRange)
 
-        // Call handleEditViaBlockModel directly (simulating Delete key via shouldChangeText)
         let handled = editor.handleEditViaBlockModel(
-            in: NSRange(location: tableRange.location, length: 1),
+            in: tableRange,
             replacementString: ""
         )
         XCTAssertTrue(handled, "block model should handle table deletion")

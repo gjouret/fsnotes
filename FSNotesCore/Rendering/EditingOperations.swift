@@ -7772,9 +7772,8 @@ public enum EditingOps {
     /// not pass through this function — they keep whatever source-text
     /// layout the user wrote.
     ///
-    /// Public because `InlineTableView` also uses it when pushing its
-    /// post-structural-change state (add row, add column, move, etc.)
-    /// back into the Document model via `notifyChanged()`.
+    /// Public for callers that build a table block outside the
+    /// primitive (e.g. paste paths, structural-mutation primitives).
     public static func rebuildTableRaw(
         header: [TableCell],
         alignments: [TableAlignment],

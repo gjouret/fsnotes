@@ -149,7 +149,10 @@ extension EditTextView {
         // source-mode highlight call — it would apply syntax colors to
         // note.content (raw markdown) that the block-model pipeline
         // doesn't use.
-        if documentProjection == nil {
+        // Phase 4.3 — also skip for non-markdown notes (`.txt` / `.rtf`),
+        // which render via `NonMarkdownRenderer` and have no markdown
+        // structure to highlight.
+        if documentProjection == nil, note.isMarkdown() {
             NotesTextProcessor.highlight(attributedString: note.content)
         }
 
@@ -161,26 +164,18 @@ extension EditTextView {
     }
 
     /// Called when the editor's available width changes (window resize,
-    /// split-view divider drag). Reflows width-sensitive attachments:
-    ///  - InlineTableView cells get their containerWidth updated and rebuild.
-    ///  - CenteredImageCell (mermaid/math) has dynamic `cellFrame(for:...)`
-    ///    scaling, but it's only consulted during layout — invalidating the
-    ///    layout here re-triggers it so wide diagrams scale to fit.
+    /// split-view divider drag). Invalidates layout so width-sensitive
+    /// fragments (e.g. `CenteredImageCell` mermaid/math scaling) rebuild.
+    /// Native tables re-layout themselves on the next TK2 pass when the
+    /// container width changes — `TableLayoutFragment` re-computes
+    /// column widths on each layout.
     public func reflowAttachmentsForWidthChange() {
-        tableController.reflowTablesForWidthChange()
         // Phase 2a TK2-safety (2026-04-22): bare `layoutManager` was an
         // implicit `self.layoutManager` read. On a TK2-wired NSTextView
         // that accessor lazy-instantiates a TK1 NSLayoutManager and
-        // permanently nils `textLayoutManager`. This method is called
-        // from `EditorSplitView.splitViewDidResizeSubviews` during the
-        // initial window layout, which happens AFTER `initTextStorage()`
-        // and BEFORE the first `fillViaBlockModel`. Trip it there and
-        // TK2 is dead before any block-model fragment delegate can run —
-        // which is exactly the regression that kept Phase 2c HR rules
-        // from rendering. Route through `layoutManagerIfTK1` so the
-        // TK1 invalidation is a no-op under TK2 (TK2 fragments are
-        // width-independent for HR / text-flow blocks; table + rendered-
-        // attachment width reflow happens above in tableController).
+        // permanently nils `textLayoutManager`. Route through
+        // `layoutManagerIfTK1` so the TK1 invalidation is a no-op
+        // under TK2.
         if let storage = textStorage, let lm = layoutManagerIfTK1 {
             let fullRange = NSRange(location: 0, length: storage.length)
             lm.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)

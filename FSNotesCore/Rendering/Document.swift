@@ -222,13 +222,9 @@ public enum Block: Equatable {
     /// tables the user never edits; once a cell is edited, `raw` is
     /// recomputed canonically from the inline trees.
     ///
-    /// The refactor from opaque cell strings to inline trees is the
-    /// Option C unification described in CLAUDE.md — cell content is
-    /// "a paragraph inside a cell, that's all it is." The widget and
-    /// the primitives both operate on inline trees; the local
-    /// `parseInlineMarkdown` in `InlineTableView` that used to
-    /// re-implement inline parsing has been replaced with the real
-    /// `InlineRenderer`.
+    /// Cell content is "a paragraph inside a cell" — the parser, the
+    /// primitives, and the native `TableElement` renderer all operate
+    /// on inline trees using the same `InlineRenderer` paragraphs use.
     case table(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], columnWidths: [CGFloat]?, raw: String)
 
     /// A literal blank line separating blocks.

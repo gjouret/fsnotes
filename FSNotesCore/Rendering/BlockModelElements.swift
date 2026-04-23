@@ -136,12 +136,11 @@ public enum BlockModelElementFactory {
 /// substitution hook; Phase 2c will override layout-fragment selection
 /// on the subclass to take over block visuals.
 ///
-/// If the paragraph carries no `.blockModelKind` attribute (legacy
-/// table attachment path when `FeatureFlag.nativeTableElements == false`;
-/// untagged ranges during edit reconciliation) the delegate returns
-/// `nil` so `NSTextContentStorage` falls back to its default
-/// `NSTextParagraph`. This keeps TK2 happy during the edit windows when
-/// storage is mid-splice.
+/// If the paragraph carries no `.blockModelKind` attribute (untagged
+/// ranges during edit reconciliation) the delegate returns `nil` so
+/// `NSTextContentStorage` falls back to its default `NSTextParagraph`.
+/// This keeps TK2 happy during the edit windows when storage is
+/// mid-splice.
 ///
 /// Phase 2e-T2-b: when `.blockModelKind == .table`, the delegate returns
 /// a `TableElement`. The element carries the paragraph's attributed

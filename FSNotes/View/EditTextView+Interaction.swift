@@ -35,8 +35,6 @@ extension EditTextView {
             return
         }
 
-        unfocusAllInlineTableViews()
-
         if NotesTextProcessor.hideSyntax, let storage = textStorage {
             let point = convert(event.locationInWindow, from: nil)
             let charIndex = characterIndexForInsertion(at: point)
@@ -475,35 +473,14 @@ extension EditTextView {
             return false
         }
 
-        if let blockType = storage.attribute(.renderedBlockType, at: index, effectiveRange: nil) as? String,
-           blockType == RenderedBlockType.table.rawValue {
-            if let att = storage.attribute(.attachment, at: index, effectiveRange: nil) as? NSTextAttachment,
-               let attCell = att.attachmentCell as? InlineTableAttachmentCell {
-                let tableView = attCell.inlineTableView
-                let tablePoint = tableView.convert(event.locationInWindow, from: nil)
-                let hitCell = tableView.cellPool.contains(where: { !$0.isHidden && $0.frame.contains(tablePoint) })
-                let hitHandle = tableView.subviews.contains(where: { $0 is NSVisualEffectView && $0.frame.contains(tablePoint) })
-
-                if !hitCell && !hitHandle {
-                    return false
-                }
-
-                tableView.focusState = .editing
-                DispatchQueue.main.async {
-                    let deferredPoint = tableView.convert(event.locationInWindow, from: nil)
-                    for cell in tableView.cellPool where !cell.isHidden {
-                        if cell.frame.contains(deferredPoint) {
-                            tableView.window?.makeFirstResponder(cell)
-                            return
-                        }
-                    }
-                    if let first = tableView.headerCells.first {
-                        tableView.window?.makeFirstResponder(first)
-                    }
-                }
-            }
-            return true
-        }
+        // Table click handling used to intercept here when the legacy
+        // `InlineTableAttachmentCell` widget path was live. With the
+        // native `TableLayoutFragment` path, TK2's default hit-testing
+        // positions the selection inside the cell via
+        // `EditTextView+TableNav`'s cursor context logic — no
+        // click-handler override needed. Tables render as real text
+        // content, not a single attachment character, so the check
+        // below (`.attachment != nil`) would never match a table anyway.
 
         let attachmentRange = NSRange(location: index, length: 1)
         guard NSMaxRange(attachmentRange) <= storage.length else { return false }
