@@ -360,6 +360,40 @@ public struct ThemeColors: Codable, Equatable {
     public static let `default` = ThemeColors()
 }
 
+// MARK: - ThemeCodeBlockEditToggle
+
+/// Visual chrome for the hover-triggered `</>` edit-toggle button that
+/// sits at the top-right of each code block. Phase 8 Slice 3 addition.
+/// Defaults match the hardcoded values the overlay would otherwise use:
+/// 5pt corner radius (paired with `CodeBlockLayoutFragment.cornerRadius`),
+/// small padding, secondary-label foreground, black translucent fills.
+public struct ThemeCodeBlockEditToggle: Codable, Equatable {
+    public var cornerRadius: CGFloat
+    public var horizontalPadding: CGFloat
+    public var verticalPadding: CGFloat
+    public var foreground: ThemeColor
+    public var backgroundHover: ThemeColor
+    public var backgroundActive: ThemeColor
+
+    public init(
+        cornerRadius: CGFloat = 5,
+        horizontalPadding: CGFloat = 4,
+        verticalPadding: CGFloat = 2,
+        foreground: ThemeColor = ThemeColor(asset: "secondaryLabel"),
+        backgroundHover: ThemeColor = ThemeColor(hex: "#00000014"),
+        backgroundActive: ThemeColor = ThemeColor(hex: "#00000028")
+    ) {
+        self.cornerRadius = cornerRadius
+        self.horizontalPadding = horizontalPadding
+        self.verticalPadding = verticalPadding
+        self.foreground = foreground
+        self.backgroundHover = backgroundHover
+        self.backgroundActive = backgroundActive
+    }
+
+    public static let `default` = ThemeCodeBlockEditToggle()
+}
+
 // MARK: - ThemeChrome
 
 public struct ThemeChrome: Codable, Equatable {
@@ -389,6 +423,11 @@ public struct ThemeChrome: Codable, Equatable {
     public var headingBorderThickness: CGFloat
     public var headingBorderOffsetBelowText: CGFloat
 
+    /// Code-block edit toggle (Phase 8, Slice 3). Visual chrome for the
+    /// `</>` hover button drawn by `CodeBlockEditToggleView`. Defaulted
+    /// so existing themes that don't set it still load cleanly.
+    public var codeBlockEditToggle: ThemeCodeBlockEditToggle
+
     public init(
         kbdCornerRadius: CGFloat = 3.0,
         kbdBorderWidth: CGFloat = 1.0,
@@ -403,7 +442,8 @@ public struct ThemeChrome: Codable, Equatable {
         blockquoteBarInitialOffset: CGFloat = 2,
         hrThickness: CGFloat = 4.0,
         headingBorderThickness: CGFloat = 0.5,
-        headingBorderOffsetBelowText: CGFloat = 1.0
+        headingBorderOffsetBelowText: CGFloat = 1.0,
+        codeBlockEditToggle: ThemeCodeBlockEditToggle = .default
     ) {
         self.kbdCornerRadius = kbdCornerRadius
         self.kbdBorderWidth = kbdBorderWidth
@@ -419,6 +459,54 @@ public struct ThemeChrome: Codable, Equatable {
         self.hrThickness = hrThickness
         self.headingBorderThickness = headingBorderThickness
         self.headingBorderOffsetBelowText = headingBorderOffsetBelowText
+        self.codeBlockEditToggle = codeBlockEditToggle
+    }
+
+    // MARK: Codable — tolerate missing `codeBlockEditToggle` for
+    // themes predating Slice 3.
+
+    private enum CodingKeys: String, CodingKey {
+        case kbdCornerRadius, kbdBorderWidth,
+             kbdHorizontalPadding, kbdVerticalPaddingTop, kbdVerticalPaddingBottom,
+             codeBlockCornerRadius, codeBlockHorizontalBleed, codeBlockBorderWidth,
+             blockquoteBarWidth, blockquoteBarSpacing, blockquoteBarInitialOffset,
+             hrThickness, headingBorderThickness, headingBorderOffsetBelowText,
+             codeBlockEditToggle
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let def = ThemeChrome.default
+        self.kbdCornerRadius = try c.decodeIfPresent(
+            CGFloat.self, forKey: .kbdCornerRadius) ?? def.kbdCornerRadius
+        self.kbdBorderWidth = try c.decodeIfPresent(
+            CGFloat.self, forKey: .kbdBorderWidth) ?? def.kbdBorderWidth
+        self.kbdHorizontalPadding = try c.decodeIfPresent(
+            CGFloat.self, forKey: .kbdHorizontalPadding) ?? def.kbdHorizontalPadding
+        self.kbdVerticalPaddingTop = try c.decodeIfPresent(
+            CGFloat.self, forKey: .kbdVerticalPaddingTop) ?? def.kbdVerticalPaddingTop
+        self.kbdVerticalPaddingBottom = try c.decodeIfPresent(
+            CGFloat.self, forKey: .kbdVerticalPaddingBottom) ?? def.kbdVerticalPaddingBottom
+        self.codeBlockCornerRadius = try c.decodeIfPresent(
+            CGFloat.self, forKey: .codeBlockCornerRadius) ?? def.codeBlockCornerRadius
+        self.codeBlockHorizontalBleed = try c.decodeIfPresent(
+            CGFloat.self, forKey: .codeBlockHorizontalBleed) ?? def.codeBlockHorizontalBleed
+        self.codeBlockBorderWidth = try c.decodeIfPresent(
+            CGFloat.self, forKey: .codeBlockBorderWidth) ?? def.codeBlockBorderWidth
+        self.blockquoteBarWidth = try c.decodeIfPresent(
+            CGFloat.self, forKey: .blockquoteBarWidth) ?? def.blockquoteBarWidth
+        self.blockquoteBarSpacing = try c.decodeIfPresent(
+            CGFloat.self, forKey: .blockquoteBarSpacing) ?? def.blockquoteBarSpacing
+        self.blockquoteBarInitialOffset = try c.decodeIfPresent(
+            CGFloat.self, forKey: .blockquoteBarInitialOffset) ?? def.blockquoteBarInitialOffset
+        self.hrThickness = try c.decodeIfPresent(
+            CGFloat.self, forKey: .hrThickness) ?? def.hrThickness
+        self.headingBorderThickness = try c.decodeIfPresent(
+            CGFloat.self, forKey: .headingBorderThickness) ?? def.headingBorderThickness
+        self.headingBorderOffsetBelowText = try c.decodeIfPresent(
+            CGFloat.self, forKey: .headingBorderOffsetBelowText) ?? def.headingBorderOffsetBelowText
+        self.codeBlockEditToggle = try c.decodeIfPresent(
+            ThemeCodeBlockEditToggle.self, forKey: .codeBlockEditToggle) ?? def.codeBlockEditToggle
     }
 
     public static let `default` = ThemeChrome()

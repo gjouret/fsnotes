@@ -106,6 +106,14 @@
         "blockquoteBarInitialOffset": 2,
         "hrThickness": 4.0,
         "headingBorderThickness": 0.5,
-        "headingBorderOffsetBelowText": 1.0
+        "headingBorderOffsetBelowText": 1.0,
+        "codeBlockEditToggle": {
+            "cornerRadius": 5,
+            "horizontalPadding": 4,
+            "verticalPadding": 2,
+            "foreground": { "asset": "secondaryLabel" },
+            "backgroundHover": "#00000014",
+            "backgroundActive": "#00000028"
+        }
     }
 }

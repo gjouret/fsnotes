@@ -89,6 +89,38 @@ extension EditTextView {
         static var explicitlyOffTraits = 4
         static var lastEditContract = 5
         static var preEditProjection = 6
+        static var editingCodeBlocks = 7
+    }
+
+    /// Phase 8 — Code-Block Edit Toggle (Slice 3).
+    ///
+    /// The set of `BlockRef`s whose backing code blocks are currently
+    /// in EDITING form (raw fenced source, not rendered preview /
+    /// syntax-highlighted). Toggled by clicking the hover `</>` button
+    /// that `CodeBlockEditToggleOverlay` paints over each code block.
+    ///
+    /// Per-editor session state — not persisted. The set is threaded
+    /// through `DocumentRenderer.render(editingCodeBlocks:)` and
+    /// `DocumentEditApplier.applyDocumentEdit(priorEditingBlocks:
+    /// newEditingBlocks:)`; the Slice-1 `promoteToggledBlocksToModified`
+    /// post-LCS pass re-renders just the toggled block's span on each
+    /// flip.
+    ///
+    /// Slice 4 will add a `textViewDidChangeSelection` observer that
+    /// drops blocks from this set when the cursor leaves their span.
+    /// Today the set is sticky-until-clicked-off.
+    public var editingCodeBlocks: Set<BlockRef> {
+        get {
+            return (objc_getAssociatedObject(
+                self, &AssociatedKeys.editingCodeBlocks
+            ) as? Set<BlockRef>) ?? []
+        }
+        set {
+            objc_setAssociatedObject(
+                self, &AssociatedKeys.editingCodeBlocks, newValue,
+                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+            )
+        }
     }
 
     /// The `EditContract` from the most recent `applyEditResultWithUndo`

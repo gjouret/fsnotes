@@ -679,6 +679,9 @@
 		BB1234560001000100010021 /* InlinePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010020 /* InlinePDFView.swift */; };
 		BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010030 /* InlineQuickLookView.swift */; };
 		IILF000000000000000000B1 /* InlineImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = IILF000000000000000000F1 /* InlineImageView.swift */; };
+		CBETV00000000000000000B1 /* CodeBlockEditToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBETV00000000000000000F1 /* CodeBlockEditToggleView.swift */; };
+		CBETO00000000000000000B1 /* CodeBlockEditToggleOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */; };
+		CBEOT00000000000000000B1 /* CodeBlockEditToggleOverlayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */; };
 		23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */; };
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
 		23EAB390742AF720CE975FB6 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8C /* AIService.swift */; };
@@ -1449,6 +1452,9 @@
 		BB1234560001000100010020 /* InlinePDFView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlinePDFView.swift; sourceTree = "<group>"; };
 		BB1234560001000100010030 /* InlineQuickLookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineQuickLookView.swift; sourceTree = "<group>"; };
 		IILF000000000000000000F1 /* InlineImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineImageView.swift; sourceTree = "<group>"; };
+		CBETV00000000000000000F1 /* CodeBlockEditToggleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleView.swift; sourceTree = "<group>"; };
+		CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleOverlay.swift; sourceTree = "<group>"; };
+		CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleOverlayTests.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRenderer.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8C /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
@@ -2349,6 +2355,8 @@
 				BB1234560001000100010020 /* InlinePDFView.swift */,
 				BB1234560001000100010030 /* InlineQuickLookView.swift */,
 				IILF000000000000000000F1 /* InlineImageView.swift */,
+				CBETV00000000000000000F1 /* CodeBlockEditToggleView.swift */,
+				CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */,
 				9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */,
 				9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */,
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
@@ -2528,6 +2536,7 @@
 				CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */,
 				TEET000000000000000000F1 /* TableElementEmissionTests.swift */,
 				TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */,
+				CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */,
 				TDLC000000000000000000F1 /* TodoListColorTests.swift */,
 				BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */,
 				LHOV000000000000000000F1 /* LinkHoverTests.swift */,
@@ -3629,6 +3638,8 @@
 				BB1234560001000100010021 /* InlinePDFView.swift in Sources */,
 				BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */,
 				IILF000000000000000000B1 /* InlineImageView.swift in Sources */,
+				CBETV00000000000000000B1 /* CodeBlockEditToggleView.swift in Sources */,
+				CBETO00000000000000000B1 /* CodeBlockEditToggleOverlay.swift in Sources */,
 				23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */,
 				23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */,
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,
@@ -4015,6 +4026,7 @@
 				CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */,
 				TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */,
 				TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */,
+				CBEOT00000000000000000B1 /* CodeBlockEditToggleOverlayTests.swift in Sources */,
 				TDLC000000000000000000B1 /* TodoListColorTests.swift in Sources */,
 				BG3N000000000000000000B1 /* Bugs3NoteColorTests.swift in Sources */,
 				LHOV000000000000000000B1 /* LinkHoverTests.swift in Sources */,
