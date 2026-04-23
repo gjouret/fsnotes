@@ -106,9 +106,11 @@ extension EditTextView {
     /// post-LCS pass re-renders just the toggled block's span on each
     /// flip.
     ///
-    /// Slice 4 will add a `textViewDidChangeSelection` observer that
-    /// drops blocks from this set when the cursor leaves their span.
-    /// Today the set is sticky-until-clicked-off.
+    /// Slice 4 (`collapseEditingCodeBlocksOutsideSelection`) drops
+    /// blocks from this set whenever the selection leaves their span.
+    /// Call sites: the outer `textViewDidChangeSelection` delegate
+    /// methods in `ViewController+Events.swift` and
+    /// `NoteViewController.swift`.
     public var editingCodeBlocks: Set<BlockRef> {
         get {
             return (objc_getAssociatedObject(
@@ -2683,4 +2685,141 @@ extension EditTextView {
         }
         breakUndoCoalescing()
     }
+
+    // MARK: - Phase 8 / Slice 4 — Cursor-leaves auto-collapse
+
+    /// Phase 8 — Slice 4. Drop any block from `editingCodeBlocks`
+    /// whose span no longer contains the current selection, and
+    /// re-render via `DocumentEditApplier`. Called from the outer
+    /// `textViewDidChangeSelection` delegate hooks.
+    ///
+    /// Contract:
+    /// - If `editingCodeBlocks` is empty → no-op.
+    /// - For each ref in the set, locate the corresponding block in
+    ///   the current document (content-hash match). If the block's
+    ///   span does NOT contain the current selection, the ref is
+    ///   dropped. If the block is no longer present in the document
+    ///   (content changed, block deleted), the ref is also dropped.
+    /// - If the computed new set equals the old set → no-op (prevents
+    ///   the infinite-loop "observer fires on re-render, re-renders,
+    ///   fires on re-render" cycle).
+    /// - Otherwise: ONE `applyDocumentEdit` call with the old set as
+    ///   prior and the new set as new. The `promoteToggledBlocksToModified`
+    ///   pass emits one `.modified` change per dropped block — batched,
+    ///   not N calls.
+    ///
+    /// Safe to call repeatedly with the same selection: the
+    /// "set == prior set" guard makes the stable-selection case a
+    /// true no-op. Also safe when the editor is not in block-model
+    /// mode (no projection) — early-returns.
+    func collapseEditingCodeBlocksOutsideSelection() {
+        let priorSet = editingCodeBlocks
+        // Guard 1 — nothing to collapse. Also blocks the infinite
+        // re-render loop: after the applier finishes and selection
+        // settles on the re-rendered content, this method fires again
+        // with an already-empty set and exits here.
+        guard !priorSet.isEmpty else { return }
+
+        guard let projection = documentProjection,
+              let tlm = textLayoutManager,
+              let contentStorage =
+                tlm.textContentManager as? NSTextContentStorage
+        else { return }
+
+        let selection = selectedRange()
+        let currentDoc = projection.document
+
+        // Build a ref → block-index map of the current document so we
+        // can answer "is the selection inside block X's span?" in one
+        // O(N) pass regardless of how many refs are in `priorSet`.
+        var refToIndex: [BlockRef: Int] = [:]
+        refToIndex.reserveCapacity(currentDoc.blocks.count)
+        for (i, block) in currentDoc.blocks.enumerated() {
+            refToIndex[BlockRef(block)] = i
+        }
+
+        // Compute the new set: keep refs whose block still exists AND
+        // whose span strictly contains the current selection.
+        var newSet = Set<BlockRef>()
+        newSet.reserveCapacity(priorSet.count)
+        for ref in priorSet {
+            guard let blockIndex = refToIndex[ref],
+                  blockIndex < projection.blockSpans.count else {
+                // Block no longer in the document — drop.
+                continue
+            }
+            let span = projection.blockSpans[blockIndex]
+            let selEnd = selection.location + selection.length
+            let spanEnd = span.location + span.length
+            // Strict containment: the entire selection must sit
+            // inside the block's span.
+            if selection.location >= span.location && selEnd <= spanEnd {
+                newSet.insert(ref)
+            }
+        }
+
+        // Guard 2 — nothing changed. Matches the Slice 3 click path
+        // cleanly: if the click flipped a block OUT, `priorSet` here
+        // is already the post-click (empty or smaller) set; this
+        // method observes no delta and no-ops.
+        guard newSet != priorSet else { return }
+
+        // Commit the new set BEFORE applying so any re-entrant
+        // observer call (via text-change notifications from the
+        // applier) sees the stable state and exits via guard 1 or
+        // guard 2.
+        editingCodeBlocks = newSet
+
+        _ = DocumentEditApplier.applyDocumentEdit(
+            priorDoc: currentDoc,
+            newDoc: currentDoc,
+            contentStorage: contentStorage,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note,
+            priorEditingBlocks: priorSet,
+            newEditingBlocks: newSet
+        )
+
+        // Rebuild the projection so subsequent edits render against
+        // the new editing set. Mirrors the pattern in
+        // `CodeBlockEditToggleOverlay.applyToggle`.
+        let newRendered = DocumentRenderer.render(
+            currentDoc,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note,
+            editingCodeBlocks: newSet
+        )
+        documentProjection = DocumentProjection(
+            rendered: newRendered,
+            bodyFont: projection.bodyFont,
+            codeFont: projection.codeFont,
+            note: projection.note
+        )
+
+        needsDisplay = true
+
+        // Notify the overlay so surviving toggle buttons update
+        // their `isActive` state. The overlay observes
+        // `NSText.didChangeNotification` — but the applier runs
+        // inside a TK2 `performEditingTransaction` that batches
+        // delegate callbacks, and in headless test contexts the
+        // notification may not fire synchronously. Post an explicit
+        // notification so the overlay repositions deterministically
+        // under both live and test environments.
+        NotificationCenter.default.post(
+            name: EditTextView.editingCodeBlocksDidChangeNotification,
+            object: self
+        )
+    }
+
+    /// Phase 8 / Slice 4. Notification posted when
+    /// `editingCodeBlocks` changes via the auto-collapse path so the
+    /// overlay can re-style surviving buttons (their `isActive` state
+    /// may have flipped). Slice 3's click path does not post this —
+    /// its `reposition()` call at the end of `applyToggle` already
+    /// refreshes button state.
+    static let editingCodeBlocksDidChangeNotification =
+        Notification.Name("FSNotesEditingCodeBlocksDidChange")
 }

@@ -132,6 +132,24 @@ final class CodeBlockEditToggleOverlay {
         }
         notificationObservers.append(textToken)
 
+        // Phase 8 / Slice 4: `editingCodeBlocks` changed via the
+        // auto-collapse path. `NSText.didChangeNotification` does NOT
+        // fire when the applier runs inside a TK2
+        // `performEditingTransaction` with no delegate chain, so
+        // Slice 4 posts its own notification to keep button `isActive`
+        // state in sync with the editor's set.
+        let editingToken = center.addObserver(
+            forName: EditTextView.editingCodeBlocksDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self = self,
+                  let editor = self.editor,
+                  (note.object as? EditTextView) === editor
+            else { return }
+            self.reposition()
+        }
+        notificationObservers.append(editingToken)
+
         // Also enable the clip view's boundsDidChange delivery. Without
         // `postsBoundsChangedNotifications = true`, the scroll observer
         // receives nothing.

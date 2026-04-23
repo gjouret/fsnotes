@@ -82,6 +82,10 @@ class NoteViewController: EditorViewController, NSWindowDelegate {
             textView.pendingInlineTraits = []
         }
 
+        // Phase 8 / Slice 4: auto-collapse any code blocks in edit
+        // mode whose span no longer contains the cursor.
+        textView.collapseEditingCodeBlocksOutsideSelection()
+
         // Auto-scroll to keep cursor visible
         textView.scrollRangeToVisible(textView.selectedRange())
     }

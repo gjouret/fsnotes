@@ -143,6 +143,56 @@ public struct DocumentProjection {
         return nil
     }
 
+    /// Locate the block whose rendered span contains the given
+    /// selection. Pure function on `blockSpans` + `document.blocks` —
+    /// no view access, no AppKit.
+    ///
+    /// Semantics:
+    /// - Zero-length selection (a cursor) → the block containing that
+    ///   insertion point (`blockContaining(storageIndex:)`).
+    /// - Non-empty selection → the block whose span STRICTLY contains
+    ///   the entire selection range. If the selection straddles block
+    ///   boundaries, there is no single containing block and we return
+    ///   nil. This is deliberate: Slice 4's observer treats a multi-
+    ///   block selection as "cursor is NOT inside any single editing
+    ///   block", so every block currently in `editingCodeBlocks`
+    ///   collapses.
+    ///
+    /// - Parameter selection: the selected `NSRange` in storage
+    ///   coordinates.
+    /// - Returns: `(index, ref)` of the containing block, or nil if no
+    ///   single block contains the entire selection.
+    public func blockContainingSelection(
+        _ selection: NSRange
+    ) -> (index: Int, ref: BlockRef)? {
+        // Zero-length → delegate to blockContaining(storageIndex:).
+        if selection.length == 0 {
+            guard let (idx, _) = blockContaining(
+                storageIndex: selection.location
+            ) else { return nil }
+            guard idx >= 0, idx < rendered.document.blocks.count else {
+                return nil
+            }
+            return (idx, BlockRef(rendered.document.blocks[idx]))
+        }
+
+        // Non-empty selection: require strict containment in a single
+        // block's span. Use the low-end via binary-search (blockContaining)
+        // then verify the high end lies within the same span.
+        guard let (idx, _) = blockContaining(
+            storageIndex: selection.location
+        ) else { return nil }
+        guard idx >= 0, idx < rendered.blockSpans.count,
+              idx < rendered.document.blocks.count else { return nil }
+        let span = rendered.blockSpans[idx]
+        let selEnd = selection.location + selection.length
+        let spanEnd = span.location + span.length
+        if selection.location >= span.location && selEnd <= spanEnd {
+            return (idx, BlockRef(rendered.document.blocks[idx]))
+        }
+        return nil
+    }
+
     /// Return the indices of all blocks that overlap the given storage
     /// range. Used by multi-block toolbar operations (e.g. select three
     /// paragraphs and toggle to list). Returns an empty array if no

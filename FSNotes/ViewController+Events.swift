@@ -333,6 +333,11 @@ extension ViewController {
 
         #if os(OSX)
         editor.triggerCodeBlockRenderingIfNeeded()
+        // Phase 8 / Slice 4: auto-collapse any code blocks in edit
+        // mode whose span no longer contains the cursor. No-op if
+        // `editingCodeBlocks` is empty or the selection is still
+        // inside every currently-editing block.
+        editor.collapseEditingCodeBlocksOutsideSelection()
         #endif
 
         editor.userActivity?.needsSave = true
