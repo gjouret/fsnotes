@@ -64,6 +64,10 @@
 		THMT000000000000000000B1 /* ThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THMT000000000000000000F1 /* ThemeTests.swift */; };
 		BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */; };
 		FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */; };
+		TELE000000000000000000B1 /* TableElement.swift in Sources */ = {isa = PBXBuildFile; fileRef = TELE000000000000000000F1 /* TableElement.swift */; };
+		TLLF000000000000000000B1 /* TableLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = TLLF000000000000000000F1 /* TableLayoutFragment.swift */; };
+		TGEO000000000000000000B1 /* TableGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGEO000000000000000000F1 /* TableGeometry.swift */; };
+		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
 		DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA0000000000000000000F1 /* DocumentEditApplier.swift */; };
 		DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */; };
@@ -1132,6 +1136,10 @@
 		THMT000000000000000000F1 /* ThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeTests.swift; sourceTree = "<group>"; };
 		BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/BlockModelLayoutManagerDelegate.swift; sourceTree = "<group>"; };
 		FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/FoldedLayoutFragment.swift; sourceTree = "<group>"; };
+		TELE000000000000000000F1 /* TableElement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableElement.swift; sourceTree = "<group>"; };
+		TLLF000000000000000000F1 /* TableLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/TableLayoutFragment.swift; sourceTree = "<group>"; };
+		TGEO000000000000000000F1 /* TableGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableGeometry.swift; sourceTree = "<group>"; };
+		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
 		DEA0000000000000000000F1 /* DocumentEditApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplier.swift; sourceTree = "<group>"; };
 		DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplierTests.swift; sourceTree = "<group>"; };
@@ -1669,6 +1677,9 @@
 				KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */,
 				BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */,
 				FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */,
+				TELE000000000000000000F1 /* TableElement.swift */,
+				TLLF000000000000000000F1 /* TableLayoutFragment.swift */,
+				TGEO000000000000000000F1 /* TableGeometry.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
 				BSTH000000000000000000F1 /* BlockStyleTheme.swift */,
 				THM7000000000000000000F1 /* ThemeSchema.swift */,
@@ -2496,6 +2507,7 @@
 				TK2E000000000000000000F1 /* TextKit2ElementDispatchTests.swift */,
 				TK2F000000000000000000F1 /* TextKit2FragmentDispatchTests.swift */,
 				DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */,
+				TGET000000000000000000F1 /* TableGeometryTests.swift */,
 				TDLC000000000000000000F1 /* TodoListColorTests.swift */,
 				BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */,
 				LHOV000000000000000000F1 /* LinkHoverTests.swift */,
@@ -3388,6 +3400,9 @@
 				THM7000000000000000000B1 /* ThemeSchema.swift in Sources */,
 				BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */,
 				FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */,
+				TELE000000000000000000B1 /* TableElement.swift in Sources */,
+				TLLF000000000000000000B1 /* TableLayoutFragment.swift in Sources */,
+				TGEO000000000000000000B1 /* TableGeometry.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
 				DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */,
 				AE6D47605A4C62BABAE54290 /* Note+FileOps.swift in Sources */,
@@ -3972,6 +3987,7 @@
 				TK2E000000000000000000B1 /* TextKit2ElementDispatchTests.swift in Sources */,
 				TK2F000000000000000000B1 /* TextKit2FragmentDispatchTests.swift in Sources */,
 				DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */,
+				TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */,
 				TDLC000000000000000000B1 /* TodoListColorTests.swift in Sources */,
 				BG3N000000000000000000B1 /* Bugs3NoteColorTests.swift in Sources */,
 				LHOV000000000000000000B1 /* LinkHoverTests.swift in Sources */,
