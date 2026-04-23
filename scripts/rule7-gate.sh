@@ -101,6 +101,22 @@ add_pattern "legacySaveContent"   '\.save\(content:|prepareForSave\b'           
 # subsystem and is NOT matched by this regex.
 add_pattern "legacyMarkdownHighlight" 'NotesTextProcessor\.highlight'                                         ""
 
+# --- Phase 4.6: legacy TextStorageProcessor.blocks peer + syncBlocksFromProjection ---
+# retired. Fold/unfold and gutter-draw now consume `Document.blocks` via the
+# `documentProjection` setter's auto-sync. No app-layer caller should invoke
+# `syncBlocksFromProjection` directly (it doesn't exist) nor reach into the
+# processor's `blocks` array from outside the processor.
+add_pattern "legacyBlocksPeer"        '\.syncBlocksFromProjection\b'                                          ""
+
+# --- Phase 4.5: legacy TK1 NSLayoutManager subclass retired ---
+# The custom `LayoutManager: NSLayoutManager` subclass (fold-gate drawGlyphs,
+# drawBackground attribute drawers, cursorCharIndex gutter cache) was deleted
+# with the app flipped to TK2-only. The TK1-safe accessor `layoutManagerIfTK1`
+# was removed alongside it — any reappearance indicates the TK1 stack is
+# being resurrected outside the explicit block-model / SourceRenderer TK2
+# paths. Comments referencing these tokens are filtered by `is_comment_line`.
+add_pattern "tk1LayoutManager"        'class[[:space:]]+LayoutManager[[:space:]]*:[[:space:]]*NSLayoutManager|layoutManagerIfTK1' ""
+
 # --- View-to-model bidirectional data flow (read cell state into model) ---
 # The InlineTableView.swift / TableRenderController.swift widget files that
 # historically held the bidirectional-flow bug were deleted 2026-04-23 in

@@ -1330,10 +1330,10 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
             return
         }
 
-        // Harness does not auto-populate the processor's source-mode
-        // blocks array (it powers the fold machinery). Sync from the
-        // projection so `headerBlockIndex` and `toggleFold` work.
-        processor.syncBlocksFromProjection(projection)
+        // Phase 4.6: the `documentProjection` setter auto-syncs
+        // `processor.blocks` from the projection. No explicit sync call
+        // is needed for `headerBlockIndex` and `toggleFold` to work.
+        _ = projection
 
         func totalFragmentHeight() -> CGFloat {
             tlm.ensureLayout(for: tlm.documentRange)
@@ -1393,7 +1393,8 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
             XCTFail("TK2 required")
             return
         }
-        processor.syncBlocksFromProjection(projection)
+        // Phase 4.6: auto-sync via setter — no explicit call needed.
+        _ = projection
 
         func totalFragmentHeight() -> CGFloat {
             tlm.ensureLayout(for: tlm.documentRange)

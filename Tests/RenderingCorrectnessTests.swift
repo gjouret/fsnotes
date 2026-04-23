@@ -380,8 +380,11 @@ class RenderingCorrectnessTests: XCTestCase {
 
         let container = NSTextContainer(size: NSSize(width: 600, height: 10_000))
         container.lineFragmentPadding = 0
-        let lm = LayoutManager()
-        lm.delegate = lm
+        // Phase 4.5: TK1 `LayoutManager` subclass deleted. Use base
+        // `NSLayoutManager` — the subclass's line-height delegate logic
+        // isn't exercised here; the test measures y-origin preservation
+        // across edits, which only needs standard glyph math.
+        let lm = NSLayoutManager()
         lm.addTextContainer(container)
         let storage = NSTextStorage(attributedString: projectionA.attributed)
         storage.addLayoutManager(lm)
@@ -511,8 +514,10 @@ class RenderingCorrectnessTests: XCTestCase {
     private func makeBlockModelEditor() -> EditTextView {
         let frame = NSRect(x: 0, y: 0, width: 600, height: 800)
         let container = NSTextContainer(size: frame.size)
-        let layoutManager = LayoutManager()
-        layoutManager.delegate = layoutManager
+        // Phase 4.5: TK1 `LayoutManager` subclass deleted. Use base
+        // `NSLayoutManager` — the block-model path doesn't rely on the
+        // subclass's drawing helpers (they live in TK2 fragments now).
+        let layoutManager = NSLayoutManager()
         layoutManager.addTextContainer(container)
         let storage = NSTextStorage()
         storage.addLayoutManager(layoutManager)
@@ -548,7 +553,7 @@ class RenderingCorrectnessTests: XCTestCase {
         editor.textStorageProcessor?.isRendering = false
         editor.documentProjection = projection
         editor.textStorageProcessor?.blockModelActive = true
-        editor.textStorageProcessor?.syncBlocksFromProjection(projection)
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         editor.layoutManager!.ensureLayout(for: editor.textContainer!)
     }
 
@@ -567,8 +572,14 @@ class RenderingCorrectnessTests: XCTestCase {
     }
 
     /// Layout a document and return the y-origin of the line fragment that starts
-    /// at the given block's first character. Uses the real LayoutManager subclass
-    /// so its font/line-height delegate logic is exercised.
+    /// at the given block's first character.
+    ///
+    /// Phase 4.5: previously used the custom `LayoutManager` subclass so
+    /// its font/line-height delegate logic was exercised; that subclass
+    /// is gone, so this helper now measures against a base
+    /// `NSLayoutManager`. The test remains meaningful because the
+    /// renderer-set `.paragraphStyle` (minLineHeight / paragraphSpacing)
+    /// still drives line metrics through standard AppKit paths.
     private func measureLineOriginY(
         for document: Document,
         blockIndex: Int,
@@ -577,8 +588,7 @@ class RenderingCorrectnessTests: XCTestCase {
         let rendered = DocumentRenderer.render(document, bodyFont: bodyFont, codeFont: bodyFont)
         let container = NSTextContainer(size: NSSize(width: 600, height: 10_000))
         container.lineFragmentPadding = 0
-        let lm = LayoutManager()
-        lm.delegate = lm
+        let lm = NSLayoutManager()
         lm.addTextContainer(container)
         let storage = NSTextStorage(attributedString: rendered.attributed)
         storage.addLayoutManager(lm)

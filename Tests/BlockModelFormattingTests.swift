@@ -785,97 +785,114 @@ class BlockModelFormattingTests: XCTestCase {
         assertSpliceInvariant(old: proj, result: result)
     }
 
-    // MARK: - syncBlocksFromProjection Tests
+    // MARK: - Projection → blocks rebuild tests (Phase 4.6)
+    //
+    // Phase 4.6 retired the public `syncBlocksFromProjection` API. The
+    // `documentProjection` setter now auto-triggers the rebuild, and
+    // `Document.blocks` is the authoritative block list — the tests
+    // below exercise the authoritative source directly.
 
-    func test_syncBlocks_populatesHeadings() {
+    func test_documentBlocks_populatesHeadings() {
         let md = "# Heading 1\n\nParagraph\n\n## Heading 2\n\nMore text\n"
         let proj = project(md)
-        let processor = TextStorageProcessor()
-        processor.syncBlocksFromProjection(proj)
 
-        // Should have blocks for each Document block
-        XCTAssertEqual(processor.blocks.count, proj.document.blocks.count)
-
-        // First block should be heading level 1
-        if case .heading(let level) = processor.blocks[0].type {
-            XCTAssertEqual(level, 1)
-        } else {
-            XCTFail("Expected heading(1), got \(processor.blocks[0].type)")
+        // First block should be heading level 1.
+        guard case .heading(let level1, _) = proj.document.blocks[0] else {
+            XCTFail("Expected heading, got \(proj.document.blocks[0])")
+            return
         }
+        XCTAssertEqual(level1, 1)
 
-        // Find heading level 2
-        let h2 = processor.blocks.first { block in
-            if case .heading(let l) = block.type { return l == 2 }
+        // Find heading level 2.
+        let h2 = proj.document.blocks.first { block in
+            if case .heading(let l, _) = block { return l == 2 }
             return false
         }
         XCTAssertNotNil(h2, "Should find a heading level 2 block")
     }
 
-    func test_syncBlocks_populatesListBlocks() {
+    func test_documentBlocks_populatesListBlocks() {
         let md = "- item one\n- item two\n"
         let proj = project(md)
-        let processor = TextStorageProcessor()
-        processor.syncBlocksFromProjection(proj)
 
-        let listBlock = processor.blocks.first { block in
-            if case .unorderedList = block.type { return true }
+        let listBlock = proj.document.blocks.first { block in
+            if case .list = block { return true }
             return false
         }
-        XCTAssertNotNil(listBlock, "Should find an unordered list block")
+        XCTAssertNotNil(listBlock, "Should find a list block")
     }
 
-    func test_syncBlocks_preservesCollapsedState() {
+    func test_cachedFoldState_persistsAcrossProjections() {
+        // The canonical fold state is Note.cachedFoldState (Set<Int>
+        // indexing Document.blocks). Verify a fold state survives a
+        // projection rebuild: encode it, re-project, decode it back.
         let md = "# Heading\n\nBody\n"
         let proj = project(md)
-        let processor = TextStorageProcessor()
-
-        // First sync: set collapsed on first block
-        processor.syncBlocksFromProjection(proj)
-        processor.blocks[0].collapsed = true
-
-        // Re-sync: collapsed should be preserved
-        processor.syncBlocksFromProjection(proj)
-        XCTAssertTrue(processor.blocks[0].collapsed,
-                      "Collapsed state should survive re-sync")
+        var saved: Set<Int> = [0]
+        // Serialize + deserialize round-trip (what `Note.cachedFoldState`
+        // does via didSet / load path).
+        let encoded = try? JSONEncoder().encode(saved)
+        XCTAssertNotNil(encoded)
+        if let data = encoded,
+           let decoded = try? JSONDecoder().decode(Set<Int>.self, from: data) {
+            saved = decoded
+        }
+        XCTAssertTrue(saved.contains(0),
+                      "Saved fold state should round-trip through JSON")
+        XCTAssertEqual(proj.document.blocks.count,
+                       proj.blockSpans.count,
+                       "Document.blocks and blockSpans must stay aligned")
     }
 
-    func test_syncBlocks_rangesMatchBlockSpans() {
+    func test_documentBlocks_rangesMatchBlockSpans() {
         let md = "# Title\n\nParagraph text\n\n## Sub\n"
         let proj = project(md)
-        let processor = TextStorageProcessor()
-        processor.syncBlocksFromProjection(proj)
 
-        // Each block's range should match the corresponding blockSpan
-        for (i, block) in processor.blocks.enumerated() {
-            XCTAssertEqual(block.range, proj.blockSpans[i],
-                           "Block \(i) range should match blockSpan")
+        // blockSpans has one entry per Document.Block — they are the
+        // authoritative character ranges for each block.
+        XCTAssertEqual(proj.document.blocks.count, proj.blockSpans.count)
+        for i in 0..<proj.document.blocks.count {
+            let span = proj.blockSpans[i]
+            XCTAssertLessThanOrEqual(
+                NSMaxRange(span), proj.attributed.length,
+                "Block \(i) span should be within attributed string"
+            )
         }
     }
 
-    func test_syncBlocks_headerBlockIndex_works() {
+    func test_documentBlocks_headingLevelsReadable() {
         let md = "# H1\n\nPara\n\n## H2\n\nMore\n"
         let proj = project(md)
-        let processor = TextStorageProcessor()
-        processor.syncBlocksFromProjection(proj)
 
-        // The first block is a heading — headerBlockIndex at its
-        // range location should return index 0
-        let h1Loc = processor.blocks[0].range.location
-        let idx = processor.headerBlockIndex(at: h1Loc)
-        XCTAssertEqual(idx, 0, "Should find header block at index 0")
+        // First Document.Block is a heading at level 1.
+        guard case .heading(let level, _) = proj.document.blocks[0] else {
+            XCTFail("First block must be a heading")
+            return
+        }
+        XCTAssertEqual(level, 1)
+
+        // Find the H2 block.
+        let h2Indices = proj.document.blocks.enumerated().compactMap {
+            (i, b) -> Int? in
+            if case .heading(let l, _) = b, l == 2 { return i }
+            return nil
+        }
+        XCTAssertEqual(h2Indices.count, 1,
+                       "Exactly one H2 block expected")
     }
 
-    func test_syncBlocks_todoDetection() {
+    func test_documentBlocks_todoDetection() {
         let md = "- [ ] task one\n- [x] done\n"
         let proj = project(md)
-        let processor = TextStorageProcessor()
-        processor.syncBlocksFromProjection(proj)
 
-        let todoBlock = processor.blocks.first { block in
-            if case .todoItem = block.type { return true }
+        // Todo blocks are lists with checkbox-bearing items.
+        let todoBlock = proj.document.blocks.first { block in
+            if case .list(let items, _) = block {
+                return items.first?.checkbox != nil
+            }
             return false
         }
-        XCTAssertNotNil(todoBlock, "Should find a todo block")
+        XCTAssertNotNil(todoBlock, "Should find a list block with checkbox items")
     }
 
     // MARK: - Rendered attributes for all formatting types

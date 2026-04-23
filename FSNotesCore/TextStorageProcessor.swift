@@ -113,27 +113,27 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// `blockModelActive` for the source-mode view.
     public var sourceRendererActive = false
 
-    // MARK: - Source-Mode Block Array
+    // MARK: - Block Array (source-mode + fold/unfold state)
 
-    /// Source-mode block array used by fold/unfold and the source-mode
-    /// rendering pipeline. When blockModelActive==true, populated
-    /// via syncBlocksFromProjection() instead of updateBlockModel().
+    /// Block array used by fold/unfold and the source-mode rendering
+    /// pipeline. In source mode it's populated by `updateBlockModel()`
+    /// (driven by `MarkdownBlockParser`). In WYSIWYG mode it's
+    /// populated automatically by the `documentProjection` setter via
+    /// `rebuildBlocksFromProjection(_:)` — callers no longer invoke a
+    /// public sync method (Phase 4.6).
     public var blocks: [MarkdownBlock] = []
 
-    /// Identity reference of the last attributed string that
-    /// `syncBlocksFromProjection` saw. Used to skip the O(blocks) walk
-    /// when the projection hasn't actually changed (Perf plan item #9).
-    private weak var lastSyncedAttributed: NSAttributedString?
-    /// Snapshot of the last-synced Document.blocks and blockSpans. When the
-    /// attributed string IS new (fast-path 1 misses) but most blocks are
-    /// unchanged — the common case during single-block typing — this lets
-    /// us rebuild only the entries whose Document.Block or span actually
-    /// differs, instead of reallocating the entire `blocks` array.
-    private var lastSyncedDocBlocks: [Block] = []
-    private var lastSyncedSpans: [NSRange] = []
+    /// Deduplication set for mermaid/math code-block rendering (unrelated
+    /// to the sync path; stays).
     private var pendingRenderedBlockIDs = Set<UUID>()
 
     /// Return the set of block indices that are currently collapsed.
+    ///
+    /// Reads from `blocks[*].collapsed` when populated; in WYSIWYG mode
+    /// the setter-driven sync preserves collapsed state across projection
+    /// rebuilds. Canonical persistence happens via `Note.cachedFoldState`
+    /// (`toggleFold` writes it on every flip; fill paths read it back via
+    /// `restoreCollapsedState`).
     public var collapsedBlockIndices: Set<Int> {
         Set(blocks.enumerated().compactMap { $0.element.collapsed ? $0.offset : nil })
     }
@@ -192,86 +192,30 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return depth
     }
 
-    // MARK: - Block Model Sync for Fold/Unfold
+    // MARK: - Block Model Sync for Fold/Unfold (Phase 4.6 — private)
 
-    /// Populate the source-mode `blocks` array from a DocumentProjection so
-    /// that fold/unfold (which reads `blocks`) works when
+    /// Populate the `blocks` array from a `DocumentProjection` so that
+    /// fold/unfold (which reads `blocks`) and gutter-draw (which
+    /// iterates `blocks` for fold carets + H-badges) work when
     /// `blockModelActive == true`.
     ///
     /// The block-model pipeline bypasses `process()` (which normally
-    /// populates `blocks`), so fold operations would silently no-op.
-    /// This method bridges the gap by creating MarkdownBlock entries
-    /// from the Document model's block types + the rendered blockSpans.
+    /// populates `blocks`), so without this rebuild fold operations
+    /// would silently no-op in WYSIWYG mode. Phase 4.6 made this method
+    /// private and made the `documentProjection` setter call it
+    /// automatically — app-layer callers no longer invoke a public sync.
     ///
     /// IMPORTANT: preserves the `collapsed` flag from any existing blocks
-    /// that match by type + position, so fold state survives re-renders.
-    public func syncBlocksFromProjection(_ projection: DocumentProjection) {
-        // Perf plan item #9: memoize on the rendered attributed string's
-        // object identity. Typing doesn't allocate a fresh attributed
-        // string — it patches the existing one via `replaceCharacters`
-        // — so most keystrokes keep `rendered.attributed === last`.
-        // Only structural operations (splits, merges, block-type changes)
-        // produce a new projection with a new attributed instance, and
-        // those are the cases where the O(blocks) walk is actually needed.
-        if lastSyncedAttributed === projection.rendered.attributed,
-           blocks.count == projection.document.blocks.count {
-            return
-        }
-
+    /// at the same index so fold state survives re-renders.
+    internal func rebuildBlocksFromProjection(_ projection: DocumentProjection) {
         let doc = projection.document
         let spans = projection.blockSpans
         guard doc.blocks.count == spans.count else {
             blocks = []
-            lastSyncedAttributed = projection.rendered.attributed
-            lastSyncedDocBlocks = []
-            lastSyncedSpans = []
             return
         }
 
-        // Differential fast-path: when fast-path 1 missed because a fresh
-        // attributed string was allocated, but the block count matches and
-        // most blocks are structurally unchanged (the common case during
-        // single-block typing), rebuild only the entries whose underlying
-        // Document.Block or span actually differs. Preserves semantics
-        // exactly — the per-entry rebuild uses identical logic to the
-        // slow path below — but avoids reallocating entries that haven't
-        // changed and skips the per-paragraph attributedSubstring +
-        // looksLikeTable check for unchanged paragraphs.
-        if blocks.count == doc.blocks.count,
-           lastSyncedDocBlocks.count == doc.blocks.count,
-           lastSyncedSpans.count == spans.count {
-            var allSame = true
-            for i in 0..<doc.blocks.count {
-                if lastSyncedDocBlocks[i] == doc.blocks[i],
-                   NSEqualRanges(lastSyncedSpans[i], spans[i]) {
-                    continue
-                }
-                allSame = false
-                // Rebuild this entry in place using the same logic as the
-                // slow path. Preserves the existing `collapsed` flag at
-                // this index (matches the dictionary-keyed-by-index
-                // preservation in the slow path).
-                let preservedCollapsed = blocks[i].collapsed
-                blocks[i] = makeBlockEntry(
-                    block: doc.blocks[i],
-                    span: spans[i],
-                    projection: projection
-                )
-                if preservedCollapsed {
-                    blocks[i].collapsed = true
-                }
-            }
-            if !allSame || lastSyncedAttributed !== projection.rendered.attributed {
-                lastSyncedAttributed = projection.rendered.attributed
-                lastSyncedDocBlocks = doc.blocks
-                lastSyncedSpans = spans
-            }
-            return
-        }
-
-        lastSyncedAttributed = projection.rendered.attributed
-
-        // Snapshot previous collapsed states keyed by block index
+        // Snapshot previous collapsed states keyed by block index.
         let previousCollapsed = Dictionary(
             uniqueKeysWithValues: blocks.enumerated()
                 .filter { $0.element.collapsed }
@@ -279,23 +223,19 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         )
 
         var newBlocks: [MarkdownBlock] = []
+        newBlocks.reserveCapacity(doc.blocks.count)
         for (i, block) in doc.blocks.enumerated() {
             var mb = makeBlockEntry(block: block, span: spans[i], projection: projection)
-            // Preserve collapsed state from previous blocks at the same index
             if previousCollapsed[i] == true {
                 mb.collapsed = true
             }
             newBlocks.append(mb)
         }
         blocks = newBlocks
-        lastSyncedDocBlocks = doc.blocks
-        lastSyncedSpans = spans
     }
 
     /// Build a single `MarkdownBlock` entry from a `Document.Block` + its
-    /// rendered span. Extracted from `syncBlocksFromProjection` so both the
-    /// full rebuild and the differential fast-path share one construction
-    /// path, guaranteeing identical semantics.
+    /// rendered span.
     private func makeBlockEntry(block: Block, span: NSRange, projection: DocumentProjection) -> MarkdownBlock {
         let blockType: MarkdownBlockType
         var isRenderedCodeBlock = false

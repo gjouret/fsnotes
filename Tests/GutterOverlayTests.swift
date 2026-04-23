@@ -57,20 +57,16 @@ final class GutterOverlayTests: XCTestCase {
             editor.textLayoutManager,
             "EditorHarness must yield a TK2 editor for Phase 2f.2 tests"
         )
-        XCTAssertNil(
-            editor.layoutManagerIfTK1,
-            "TK2 editor must expose nil `layoutManagerIfTK1`"
-        )
+        // Phase 4.5: `layoutManagerIfTK1` property was deleted along with
+        // the custom TK1 `LayoutManager` subclass. The TK2 precondition
+        // is now satisfied by construction — no TK1 accessor to assert
+        // against.
 
-        // The harness seeds via `DocumentProjection` but does not call
-        // `syncBlocksFromProjection`, which the live app invokes on
-        // every fill/edit to populate `processor.blocks`. Fold-state
-        // queries (`headerBlockIndex(at:)`) depend on that array — and
-        // so does the gutter caret hit test. Mirror the app's fill
-        // path here.
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: the `documentProjection` setter auto-syncs
+        // `processor.blocks`. The harness seeds via the setter so
+        // fold-state queries (`headerBlockIndex(at:)`) and the gutter
+        // caret hit test have a populated block list without any
+        // explicit priming here.
 
         // Force layout so `enumerateTextLayoutFragments(... .ensuresLayout)`
         // has fragments to iterate.
@@ -138,10 +134,7 @@ final class GutterOverlayTests: XCTestCase {
             return
         }
 
-        // See note on sync in the sibling test above.
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`; no priming needed.
 
         tlm.ensureLayout(for: tlm.documentRange)
 
@@ -274,17 +267,13 @@ final class GutterOverlayTests: XCTestCase {
             editor.textLayoutManager,
             "EditorHarness must yield a TK2 editor"
         )
-        XCTAssertNil(
-            editor.layoutManagerIfTK1,
-            "TK2 editor must expose nil `layoutManagerIfTK1`"
-        )
+        // Phase 4.5: `layoutManagerIfTK1` property was deleted along with
+        // the custom TK1 `LayoutManager` subclass. The TK2 precondition
+        // is now satisfied by construction — no TK1 accessor to assert
+        // against.
 
-        // Populate `processor.blocks` from the seeded projection — the
-        // code-block discovery path looks up `processor.blocks` to map
-        // a fragment's first character to a logical block.
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`; the code-block
+        // discovery path picks up the populated list without priming.
 
         if let tlm = editor.textLayoutManager {
             tlm.ensureLayout(for: tlm.documentRange)
@@ -376,11 +365,10 @@ final class GutterOverlayTests: XCTestCase {
         let editor = harness.editor
 
         XCTAssertNotNil(editor.textLayoutManager, "Must be TK2")
-        XCTAssertNil(editor.layoutManagerIfTK1, "Must be TK2")
+        // Phase 4.5: `layoutManagerIfTK1` deleted — TK2 precondition is
+        // satisfied by construction.
 
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`; no priming.
         if let tlm = editor.textLayoutManager {
             tlm.ensureLayout(for: tlm.documentRange)
         }

@@ -65,10 +65,7 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         let harness = EditorHarness(markdown: markdown)
         defer { harness.teardown() }
 
-        if let proj = harness.editor.documentProjection {
-            harness.editor.textStorageProcessor?
-                .syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         pumpLayout(harness.editor)
 
         let overlay = CodeBlockEditToggleOverlay(editor: harness.editor)
@@ -98,9 +95,7 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         pumpLayout(editor)
 
         // Mark the code block's storage range as folded. Under the
@@ -156,9 +151,7 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         pumpLayout(editor)
 
         let overlay = CodeBlockEditToggleOverlay(editor: editor)
@@ -222,9 +215,7 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         pumpLayout(editor)
 
         // Locate the mermaid block's ref (content-hash keyed).
@@ -298,9 +289,7 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        if let proj = editor.documentProjection {
-            editor.textStorageProcessor?.syncBlocksFromProjection(proj)
-        }
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         pumpLayout(editor)
 
         guard let proj = editor.documentProjection,

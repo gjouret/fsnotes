@@ -78,6 +78,14 @@ extension EditTextView {
         }
         set {
             objc_setAssociatedObject(self, &AssociatedKeys.projection, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            // Phase 4.6: auto-sync `textStorageProcessor.blocks` from the
+            // new projection so fold/unfold + gutter-draw see the current
+            // block list without an explicit call. Callers used to invoke
+            // `syncBlocksFromProjection(_:)` manually after every
+            // projection update — that public API has been retired.
+            if let proj = newValue {
+                textStorageProcessor?.rebuildBlocksFromProjection(proj)
+            }
         }
     }
 
@@ -335,8 +343,9 @@ extension EditTextView {
 
         documentProjection = projection
         textStorageProcessor?.blockModelActive = true
-        // Populate the source-mode blocks array so fold/unfold works
-        textStorageProcessor?.syncBlocksFromProjection(projection)
+        // Phase 4.6: the `documentProjection` setter auto-syncs
+        // `processor.blocks` from `projection`, so no explicit sync call
+        // is needed here.
 
         // Restore fold state from the note's cache (RC5).
         if let savedFolds = note.cachedFoldState, !savedFolds.isEmpty,
@@ -666,8 +675,9 @@ extension EditTextView {
         bmLog("🔧 applyEditResultWithUndo AFTER: storage.length=\(storage.length), storage.string='\(storage.string)'")
 
         // Update projection.
+        // Phase 4.6: setter auto-syncs `processor.blocks` from the new
+        // projection — no explicit call needed.
         documentProjection = result.newProjection
-        textStorageProcessor?.syncBlocksFromProjection(result.newProjection)
 
         // Set cursor without triggering an implicit scroll.
         // The 1-arg setSelectedRange(_:) calls scrollRangeToVisible;
@@ -869,8 +879,8 @@ extension EditTextView {
         umRestore?.enableUndoRegistration()
 
         // Restore projection and cursor.
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         documentProjection = projection
-        textStorageProcessor?.syncBlocksFromProjection(projection)
         let safeCursor = NSRange(
             location: min(cursorRange.location, storage.length),
             length: min(cursorRange.length, max(0, storage.length - cursorRange.location))
@@ -2644,8 +2654,8 @@ extension EditTextView {
                             codeFont: proj.codeFont,
                             note: proj.note
                         )
+                        // Phase 4.6: setter auto-syncs `processor.blocks`.
                         self.documentProjection = newProjection
-                        self.textStorageProcessor?.syncBlocksFromProjection(newProjection)
                     }
 
                     self.needsDisplay = true
@@ -2845,8 +2855,8 @@ extension EditTextView {
                             codeFont: proj.codeFont,
                             note: proj.note
                         )
+                        // Phase 4.6: setter auto-syncs `processor.blocks`.
                         self.documentProjection = newProjection
-                        self.textStorageProcessor?.syncBlocksFromProjection(newProjection)
                     }
 
                     self.needsDisplay = true

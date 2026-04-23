@@ -77,8 +77,8 @@ extension EditTextView {
         guard let storage = textStorage else { return }
         let fullRange = NSRange(location: 0, length: storage.length)
         storage.replaceCharacters(in: fullRange, with: newProjection.attributed)
+        // Phase 4.6: setter auto-syncs `processor.blocks`.
         documentProjection = newProjection
-        textStorageProcessor?.syncBlocksFromProjection(newProjection)
 
         // Save the updated document.
         save()
