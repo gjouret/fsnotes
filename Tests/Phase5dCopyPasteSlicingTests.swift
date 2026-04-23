@@ -240,4 +240,37 @@ final class Phase5dCopyPasteSlicingTests: XCTestCase {
         m.replaceCharacters(in: result.spliceRange, with: result.spliceReplacement)
         XCTAssertEqual(m.string, result.newProjection.attributed.string)
     }
+
+    // MARK: - Copy-path wire-in (markdownForCopy → slice → serialize)
+
+    func test_5d_copy_singleParagraph_wholeBlock_viaSlice() {
+        // Selecting the entire paragraph span should produce exactly the
+        // paragraph's markdown (no trailing newline, no surrounding
+        // whitespace).
+        let proj = project("hello world\n")
+        let span = proj.blockSpans[0]
+        let md = EditTextView.markdownForCopy(projection: proj, range: span)
+        XCTAssertEqual(md, "hello world")
+    }
+
+    func test_5d_copy_wholeBlock_preservesInlineFormatting() {
+        // Inline markers (bold, italic, links) must survive whole-
+        // block copy via slice.
+        let proj = project("say **hello** _world_\n")
+        let span = proj.blockSpans[0]
+        let md = EditTextView.markdownForCopy(projection: proj, range: span)
+        XCTAssertEqual(md, "say **hello** _world_")
+    }
+
+    func test_5d_copy_spanningTwoParagraphs_viaSlice() {
+        // Two paragraphs separated by a blank line. Selecting the
+        // entire document should produce both paragraphs joined by
+        // a blank line (the serializer handles block separators).
+        let proj = project("first\n\nsecond\n")
+        let total = NSRange(location: 0, length: proj.attributed.length)
+        let md = EditTextView.markdownForCopy(projection: proj, range: total)
+        XCTAssertNotNil(md)
+        XCTAssertTrue(md!.contains("first"))
+        XCTAssertTrue(md!.contains("second"))
+    }
 }

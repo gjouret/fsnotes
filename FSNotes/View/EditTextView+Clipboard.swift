@@ -64,10 +64,21 @@ extension EditTextView {
         // italic, links, wikilinks, etc.) instead of landing as plain
         // rendered text. The branches below are source-mode legacy:
         // they read `paragraph.string`, which strips all markers.
+        //
+        // Phase 5d: also write an RTF representation of the selected
+        // attributed string when available, for cross-app fidelity
+        // (paste into Pages / TextEdit / Mail preserves bold/italic/
+        // links visually). RTF is only written when the conversion
+        // succeeds; the markdown string is always the primary type.
         if let mdCopy = copyAsMarkdownViaBlockModel() {
             let pb = NSPasteboard.general
             pb.clearContents()
-            pb.declareTypes([.string], owner: nil)
+            if let rtfData = rtfDataForCopy() {
+                pb.declareTypes([.rtf, .string], owner: nil)
+                pb.setData(rtfData, forType: .rtf)
+            } else {
+                pb.declareTypes([.string], owner: nil)
+            }
             pb.setString(mdCopy, forType: .string)
             return
         }
@@ -452,6 +463,41 @@ extension EditTextView {
         return cells
     }
 
+    /// Phase 5d: build an RTF representation of the current selection
+    /// for cross-app fidelity (Pages, TextEdit, Mail etc. read `.rtf`
+    /// natively). Returns nil when:
+    ///   - there is no selection or the paragraph under the cursor
+    ///     can't be resolved, or
+    ///   - the RTF serialization fails for any reason.
+    /// Callers treat RTF as optional; the canonical copy type remains
+    /// markdown via `copyAsMarkdownViaBlockModel`.
+    ///
+    /// The attributed substring comes straight from text storage's
+    /// rendered output (no marker re-injection), so the RTF carries
+    /// the visual styling a reader of the note would see.
+    func rtfDataForCopy() -> Data? {
+        let sel = selectedRange()
+        let range: NSRange
+        if sel.length > 0 {
+            range = sel
+        } else if let paragraphRange = getParagraphRange() {
+            range = paragraphRange
+        } else {
+            return nil
+        }
+        guard let attributed = attributedSubstring(
+            forProposedRange: range, actualRange: nil
+        ) else {
+            return nil
+        }
+        return try? attributed.data(
+            from: NSRange(location: 0, length: attributed.length),
+            documentAttributes: [
+                .documentType: NSAttributedString.DocumentType.rtf
+            ]
+        )
+    }
+
     /// Copy the current selection (or the paragraph under the cursor
     /// when the selection is empty) as MARKDOWN via the block-model
     /// pipeline. Returns nil when we're not in block-model mode or
@@ -484,6 +530,17 @@ extension EditTextView {
     /// Pure helper: serialize the markdown for a textStorage range
     /// against a projection. Extracted from `copyAsMarkdownViaBlockModel`
     /// so it can be unit-tested without an editor instance.
+    ///
+    /// Phase 5d: whole-block slicing now routes through
+    /// `DocumentProjection.slice(in:)` + `MarkdownSerializer.serialize`
+    /// (the single-primitive copy contract). Partial overlap of non-
+    /// paragraph blocks (e.g. copying a single rendered line out of a
+    /// list block) remains on `partialBlockMarkdown` because
+    /// `slice(in:)` degrades partial structural-block overlap to plain
+    /// text — the list-line branch of `partialBlockMarkdown` produces
+    /// the marker-preserved `"- item"` output that existing tests
+    /// require. Paragraph partial overlap goes through the same
+    /// `splitInlines` path in both helpers, so the output is identical.
     static func markdownForCopy(
         projection: DocumentProjection, range: NSRange
     ) -> String? {
@@ -502,13 +559,13 @@ extension EditTextView {
             let fullyCovered = (overlapStart == span.location && overlapEnd == NSMaxRange(span))
 
             if fullyCovered {
-                // Wrap in a single-block Document to reuse the public
-                // `serialize` entry point. `trailingNewline: false`
-                // prevents a stray "\n" from being appended.
-                let singleBlockDoc = Document(
-                    blocks: [block], trailingNewline: false
+                // Phase 5d: use DocumentProjection.slice for the whole-
+                // block case — single primitive, same output as the
+                // pre-5d single-block Document wrapping.
+                let sliced = projection.slice(
+                    in: NSRange(location: span.location, length: span.length)
                 )
-                parts.append(MarkdownSerializer.serialize(singleBlockDoc))
+                parts.append(MarkdownSerializer.serialize(sliced))
             } else {
                 parts.append(partialBlockMarkdown(
                     block, from: inBlockStart, to: inBlockEnd,
