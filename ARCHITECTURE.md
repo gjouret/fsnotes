@@ -267,6 +267,108 @@ When backspace crosses a block boundary, `mergeAdjacentBlocks` combines the tail
 | any | htmlBlock | HTML block removed (content lost) |
 | any | blockquote | Blockquote removed (first line's inlines appended) |
 
+## FSM and Edit Contracts
+
+### Why this exists
+
+Every `EditingOps` primitive used to return an opaque `EditResult` that described the *textual* outcome — a splice range, a replacement string, and a cursor `Int`. The *structural* outcome (which blocks were created, deleted, merged, split, or renumbered) was implicit in the diff between the before and after projections. That meant a bug like "toggleList accidentally deleted a neighbor block" or "renumberList touched an adjacent ordered list that should have been untouched" was only caught by code review: nothing in the primitive's signature declared what it was allowed to change. Phase 1 introduces `EditContract`, a declarative statement each primitive attaches to its result. The harness holds the primitive to exactly what it promised — undeclared changes and missing declared changes both surface as invariant failures at the pure-function layer.
+
+### DocumentCursor
+
+A cursor expressed in document terms rather than storage terms. `blockPath` identifies a block (flat today, nestable tomorrow without a migration). `inlineOffset` is a UTF-16 character offset into the block's rendered inline text — the *same* coordinate `DocumentRenderer` emits into `NSAttributedString`. Conversion between `DocumentCursor` and a storage `Int` goes through the projection, which owns `blockSpans` and knows where every block lives. This is the natural representation for the eventual TextKit 2 / `NSTextLocation` switchover: Phase 2 replaces the storage-int translation, not the cursor type.
+
+```swift
+public struct DocumentCursor: Equatable {
+    public let blockPath: [Int]
+    public let inlineOffset: Int
+}
+```
+
+For block kinds whose storage representation is a single attachment (`.horizontalRule`, `.table`), `inlineOffset` is ignored and canonically 0.
+
+### EditAction
+
+The enumeration of structural changes a primitive may declare. Actions are coarse-grained — they describe *what* changed, not *how*.
+
+| Case | Meaning |
+|------|---------|
+| `.insertBlock(at:)` | A new block appeared at this post-edit top-level index. |
+| `.deleteBlock(at:)` | The block at this pre-edit top-level index was removed. |
+| `.replaceBlock(at:)` | Same position, same-or-different kind, different content. |
+| `.mergeAdjacent(firstIndex:)` | Two adjacent blocks were merged; post-edit doc is one shorter. |
+| `.splitBlock(at:inlineIndex:offset:)` | A block was split in two; post-edit doc is one longer. |
+| `.renumberList(startIndex:)` | An ordered list's markers were resequenced from this index. |
+| `.reindentList(range:)` | Indent/outdent changed across a range of list items. |
+| `.modifyInline(blockIndex:)` | Inline-level change within a single block (typing, formatting, inline delete). |
+| `.changeBlockKind(at:)` | Block kind changed (paragraph ↔ heading, list marker change, heading level, todo toggle). Same top-level index. |
+| `.replaceTableCell(blockIndex:rowIndex:colIndex:)` | A table cell's inline content changed; shape unchanged. |
+
+### EditContract
+
+What the primitive promises. Populated by the primitive and attached to `EditResult`.
+
+```swift
+public struct EditContract: Equatable {
+    public var declaredActions: [EditAction]
+    public var postCursor: DocumentCursor
+    public var postSelectionLength: Int
+}
+```
+
+Empty `declaredActions` means "no structural change" — a pure-inline edit that doesn't change block count or kind (e.g. `toggleInlineTrait` on a non-empty selection inside a single paragraph).
+
+### Invariant: `assertContract`
+
+`Invariants.assertContract(before:after:contract:)` is the enforcement mechanism. Called from every contract-aware test, it checks three things:
+
+1. **Count-delta matches declared size-changing actions.** The sum of `+1` for each `.insertBlock` / `.splitBlock` and `-1` for each `.deleteBlock` / `.mergeAdjacent` must equal `afterBlocks.count - beforeBlocks.count`. If a primitive declares one insertion but actually added two blocks, the mismatch fails here.
+2. **Size-preserving contracts leave neighbors untouched.** When every declared action is in-place (`.changeBlockKind`, `.modifyInline`, `.replaceBlock`, `.replaceTableCell`), every block index *not* named in the contract must be bit-identical before and after. This is the "toggleList leaked to a neighbor" detector.
+3. **`postCursor` resolves in-bounds.** The declared post-edit cursor must resolve to a storage index inside the new projection's total length. A primitive that claims to leave the cursor on a block that no longer exists gets caught here.
+
+The empty-contract case is enforced strictly: if `declaredActions` is empty, `beforeBlocks` and `afterBlocks` must be equal.
+
+### Retrofitted primitives
+
+The following `EditingOps` primitives populate `result.contract` today:
+
+- `changeHeadingLevel`
+- `toggleInlineTrait`
+- `toggleList`, `toggleListRange` (via its per-block calls into `toggleList`)
+- `toggleBlockquote`
+- `toggleTodoList`, `toggleTodoCheckbox`
+- `insertHorizontalRule`
+- `wrapInCodeBlock`
+- `insertImage`, `setImageSize`
+- `insertWithTraits`
+- `indentListItem`, `unindentListItem`, `exitListItem`
+- `reparseInlinesIfNeeded`
+- `swapBlocks` / `rerenderSingleBlockSwap` (the private helpers under `moveBlockUp` / `moveBlockDown` / `moveListItemOrBlockUp` / `moveListItemOrBlockDown`)
+- `replaceTableCellInline` (and the raw-string `replaceTableCell` forwarder)
+- `insert` — every return path (Return-key splits across all block kinds, multi-line paste into paragraph/list/blockquote/heading, atomic-block sibling insertion, HTML block typing, blankLine doubling, code-block Return-on-blank exit)
+- `delete` — single-block delete paths, atomic-block full-select, and the multi-block merge path (inherits contract from `mergeAdjacentBlocks`)
+- `mergeAdjacentBlocks` — delta-based `.replaceBlock(at: effectiveStart)` + |delta| × `.mergeAdjacent` on both the coalesced and block-granular splice return paths
+
+### Observed-delta pattern
+
+Several primitives go through `replaceBlocksSlow`, which runs a coalescence pass that merges adjacent same-kind blocks (paragraph+paragraph, list+list) after the splice lands. The primitive can't know statically how many neighbors will coalesce — that depends on what's *around* the target block in the input document. The pattern these primitives use:
+
+```swift
+let delta = newProj.document.blocks.count - projection.document.blocks.count
+var actions: [EditAction] = [.changeBlockKind(at: blockIndex)]
+for _ in 0..<(-delta) {
+    actions.append(.mergeAdjacent(firstIndex: blockIndex))
+}
+result.contract = EditContract(declaredActions: actions, postCursor: ...)
+```
+
+Each coalesced neighbor contributes one `.mergeAdjacent`, so the count-delta invariant passes without the primitive having to predict surroundings. `toggleList`, `toggleTodoList`, `indentListItem`, `unindentListItem`, and `exitListItem` all use this pattern.
+
+### Coverage
+
+As of 2026-04-22, `EditContractTests` contains 66 tests covering every retrofitted primitive above. Several use `XCTExpectFailure` as negative controls: contracts that claim no structural change fail when the primitive actually changed count, contracts naming the wrong block fail when the primitive modified a different one, and contracts over `.replaceTableCell` fail on cross-cell leak or table shape change. The negative tests are the proof that the harness catches a lying contract — without them, the whole apparatus would be decorative.
+
+Batch H (the insert/delete/replace retrofit) landed on 2026-04-22 and is complete: every `insert`, `delete`, and `replace` return path either populates `result.contract` directly or forwards to a primitive that does. On the same date the harness auto-assert wired contracts into the live editor path: `EditTextView` captures `preEditProjection` + `lastEditContract` inside `applyEditResultWithUndo`, and `EditorHarness` calls `Invariants.assertContract` after every scripted input. A dedicated coverage file `Tests/HarnessContractCoverageTests.swift` (4 tests) drives mermaid typing / backspace, math typing, and `replaceTableCellInline` through the harness-owned live projection — verifying the contract-diff invariants (per-cell structural equality for tables, neighbour bit-equality for mermaid/math code blocks) hold end-to-end through the same path the app uses. Regression gate: zero regressions against the 3 baseline known-red tests (`test_bug60_findAcrossTableCells`, `CommonMarkSpecTests.test_images`, `.test_links`).
+
 ## Paste Pipeline
 
 Copy reads `EditTextView.copyAsMarkdownViaBlockModel()` which walks `blockIndices(overlapping: selection)` and either serializes each fully-covered block through `MarkdownSerializer.serialize(Document(blocks: [block]))` or (for partial paragraph overlaps) calls `splitInlines` to isolate the covered inline sub-tree and runs it through `serializeInlines`. The result is pushed to the pasteboard as markdown — bold/italic/links/wikilinks survive a copy → paste round-trip.
