@@ -82,6 +82,7 @@
 		FTFL000000000000000000B1 /* FeatureFlag.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTFL000000000000000000F1 /* FeatureFlag.swift */; };
 		TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TEET000000000000000000F1 /* TableElementEmissionTests.swift */; };
 		TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */; };
+		TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TNAV000000000000000000F1 /* TableNavigationTests.swift */; };
 		BQT0000000000000000000B1 /* BlockquoteRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */; };
 		INR0000000000000000000B1 /* InlineRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = INR0000000000000000000F1 /* InlineRenderer.swift */; };
 		HRT0000000000000000000B1 /* HeadingRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */; };
@@ -154,6 +155,8 @@
 		11AAAA00000000000000002C /* ImageAttachmentHydrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11AAAA00000000000000002B /* ImageAttachmentHydrator.swift */; };
 		11F5A1F12F1A600100AAA001 /* EditTextView+Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1F02F1A600100AAA001 /* EditTextView+Input.swift */; };
 		11F5A1F22F1A600100AAA001 /* EditTextView+Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1F02F1A600100AAA001 /* EditTextView+Input.swift */; };
+		11A0B7A02F1A600100AAA111 /* EditTextView+TableNav.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11A0B7A22F1A600100AAA111 /* EditTextView+TableNav.swift */; };
+		11A0B7A12F1A600100AAA111 /* EditTextView+TableNav.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11A0B7A22F1A600100AAA111 /* EditTextView+TableNav.swift */; };
 		11F5A2112F1A600100AAA001 /* EditTextView+EditorDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A2102F1A600100AAA001 /* EditTextView+EditorDelegate.swift */; };
 		11F5A2122F1A600100AAA001 /* EditTextView+EditorDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A2102F1A600100AAA001 /* EditTextView+EditorDelegate.swift */; };
 		11F5A1612F1A400100AAA001 /* ViewController+Notes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1602F1A400100AAA001 /* ViewController+Notes.swift */; };
@@ -1167,6 +1170,7 @@
 		FTFL000000000000000000F1 /* FeatureFlag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureFlag.swift; sourceTree = "<group>"; };
 		TEET000000000000000000F1 /* TableElementEmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableElementEmissionTests.swift; sourceTree = "<group>"; };
 		TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableLayoutFragmentRenderTests.swift; sourceTree = "<group>"; };
+		TNAV000000000000000000F1 /* TableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableNavigationTests.swift; sourceTree = "<group>"; };
 		BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteRoundTripTests.swift; sourceTree = "<group>"; };
 		INR0000000000000000000F1 /* InlineRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineRenderer.swift; sourceTree = "<group>"; };
 		HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadingRoundTripTests.swift; sourceTree = "<group>"; };
@@ -1209,6 +1213,7 @@
 		11F5A1E02F1A600100AAA001 /* EditTextView+Clipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Clipboard.swift"; sourceTree = "<group>"; };
 		11AAAA00000000000000002B /* ImageAttachmentHydrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAttachmentHydrator.swift; sourceTree = "<group>"; };
 		11F5A1F02F1A600100AAA001 /* EditTextView+Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Input.swift"; sourceTree = "<group>"; };
+		11A0B7A22F1A600100AAA111 /* EditTextView+TableNav.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+TableNav.swift"; sourceTree = "<group>"; };
 		11F5A2102F1A600100AAA001 /* EditTextView+EditorDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+EditorDelegate.swift"; sourceTree = "<group>"; };
 		111013142EC8F1B600B6CF1B /* ImagePreviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreviewViewController.swift; sourceTree = "<group>"; };
 		113685592EC7A2130033767F /* NSMutableAttributedString+.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSMutableAttributedString+.swift"; sourceTree = "<group>"; };
@@ -2316,6 +2321,7 @@
 				11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */,
 				11F5A1E02F1A600100AAA001 /* EditTextView+Clipboard.swift */,
 				11F5A1F02F1A600100AAA001 /* EditTextView+Input.swift */,
+				11A0B7A22F1A600100AAA111 /* EditTextView+TableNav.swift */,
 				11F5A2102F1A600100AAA001 /* EditTextView+EditorDelegate.swift */,
 				11A6A8FC2EF074D2005D000A /* EditTextView+Todo.swift */,
 				117C0E4C2EEDB9B70086419C /* EditTextView+Clicked.swift */,
@@ -2545,6 +2551,7 @@
 				CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */,
 				TEET000000000000000000F1 /* TableElementEmissionTests.swift */,
 				TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */,
+				TNAV000000000000000000F1 /* TableNavigationTests.swift */,
 				CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */,
 				TDLC000000000000000000F1 /* TodoListColorTests.swift */,
 				BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */,
@@ -3610,6 +3617,7 @@
 				11F5A1E22F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */,
 				11AAAA00000000000000002A /* ImageAttachmentHydrator.swift in Sources */,
 				11F5A1F22F1A600100AAA001 /* EditTextView+Input.swift in Sources */,
+				11A0B7A02F1A600100AAA111 /* EditTextView+TableNav.swift in Sources */,
 				11F5A2122F1A600100AAA001 /* EditTextView+EditorDelegate.swift in Sources */,
 				11F5A1912F1A500100AAA001 /* ViewController+Events.swift in Sources */,
 				11F5A1612F1A400100AAA001 /* ViewController+Notes.swift in Sources */,
@@ -3874,6 +3882,7 @@
 				11F5A1E12F1A600100AAA001 /* EditTextView+Clipboard.swift in Sources */,
 				11AAAA00000000000000002C /* ImageAttachmentHydrator.swift in Sources */,
 				11F5A1F12F1A600100AAA001 /* EditTextView+Input.swift in Sources */,
+				11A0B7A12F1A600100AAA111 /* EditTextView+TableNav.swift in Sources */,
 				11F5A2112F1A600100AAA001 /* EditTextView+EditorDelegate.swift in Sources */,
 				11F5A1922F1A500100AAA001 /* ViewController+Events.swift in Sources */,
 				11F5A1622F1A400100AAA001 /* ViewController+Notes.swift in Sources */,
@@ -4039,6 +4048,7 @@
 				CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */,
 				TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */,
 				TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */,
+				TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */,
 				CBEOT00000000000000000B1 /* CodeBlockEditToggleOverlayTests.swift in Sources */,
 				TDLC000000000000000000B1 /* TodoListColorTests.swift in Sources */,
 				BG3N000000000000000000B1 /* Bugs3NoteColorTests.swift in Sources */,

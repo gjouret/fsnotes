@@ -121,4 +121,144 @@ public final class TableElement: NSTextParagraph {
         }
         return (header: header, body: body)
     }
+
+    // MARK: - Cursor locator (2e-T2-d)
+    //
+    // The flat, separator-encoded attributed string produced by
+    // `TableTextRenderer.renderNative(...)` lays out as:
+    //
+    //     <header cell 0>US<header cell 1>US…US<header cell M-1>
+    //     RS<body 0 cell 0>US…US<body 0 cell M-1>
+    //     RS<body 1 cell 0>US…
+    //
+    // where `US` = U+001F (cell separator) and `RS` = U+001E (row
+    // separator). The header row is `row = 0`; body rows are
+    // `row = 1, 2, …`. Column indexing is 0-based within each row.
+    //
+    // Both helpers operate on *element-local* UTF-16 offsets — i.e.
+    // offsets into `self.attributedString.string`. Callers convert
+    // global storage offsets to element-local ones via
+    // `NSTextContentStorage.offset(from: elementRange.location, …)`.
+    //
+    // They are pure functions over the decoded `block` payload — no
+    // AppKit mutation, no attributed-string walk. That keeps them
+    // unit-testable without an `NSWindow` (CLAUDE.md rule 3).
+
+    /// Given an element-local UTF-16 offset, return the cell
+    /// `(row, col)` the offset lives inside. Returns `nil` when
+    /// `offset` lands exactly on a separator character (U+001F /
+    /// U+001E) or falls outside the element.
+    ///
+    /// Semantic contract: `offset` is inside a cell iff it is in
+    /// the half-open range `[cellStart, cellEnd)`, where `cellEnd`
+    /// is the index of the following separator (or the end of the
+    /// element for the last cell). `offset == cellEnd` is *not*
+    /// inside the cell — it's on / past the separator.
+    ///
+    /// Exception: an offset at the very end of the last body cell
+    /// (i.e. at `element.length`) is considered inside that cell,
+    /// so a cursor parked at end-of-table still resolves. This
+    /// mirrors NSText behaviour where cursor-at-length is a valid
+    /// selection.
+    public func cellLocation(forOffset offset: Int) -> (row: Int, col: Int)? {
+        let string = attributedString.string as NSString
+        let length = string.length
+        guard offset >= 0, offset <= length else { return nil }
+
+        let cellSep: unichar = unichar(Self.cellSeparator.unicodeScalars.first!.value)
+        let rowSep: unichar = unichar(Self.rowSeparator.unicodeScalars.first!.value)
+
+        var row = 0
+        var col = 0
+        var cellStart = 0
+        var i = 0
+        // Walk character by character. On each separator we snapshot
+        // whether the incoming offset fell inside the just-closed cell
+        // and either return it or advance the (row, col) cursor.
+        while i < length {
+            let ch = string.character(at: i)
+            let isCellSep = (ch == cellSep)
+            let isRowSep = (ch == rowSep)
+            if isCellSep || isRowSep {
+                // Non-empty cell: offset in [cellStart, i).
+                // Empty cell (cellStart == i): no content range to fall
+                // inside — offset == i is the separator, returns nil.
+                if cellStart < i, offset >= cellStart, offset < i {
+                    return (row: row, col: col)
+                }
+                if offset == i {
+                    // Cursor on the separator itself — not inside a cell.
+                    return nil
+                }
+                if isCellSep {
+                    col += 1
+                } else {
+                    row += 1
+                    col = 0
+                }
+                cellStart = i + 1
+            }
+            i += 1
+        }
+        // Tail cell — from last separator to end of element. Note the
+        // closed upper bound: cursor-at-end-of-table resolves to the
+        // last cell.
+        if offset >= cellStart && offset <= length {
+            return (row: row, col: col)
+        }
+        return nil
+    }
+
+    /// Given a `(row, col)` coordinate, return the element-local
+    /// UTF-16 offset of the FIRST content character of that cell.
+    /// Returns `nil` if `(row, col)` is out of range for the block
+    /// shape carried on this element.
+    ///
+    /// For an empty cell, the returned offset is the index of the
+    /// cell's opening character — which, being empty, is the
+    /// immediately-following separator (or the end of the element
+    /// for a trailing empty cell). Callers placing the cursor at
+    /// this offset get a valid insertion point; the locator stays
+    /// consistent because `cellLocation(forOffset: offset(for: …))`
+    /// round-trips by construction (see tests).
+    public func offset(forCellAt position: (row: Int, col: Int)) -> Int? {
+        guard case .table(let header, _, let rows, _) = block else {
+            return nil
+        }
+        let columns = header.count
+        guard position.col >= 0, position.col < columns else { return nil }
+        guard position.row >= 0, position.row <= rows.count else { return nil }
+
+        let string = attributedString.string as NSString
+        let length = string.length
+        let cellSep: unichar = unichar(Self.cellSeparator.unicodeScalars.first!.value)
+        let rowSep: unichar = unichar(Self.rowSeparator.unicodeScalars.first!.value)
+
+        var row = 0
+        var col = 0
+        var cellStart = 0
+        var i = 0
+        while i < length {
+            if row == position.row && col == position.col {
+                return cellStart
+            }
+            let ch = string.character(at: i)
+            if ch == cellSep {
+                col += 1
+                cellStart = i + 1
+            } else if ch == rowSep {
+                row += 1
+                col = 0
+                cellStart = i + 1
+            }
+            i += 1
+        }
+        // Tail case: the last cell opens exactly at cellStart and
+        // runs to length. If the requested (row, col) identifies
+        // it, return cellStart.
+        if row == position.row && col == position.col {
+            return cellStart
+        }
+        return nil
+    }
 }

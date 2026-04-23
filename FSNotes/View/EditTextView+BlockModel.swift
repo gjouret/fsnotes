@@ -872,6 +872,27 @@ extension EditTextView {
             return false
         }
 
+        // Phase 2e-T2-d defensive gate: cell text editing is a T2-e
+        // concern. While T2-d is in effect the cursor can be parked
+        // inside a TableElement (via click / Tab / arrow) but any
+        // character insertion would corrupt the separator-encoded
+        // storage because `EditingOps` has no separator-aware apply
+        // path yet. Swallow the edit with a diagnostic log and let
+        // the user feel the no-op; typing into cells lands in T2-e.
+        //
+        // Exception: an empty replacement (pure deletion) still falls
+        // through — it hits `EditingOps.delete(...)` which, under the
+        // legacy table path, merged cross-block and under the native
+        // path no-ops cleanly when the range is entirely inside a
+        // TableElement (the element is a single NSTextParagraph;
+        // `EditingOps` sees the paragraph boundary, not individual
+        // cells). This keeps delete safe; it is the character-insert
+        // case we must guard.
+        if !replacement.isEmpty, storageOffsetIsInTableElement(range.location) {
+            bmLog("⛔ handleEditViaBlockModel: edit range inside TableElement — swallowing '\(replacement)' (T2-e will handle cell text edits)")
+            return true
+        }
+
         // Detailed logging for debugging new note typing issues
         bmLog("🎯 handleEditViaBlockModel: range=\(range), replacement='\(replacement)', storage.length=\(storage.length), projection.length=\(projection.attributed.length)")
         bmLog("📝 storage.string='\(storage.string)'")
