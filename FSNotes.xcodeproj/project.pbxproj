@@ -18,12 +18,11 @@
 		C40864C972A9D75AD6A62981 /* GutterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8E9E90A4CAF395C4789D551 /* GutterController.swift */; };
 		B61B5F8CEAD35C13E9E11654 /* Note+Crypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E542E1FA50A721D79E9B2B9 /* Note+Crypto.swift */; };
 		B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */; };
+		P47S0000000000000000000B1 /* Phase47SaveConsolidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P47S0000000000000000000F1 /* Phase47SaveConsolidationTests.swift */; };
 		4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */; };
 		1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8852B50A2749E42226C8379 /* EditorPreferences.swift */; };
-		C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */; };
 		C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */; };
 		GOVL0000000000000000000B1 /* GutterOverlayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = GOVL0000000000000000000F1 /* GutterOverlayTests.swift */; };
-		432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 568C7270DF4C1784CFDD100B /* NoteSerializer.swift */; };
 		DOC0000000000000000000B1 /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = DOC0000000000000000000F1 /* Document.swift */; };
 		E2255B899F5A2E6F221D930E /* ListEditingFSM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */; };
 		DDC1196B5E689F71A0A4E357 /* EditingOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F23911779AD1E5392251BC /* EditingOperations.swift */; };
@@ -80,6 +79,7 @@
 		P41S000000000000000000B1 /* SourceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F1 /* SourceRenderer.swift */; };
 		P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F2 /* SourceLayoutFragment.swift */; };
 		P41S000000000000000000B3 /* Phase41SourceRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */; };
+		P44S000000000000000000B1 /* Phase44SourceModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P44S000000000000000000F1 /* Phase44SourceModeTests.swift */; };
 		TGEO000000000000000000B1 /* TableGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGEO000000000000000000F1 /* TableGeometry.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
@@ -1125,8 +1125,7 @@
 		0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldSnapshotTests.swift; sourceTree = "<group>"; };
 		5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		B8852B50A2749E42226C8379 /* EditorPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPreferences.swift; sourceTree = "<group>"; };
-		62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializerTests.swift; sourceTree = "<group>"; };
-		568C7270DF4C1784CFDD100B /* NoteSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteSerializer.swift; sourceTree = "<group>"; };
+		P47S0000000000000000000F1 /* Phase47SaveConsolidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase47SaveConsolidationTests.swift; sourceTree = "<group>"; };
 		DOC0000000000000000000F1 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListEditingFSM.swift; sourceTree = "<group>"; };
 		A7F23911779AD1E5392251BC /* EditingOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingOperations.swift; sourceTree = "<group>"; };
@@ -1182,6 +1181,7 @@
 		P41S000000000000000000F1 /* SourceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceRenderer.swift; sourceTree = "<group>"; };
 		P41S000000000000000000F2 /* SourceLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/SourceLayoutFragment.swift; sourceTree = "<group>"; };
 		P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase41SourceRendererTests.swift; sourceTree = "<group>"; };
+		P44S000000000000000000F1 /* Phase44SourceModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase44SourceModeTests.swift; sourceTree = "<group>"; };
 		TGEO000000000000000000F1 /* TableGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableGeometry.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
@@ -1709,7 +1709,6 @@
 			children = (
 				C0BCE404F6F65B92B18DFE92 /* InlineTagRegistry.swift */,
 				593E5F031A986B6F265DD161 /* BlockProcessor.swift */,
-				568C7270DF4C1784CFDD100B /* NoteSerializer.swift */,
 				DOC0000000000000000000F1 /* Document.swift */,
 				6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */,
 				A7F23911779AD1E5392251BC /* EditingOperations.swift */,
@@ -2535,7 +2534,7 @@
 				TEST00000000000000000002 /* RendererComparisonTests.swift */,
 				992A7F1EEF372989B048ABA4 /* FacadeTests.swift */,
 				0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */,
-				62ED451FC54A5F0B70A790B9 /* NoteSerializerTests.swift */,
+				P47S0000000000000000000F1 /* Phase47SaveConsolidationTests.swift */,
 				65ABACC3555B97D4FC743685 /* BlockParserTests.swift */,
 				CBT0000000000000000000F1 /* CodeBlockRoundTripTests.swift */,
 				AET0000000000000000000F1 /* ArchitectureEnforcementTests.swift */,
@@ -2597,6 +2596,7 @@
 				PTWB000000000000000000F1 /* PreferencesThemeWritebackTests.swift */,
 				P75C000000000000000000F1 /* Phase75cUDProxyTests.swift */,
 				P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */,
+				P44S000000000000000000F1 /* Phase44SourceModeTests.swift */,
 				P1AA000000000000000000F1 /* ThemeSaveThrottleTests.swift */,
 				P1BB000000000000000000F1 /* ThemeSaveSecurityTests.swift */,
 				P1CC000000000000000000F1 /* ListRendererPlaceholderCacheTests.swift */,
@@ -3460,7 +3460,6 @@
 				4CDB5D1C50CCB3DEEEC869E7 /* KbdBoxDrawer.swift in Sources */,
 				4B8F17CEB746492878496ADF /* InlineTagRegistry.swift in Sources */,
 				A55520A7B95E5FE26FE360A8 /* BlockProcessor.swift in Sources */,
-				432648A4CDE1C9BD7DB21D4A /* NoteSerializer.swift in Sources */,
 				DOC0000000000000000000B1 /* Document.swift in Sources */,
 				E2255B899F5A2E6F221D930E /* ListEditingFSM.swift in Sources */,
 				DDC1196B5E689F71A0A4E357 /* EditingOperations.swift in Sources */,
@@ -4035,9 +4034,9 @@
 			files = (
 				F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */,
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
+				P47S0000000000000000000B1 /* Phase47SaveConsolidationTests.swift in Sources */,
 				C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */,
 				GOVL0000000000000000000B1 /* GutterOverlayTests.swift in Sources */,
-				C64B860B0413AC40E64E25A3 /* NoteSerializerTests.swift in Sources */,
 				1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */,
 				CBT0000000000000000000B1 /* CodeBlockRoundTripTests.swift in Sources */,
 				AET0000000000000000000B1 /* ArchitectureEnforcementTests.swift in Sources */,
@@ -4108,6 +4107,7 @@
 				PTWB000000000000000000B1 /* PreferencesThemeWritebackTests.swift in Sources */,
 				P75C000000000000000000B1 /* Phase75cUDProxyTests.swift in Sources */,
 				P41S000000000000000000B3 /* Phase41SourceRendererTests.swift in Sources */,
+				P44S000000000000000000B1 /* Phase44SourceModeTests.swift in Sources */,
 				P1AA000000000000000000B1 /* ThemeSaveThrottleTests.swift in Sources */,
 				P1BB000000000000000000B1 /* ThemeSaveSecurityTests.swift in Sources */,
 				P1CC000000000000000000B1 /* ListRendererPlaceholderCacheTests.swift in Sources */,
