@@ -241,7 +241,11 @@ extension EditTextView {
 
         viewDelegate?.updateCounters(note: note)
 
-        textStorage?.setAttributedString(NSAttributedString(string: ""))
+        // Phase 5a: clearing storage at note-switch time is a fill-kind
+        // whole-document replacement. Mark authorized.
+        StorageWriteGuard.performingFill {
+            textStorage?.setAttributedString(NSAttributedString(string: ""))
+        }
 
         if let length = textStorage?.length {
             textStorage?.layoutManagers.first?.invalidateDisplay(forGlyphRange: NSRange(location: 0, length: length))
@@ -307,7 +311,11 @@ extension EditTextView {
             // block-model and source-mode renderers decline.
             if !fillViaBlockModel(note: note) {
                 if !fillViaSourceRenderer(note: note) {
-                    storage.setAttributedString(content)
+                    // Phase 5a: both pipelines declined — this is the
+                    // legacy safety-fallback fill path. Mark authorized.
+                    StorageWriteGuard.performingFill {
+                        storage.setAttributedString(content)
+                    }
                 }
             }
         } else {
@@ -316,7 +324,10 @@ extension EditTextView {
             // Kept as a safety fallback in case the type system grows
             // a new primary-content format later.
             documentProjection = nil
-            storage.setAttributedString(note.content)
+            // Phase 5a: non-markdown fallback fill — mark authorized.
+            StorageWriteGuard.performingFill {
+                storage.setAttributedString(note.content)
+            }
         }
 
         if highlight {
@@ -376,7 +387,10 @@ extension EditTextView {
     }
 
     public func lockEncryptedView() {
-        textStorage?.setAttributedString(NSAttributedString())
+        // Phase 5a: encrypted-view lock wipes storage — fill semantics.
+        StorageWriteGuard.performingFill {
+            textStorage?.setAttributedString(NSAttributedString())
+        }
         isEditable = false
 
         if let label = editorViewController?.vcNonSelectedLabel {
@@ -386,7 +400,10 @@ extension EditTextView {
     }
 
     public func clear() {
-        textStorage?.setAttributedString(NSAttributedString())
+        // Phase 5a: view `clear()` wipes storage to empty — fill semantics.
+        StorageWriteGuard.performingFill {
+            textStorage?.setAttributedString(NSAttributedString())
+        }
         isEditable = false
         window?.title = AppDelegate.appTitle
 

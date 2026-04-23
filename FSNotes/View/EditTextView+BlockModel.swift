@@ -335,7 +335,13 @@ extension EditTextView {
         // transaction makes the initial fill take the same fast path
         // the splice would.
         textStorageProcessor?.isRendering = true
-        storage.setAttributedString(projection.attributed)
+        // Phase 5a: initial-fill `setAttributedString` is the whole-
+        // document replacement path; mark it authorized so the debug
+        // assertion in `TextStorageProcessor.didProcessEditing` sees
+        // an active write scope.
+        StorageWriteGuard.performingFill {
+            storage.setAttributedString(projection.attributed)
+        }
         textStorageProcessor?.isRendering = false
 
         // Verify storage matches projection after setting
@@ -429,7 +435,13 @@ extension EditTextView {
         // pipeline (`TextStorageProcessor.process`) off for this paint
         // so the legacy highlight path doesn't clobber our markers.
         textStorageProcessor?.isRendering = true
-        storage.setAttributedString(rendered)
+        // Phase 5a: source-mode fill is also a full-doc replacement;
+        // mark it authorized. The 5a debug assertion short-circuits on
+        // `sourceRendererActive == true` but we still flag the scope to
+        // keep the audit story uniform across fill paths.
+        StorageWriteGuard.performingFill {
+            storage.setAttributedString(rendered)
+        }
         textStorageProcessor?.isRendering = false
 
         textStorageProcessor?.sourceRendererActive = true
