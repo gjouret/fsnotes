@@ -391,6 +391,108 @@ When `blockModelActive == false`: text change → `didProcessEditing` → `proce
 3. **Stage 3**: `phase5_paragraphStyles` — `.paragraphStyle` per block type
 4. **Stage 4**: `LayoutManager.drawBackground` → `AttributeDrawer` protocol (bullets, HR, blockquote borders)
 
+## Theme — single source of truth for presentation
+
+Every value that describes how the editor *looks* — font family, font size, line
+spacing, margins, paragraph spacing, block colors, border widths, heading
+hairlines, kbd fills, HR line color, blockquote bar, code-block chrome, inline
+link color, highlight color — lives on `BlockStyleTheme` (see
+`FSNotesCore/Rendering/ThemeSchema.swift`). The active theme is `Theme.shared`;
+all renderers and fragments read their values from it at render time. There is
+exactly one place literal presentation values are allowed: theme JSON files and
+`ThemeSchema.swift`'s default-value constructors. Everything else is a read.
+
+### Load order
+
+1. **Bundled defaults** ship inside the app bundle at
+   `Resources/default-theme.json` and `Resources/Themes/*.json` (`Default`,
+   `Dark`, `High Contrast`).
+2. **User overrides** live at
+   `~/Library/Application Support/FSNotes++/Themes/*.json`. A user theme with
+   the same basename as a bundled theme replaces the bundled entry in
+   `Theme.availableThemes(...)` — user-override-wins.
+3. **Selection** persists via `UserDefaultsManagement.currentThemeName` and is
+   applied in `AppDelegate.applicationDidFinishLaunching` before
+   `applyAppearance()`.
+
+If a named theme is missing or its JSON is corrupt, `Theme.load(named:)` falls
+back to the bundled default rather than propagating the error to the UI.
+
+### Who owns what
+
+| Layer | Reads from theme |
+|---|---|
+| `DocumentRenderer` | block-level fills, borders, margins, paragraph spacing, heading font sizes, list/blockquote/code-block chrome |
+| `InlineRenderer` | link color, highlight background, inline code color, strike / underline / mark styles |
+| Per-block fragments (`HeadingLayoutFragment`, `BlockquoteLayoutFragment`, `HorizontalRuleLayoutFragment`, `KbdBoxParagraphLayoutFragment`, `CodeBlockLayoutFragment`) | the block's own section of the theme |
+| `TableElement` / `TableLayoutFragment` | table handle color, resize preview color, column separator color |
+
+Geometry that is inherently structural (e.g. an HR's arithmetic around line
+thickness, bezier curve offsets in a code-block border path) stays as-is; only
+the *values* flow through Theme.
+
+### Write-through from Preferences
+
+IBActions on `PreferencesEditorViewController` (font family, font size, margin,
+line width, line spacing, images width, italic, bold) mutate `Theme.shared` in
+place and persist via `Theme.saveActiveTheme(...)`, which writes the active
+theme to `~/Library/Application Support/FSNotes++/Themes/<name>.json`. When the
+user is on the read-only bundled `Default`, the override file is written under
+the same name so subsequent launches pick it up via user-override-wins.
+
+Every save posts `Theme.didChangeNotification`. Each live `EditTextView`
+installs one observer per view (associated-object token, idempotent) via
+`EditTextView+ThemeObserver.swift` and re-runs `fillViaBlockModel(note:)` on
+theme-change without flushing scroll.
+
+### UserDefaults subsumption
+
+The legacy `UserDefaultsManagement` typography/layout accessors
+(`noteFont`, `fontName`, `fontSize`, `codeFont`, `codeFontName`, `codeFontSize`,
+`editorLineSpacing`, `lineHeightMultiple`, `lineWidth`, `marginSize`,
+`imagesWidth`, `italic`, `bold`) are **computed-property proxies** over
+`Theme.shared` — no independent storage. The first-launch migration copies any
+pre-7.5 legacy UD values into the active theme, then deletes the backing UD
+keys. To change any of these values programmatically, mutate `Theme.shared` and
+call `Theme.saveActiveTheme(...)`; do not write UD keys.
+
+### Whitelist: UI-only literals
+
+One documented literal survives in presentation code:
+`PreferencesEditorViewController.previewFontSize: CGFloat = 13` is used to
+render the font-preview label in the Preferences sheet. This is UI chrome for
+the preference UI itself, not for note rendering, and is explicitly exempt from
+the gate (file-level exclusion). Any new literal in render-path code is a
+violation.
+
+### Grep gate
+
+`scripts/rule7-gate.sh` scans `FSNotes/` and `FSNotesCore/` for the banned
+patterns that enforce this invariant:
+
+- Marker-hiding tricks (0.1pt font, `NSColor.clear` foreground, `.kern`
+  attribute, widget-local `parseInlineMarkdown`) — CLAUDE.md Rule 7 proper.
+- View→model bidirectional data flow inside `InlineTableView.swift` and
+  `TableRenderController.swift` (reads of `.stringValue` into `rows[]` /
+  `headers[]`).
+- Literal presentation values in `FSNotesCore/Rendering/*` — hardcoded
+  `NSFont.systemFont(ofSize: <number>)`, hardcoded `paragraphSpacing = <number>`,
+  hex color literals in `Fragments/` or `Elements/`.
+
+Files that belong to the theme definition itself (`ThemeSchema.swift`,
+`ThemeAccess.swift`, `Theme.swift`) and the still-retired source-mode pipeline
+(`TextStorageProcessor.swift`, `NotesTextProcessor.swift`, `NSTextStorage++.swift`,
+`TextFormatter.swift`, `ImagesProcessor.swift` — see Phase 4 of
+`REFACTOR_PLAN.md` for retirement) are excluded at the file level. Any
+individual line can be exempted with a `// rule7-gate:allow` comment on the
+preceding line; use sparingly and always with a rationale.
+
+Run locally: `./scripts/rule7-gate.sh` — exit 0 on pass, 1 on violations with a
+`file:line: label: source` report per hit. The script is pure shell (no
+xcodebuild, no state), so it is CI-ready; wiring it into a pre-build phase or a
+GitHub Actions step is a separate slice (deferred to avoid an
+`FSNotes.xcodeproj/project.pbxproj` race with concurrent refactor work).
+
 ## A-Grade Architecture (Fully Implemented)
 
 All 6 architecture improvements have been implemented directly in `EditingOperations.swift`:
