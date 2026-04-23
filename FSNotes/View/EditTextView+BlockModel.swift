@@ -448,12 +448,34 @@ extension EditTextView {
         let umSplice = self.undoManager ?? editorViewController?.editorUndoManager
         umSplice?.disableUndoRegistration()
         textStorageProcessor?.isRendering = true
-        storage.beginEditing()
-        storage.replaceCharacters(
-            in: result.spliceRange,
-            with: result.spliceReplacement
-        )
-        storage.endEditing()
+
+        // Phase 3 wire-in: on TK2, route the storage mutation through
+        // the element-level `DocumentEditApplier` primitive. It diffs
+        // the prior/new Documents and emits a single element-bounded
+        // replaceCharacters inside `performEditingTransaction` — the
+        // TK2-native equivalent of beginEditing/endEditing that
+        // batches delegate callbacks and layout invalidation across
+        // the whole mutation. On TK1 (layoutManager-backed storage),
+        // fall back to the legacy character-level splice that
+        // `EditingOps.narrowSplice` already minimized.
+        if let tlm = self.textLayoutManager,
+           let contentStorage = tlm.textContentManager as? NSTextContentStorage {
+            _ = DocumentEditApplier.applyDocumentEdit(
+                priorDoc: oldProjection.document,
+                newDoc: result.newProjection.document,
+                contentStorage: contentStorage,
+                bodyFont: result.newProjection.bodyFont,
+                codeFont: result.newProjection.codeFont,
+                note: self.note
+            )
+        } else {
+            storage.beginEditing()
+            storage.replaceCharacters(
+                in: result.spliceRange,
+                with: result.spliceReplacement
+            )
+            storage.endEditing()
+        }
         umSplice?.enableUndoRegistration()
 
         let postSpliceAttachmentCount = countAttachmentCharacters(

@@ -42,160 +42,52 @@ final class HarnessContractCoverageTests: XCTestCase {
     ///    preservation check for size-preserving contracts).
     /// 3. Declare `.modifyInline(blockIndex: i)` — the primitive's
     ///    contract is wired on the default typing fall-through path.
-    func test_harness_type_inMermaidCodeBlock_preservesLanguageAndNeighbors() {
-        let md = """
-        Intro paragraph.
-
-        ```mermaid
-        graph TD
-        A-->B
-        ```
-
-        Outro paragraph.
-        """
-        let harness = EditorHarness(markdown: md)
-        defer { harness.teardown() }
-
-        // Sanity: the seeded document has the expected shape.
-        guard let doc = harness.document else {
-            return XCTFail("Harness must seed block-model projection")
-        }
-        guard let mermaidIdx = doc.blocks.firstIndex(where: {
-            if case .codeBlock(let lang, _, _) = $0, lang == "mermaid" {
-                return true
-            }
-            return false
-        }) else {
-            return XCTFail("Expected a mermaid code block in the seed")
-        }
-
-        // Capture the pre-edit neighbors so we can cross-check
-        // independently of the auto-assert.
-        let beforeBlocks = doc.blocks
-        let blockCountBefore = beforeBlocks.count
-
-        // Move the cursor inside the mermaid block's rendered content,
-        // 3 chars into its span.
-        let proj = harness.editor.documentProjection!
-        let span = proj.blockSpans[mermaidIdx]
-        XCTAssertGreaterThan(span.length, 3, "Mermaid content should be long enough to type into")
-        harness.moveCursor(to: span.location + 3)
-
-        // Type a character — `EditorHarness.type` auto-asserts the
-        // contract against `Invariants.assertContract` after the edit.
-        harness.type("X")
-
-        // Post-conditions driven by the harness's live state.
-        guard let afterDoc = harness.document else {
-            return XCTFail("Expected block-model projection after edit")
-        }
-        XCTAssertEqual(
-            afterDoc.blocks.count, blockCountBefore,
-            "Block count must not change on a .modifyInline edit"
-        )
-
-        // Mermaid block remains a codeBlock with language == "mermaid".
-        if case .codeBlock(let lang, let content, _) = afterDoc.blocks[mermaidIdx] {
-            XCTAssertEqual(lang, "mermaid", "Language field must survive an in-block edit")
-            XCTAssertTrue(content.contains("X"), "Typed character must land in the code block's content")
-        } else {
-            XCTFail("Mermaid block slot must still be a codeBlock after the edit")
-        }
-
-        // Neighbors must be byte-identical. The auto-assert already
-        // covers this, but we repeat it here as an explicit assertion
-        // so the coverage intent reads from the test itself.
-        for (idx, (bBefore, bAfter)) in zip(beforeBlocks, afterDoc.blocks).enumerated() {
-            if idx == mermaidIdx { continue }
-            XCTAssertEqual(bBefore, bAfter, "Neighbor block at \(idx) must be unchanged")
-        }
+    func test_harness_type_inMermaidCodeBlock_preservesLanguageAndNeighbors() throws {
+        // Phase 2d follow-up (2026-04-23): mermaid/math/latex code blocks
+        // now render as a single `U+FFFC` `BlockSourceTextAttachment` in
+        // storage (source on `.renderedBlockSource` attribute). The
+        // `span.length > 3` precondition below no longer holds — span
+        // length is 1. The test's premise (place cursor 3 chars into
+        // the rendered mermaid span and type) doesn't map to WYSIWYG
+        // behaviour anymore: users editing mermaid source toggle to
+        // source mode first.
+        //
+        // The underlying `.modifyInline` contract this test was designed
+        // to exercise is still covered for OTHER block types (paragraphs,
+        // headings, lists) by the sibling tests in this file, and the
+        // mermaid-attachment invariant is covered by
+        // `test_phase2d_followup_mermaidMultiLine_singleAttachmentWithSourceAttribute`
+        // in TextKit2FragmentDispatchTests. Rewriting this test to use
+        // source mode or to drive the edit through a non-cursor path
+        // (e.g. EditingOps.replaceBlock directly) is a Phase 4 or
+        // follow-up slice; skipping for now.
+        throw XCTSkip("Obsoleted by BlockSourceTextAttachment (c7e7e26). Invariant covered elsewhere; see header comment.")
     }
 
     /// Backspace inside a mermaid code block: same guarantees as typing.
     /// The `.modifyInline` contract is wired on both insert and delete
     /// single-block paths.
-    func test_harness_backspace_inMermaidCodeBlock_preservesLanguageAndNeighbors() {
-        let md = """
-        ```mermaid
-        graph TD
-        A-->B
-        ```
-        """
-        let harness = EditorHarness(markdown: md)
-        defer { harness.teardown() }
-
-        guard let doc = harness.document,
-              let mermaidIdx = doc.blocks.firstIndex(where: {
-                  if case .codeBlock(let lang, _, _) = $0, lang == "mermaid" { return true }
-                  return false
-              }) else {
-            return XCTFail("Expected mermaid code block")
-        }
-        let beforeBlocks = doc.blocks
-        let span = harness.editor.documentProjection!.blockSpans[mermaidIdx]
-        XCTAssertGreaterThan(span.length, 1)
-        harness.moveCursor(to: span.location + 3)
-
-        harness.pressDelete() // auto-asserts contract
-
-        guard let afterDoc = harness.document else {
-            return XCTFail("Missing projection after delete")
-        }
-        XCTAssertEqual(afterDoc.blocks.count, beforeBlocks.count)
-        if case .codeBlock(let lang, _, _) = afterDoc.blocks[mermaidIdx] {
-            XCTAssertEqual(lang, "mermaid")
-        } else {
-            XCTFail("Mermaid slot regressed to \(afterDoc.blocks[mermaidIdx])")
-        }
+    func test_harness_backspace_inMermaidCodeBlock_preservesLanguageAndNeighbors() throws {
+        // Obsoleted by BlockSourceTextAttachment — see the sibling
+        // `test_harness_type_inMermaidCodeBlock_...` for the full
+        // rationale. Mermaid span length in storage is now 1 (the
+        // attachment character), so the precondition and the cursor-
+        // placement don't map to any user-reachable WYSIWYG action.
+        throw XCTSkip("Obsoleted by BlockSourceTextAttachment (c7e7e26). Invariant covered elsewhere.")
     }
 
     // MARK: - Math
 
     /// Math code blocks follow the same `Block.codeBlock(language:)`
     /// shape as mermaid. Typing inside must preserve language + neighbors.
-    func test_harness_type_inMathCodeBlock_preservesLanguageAndNeighbors() {
-        let md = """
-        Before.
-
-        ```math
-        E = mc^2
-        ```
-
-        After.
-        """
-        let harness = EditorHarness(markdown: md)
-        defer { harness.teardown() }
-
-        guard let doc = harness.document,
-              let mathIdx = doc.blocks.firstIndex(where: {
-                  if case .codeBlock(let lang, _, _) = $0, lang == "math" { return true }
-                  return false
-              }) else {
-            return XCTFail("Expected math code block")
-        }
-        let beforeBlocks = doc.blocks
-        let span = harness.editor.documentProjection!.blockSpans[mathIdx]
-        XCTAssertGreaterThan(span.length, 1)
-        harness.moveCursor(to: span.location + 1)
-
-        harness.type("Z")
-
-        guard let afterDoc = harness.document else {
-            return XCTFail("Expected block-model projection after edit")
-        }
-        XCTAssertEqual(afterDoc.blocks.count, beforeBlocks.count)
-
-        if case .codeBlock(let lang, let content, _) = afterDoc.blocks[mathIdx] {
-            XCTAssertEqual(lang, "math", "Math language identifier must survive")
-            XCTAssertTrue(content.contains("Z"))
-        } else {
-            XCTFail("Math slot regressed to \(afterDoc.blocks[mathIdx])")
-        }
-
-        for (idx, (bBefore, bAfter)) in zip(beforeBlocks, afterDoc.blocks).enumerated() {
-            if idx == mathIdx { continue }
-            XCTAssertEqual(bBefore, bAfter, "Neighbor block at \(idx) must be unchanged")
-        }
+    func test_harness_type_inMathCodeBlock_preservesLanguageAndNeighbors() throws {
+        // Obsoleted by BlockSourceTextAttachment — see the sibling
+        // `test_harness_type_inMermaidCodeBlock_...` for rationale.
+        // Math block span length in storage is now 1 (the attachment
+        // character); the test's premise of placing a cursor inside
+        // the rendered span no longer maps to a user-reachable WYSIWYG
+        // action. Users editing math source toggle to source mode.
+        throw XCTSkip("Obsoleted by BlockSourceTextAttachment (c7e7e26). Invariant covered elsewhere.")
     }
 
     // MARK: - Tables (via the primitive path — harness.type() doesn't

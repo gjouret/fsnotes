@@ -526,6 +526,159 @@ final class DocumentEditApplierTests: XCTestCase {
             "no-op must not mutate storage")
     }
 
+    // MARK: - Wire-in prerequisites (per bd44aeb trailer)
+
+    /// Deleting the FIRST block must emit exactly one `.deleted` at
+    /// prior idx 0, touch no `.modified` or `.inserted` entries, and
+    /// leave storage byte-identical to a fresh render of the new doc.
+    /// The insert-at-start counterpart is exercised indirectly by
+    /// `test_phase3_applyDocumentEdit_multipleEdits_storageRemainsValid`;
+    /// see `test_phase3_applyDocumentEdit_insertAtStart` below for a
+    /// direct assertion.
+    func test_phase3_applyDocumentEdit_deleteAtStart() {
+        let prior = Document(
+            blocks: [
+                .paragraph(inline: [.text("aaa")]),
+                .paragraph(inline: [.text("bbb")]),
+                .paragraph(inline: [.text("ccc")])
+            ],
+            trailingNewline: false
+        )
+        let next = Document(
+            blocks: [
+                .paragraph(inline: [.text("bbb")]),
+                .paragraph(inline: [.text("ccc")])
+            ],
+            trailingNewline: false
+        )
+
+        let priorRendered = DocumentRenderer.render(
+            prior, bodyFont: bodyFont(), codeFont: codeFont()
+        )
+        let newRendered = DocumentRenderer.render(
+            next, bodyFont: bodyFont(), codeFont: codeFont()
+        )
+        let (cs, _, _) = makeSeededContentStorage(for: prior)
+
+        let report = DocumentEditApplier.applyDocumentEdit(
+            priorDoc: prior, newDoc: next,
+            contentStorage: cs,
+            bodyFont: bodyFont(), codeFont: codeFont()
+        )
+
+        XCTAssertEqual(report.elementsDeleted, [0],
+            "delete-at-start must emit exactly one .deleted at prior idx 0")
+        XCTAssertTrue(report.elementsChanged.isEmpty,
+            "delete-at-start must emit no .modified")
+        XCTAssertTrue(report.elementsInserted.isEmpty,
+            "delete-at-start must emit no .inserted")
+        XCTAssertFalse(report.wasNoop)
+
+        XCTAssertEqual(cs.textStorage?.string,
+                       newRendered.attributed.string,
+            "storage must equal DocumentRenderer.render(next).string after delete-at-start")
+        XCTAssertEqual(report.totalLenDelta,
+                       newRendered.attributed.length - priorRendered.attributed.length,
+            "totalLenDelta must match rendered-length delta")
+    }
+
+    /// `trailingNewline=true` docs must round-trip: modifying one
+    /// block produces a `.modified` at the right index AND the final
+    /// `\n` at end-of-document is preserved. Guards against the range-
+    /// math mishandling trailing-newline as a "phantom block" and
+    /// emitting spurious insert/delete entries.
+    func test_phase3_applyDocumentEdit_trailingNewlineTrue() {
+        let prior = Document(
+            blocks: [
+                .paragraph(inline: [.text("first")]),
+                .paragraph(inline: [.text("second")])
+            ],
+            trailingNewline: true
+        )
+        let next = Document(
+            blocks: [
+                .paragraph(inline: [.text("first")]),
+                .paragraph(inline: [.text("secondModified")])
+            ],
+            trailingNewline: true
+        )
+
+        let (cs, _, _) = makeSeededContentStorage(for: prior)
+        // Sanity: the rendered prior must actually end with the
+        // trailing newline, otherwise the test's premise is wrong.
+        let priorRendered = DocumentRenderer.render(
+            prior, bodyFont: bodyFont(), codeFont: codeFont()
+        )
+        XCTAssertTrue(priorRendered.attributed.string.hasSuffix("\n"),
+            "priorRendered must end with \\n when trailingNewline=true")
+
+        let report = DocumentEditApplier.applyDocumentEdit(
+            priorDoc: prior, newDoc: next,
+            contentStorage: cs,
+            bodyFont: bodyFont(), codeFont: codeFont()
+        )
+
+        XCTAssertEqual(report.elementsChanged, [1],
+            "trailing-newline doc with modified last block must emit one .modified at idx 1")
+        XCTAssertTrue(report.elementsInserted.isEmpty,
+            "trailing-newline handling must not produce spurious .inserted entries")
+        XCTAssertTrue(report.elementsDeleted.isEmpty,
+            "trailing-newline handling must not produce spurious .deleted entries")
+
+        let newRendered = DocumentRenderer.render(
+            next, bodyFont: bodyFont(), codeFont: codeFont()
+        )
+        XCTAssertEqual(cs.textStorage?.string,
+                       newRendered.attributed.string,
+            "storage must equal DocumentRenderer.render(next).string (trailing-\\n included)")
+        XCTAssertTrue(cs.textStorage?.string.hasSuffix("\n") ?? false,
+            "trailing \\n must survive the element-level splice")
+    }
+
+    /// Inserting a new FIRST block must emit exactly one `.inserted`
+    /// at new idx 0 and leave storage byte-identical to the fresh
+    /// render.
+    func test_phase3_applyDocumentEdit_insertAtStart() {
+        let prior = Document(
+            blocks: [
+                .paragraph(inline: [.text("bbb")]),
+                .paragraph(inline: [.text("ccc")])
+            ],
+            trailingNewline: false
+        )
+        let next = Document(
+            blocks: [
+                .paragraph(inline: [.text("aaa")]),
+                .paragraph(inline: [.text("bbb")]),
+                .paragraph(inline: [.text("ccc")])
+            ],
+            trailingNewline: false
+        )
+
+        let (cs, _, _) = makeSeededContentStorage(for: prior)
+
+        let report = DocumentEditApplier.applyDocumentEdit(
+            priorDoc: prior, newDoc: next,
+            contentStorage: cs,
+            bodyFont: bodyFont(), codeFont: codeFont()
+        )
+
+        XCTAssertEqual(report.elementsInserted, [0],
+            "insert-at-start must emit exactly one .inserted at new idx 0")
+        XCTAssertTrue(report.elementsChanged.isEmpty,
+            "insert-at-start must emit no .modified")
+        XCTAssertTrue(report.elementsDeleted.isEmpty,
+            "insert-at-start must emit no .deleted")
+        XCTAssertFalse(report.wasNoop)
+
+        let newRendered = DocumentRenderer.render(
+            next, bodyFont: bodyFont(), codeFont: codeFont()
+        )
+        XCTAssertEqual(cs.textStorage?.string,
+                       newRendered.attributed.string,
+            "storage must equal DocumentRenderer.render(next).string after insert-at-start")
+    }
+
     /// Round-trip: apply a sequence of edits to a single content
     /// storage and verify after each edit that the storage string
     /// equals the freshly-rendered string for the current document.

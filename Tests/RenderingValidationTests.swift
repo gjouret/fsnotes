@@ -230,12 +230,40 @@ class RenderingValidationTests: XCTestCase {
     }
 
     func testMermaidCodeBlock_AttributedString() {
+        // Phase 2d follow-up (2026-04-23): mermaid/math/latex code blocks
+        // now render as a single U+FFFC `BlockSourceTextAttachment` in
+        // storage rather than as monospaced source text. The source
+        // lives on the `.renderedBlockSource` attribute; the fragment
+        // (MermaidLayoutFragment) draws the bitmap. So the old
+        // "monospace font at 'graph TD' substring" assertion no longer
+        // applies — instead we assert the new contract: exactly one
+        // attachment char carrying the full source on the attribute.
         let proj = project("```mermaid\ngraph TD\nA-->B\n```\n")
-        let f = font(in: proj, at: "graph TD")
-        XCTAssertNotNil(f, "Mermaid block should have a font")
-        #if os(OSX)
-        XCTAssertTrue(f!.isFixedPitch, "Mermaid block should use monospace font")
-        #endif
+        let storage = proj.attributed
+        var foundSource: String?
+        var foundLength = 0
+        storage.enumerateAttribute(
+            .renderedBlockSource,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, range, _ in
+            guard let src = value as? String,
+                  src.contains("graph TD") else { return }
+            foundSource = src
+            foundLength = range.length
+        }
+        XCTAssertNotNil(
+            foundSource,
+            "Mermaid block must carry source on `.renderedBlockSource`"
+        )
+        XCTAssertTrue(
+            foundSource?.contains("A-->B") ?? false,
+            "Source attribute must carry the full multi-line mermaid source"
+        )
+        XCTAssertEqual(
+            foundLength, 1,
+            "Mermaid block must occupy exactly one character in storage (the U+FFFC attachment)"
+        )
     }
 
     // MARK: - Math Code Blocks
@@ -248,12 +276,31 @@ class RenderingValidationTests: XCTestCase {
     }
 
     func testMathCodeBlock_AttributedString() {
+        // Phase 2d follow-up: same contract as mermaid — single
+        // `BlockSourceTextAttachment` in storage, source on
+        // `.renderedBlockSource`.
         let proj = project("```math\nE=mc^2\n```\n")
-        let f = font(in: proj, at: "E=mc^2")
-        XCTAssertNotNil(f, "Math block should have a font")
-        #if os(OSX)
-        XCTAssertTrue(f!.isFixedPitch, "Math block should use monospace font")
-        #endif
+        let storage = proj.attributed
+        var foundSource: String?
+        var foundLength = 0
+        storage.enumerateAttribute(
+            .renderedBlockSource,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, range, _ in
+            guard let src = value as? String,
+                  src.contains("E=mc^2") else { return }
+            foundSource = src
+            foundLength = range.length
+        }
+        XCTAssertNotNil(
+            foundSource,
+            "Math block must carry source on `.renderedBlockSource`"
+        )
+        XCTAssertEqual(
+            foundLength, 1,
+            "Math block must occupy exactly one character in storage (the U+FFFC attachment)"
+        )
     }
 
     // MARK: - Inline Math
