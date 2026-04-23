@@ -83,7 +83,7 @@ final class TableCellCursorMathTests: XCTestCase {
             return false
         }
         guard let blockIdx = blockIdx,
-              case let .table(_, _, rows, _, _) = proj.document.blocks[blockIdx] else {
+              case let .table(_, _, rows, _) = proj.document.blocks[blockIdx] else {
             XCTFail("Expected a .table block at some index")
             return
         }
@@ -106,7 +106,7 @@ final class TableCellCursorMathTests: XCTestCase {
             in: proj
         )
 
-        guard case let .table(_, _, newRows, _, _) = result.newProjection.document.blocks[blockIdx] else {
+        guard case let .table(_, _, newRows, _) = result.newProjection.document.blocks[blockIdx] else {
             XCTFail("Post-edit block must still be .table")
             return
         }
@@ -141,11 +141,10 @@ final class TableCellCursorMathTests: XCTestCase {
         let doc = MarkdownParser.parse(md)
 
         // Build a new Document where the body cell has a <br> mid-text.
-        guard case let .table(header, alignments, _, _, raw) = doc.blocks[0] else {
+        guard case let .table(header, alignments, _, _) = doc.blocks[0] else {
             XCTFail("Expected a table block")
             return
         }
-        _ = raw
         let newRows: [[TableCell]] = [
             [TableCell([
                 .text("he"),
@@ -153,13 +152,8 @@ final class TableCellCursorMathTests: XCTestCase {
                 .text("llo")
             ])]
         ]
-        let newRaw = EditingOps.rebuildTableRaw(
-            header: header,
-            alignments: alignments,
-            rows: newRows
-        )
         let newDoc = Document(
-            blocks: [.table(header: header, alignments: alignments, rows: newRows, columnWidths: nil, raw: newRaw)],
+            blocks: [.table(header: header, alignments: alignments, rows: newRows, columnWidths: nil)],
             trailingNewline: doc.trailingNewline,
             refDefs: doc.refDefs
         )

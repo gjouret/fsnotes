@@ -349,11 +349,15 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         if isRenderedCodeBlock {
             mb.renderMode = .rendered
         }
-        // Carry original markdown for table blocks so renderTables()
-        // can parse the pipe-delimited source (the rendered storage
-        // uses spaces/box-drawing, not pipes).
-        if case .table(_, _, _, _, let raw) = block {
-            mb.rawMarkdown = raw
+        // Carry canonical markdown for table blocks. The widget path
+        // consuming this has been deleted (T2-h); keeping the field
+        // populated for any remaining source-mode MarkdownBlock
+        // consumers. Phase 4.2 drops the per-block `raw` cache, so we
+        // rebuild canonically on demand.
+        if case .table(let header, let alignments, let rows, _) = block {
+            mb.rawMarkdown = EditingOps.rebuildTableRaw(
+                header: header, alignments: alignments, rows: rows
+            )
         }
         return mb
     }

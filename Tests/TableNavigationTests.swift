@@ -60,8 +60,7 @@ final class TableNavigationTests: XCTestCase {
             header: header,
             alignments: alignments,
             rows: rows,
-            columnWidths: nil,
-            raw: ""
+            columnWidths: nil
         )
         let element = TableElement(
             block: block, attributedString: rendered
@@ -342,7 +341,7 @@ final class TableNavigationTests: XCTestCase {
         }
 
         // Find the END of cell (0,0): its start + its text length.
-        guard case .table(let header, _, _, _, _) = ctx.element.block else {
+        guard case .table(let header, _, _, _) = ctx.element.block else {
             XCTFail("Element block is not .table")
             return
         }
@@ -428,7 +427,7 @@ final class TableNavigationTests: XCTestCase {
         // col 0) carries a `.rawHTML("<br>")` inline.
         var found = false
         for block in after.blocks {
-            if case .table(let header, _, _, _, _) = block {
+            if case .table(let header, _, _, _) = block {
                 let inline = header[0].inline
                 if inline.contains(where: { node in
                     if case .rawHTML(let s) = node, s == "<br>" { return true }

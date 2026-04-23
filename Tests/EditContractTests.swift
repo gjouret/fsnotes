@@ -724,7 +724,7 @@ final class EditContractTests: XCTestCase {
             contract: contract
         )
         // Verify the cell content actually mutated.
-        guard case .table(_, _, let rows, _, _) =
+        guard case .table(_, _, let rows, _) =
                 result.newProjection.document.blocks[0] else {
             return XCTFail("Block 0 must remain a table")
         }
@@ -754,7 +754,7 @@ final class EditContractTests: XCTestCase {
             after: result.newProjection,
             contract: contract
         )
-        guard case .table(let header, _, _, _, _) =
+        guard case .table(let header, _, _, _) =
                 result.newProjection.document.blocks[0] else {
             return XCTFail("Block 0 must remain a table")
         }
@@ -865,9 +865,9 @@ final class EditContractTests: XCTestCase {
             contract: contract
         )
         // Spot-check: body[0][1] changed, others unchanged.
-        guard case .table(let header, _, let rows, _, _) =
+        guard case .table(let header, _, let rows, _) =
                 result.newProjection.document.blocks[0],
-              case .table(let beforeHeader, _, let beforeRows, _, _) =
+              case .table(let beforeHeader, _, let beforeRows, _) =
                 before.document.blocks[0] else {
             return XCTFail("Both projections must expose .table at index 0")
         }
@@ -895,7 +895,7 @@ final class EditContractTests: XCTestCase {
         // Build a forged "after" document where TWO cells have changed.
         // Mimic what a buggy primitive might produce.
         var forgedDoc = before.document
-        guard case .table(let header, let alignments, let rows, _, let raw) =
+        guard case .table(let header, let alignments, let rows, _) =
                 forgedDoc.blocks[0] else {
             return XCTFail("Block 0 must be a table")
         }
@@ -905,7 +905,7 @@ final class EditContractTests: XCTestCase {
         forgedDoc.replaceBlock(
             at: 0,
             with: .table(header: header, alignments: alignments,
-                         rows: newRows, columnWidths: nil, raw: raw)
+                         rows: newRows, columnWidths: nil)
         )
         let forgedAfter = DocumentProjection(
             document: forgedDoc,
@@ -943,7 +943,7 @@ final class EditContractTests: XCTestCase {
 
         // Forge an "after" that grew from 2 to 3 columns.
         var forgedDoc = before.document
-        guard case .table(let header, let alignments, let rows, _, let raw) =
+        guard case .table(let header, let alignments, let rows, _) =
                 forgedDoc.blocks[0] else {
             return XCTFail("Block 0 must be a table")
         }
@@ -953,7 +953,7 @@ final class EditContractTests: XCTestCase {
         forgedDoc.replaceBlock(
             at: 0,
             with: .table(header: newHeader, alignments: newAlignments,
-                         rows: newRows, columnWidths: nil, raw: raw)
+                         rows: newRows, columnWidths: nil)
         )
         let forgedAfter = DocumentProjection(
             document: forgedDoc,

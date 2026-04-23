@@ -278,8 +278,7 @@ public final class BlockModelContentStorageDelegate: NSObject, NSTextContentStor
             header: headerCells,
             alignments: alignments,
             rows: bodyCells,
-            columnWidths: nil,
-            raw: ""
+            columnWidths: nil
         )
     }
 }

@@ -37,14 +37,17 @@ final class TableStructuralEditingTests: XCTestCase {
         return DocumentProjection(document: doc, bodyFont: bodyFont(), codeFont: codeFont())
     }
 
-    /// Pull the `.table` block from the projection at index 0.
+    /// Pull the `.table` block from the projection at index 0. The
+    /// returned `raw` string is the canonical rebuild used by the
+    /// serializer (Phase 4.2 dropped the per-block source cache).
     private func table(
         in projection: DocumentProjection,
         at blockIndex: Int = 0
     ) -> (header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], raw: String)? {
         guard blockIndex < projection.document.blocks.count,
-              case .table(let h, let a, let r, _, let raw) = projection.document.blocks[blockIndex]
+              case .table(let h, let a, let r, _) = projection.document.blocks[blockIndex]
         else { return nil }
+        let raw = EditingOps.rebuildTableRaw(header: h, alignments: a, rows: r)
         return (h, a, r, raw)
     }
 
@@ -414,7 +417,7 @@ final class TableStructuralEditingTests: XCTestCase {
         let set = try EditingOps.setTableColumnWidths(
             blockIndex: 0, widths: [100, 120, 140], in: p
         )
-        guard case .table(_, _, _, let seeded, _) =
+        guard case .table(_, _, _, let seeded) =
                 set.newProjection.document.blocks[0] else {
             XCTFail("Block 0 must be a table after setTableColumnWidths")
             return
@@ -426,7 +429,7 @@ final class TableStructuralEditingTests: XCTestCase {
             blockIndex: 0, at: 1, alignment: .none,
             in: set.newProjection
         )
-        guard case .table(_, _, _, let afterW, _) =
+        guard case .table(_, _, _, let afterW) =
                 afterInsert.newProjection.document.blocks[0] else {
             XCTFail("Block 0 must still be a table after insertTableColumn")
             return

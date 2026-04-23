@@ -156,8 +156,7 @@ public enum TableTextRenderer {
                 header: header,
                 alignments: alignments,
                 rows: rows,
-                columnWidths: nil,
-                raw: rawMarkdown
+                columnWidths: nil
             )
             result.addAttribute(
                 .tableAuthoritativeBlock,

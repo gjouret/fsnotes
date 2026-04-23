@@ -369,15 +369,14 @@ public enum MarkdownParser {
             if case .htmlBlock(let raw) = block,
                let widths = parseColumnWidthsComment(raw),
                i + 1 < blocks.count,
-               case .table(let header, let alignments, let rows, _, let tableRaw) = blocks[i + 1],
+               case .table(let header, let alignments, let rows, _) = blocks[i + 1],
                widths.count == alignments.count,
                widths.allSatisfy({ $0 > 0 }) {
                 out.append(.table(
                     header: header,
                     alignments: alignments,
                     rows: rows,
-                    columnWidths: widths,
-                    raw: tableRaw
+                    columnWidths: widths
                 ))
                 i += 2
                 continue
@@ -2205,7 +2204,6 @@ public enum MarkdownParser {
                 let headerCells = headerStrings.map {
                     TableCell(parseInlines($0, refDefs: [:]))
                 }
-                var rawLines = [headerLine, sepLine]
                 var dataRows: [[TableCell]] = []
                 var j = i + 2
                 while j < lines.count {
@@ -2222,12 +2220,10 @@ public enum MarkdownParser {
                         TableCell(parseInlines($0, refDefs: [:]))
                     }
                     dataRows.append(rowCells)
-                    rawLines.append(l)
                     j += 1
                 }
-                let raw = rawLines.joined(separator: "\n")
                 return TableDetection(
-                    block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil, raw: raw),
+                    block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil),
                     nextIndex: j,
                     headerFromBuffer: false
                 )
@@ -2245,7 +2241,6 @@ public enum MarkdownParser {
             let headerCells = headerStrings.map {
                 TableCell(parseInlines($0, refDefs: [:]))
             }
-            var rawLines = [headerLine, sepLine]
             var dataRows: [[TableCell]] = []
             var j = i + 1
             while j < lines.count {
@@ -2261,12 +2256,10 @@ public enum MarkdownParser {
                     TableCell(parseInlines($0, refDefs: [:]))
                 }
                 dataRows.append(rowCells)
-                rawLines.append(l)
                 j += 1
             }
-            let raw = rawLines.joined(separator: "\n")
             return TableDetection(
-                block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil, raw: raw),
+                block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil),
                 nextIndex: j,
                 headerFromBuffer: true
             )

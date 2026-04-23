@@ -328,8 +328,7 @@ extension EditTextView {
                 header: [empty, empty],
                 alignments: [.none, .none],
                 rows: [[empty, empty]],
-                columnWidths: nil,
-                raw: tableMarkdown
+                columnWidths: nil
             )
             var newDoc = projection.document
             newDoc.insertBlock(tableBlock, at: blockIndex + 1)

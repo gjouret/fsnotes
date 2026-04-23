@@ -502,7 +502,7 @@ final class TableHandleOverlay {
         guard let editor = editor,
               let projection = editor.documentProjection,
               blockIndex < projection.document.blocks.count,
-              case .table(let h, let a, let r, _, _) =
+              case .table(let h, let a, let r, _) =
                 projection.document.blocks[blockIndex]
         else { return nil }
         return (h, a, r)

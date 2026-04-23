@@ -113,7 +113,7 @@ class TableCellEditingRefactorTests: XCTestCase {
         let parsed = MarkdownParser.parse(md)
 
         // Sanity: the parse produced the shape we expect.
-        guard case .table(_, _, let rows, _, _) = parsed.blocks[0] else {
+        guard case .table(_, _, let rows, _) = parsed.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
         XCTAssertEqual(rows.count, 2, "expected two data rows")
@@ -201,7 +201,7 @@ class TableCellEditingRefactorTests: XCTestCase {
 
         let roundTripped = MarkdownParser.parse(MarkdownSerializer.serialize(edited))
 
-        guard case .table(_, _, let rows, _, _) = roundTripped.blocks[0] else {
+        guard case .table(_, _, let rows, _) = roundTripped.blocks[0] else {
             XCTFail("round-tripped block 0 is not a table"); return
         }
         XCTAssertEqual(
@@ -243,13 +243,16 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .body(row: 1, col: 2),
             newSourceText: "**c2**", in: proj
         )
-        guard case .table(_, _, let rows, _, let raw) =
+        guard case .table(_, _, let rows, _) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
         XCTAssertEqual(rows[1][2].rawText, "**c2**")
-        XCTAssertTrue(raw.contains("**c2**"),
-            "raw was not recomputed after body edit. raw:\n\(raw)")
+        let serialized = MarkdownSerializer.serialize(
+            result.newProjection.document
+        )
+        XCTAssertTrue(serialized.contains("**c2**"),
+            "serializer did not emit edited cell. got:\n\(serialized)")
     }
 
     func test_primitive_editHeaderCell_updatesRawAndHeader() throws {
@@ -258,13 +261,16 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .header(col: 0),
             newSourceText: "*A*", in: proj
         )
-        guard case .table(let header, _, _, _, let raw) =
+        guard case .table(let header, _, _, _) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
         XCTAssertEqual(header[0].rawText, "*A*")
-        XCTAssertTrue(raw.contains("*A*"),
-            "raw was not recomputed after header edit. raw:\n\(raw)")
+        let serialized = MarkdownSerializer.serialize(
+            result.newProjection.document
+        )
+        XCTAssertTrue(serialized.contains("*A*"),
+            "serializer did not emit edited header cell. got:\n\(serialized)")
     }
 
     func test_primitive_unwrapMarkers_removesFromCell() throws {
@@ -353,7 +359,7 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .body(row: 0, col: 1),
             newSourceText: "__B1__", in: proj
         )
-        guard case .table(let header, _, let rows, _, _) =
+        guard case .table(let header, _, let rows, _) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
@@ -408,35 +414,47 @@ class TableCellEditingRefactorTests: XCTestCase {
             blockIndex: 0, at: .body(row: 0, col: 1),
             newSourceText: "**b1**", in: proj
         )
-        guard case .table(_, let alignments, _, _, let raw) =
+        guard case .table(_, let alignments, _, _) =
                 result.newProjection.document.blocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
         XCTAssertEqual(alignments, [.left, .center, .right],
             "alignment vector was corrupted by cell edit")
-        // raw should contain the canonical alignment markers for the
-        // three columns in order.
-        XCTAssertTrue(raw.contains(":---"),
-            "left-alignment marker missing from recomputed raw. raw:\n\(raw)")
-        XCTAssertTrue(raw.contains(":---:"),
-            "center-alignment marker missing from recomputed raw. raw:\n\(raw)")
-        XCTAssertTrue(raw.contains("---:"),
-            "right-alignment marker missing from recomputed raw. raw:\n\(raw)")
+        // Serialized output should contain the canonical alignment
+        // markers for the three columns in order.
+        let serialized = MarkdownSerializer.serialize(
+            result.newProjection.document
+        )
+        XCTAssertTrue(serialized.contains(":---"),
+            "left-alignment marker missing from serialized output:\n\(serialized)")
+        XCTAssertTrue(serialized.contains(":---:"),
+            "center-alignment marker missing from serialized output:\n\(serialized)")
+        XCTAssertTrue(serialized.contains("---:"),
+            "right-alignment marker missing from serialized output:\n\(serialized)")
     }
 
-    func test_primitive_untouchedTablesKeepExactSourceText() throws {
-        // A table in non-canonical form (no spaces around pipes). If
-        // we never call replaceTableCell on it, serialize must emit
-        // the exact source — this is the B1 contract.
+    func test_primitive_tablesSerializeCanonically() throws {
+        // Phase 4.2: tables always serialize canonically — the
+        // per-block `raw: String` field that preserved non-canonical
+        // source formatting was deleted. Legacy notes with
+        // non-canonical tables are rewritten on first save (accepted
+        // trade per plan). The pre-4.2 test pinned byte-equal round-
+        // trip of `|A|B|\n|-|-|\n|1|2|\n`; post-4.2 the parser still
+        // accepts that input but the serializer emits the canonical
+        // `| A | B |\n|---|---|\n| 1 | 2 |` form.
         let md = "|A|B|\n|-|-|\n|1|2|\n"
         let doc = MarkdownParser.parse(md)
         let serialized = MarkdownSerializer.serialize(doc)
-        XCTAssertEqual(
-            serialized, md,
-            "untouched non-canonical table lost its source text")
+        XCTAssertTrue(serialized.contains("| A | B |"),
+            "canonical header missing:\n\(serialized)")
+        XCTAssertTrue(serialized.contains("|---|---|"),
+            "canonical separator missing:\n\(serialized)")
+        XCTAssertTrue(serialized.contains("| 1 | 2 |"),
+            "canonical body row missing:\n\(serialized)")
 
-        // A different table in the same document getting edited must
-        // not affect an untouched table.
+        // An edit to one table in a multi-table document canonicalises
+        // every table's output (the untouched table no longer preserves
+        // its source formatting — see the rewrite note above).
         let md2 = """
         |A|B|
         |-|-|
@@ -453,13 +471,16 @@ class TableCellEditingRefactorTests: XCTestCase {
             newSourceText: "**x1**", in: proj
         )
         let outBlocks = result.newProjection.document.blocks
-        guard case .table(_, _, _, _, let raw0) = outBlocks[0] else {
+        guard case .table = outBlocks[0] else {
             XCTFail("block 0 is not a table"); return
         }
-        // The first table was not touched — its raw must be byte-equal
-        // to what the parser saw, i.e. the non-canonical form.
-        XCTAssertEqual(raw0, "|A|B|\n|-|-|\n|1|2|",
-            "untouched table was re-canonicalized after editing a DIFFERENT table")
+        let out = MarkdownSerializer.serialize(result.newProjection.document)
+        // The first (untouched) table canonicalises on save.
+        XCTAssertTrue(out.contains("| A | B |"),
+            "first table did not canonicalise on save:\n\(out)")
+        // The second (edited) table carries the new content.
+        XCTAssertTrue(out.contains("**x1**"),
+            "edited cell missing from output:\n\(out)")
     }
 
     // MARK: - Block deletion (select-table + delete)

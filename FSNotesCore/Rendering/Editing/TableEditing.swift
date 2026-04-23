@@ -108,7 +108,7 @@ public enum TableEditing {
               blockIndex < projection.document.blocks.count else {
             throw EditingError.outOfBounds
         }
-        guard case .table(let header, let alignments, let rows, let widths, _) =
+        guard case .table(let header, let alignments, let rows, let widths) =
                 projection.document.blocks[blockIndex] else {
             throw EditingError.unsupported(
                 reason: "replaceTableCellInline: block \(blockIndex) is not a table"
@@ -135,19 +135,14 @@ public enum TableEditing {
             newRows[row][col] = newCell
         }
 
-        // 3. Recompute `raw` from the new structural fields so the
-        //    serializer sees the edit directly.
-        let newRaw = rebuildTableRaw(
-            header: newHeader, alignments: alignments, rows: newRows
-        )
-
-        // 4. Build the new block and route through the standard block
+        // 3. Build the new block and route through the standard block
         //    replacement path. `sameBlockKind` routes unchanged-shape
         //    table edits through `replaceBlockFast` — the hot path for
-        //    cell typing.
+        //    cell typing. Phase 4.2: no raw-string recompute needed —
+        //    the serializer canonicalizes on write.
         let newBlock: Block = .table(
             header: newHeader, alignments: alignments,
-            rows: newRows, columnWidths: widths, raw: newRaw
+            rows: newRows, columnWidths: widths
         )
         return try replaceBlock(
             atIndex: blockIndex, with: newBlock, in: projection

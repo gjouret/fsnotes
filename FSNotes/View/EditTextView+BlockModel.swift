@@ -1724,7 +1724,7 @@ extension EditTextView {
             bmLog("⛔ handleTableCellEdit: projection has no block at offset \(ctx.elementStorageStart)")
             return false
         }
-        guard case .table(let header, _, _, _, _) =
+        guard case .table(let header, _, _, _) =
                 projection.document.blocks[blockIdx] else {
             bmLog("⛔ handleTableCellEdit: block \(blockIdx) is not a table")
             return false

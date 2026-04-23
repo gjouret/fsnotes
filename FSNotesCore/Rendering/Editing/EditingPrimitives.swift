@@ -1036,7 +1036,10 @@ public enum EditingPrimitives {
             return lines.map { inlinesToText($0.inline) }.joined(separator: "\n")
         case .horizontalRule: return ""
         case .blankLine: return ""
-        case .table(_, _, _, _, let raw): return raw
+        case .table(let header, let alignments, let rows, _):
+            return EditingOps.rebuildTableRaw(
+                header: header, alignments: alignments, rows: rows
+            )
         }
     }
 

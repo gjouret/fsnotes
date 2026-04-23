@@ -28,7 +28,7 @@ public enum MarkdownSerializer {
         var parts: [String] = []
         parts.reserveCapacity(document.blocks.count)
         for block in document.blocks {
-            if case .table(_, _, _, let widths, _) = block, let widths = widths {
+            if case .table(_, _, _, let widths) = block, let widths = widths {
                 parts.append(columnWidthsComment(widths))
             }
             parts.append(serialize(block: block))
@@ -97,11 +97,17 @@ public enum MarkdownSerializer {
         case .htmlBlock(let raw):
             return raw
 
-        case .table(_, _, _, _, let raw):
-            // Round-trip: emit the exact source text that was parsed.
+        case .table(let header, let alignments, let rows, _):
+            // Canonical output: rebuild from the structural fields.
+            // Phase 4.2 dropped the `raw: String` field in favour of
+            // this single unconditional-canonical emission path.
+            // Legacy notes with non-canonical table formatting are
+            // rewritten on first save (accepted trade per plan).
             // The `columnWidths` sentinel (if any) is emitted by the
             // top-level `serialize(_:)` as a line above this body.
-            return raw
+            return EditingOps.rebuildTableRaw(
+                header: header, alignments: alignments, rows: rows
+            )
 
         case .blankLine:
             return ""

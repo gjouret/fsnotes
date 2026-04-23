@@ -138,7 +138,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         containerWidth: CGFloat,
         font: NSFont
     ) -> TableGeometry.Result {
-        guard case .table(let header, let alignments, let rows, let widths, _) = block else {
+        guard case .table(let header, let alignments, let rows, let widths) = block else {
             return TableGeometry.Result(
                 columnWidths: [], rowHeights: [], totalHeight: 0
             )
@@ -274,7 +274,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// text with embedded control characters.
     public override func draw(at point: CGPoint, in context: CGContext) {
         guard let element = tableElement,
-              case .table(let header, let alignments, let rows, _, _) = element.block,
+              case .table(let header, let alignments, let rows, _) = element.block,
               header.count > 0 else {
             return
         }
@@ -459,7 +459,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// fragment's `layoutFragmentFrame.origin.x` before calling.
     public func columnAt(localX: CGFloat) -> Int? {
         guard let element = tableElement,
-              case .table(_, _, _, _, _) = element.block else { return nil }
+              case .table(_, _, _, _) = element.block else { return nil }
         let g = geometry(
             block: element.block,
             containerWidth: containerWidth,
@@ -481,7 +481,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// if `localY` is outside the grid's vertical extent.
     public func rowAt(localY: CGFloat) -> Int? {
         guard let element = tableElement,
-              case .table(_, _, _, _, _) = element.block else { return nil }
+              case .table(_, _, _, _) = element.block else { return nil }
         let g = geometry(
             block: element.block,
             containerWidth: containerWidth,
@@ -521,7 +521,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// out of scope) and for single-column tables.
     public func columnBoundaryAt(localX: CGFloat) -> Int? {
         guard let element = tableElement,
-              case .table(let header, _, _, _, _) = element.block,
+              case .table(let header, _, _, _) = element.block,
               header.count > 1 else { return nil }
         let g = geometry(
             block: element.block,

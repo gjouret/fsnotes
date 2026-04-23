@@ -41,20 +41,19 @@ final class TableColumnResizeTests: XCTestCase {
     | a1 | b1 | c1 |
     """
 
-    /// Pull (header, alignments, rows, widths, raw) out of a table
-    /// block. Matches the 5-field shape introduced in T2-g.4.
+    /// Pull (header, alignments, rows, widths) out of a table block.
+    /// Matches the 4-field shape after Phase 4.2 dropped `raw`.
     private func unwrapTable(
         _ projection: DocumentProjection, at blockIndex: Int = 0
     ) -> (header: [TableCell],
           alignments: [TableAlignment],
           rows: [[TableCell]],
-          widths: [CGFloat]?,
-          raw: String)? {
+          widths: [CGFloat]?)? {
         guard blockIndex < projection.document.blocks.count,
-              case .table(let h, let a, let r, let w, let raw) =
+              case .table(let h, let a, let r, let w) =
                 projection.document.blocks[blockIndex]
         else { return nil }
-        return (h, a, r, w, raw)
+        return (h, a, r, w)
     }
 
     // MARK: - Primitive
@@ -201,7 +200,7 @@ final class TableColumnResizeTests: XCTestCase {
         // Expect exactly one block, a .table with widths populated.
         // (The sentinel comment is consumed; it's not a separate block.)
         let tableBlocks = doc.blocks.compactMap { block -> [CGFloat]? in
-            if case .table(_, _, _, let w, _) = block { return w ?? [] }
+            if case .table(_, _, _, let w) = block { return w ?? [] }
             return nil
         }
         XCTAssertEqual(tableBlocks.count, 1, "Expected exactly one table block")
@@ -225,7 +224,7 @@ final class TableColumnResizeTests: XCTestCase {
         let doc = MarkdownParser.parse(md)
         // Find the table; widths must be nil.
         let tableWidths = doc.blocks.compactMap { block -> [CGFloat]?? in
-            if case .table(_, _, _, let w, _) = block { return .some(w) }
+            if case .table(_, _, _, let w) = block { return .some(w) }
             return nil
         }
         XCTAssertEqual(tableWidths.count, 1)
@@ -243,7 +242,7 @@ final class TableColumnResizeTests: XCTestCase {
         """
         let doc = MarkdownParser.parse(md)
         for block in doc.blocks {
-            if case .table(_, _, _, let w, _) = block {
+            if case .table(_, _, _, let w) = block {
                 XCTAssertNil(w, "Mismatched width count must be rejected")
             }
         }
@@ -262,7 +261,7 @@ final class TableColumnResizeTests: XCTestCase {
         let d2 = MarkdownParser.parse(s1)
         var recovered: [CGFloat]? = nil
         for block in d2.blocks {
-            if case .table(_, _, _, let w, _) = block {
+            if case .table(_, _, _, let w) = block {
                 recovered = w
                 break
             }
@@ -294,12 +293,12 @@ final class TableColumnResizeTests: XCTestCase {
         let d2 = MarkdownParser.parse(md2)
         // d1 has exactly one (table) block with widths == nil.
         XCTAssertTrue(d1.blocks.contains(where: {
-            if case .table(_, _, _, let w, _) = $0 { return w == nil }
+            if case .table(_, _, _, let w) = $0 { return w == nil }
             return false
         }))
         // d2 has a (malformed-comment htmlBlock) + (table with widths nil).
         XCTAssertTrue(d2.blocks.contains(where: {
-            if case .table(_, _, _, let w, _) = $0 { return w == nil }
+            if case .table(_, _, _, let w) = $0 { return w == nil }
             return false
         }))
     }

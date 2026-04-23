@@ -217,15 +217,21 @@ public enum Block: Equatable {
     /// A pipe-delimited markdown table. `header` and `rows` hold
     /// `TableCell` values — each cell is its own inline tree, parsed
     /// and rendered the same way paragraph content is. `alignments`
-    /// comes from the separator row. The `raw` string preserves the
-    /// exact source text for byte-equal round-trip serialization of
-    /// tables the user never edits; once a cell is edited, `raw` is
-    /// recomputed canonically from the inline trees.
+    /// comes from the separator row. `columnWidths` (T2-g.4) carries
+    /// the persisted drag-resize widths when set; when nil, layout
+    /// computes widths from cell content.
+    ///
+    /// Tables serialize canonically: `MarkdownSerializer` emits via
+    /// `EditingOps.rebuildTableRaw(header, alignments, rows)` on every
+    /// write, regardless of whether the table was edited. Legacy
+    /// non-canonical source formatting is rewritten on the first save
+    /// of a note that contains tables — this is an accepted trade-off
+    /// (see REFACTOR_PLAN Phase 4.2).
     ///
     /// Cell content is "a paragraph inside a cell" — the parser, the
     /// primitives, and the native `TableElement` renderer all operate
     /// on inline trees using the same `InlineRenderer` paragraphs use.
-    case table(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], columnWidths: [CGFloat]?, raw: String)
+    case table(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], columnWidths: [CGFloat]?)
 
     /// A literal blank line separating blocks.
     case blankLine

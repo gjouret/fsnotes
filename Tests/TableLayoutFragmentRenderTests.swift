@@ -100,7 +100,7 @@ final class TableLayoutFragmentRenderTests: XCTestCase {
         }
 
         guard let block = tableBlock(of: fragment),
-              case .table(let header, let alignments, let rows, _, _) = block
+              case .table(let header, let alignments, let rows, _) = block
         else {
             XCTFail("Fragment's TableElement did not carry a .table block")
             return
@@ -169,7 +169,7 @@ final class TableLayoutFragmentRenderTests: XCTestCase {
             }
 
             guard let block = tableBlock(of: fragment),
-                  case .table(let header, let alignments, let rows, _, _) = block
+                  case .table(let header, let alignments, let rows, _) = block
             else {
                 XCTFail("Shape \(shape): fragment's element did not carry a .table block")
                 continue
