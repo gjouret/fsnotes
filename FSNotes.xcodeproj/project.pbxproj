@@ -70,6 +70,7 @@
 		ETVT000000000000000000B2 /* EditTextView+ThemeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */; };
 		THMDT00000000000000000B1 /* ThemeDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THMDT00000000000000000F1 /* ThemeDiscoveryTests.swift */; };
 		PTWB000000000000000000B1 /* PreferencesThemeWritebackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PTWB000000000000000000F1 /* PreferencesThemeWritebackTests.swift */; };
+		P75C000000000000000000B1 /* Phase75cUDProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P75C000000000000000000F1 /* Phase75cUDProxyTests.swift */; };
 		P1AA000000000000000000B1 /* ThemeSaveThrottleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P1AA000000000000000000F1 /* ThemeSaveThrottleTests.swift */; };
 		P1BB000000000000000000B1 /* ThemeSaveSecurityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P1BB000000000000000000F1 /* ThemeSaveSecurityTests.swift */; };
 		P1CC000000000000000000B1 /* ListRendererPlaceholderCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P1CC000000000000000000F1 /* ListRendererPlaceholderCacheTests.swift */; };
@@ -78,6 +79,9 @@
 		FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */; };
 		TELE000000000000000000B1 /* TableElement.swift in Sources */ = {isa = PBXBuildFile; fileRef = TELE000000000000000000F1 /* TableElement.swift */; };
 		TLLF000000000000000000B1 /* TableLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = TLLF000000000000000000F1 /* TableLayoutFragment.swift */; };
+		P41S000000000000000000B1 /* SourceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F1 /* SourceRenderer.swift */; };
+		P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F2 /* SourceLayoutFragment.swift */; };
+		P41S000000000000000000B3 /* Phase41SourceRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */; };
 		TGEO000000000000000000B1 /* TableGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGEO000000000000000000F1 /* TableGeometry.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
@@ -92,6 +96,7 @@
 		TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCET000000000000000000F1 /* TableCellEditingTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
 		TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */; };
+		ETVF000000000000000000B1 /* EditTextViewFillRenderSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */; };
 		BQT0000000000000000000B1 /* BlockquoteRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */; };
 		INR0000000000000000000B1 /* InlineRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = INR0000000000000000000F1 /* InlineRenderer.swift */; };
 		HRT0000000000000000000B1 /* HeadingRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */; };
@@ -700,6 +705,7 @@
 		T2GHOV000000000000000B1 /* TableHandleOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHOV000000000000000F1 /* TableHandleOverlay.swift */; };
 		T2GHVW000000000000000B1 /* TableHandleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHVW000000000000000F1 /* TableHandleView.swift */; };
 		T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */; };
+		T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2G40000000000000000000F1 /* TableColumnResizeTests.swift */; };
 		CBEOT00000000000000000B1 /* CodeBlockEditToggleOverlayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */; };
 		23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */; };
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
@@ -1170,6 +1176,7 @@
 		ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+ThemeObserver.swift"; sourceTree = "<group>"; };
 		THMDT00000000000000000F1 /* ThemeDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeDiscoveryTests.swift; sourceTree = "<group>"; };
 		PTWB000000000000000000F1 /* PreferencesThemeWritebackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesThemeWritebackTests.swift; sourceTree = "<group>"; };
+		P75C000000000000000000F1 /* Phase75cUDProxyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase75cUDProxyTests.swift; sourceTree = "<group>"; };
 		P1AA000000000000000000F1 /* ThemeSaveThrottleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSaveThrottleTests.swift; sourceTree = "<group>"; };
 		P1BB000000000000000000F1 /* ThemeSaveSecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSaveSecurityTests.swift; sourceTree = "<group>"; };
 		P1CC000000000000000000F1 /* ListRendererPlaceholderCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListRendererPlaceholderCacheTests.swift; sourceTree = "<group>"; };
@@ -1178,6 +1185,9 @@
 		FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/FoldedLayoutFragment.swift; sourceTree = "<group>"; };
 		TELE000000000000000000F1 /* TableElement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableElement.swift; sourceTree = "<group>"; };
 		TLLF000000000000000000F1 /* TableLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/TableLayoutFragment.swift; sourceTree = "<group>"; };
+		P41S000000000000000000F1 /* SourceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceRenderer.swift; sourceTree = "<group>"; };
+		P41S000000000000000000F2 /* SourceLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/SourceLayoutFragment.swift; sourceTree = "<group>"; };
+		P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase41SourceRendererTests.swift; sourceTree = "<group>"; };
 		TGEO000000000000000000F1 /* TableGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableGeometry.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
@@ -1192,6 +1202,7 @@
 		TCET000000000000000000F1 /* TableCellEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellEditingTests.swift; sourceTree = "<group>"; };
 		T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2eT2fFindAcrossTableCellsTests.swift; sourceTree = "<group>"; };
 		TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCursorMathTests.swift; sourceTree = "<group>"; };
+		ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditTextViewFillRenderSyncTests.swift; sourceTree = "<group>"; };
 		BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteRoundTripTests.swift; sourceTree = "<group>"; };
 		INR0000000000000000000F1 /* InlineRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineRenderer.swift; sourceTree = "<group>"; };
 		HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadingRoundTripTests.swift; sourceTree = "<group>"; };
@@ -1490,6 +1501,7 @@
 		T2GHOV000000000000000F1 /* TableHandleOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleOverlay.swift; sourceTree = "<group>"; };
 		T2GHVW000000000000000F1 /* TableHandleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleView.swift; sourceTree = "<group>"; };
 		T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableStructuralEditingTests.swift; sourceTree = "<group>"; };
+		T2G40000000000000000000F1 /* TableColumnResizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableColumnResizeTests.swift; sourceTree = "<group>"; };
 		CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleOverlayTests.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRenderer.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
@@ -1736,6 +1748,8 @@
 				TELE000000000000000000F1 /* TableElement.swift */,
 				TLLF000000000000000000F1 /* TableLayoutFragment.swift */,
 				TGEO000000000000000000F1 /* TableGeometry.swift */,
+				P41S000000000000000000F1 /* SourceRenderer.swift */,
+				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
 				BSTH000000000000000000F1 /* BlockStyleTheme.swift */,
 				THM7000000000000000000F1 /* ThemeSchema.swift */,
@@ -2581,8 +2595,10 @@
 				TNAV000000000000000000F1 /* TableNavigationTests.swift */,
 				TCET000000000000000000F1 /* TableCellEditingTests.swift */,
 				T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */,
+				T2G40000000000000000000F1 /* TableColumnResizeTests.swift */,
 				T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */,
 				TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */,
+				ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */,
 				CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */,
 				TDLC000000000000000000F1 /* TodoListColorTests.swift */,
 				BG3N000000000000000000F1 /* Bugs3NoteColorTests.swift */,
@@ -2591,6 +2607,8 @@
 				THMT000000000000000000F1 /* ThemeTests.swift */,
 				THMDT00000000000000000F1 /* ThemeDiscoveryTests.swift */,
 				PTWB000000000000000000F1 /* PreferencesThemeWritebackTests.swift */,
+				P75C000000000000000000F1 /* Phase75cUDProxyTests.swift */,
+				P41S000000000000000000F3 /* Phase41SourceRendererTests.swift */,
 				P1AA000000000000000000F1 /* ThemeSaveThrottleTests.swift */,
 				P1BB000000000000000000F1 /* ThemeSaveSecurityTests.swift */,
 				P1CC000000000000000000F1 /* ListRendererPlaceholderCacheTests.swift */,
@@ -3489,6 +3507,8 @@
 				TELE000000000000000000B1 /* TableElement.swift in Sources */,
 				TLLF000000000000000000B1 /* TableLayoutFragment.swift in Sources */,
 				TGEO000000000000000000B1 /* TableGeometry.swift in Sources */,
+				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
+				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
 				DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */,
 				BREF000000000000000000B1 /* BlockRef.swift in Sources */,
@@ -4090,8 +4110,10 @@
 				TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */,
 				TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,
+				T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */,
 				T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */,
 				TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */,
+				ETVF000000000000000000B1 /* EditTextViewFillRenderSyncTests.swift in Sources */,
 				CBEOT00000000000000000B1 /* CodeBlockEditToggleOverlayTests.swift in Sources */,
 				TDLC000000000000000000B1 /* TodoListColorTests.swift in Sources */,
 				BG3N000000000000000000B1 /* Bugs3NoteColorTests.swift in Sources */,
@@ -4100,6 +4122,8 @@
 				THMT000000000000000000B1 /* ThemeTests.swift in Sources */,
 				THMDT00000000000000000B1 /* ThemeDiscoveryTests.swift in Sources */,
 				PTWB000000000000000000B1 /* PreferencesThemeWritebackTests.swift in Sources */,
+				P75C000000000000000000B1 /* Phase75cUDProxyTests.swift in Sources */,
+				P41S000000000000000000B3 /* Phase41SourceRendererTests.swift in Sources */,
 				P1AA000000000000000000B1 /* ThemeSaveThrottleTests.swift in Sources */,
 				P1BB000000000000000000B1 /* ThemeSaveSecurityTests.swift in Sources */,
 				P1CC000000000000000000B1 /* ListRendererPlaceholderCacheTests.swift in Sources */,
