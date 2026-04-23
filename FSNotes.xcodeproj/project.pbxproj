@@ -59,6 +59,7 @@
 		KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */; };
 		BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */; };
 		FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */; };
+		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
 		BQT0000000000000000000B1 /* BlockquoteRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */; };
 		INR0000000000000000000B1 /* InlineRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = INR0000000000000000000F1 /* InlineRenderer.swift */; };
 		HRT0000000000000000000B1 /* HeadingRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */; };
@@ -1119,6 +1120,7 @@
 		KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/KbdBoxParagraphLayoutFragment.swift; sourceTree = "<group>"; };
 		BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/BlockModelLayoutManagerDelegate.swift; sourceTree = "<group>"; };
 		FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/FoldedLayoutFragment.swift; sourceTree = "<group>"; };
+		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
 		BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteRoundTripTests.swift; sourceTree = "<group>"; };
 		INR0000000000000000000F1 /* InlineRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineRenderer.swift; sourceTree = "<group>"; };
 		HRT0000000000000000000F1 /* HeadingRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadingRoundTripTests.swift; sourceTree = "<group>"; };
@@ -1653,6 +1655,7 @@
 				KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */,
 				BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */,
 				FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */,
+				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
 				AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */,
 				ACFDF9EE77AD6F3A2B674332 /* UIPreferences.swift */,
@@ -3361,6 +3364,7 @@
 				KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */,
 				BMLM000000000000000000B1 /* BlockModelLayoutManagerDelegate.swift in Sources */,
 				FOLF000000000000000000B1 /* FoldedLayoutFragment.swift in Sources */,
+				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
 				AE6D47605A4C62BABAE54290 /* Note+FileOps.swift in Sources */,
 				2B39BCAF9051872BCE028441 /* SyncPreferences.swift in Sources */,
 				613B083A6587CA8FA9EF6729 /* UIPreferences.swift in Sources */,

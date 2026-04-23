@@ -85,6 +85,34 @@ public final class DisplayMathLayoutFragment: NSTextLayoutFragment {
         return width > 0 ? width : Self.fallbackContainerWidth
     }
 
+    // MARK: - Layout
+
+    /// Reserve enough vertical space for the rendered bitmap — TK2's
+    /// default `layoutFragmentFrame` uses the backing text's natural
+    /// height (one line for a single-line LaTeX source paragraph), but
+    /// the rendered bitmap often spans multiple lines (e.g. the
+    /// quadratic formula with a `\over` stacked fraction is 2–3 lines
+    /// tall). Without this override, the bitmap escapes the fragment's
+    /// allocated space and overlaps the fragments below.
+    /// See `MermaidLayoutFragment.layoutFragmentFrame` for the full
+    /// rationale (same bug class, same fix).
+    public override var layoutFragmentFrame: CGRect {
+        let base = super.layoutFragmentFrame
+        let target: CGFloat
+        if let image = renderedImage {
+            let scale = min(containerWidth / image.size.width, 1.0)
+            target = image.size.height * scale
+        } else {
+            target = Self.placeholderHeight
+        }
+        return CGRect(
+            x: base.origin.x,
+            y: base.origin.y,
+            width: base.width,
+            height: max(base.height, target)
+        )
+    }
+
     // MARK: - Rendering surface
 
     /// The rendered image is drawn starting at the text container's

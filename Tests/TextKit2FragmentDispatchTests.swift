@@ -1566,6 +1566,294 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         )
     }
 
+    // MARK: - Phase 2d follow-up: mixed-content display math
+    //
+    // Single-inline display-math paragraphs render via
+    // `DisplayMathLayoutFragment` (fragment-level draw of the MathJax
+    // bitmap over the source text in storage). Mixed-content paragraphs
+    // (e.g. "See $$\sum x$$ below") fall through to the paragraph kind
+    // and render the bitmap via an `NSTextAttachment` swap driven by
+    // `renderDisplayMathViaBlockModel()`. The two paths MUST NOT collide:
+    // a single-inline paragraph already has its bitmap painted by the
+    // fragment, so the attachment hydrator must skip that range.
+    //
+    // The hydrator's discriminator is the paragraph's `.blockModelKind`
+    // attribute — "displayMath" means the fragment owns the draw; any
+    // other value (typically "paragraph" / "paragraphWithKbd") means
+    // the hydrator owns it. These two tests pin the producer side of
+    // that contract: the attribute combinations DocumentRenderer emits
+    // for both shapes are exactly what the hydrator's filter reads.
+
+    /// Producer contract for the mixed-content path: a paragraph that
+    /// contains display math PLUS other text must be tagged
+    /// `.blockModelKind = .paragraph` (NOT `.displayMath`) AND must
+    /// still carry `.displayMathSource` on the LaTeX sub-range. Without
+    /// both conditions, `renderDisplayMathViaBlockModel()` either
+    /// wouldn't fire (no `.displayMathSource`) or would be suppressed
+    /// by its own single-inline guard (kind == "displayMath").
+    func test_phase2d_followup_mixedContentDisplayMath_tagsAsParagraphKind() {
+        let harness = EditorHarness(markdown: "See $$a=b$$ below\n")
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage else {
+            XCTFail("Harness editor must have text storage")
+            return
+        }
+        XCTAssertGreaterThan(
+            storage.length, 0,
+            "Sanity: storage must be populated from the harness markdown"
+        )
+
+        // Find the `.displayMathSource` range — this is where the
+        // hydrator would install an attachment. It must exist for the
+        // filter to have anything to match.
+        var mathRange: NSRange?
+        var mathSource: String?
+        storage.enumerateAttribute(
+            .displayMathSource,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, range, stop in
+            if let raw = value as? String, !raw.isEmpty {
+                mathRange = range
+                mathSource = raw
+                stop.pointee = true
+            }
+        }
+
+        guard let mathRange = mathRange else {
+            XCTFail(
+                "Mixed-content paragraph must have `.displayMathSource` " +
+                "on the LaTeX sub-range. Without it, " +
+                "renderDisplayMathViaBlockModel() has no ranges to process."
+            )
+            return
+        }
+        XCTAssertEqual(
+            mathSource, "a=b",
+            "Display-math inline must preserve the trimmed LaTeX source. " +
+            "Got \(mathSource ?? "nil")."
+        )
+
+        // The block containing the `.displayMathSource` range must be
+        // tagged as a PARAGRAPH (or paragraphWithKbd), NOT displayMath.
+        // If this is .displayMath, the hydrator would skip the range —
+        // leaving mixed-content display math unrendered.
+        let kindRaw = storage.attribute(
+            .blockModelKind,
+            at: mathRange.location,
+            effectiveRange: nil
+        ) as? String
+        XCTAssertNotEqual(
+            kindRaw,
+            BlockModelKind.displayMath.rawValue,
+            "Mixed-content paragraph must NOT be tagged .displayMath. " +
+            "If it is, DocumentRenderer.blockModelKind(for:) has over-" +
+            "matched and the follow-up hydrator will skip this range, " +
+            "regressing the mixed-content-display-math path."
+        )
+        XCTAssertEqual(
+            kindRaw,
+            BlockModelKind.paragraph.rawValue,
+            "Mixed-content display math paragraphs are expected to be " +
+            "tagged .paragraph (InlineRenderer does not emit .kbdTag " +
+            "here, so `.paragraphWithKbd` is unexpected). Got " +
+            "\(kindRaw ?? "nil")."
+        )
+    }
+
+    /// Hydrator-filter contract (single-inline side): in a paragraph
+    /// whose sole inline is `$$…$$`, the `.displayMathSource` range
+    /// must sit inside a block tagged `.blockModelKind = .displayMath`.
+    /// If this invariant breaks, the mixed-content hydrator's filter
+    /// would fail to suppress the single-inline case and paint the
+    /// bitmap twice — once via `DisplayMathLayoutFragment`, once via
+    /// the attachment swap.
+    func test_phase2d_followup_singleInlineDisplayMath_isFilteredByKind() {
+        let harness = EditorHarness(markdown: "$$a=b$$\n")
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage else {
+            XCTFail("Harness editor must have text storage")
+            return
+        }
+
+        var mathRange: NSRange?
+        storage.enumerateAttribute(
+            .displayMathSource,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, range, stop in
+            if let raw = value as? String, !raw.isEmpty {
+                mathRange = range
+                stop.pointee = true
+            }
+        }
+
+        guard let mathRange = mathRange else {
+            XCTFail(
+                "Single-inline `$$…$$` paragraph must still emit " +
+                "`.displayMathSource` (InlineRenderer sets it on the " +
+                "inline payload regardless of paragraph shape). If " +
+                "absent, the filter below has nothing to test."
+            )
+            return
+        }
+
+        let kindRaw = storage.attribute(
+            .blockModelKind,
+            at: mathRange.location,
+            effectiveRange: nil
+        ) as? String
+        XCTAssertEqual(
+            kindRaw,
+            BlockModelKind.displayMath.rawValue,
+            "Single-inline display math range must be covered by " +
+            ".blockModelKind = .displayMath — the discriminator the " +
+            "mixed-content hydrator uses to suppress this range. Got " +
+            "\(kindRaw ?? "nil")."
+        )
+    }
+
+    // MARK: - Phase 2d follow-up: multi-line mermaid/math via BlockSourceTextAttachment
+    //
+    // `NSTextContentStorage` splits its backing store into paragraphs
+    // using Unicode rules — `\n`, `\r\n`, U+2029 are paragraph boundaries.
+    // For mermaid / math / latex code blocks that render a single bitmap
+    // spanning multiple source lines, storing the source verbatim caused
+    // each line to become its own paragraph → its own `MermaidElement` /
+    // `MathElement` → its own fragment → a `BlockRenderer.render` call
+    // with only ONE line as input. MermaidJS / MathJax reject every
+    // single-line call because one line isn't a valid diagram / formula.
+    //
+    // The fix: `CodeBlockRenderer.render` emits a single `U+FFFC`
+    // `BlockSourceTextAttachment` for these three languages instead of
+    // the raw source text. `DocumentRenderer` tags the attachment's
+    // one-character range with `.renderedBlockSource` carrying the full
+    // source. `MermaidLayoutFragment.sourceText` / `MathLayoutFragment.
+    // sourceText` read that attribute and hand the real multi-line
+    // source to `BlockRenderer`. The attachment's `viewProvider(...)`
+    // returns `nil` so TK2 paints no default placeholder; the fragment
+    // owns all drawing.
+    //
+    // Regular code blocks (python, swift, etc.) keep real `\n` and
+    // render through the syntax highlighter. Per-paragraph element
+    // splitting works fine for them — each line renders independently
+    // via default text draw, no shared bitmap to coordinate across
+    // lines.
+    //
+    // These tests pin the end-to-end contract: (1) a multi-line mermaid
+    // block lands in storage as a single `U+FFFC` character with the
+    // full source on `.renderedBlockSource`; (2) regular code blocks
+    // still round-trip their source text with real `\n`.
+
+    /// Storage contract: a multi-line mermaid block renders into storage
+    /// as exactly one `U+FFFC` attachment character, with the full
+    /// source on `.renderedBlockSource`. If this splits into multiple
+    /// paragraphs (the old bug), each one's `MermaidElement` would only
+    /// see one line and the diagram would never render.
+    func test_phase2d_followup_mermaidMultiLine_singleAttachmentWithSourceAttribute() {
+        let markdown = "```mermaid\ngraph LR\n  A --> B\n  B --> C\n```\n"
+        let harness = EditorHarness(markdown: markdown)
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage else {
+            XCTFail("Harness editor must have text storage")
+            return
+        }
+        XCTAssertGreaterThan(
+            storage.length, 0,
+            "Sanity: storage must be populated from the harness markdown"
+        )
+
+        // Find the `.renderedBlockSource` run that covers the mermaid
+        // block. There must be exactly one `U+FFFC` character in it
+        // carrying the full source.
+        var foundSource: String?
+        var foundAttachmentRange: NSRange?
+        let full = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(
+            .renderedBlockSource, in: full, options: []
+        ) { value, range, _ in
+            guard let src = value as? String,
+                  src.contains("graph LR") else { return }
+            foundSource = src
+            foundAttachmentRange = range
+        }
+
+        guard let source = foundSource,
+              let range = foundAttachmentRange else {
+            XCTFail(
+                ".renderedBlockSource carrying the mermaid source was " +
+                "not found in storage. DocumentRenderer must tag the " +
+                "mermaid block range with the full source."
+            )
+            return
+        }
+        XCTAssertTrue(
+            source.contains("graph LR") &&
+            source.contains("A --> B") &&
+            source.contains("B --> C"),
+            ".renderedBlockSource must carry the FULL multi-line source. " +
+            "Got: \"\(source)\"."
+        )
+        XCTAssertTrue(
+            source.contains("\n"),
+            ".renderedBlockSource must contain real `\\n` between lines " +
+            "so MermaidJS / MathJax get the expected multi-line input. " +
+            "Got: \"\(source)\"."
+        )
+        XCTAssertEqual(
+            range.length, 1,
+            "The attachment's character range must be exactly 1 (a single " +
+            "`U+FFFC`). Got length=\(range.length). If > 1, the mermaid " +
+            "block is emitting source text into storage and the " +
+            "BlockSourceTextAttachment path is not in effect."
+        )
+        let substr = (storage.string as NSString).substring(with: range)
+        XCTAssertEqual(
+            substr, "\u{FFFC}",
+            "The attachment's single character must be `U+FFFC` (the " +
+            "Unicode OBJECT REPLACEMENT CHARACTER — i.e. the standard " +
+            "NSTextAttachment placeholder). Got: \(substr.unicodeScalars.map { String(format: "U+%04X", $0.value) })."
+        )
+    }
+
+    /// Non-mermaid code blocks (python here) must retain their raw
+    /// source text with real `\n` in storage — the syntax highlighter's
+    /// patterns and per-line layout depend on real line breaks. If this
+    /// fails, the language switch in `CodeBlockRenderer.render` has
+    /// broadened beyond `mermaid`/`math`/`latex`.
+    func test_phase2d_followup_regularCodeBlock_keepsRealNewlines() {
+        let markdown = "```python\ndef foo():\n  return 1\n```\n"
+        let harness = EditorHarness(markdown: markdown)
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage else {
+            XCTFail("Harness editor must have text storage")
+            return
+        }
+        XCTAssertGreaterThan(
+            storage.length, 0,
+            "Sanity: storage must be populated from the harness markdown"
+        )
+
+        let raw = storage.string
+        XCTAssertTrue(
+            raw.contains("def foo():"),
+            "Python block content must round-trip through the harness " +
+            "with source text intact. If absent, CodeBlockRenderer has " +
+            "switched python to the attachment path, which would break " +
+            "syntax highlighting."
+        )
+        XCTAssertTrue(
+            raw.contains("\n"),
+            "Python block storage must retain real `\\n` characters — " +
+            "they are the paragraph boundaries the syntax highlighter " +
+            "and per-line layout depend on."
+        )
+    }
+
     // MARK: - Phase 2d: List marker attachments (bullets + checkboxes)
     // via view-provider under TK2
     //

@@ -2050,12 +2050,24 @@ extension EditTextView {
         // --- Inline math ($...$): render inline with text ---
         renderInlineMathViaBlockModel()
 
-        // --- Display math ($$...$$): now migrated to DisplayMathLayoutFragment.
-        // The TK2 layout-manager delegate dispatches `DisplayMathElement` ->
-        // `DisplayMathLayoutFragment`, which reads `.renderedBlockSource`
-        // (tagged by DocumentRenderer) and renders the centered bitmap in
-        // place of the source text — no storage replacement, no attachment.
-        // `renderDisplayMathViaBlockModel()` is no longer called.
+        // --- Display math ($$...$$) ---
+        // Single-inline paragraphs (the whole paragraph is one `$$…$$`)
+        // are tagged `.blockModelKind = "displayMath"` by DocumentRenderer
+        // and render via `DisplayMathLayoutFragment` — no storage swap.
+        //
+        // Mixed-content paragraphs (e.g. "See $$\sum x$$ below") fall
+        // through to `.blockModelKind = "paragraph"` and render via the
+        // inline-attachment path below, because a custom paragraph
+        // fragment embedding display math mid-paragraph would cross-cut
+        // the block/inline boundary. The attachment spans the container
+        // width and centers the bitmap, visually breaking the paragraph
+        // at the equation — matching the conventional LaTeX layout for
+        // inline `$$…$$`.
+        //
+        // The hydrator skips single-inline ranges (detected via the
+        // paragraph's `.blockModelKind` attribute) so the two paths
+        // don't collide on the same storage range.
+        renderDisplayMathViaBlockModel()
     }
 
     /// Compute the range of characters whose paragraphStyle attribute
@@ -2334,24 +2346,38 @@ extension EditTextView {
     /// Render display math ($$...$$) as centered block images — like mermaid
     /// but without the gray frame. Uses BlockRenderer with display mode (\[...\]).
     ///
-    /// Vestigial as of the DisplayMathLayoutFragment migration: paragraphs
-    /// whose sole inline is `Inline.displayMath` now render via the TK2
-    /// `DisplayMathLayoutFragment` (source text stays in storage, bitmap
-    /// drawn over). This function is no longer invoked from
-    /// `renderSpecialBlocksViaBlockModel()`. Retained for reference and
-    /// for future mixed-content-paragraph handling if ever needed.
+    /// Invoked for **mixed-content paragraphs only** (e.g. "See $$\sum x$$
+    /// below"). Paragraphs whose sole inline is `Inline.displayMath` are
+    /// tagged `.blockModelKind = "displayMath"` by DocumentRenderer and
+    /// render via the TK2 `DisplayMathLayoutFragment` — we must skip
+    /// those ranges here to avoid painting the bitmap twice (once via
+    /// the fragment, once via the attachment this method would install).
+    ///
+    /// Detection of the single-inline case reads `.blockModelKind` at
+    /// the range's location: DocumentRenderer applies that attribute to
+    /// the entire block range, so it's present on the `.displayMathSource`
+    /// run for single-inline paragraphs and absent (or a different kind)
+    /// for mixed-content paragraphs.
     private func renderDisplayMathViaBlockModel() {
         guard let storage = textStorage else { return }
 
         var mathEntries: [(range: NSRange, source: String)] = []
         storage.enumerateAttribute(.displayMathSource, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
-            if let source = value as? String, !source.isEmpty {
-                mathEntries.append((range: range, source: source))
+            guard let source = value as? String, !source.isEmpty else { return }
+            // Skip ranges inside a single-inline displayMath paragraph.
+            // Those render via `DisplayMathLayoutFragment` (fragment-level
+            // draw); installing an attachment here would stack a second
+            // bitmap on top. Detection: the paragraph's `.blockModelKind`
+            // covers the whole block range and equals `.displayMath`.
+            let kind = storage.attribute(.blockModelKind, at: range.location, effectiveRange: nil) as? String
+            if kind == BlockModelKind.displayMath.rawValue {
+                return
             }
+            mathEntries.append((range: range, source: source))
         }
 
         guard !mathEntries.isEmpty else { return }
-        bmLog("🎭 renderDisplayMath: found \(mathEntries.count) display math spans")
+        bmLog("🎭 renderDisplayMath: found \(mathEntries.count) mixed-content display math spans")
 
         EditTextView._renderedDisplayMathRanges.removeAll()
 
@@ -2399,7 +2425,54 @@ extension EditTextView {
 
                     bmLog("🎭 displayMath: replacing \(range) with \(scaledSize) attachment")
 
+                    // To make the attachment *visually* a block (its own
+                    // line, image centered horizontally) under BOTH TK1
+                    // and TK2, we composite the rendered MathJax bitmap
+                    // onto a container-wide transparent canvas, with the
+                    // formula centered on it. The resulting image is then
+                    // set as `attachment.image` with `attachment.bounds`
+                    // matching the canvas size.
+                    //
+                    // Why the canvas trick instead of a custom view
+                    // provider: under TK2 the default view provider just
+                    // draws `.image` into `.bounds`; a wider bounds with a
+                    // non-wide image would stretch horizontally. Pre-
+                    // compositing keeps the image crisp at its natural
+                    // size while still giving the attachment the container-
+                    // wide footprint that forces the layout engine to
+                    // wrap it onto its own line (de facto block-level
+                    // rendering — the same trick `CenteredImageCell`
+                    // played under TK1 via `cellSize()`).
+                    let canvasSize = NSSize(width: maxWidth, height: scaledSize.height)
+                    let canvas = NSImage(size: canvasSize)
+                    canvas.lockFocus()
+                    let targetRect = NSRect(
+                        x: (maxWidth - scaledSize.width) / 2.0,
+                        y: 0,
+                        width: scaledSize.width,
+                        height: scaledSize.height
+                    )
+                    image.draw(
+                        in: targetRect,
+                        from: .zero,
+                        operation: .sourceOver,
+                        fraction: 1.0,
+                        respectFlipped: true,
+                        hints: nil
+                    )
+                    canvas.unlockFocus()
+
                     let attachment = NSTextAttachment()
+                    attachment.image = canvas
+                    attachment.bounds = NSRect(
+                        x: 0,
+                        y: 0,
+                        width: canvasSize.width,
+                        height: canvasSize.height
+                    )
+                    // Keep `CenteredImageCell` as the TK1 fallback — its
+                    // `cellSize()` / `draw(withFrame:)` still work under
+                    // TK1 and match the TK2 canvas behaviour.
                     let cell = CenteredImageCell(image: image, imageSize: scaledSize, containerWidth: maxWidth)
                     attachment.attachmentCell = cell
                     let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))

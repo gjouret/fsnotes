@@ -64,10 +64,24 @@ public final class MathLayoutFragment: NSTextLayoutFragment {
     /// Whitespace-trimmed to match the call site at
     /// `EditTextView+BlockModel.swift:2065` which trims before handing
     /// the string to `BlockRenderer`.
+    /// Raw LaTeX source text. `CodeBlockRenderer.render` emits a
+    /// single-`U+FFFC` `BlockSourceTextAttachment` for math/latex blocks
+    /// rather than the source verbatim; `DocumentRenderer` tags the
+    /// attachment's one-character range with `.renderedBlockSource`
+    /// carrying the full source (including real `\n` between
+    /// `\begin{...}` / `\end{...}` lines that MathJax needs). We read
+    /// that attribute here. See `MermaidLayoutFragment.sourceText` and
+    /// `BlockSourceTextAttachment` for the full rationale.
     private var sourceText: String {
         guard let paragraph = textElement as? NSTextParagraph else { return "" }
-        return paragraph.attributedString.string
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let attributed = paragraph.attributedString
+        if attributed.length > 0,
+           let raw = attributed.attribute(
+               .renderedBlockSource, at: 0, effectiveRange: nil
+           ) as? String {
+            return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Target render width in points — the text container's usable
@@ -75,6 +89,31 @@ public final class MathLayoutFragment: NSTextLayoutFragment {
     private var containerWidth: CGFloat {
         let width = textLayoutManager?.textContainer?.size.width ?? 0
         return width > 0 ? width : Self.fallbackContainerWidth
+    }
+
+    // MARK: - Layout
+
+    /// Reserve enough vertical space for the rendered bitmap — the
+    /// fragment's backing storage is a single `U+FFFC` attachment
+    /// character, so TK2's default `layoutFragmentFrame` would be
+    /// one-line tall and the bitmap would overlap the fragments below.
+    /// See `MermaidLayoutFragment.layoutFragmentFrame` for the full
+    /// rationale (same bug, same fix).
+    public override var layoutFragmentFrame: CGRect {
+        let base = super.layoutFragmentFrame
+        let target: CGFloat
+        if let image = renderedImage {
+            let scale = min(containerWidth / image.size.width, 1.0)
+            target = image.size.height * scale
+        } else {
+            target = Self.placeholderHeight
+        }
+        return CGRect(
+            x: base.origin.x,
+            y: base.origin.y,
+            width: base.width,
+            height: max(base.height, target)
+        )
     }
 
     // MARK: - Rendering surface

@@ -39,6 +39,45 @@ public enum CodeBlockRenderer {
         // Architectural invariant: the rendered string must contain ONLY
         // the raw code content. It MUST NOT contain fence characters.
         // Downstream tests (NoMarkdownSyntaxInStorage) verify this.
+        //
+        // Mermaid / math / LaTeX code blocks: emit a single `U+FFFC`
+        // attachment character rather than the raw source text. The
+        // block's source is carried on the `.renderedBlockSource`
+        // attribute (tagged by `DocumentRenderer`) so the fragment
+        // (`MermaidLayoutFragment` / `MathLayoutFragment`) can still
+        // find it; the attachment reserves one paragraph slot in
+        // `NSTextContentStorage` regardless of how many source lines
+        // the block contains.
+        //
+        // Why this matters: `NSTextContentStorage` splits storage into
+        // paragraphs on `\n` (Unicode rule). Storing multi-line mermaid
+        // source verbatim caused each line to become its own paragraph
+        // -> its own `MermaidElement` -> its own `MermaidLayoutFragment`
+        // -> its own `BlockRenderer.render(mermaid:)` call with a single
+        // line as input. MermaidJS rejects every single-line call
+        // because one line isn't a valid diagram. The attachment keeps
+        // the block as one paragraph → one element → one fragment →
+        // one render.
+        //
+        // `BlockSourceTextAttachment` is a no-view-provider attachment:
+        // the fragment owns all drawing. No TK2 default placeholder
+        // paints under the bitmap.
+        //
+        // Trade-off: Find-in-note cannot match text inside mermaid /
+        // math source — the source is on an attribute, not in the
+        // paragraph string. Accepted per the 2d follow-up review.
+        //
+        // Regular code (python, swift, etc.) keeps real `\n` and
+        // renders through the syntax highlighter. Per-paragraph element
+        // splitting works fine for those because each line renders
+        // independently via default text draw.
+        switch language?.lowercased() {
+        case "mermaid", "math", "latex":
+            let attachment = BlockSourceTextAttachment()
+            return NSAttributedString(attachment: attachment)
+        default:
+            break
+        }
 
         if let lang = language {
             let highlighted = runSyntaxHighlighter(code: content, language: lang, codeFont: codeFont)

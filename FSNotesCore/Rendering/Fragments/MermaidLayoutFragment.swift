@@ -65,17 +65,34 @@ public final class MermaidLayoutFragment: NSTextLayoutFragment {
 
     // MARK: - Source extraction
 
-    /// Raw mermaid source text. Extracted directly from the element's
-    /// backing attributed string — `CodeBlockRenderer.render(language:
-    /// content:codeFont:)` emits ONLY the content (no fence markers),
-    /// so `textElement.attributedString.string` IS the source verbatim.
-    /// Whitespace-trimmed to match the call site at
-    /// `EditTextView+BlockModel.swift:2065` which trims before handing
-    /// the string to `BlockRenderer`.
+    /// Raw mermaid source text. `CodeBlockRenderer.render` emits a
+    /// single-`U+FFFC` `BlockSourceTextAttachment` for mermaid blocks
+    /// rather than the source verbatim, and `DocumentRenderer` tags
+    /// the attachment's one-character range with `.renderedBlockSource`
+    /// carrying the full source. We read that attribute here.
+    ///
+    /// Why source isn't stored as text: under `NSTextContentStorage`
+    /// each `\n` is a paragraph boundary. Storing multi-line mermaid
+    /// source verbatim split the block into one paragraph per line —
+    /// each producing its own `MermaidElement` / `MermaidLayoutFragment`
+    /// that fed a single source line to `BlockRenderer`, which fails
+    /// (one line isn't a valid mermaid diagram). The attachment
+    /// placeholder keeps the block as one paragraph; the attribute
+    /// carries the multi-line source intact.
+    ///
+    /// Fallback to the paragraph's string content preserves behaviour
+    /// for any legacy-rendered storage (e.g. a snapshot that predates
+    /// the attachment switch).
     private var sourceText: String {
         guard let paragraph = textElement as? NSTextParagraph else { return "" }
-        return paragraph.attributedString.string
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let attributed = paragraph.attributedString
+        if attributed.length > 0,
+           let raw = attributed.attribute(
+               .renderedBlockSource, at: 0, effectiveRange: nil
+           ) as? String {
+            return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Target render width in points — the text container's usable
@@ -83,6 +100,45 @@ public final class MermaidLayoutFragment: NSTextLayoutFragment {
     private var containerWidth: CGFloat {
         let width = textLayoutManager?.textContainer?.size.width ?? 0
         return width > 0 ? width : Self.fallbackContainerWidth
+    }
+
+    // MARK: - Layout
+
+    /// Override the layout frame's height so TK2 reserves enough
+    /// vertical space for the rendered bitmap. The fragment's backing
+    /// storage is a single `U+FFFC` attachment character — TK2's default
+    /// `layoutFragmentFrame` would be a one-line-tall frame, but we
+    /// paint a bitmap spanning the full image height. Without this
+    /// override, the bitmap draws past the fragment's allocated space
+    /// and overlaps the fragments below (confirmed bug 2026-04-23: the
+    /// mermaid diagram painted over the following `MathJax example`
+    /// heading and paragraphs).
+    ///
+    /// The width is inherited from `super.layoutFragmentFrame` — TK2
+    /// manages horizontal positioning within the text container. Only
+    /// the height needs extending.
+    public override var layoutFragmentFrame: CGRect {
+        let base = super.layoutFragmentFrame
+        let target = bitmapHeightOrPlaceholder()
+        return CGRect(
+            x: base.origin.x,
+            y: base.origin.y,
+            width: base.width,
+            height: max(base.height, target)
+        )
+    }
+
+    /// The rendered bitmap's height if known, else the pre-render
+    /// placeholder height. Used by both `layoutFragmentFrame` (to
+    /// reserve vertical space) and `renderingSurfaceBounds` (to define
+    /// the draw surface). Keeping them in lockstep prevents the draw
+    /// from escaping the frame.
+    private func bitmapHeightOrPlaceholder() -> CGFloat {
+        if let image = renderedImage {
+            let scale = min(containerWidth / image.size.width, 1.0)
+            return image.size.height * scale
+        }
+        return Self.placeholderHeight
     }
 
     // MARK: - Rendering surface
