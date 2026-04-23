@@ -2,13 +2,13 @@
 //  ThemeSchema.swift
 //  FSNotesCore
 //
-//  Phase 7.1 — Theme struct + default JSON + loader (additive slice).
+//  Theme struct + default JSON + loader.
 //
-//  Extends `BlockStyleTheme` (the Phase-2-era seed) with the schema
-//  needed by Phase 7.2–7.5. Purely additive: no renderer / fragment
-//  wiring yet. Every new field ships with a sensible default that
-//  matches the current hardcoded behaviour in DocumentRenderer,
-//  InlineRenderer, CodeBlockRenderer, and the Fragments/ directory.
+//  Phase 7.1 introduced the schema as an additive slice on top of
+//  `BlockStyleTheme` (the Phase-2-era seed); Phase 7.2–7.5 wired it
+//  through `DocumentRenderer`, `InlineRenderer`, `CodeBlockRenderer`,
+//  and the Fragments/ directory. Every field ships with a sensible
+//  default that matches the historical hardcoded behaviour.
 //
 //  Dark-mode shape decision: single JSON file with `{"light": "...",
 //  "dark": "..."}` value pairs for color fields. A theme bundles "a
@@ -552,11 +552,11 @@ public struct ThemeChrome: Codable, Equatable {
 
 extension BlockStyleTheme {
 
-    /// Phase 7.1 additive nested groups. Not yet consumed by any
-    /// renderer — wired in Phase 7.2–7.3. Accessed via the computed
-    /// properties `typography`, `spacing`, `colors`, `chrome` below,
-    /// which synthesize values from the flat fields when no nested
-    /// block was present in the source JSON.
+    /// Phase 7.1 additive nested groups, consumed by renderers since
+    /// Phase 7.2–7.3. Accessed via the computed properties
+    /// `typography`, `spacing`, `colors`, `chrome` below, which
+    /// synthesize values from the flat fields when no nested block was
+    /// present in the source JSON.
     ///
     /// These are stored in a side table (keyed by ObjectIdentifier of
     /// the struct type) so they can survive JSON round-trip without
@@ -564,9 +564,6 @@ extension BlockStyleTheme {
     /// nested blocks are pulled from the JSON's `typography` /
     /// `spacing` / `colors` / `chrome` keys if present, otherwise
     /// synthesized from the flat fields.
-    ///
-    /// Phase 7.2 migrates all renderers to read through these nested
-    /// groups and the flat fields become computed passthroughs.
 
     // MARK: - Nested group loader/saver
 
@@ -635,7 +632,7 @@ extension BlockStyleTheme {
     /// Encode both flat and nested groups into one JSON payload. The
     /// flat keys are preserved for backward compatibility with the
     /// existing `DefaultBlockStyleTheme.json`; nested keys sit
-    /// alongside them and will become the primary source in 7.2.
+    /// alongside them and have been the primary source since Phase 7.2.
     public static func encodeWithNested(
         flat: BlockStyleTheme,
         nested: ThemeNestedGroups
