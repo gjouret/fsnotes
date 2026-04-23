@@ -150,6 +150,90 @@ class CommonMarkSpecTests: XCTestCase {
          .replacingOccurrences(of: "\t", with: "\\t")
     }
 
+    // MARK: - Batch N+7 targeted regressions
+
+    // Locks in the parser fixes landed in this batch. Each test exercises
+    // one of the spec's failing examples that the batch fix turned green.
+
+    /// Spec #227: whitespace-only lines are blank lines, not paragraph content.
+    func test_regression_blankLine_whitespaceOnly_terminatesParagraph() {
+        let md = "  \n\naaa\n  \n\n# aaa\n\n  \n"
+        let html = CommonMarkHTMLRenderer.render(MarkdownParser.parse(md))
+        XCTAssertEqual(html, "<p>aaa</p>\n<h1>aaa</h1>\n")
+    }
+
+    /// Spec #222, #224: up to 3 leading spaces stripped from paragraph lines.
+    func test_regression_paragraph_leadingSpaces_stripped() {
+        XCTAssertEqual(
+            CommonMarkHTMLRenderer.render(MarkdownParser.parse("  aaa\n bbb\n")),
+            "<p>aaa\nbbb</p>\n"
+        )
+        XCTAssertEqual(
+            CommonMarkHTMLRenderer.render(MarkdownParser.parse("   aaa\nbbb\n")),
+            "<p>aaa\nbbb</p>\n"
+        )
+    }
+
+    /// Spec #266: ordered-list digit run capped at 9.
+    func test_regression_list_orderedMarker_tenDigits_isNotAList() {
+        let html = CommonMarkHTMLRenderer.render(
+            MarkdownParser.parse("1234567890. not ok\n")
+        )
+        XCTAssertEqual(html, "<p>1234567890. not ok</p>\n")
+    }
+
+    /// Spec #304: ordered list with start != 1 cannot interrupt a paragraph.
+    func test_regression_list_orderedNonOne_doesNotInterruptParagraph() {
+        let md = "The number of windows in my house is\n14.  The number of doors is 6.\n"
+        let html = CommonMarkHTMLRenderer.render(MarkdownParser.parse(md))
+        XCTAssertEqual(
+            html,
+            "<p>The number of windows in my house is\n14.  The number of doors is 6.</p>\n"
+        )
+    }
+
+    /// Spec #295: items whose marker column is < previous item's content
+    /// column are siblings, not children.
+    func test_regression_list_nesting_requiresContentColumn() {
+        let md = "- foo\n - bar\n  - baz\n   - boo\n"
+        let doc = MarkdownParser.parse(md)
+        XCTAssertEqual(doc.blocks.count, 1)
+        if case .list(let items, _) = doc.blocks[0] {
+            XCTAssertEqual(items.count, 4)
+            XCTAssertTrue(items.allSatisfy { $0.children.isEmpty })
+        } else {
+            XCTFail("expected list, got \(doc.blocks[0])")
+        }
+    }
+
+    /// Spec #323: marker column exactly at parent's content column DOES nest.
+    func test_regression_list_nesting_atContentColumn() {
+        let doc = MarkdownParser.parse("- a\n  - b\n")
+        XCTAssertEqual(doc.blocks.count, 1)
+        if case .list(let items, _) = doc.blocks[0] {
+            XCTAssertEqual(items.count, 1)
+            XCTAssertEqual(items[0].children.count, 1)
+        } else {
+            XCTFail("expected list, got \(doc.blocks[0])")
+        }
+    }
+
+    /// A marker-type change terminates the current list even when the
+    /// switching item has a different indent (corpus 04_lists_ordered.md).
+    func test_regression_list_markerTypeChange_splitsLists() {
+        let md = """
+        1. First
+        1. Second
+          - Nested one
+          - Nested two
+        1. Third
+
+        """
+        let doc = MarkdownParser.parse(md)
+        let lists = doc.blocks.filter { if case .list = $0 { return true }; return false }
+        XCTAssertEqual(lists.count, 3, "expected 3 separate lists (ol/ul/ol)")
+    }
+
     // MARK: - Full compliance report
 
     /// Runs ALL 652 examples and writes a compliance report.

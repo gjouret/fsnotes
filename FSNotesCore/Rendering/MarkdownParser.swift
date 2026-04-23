@@ -210,7 +210,12 @@ public enum MarkdownParser {
                // Don't let a bare marker at EOL (e.g. "*", "1.") interrupt
                // a paragraph. CommonMark example 285: "foo\n*" is a paragraph,
                // not a paragraph + list. Only applies when raw buffer has content.
-               !(rawBuffer.count > 0 && firstParsed.afterMarker.isEmpty && firstParsed.content.isEmpty) {
+               !(rawBuffer.count > 0 && firstParsed.afterMarker.isEmpty && firstParsed.content.isEmpty),
+               // CommonMark 5.3: an ordered list with a starting number other
+               // than 1 cannot interrupt a paragraph. Example 304: a paragraph
+               // that happens to contain "14. ..." as its second line must
+               // remain a single paragraph, not paragraph + list.
+               !(rawBuffer.count > 0 && isOrderedListMarkerWithNonOneStart(firstParsed.marker)) {
                 flushRawBuffer()
 
                 // Determine the list type from the first item's marker.
@@ -261,11 +266,22 @@ public enum MarkdownParser {
                         }
                     }
                     guard var parsed = parseListLine(l) else { break }
-                    // Different marker type at the SAME indent level
-                    // starts a new list. Nested items are allowed to
-                    // have any marker type.
-                    if parsed.indent.count == topIndent &&
-                       Self.listMarkerType(parsed.marker) != listType { break }
+                    // CommonMark 5.3 / 5.4: a list ends when the marker
+                    // type changes — at ANY level where the new item is
+                    // a sibling, not a child, of any item we've already
+                    // collected. A line is a "child" of an earlier item
+                    // only if its indent reaches that earlier item's
+                    // content column. Otherwise it would be a sibling,
+                    // and a sibling with a different marker type starts
+                    // a new list.
+                    if Self.listMarkerType(parsed.marker) != listType {
+                        let childOfSome = parsedLines.contains(where: { existing in
+                            let existingContentCol = existing.indent.count
+                                + existing.marker.count + existing.afterMarker.count
+                            return parsed.indent.count >= existingContentCol
+                        })
+                        if !childOfSome { break }
+                    }
                     if nextItemFollowsBlank {
                         parsed.blankLineBefore = true
                         nextItemFollowsBlank = false
@@ -274,7 +290,7 @@ public enum MarkdownParser {
                     j += 1
                 }
                 let (items, _) = buildItemTree(
-                    lines: parsedLines, from: 0, parentIndent: -1, refDefs: refDefs
+                    lines: parsedLines, from: 0, parentContentColumn: -1, refDefs: refDefs
                 )
                 blocks.append(.list(items: items, loose: hasBlankLines))
                 i = j
@@ -332,14 +348,24 @@ public enum MarkdownParser {
                 continue
             }
 
-            if line.isEmpty {
+            if line.isEmpty || isBlankLine(line) {
+                // CommonMark: a blank line is empty or contains only
+                // whitespace. Treat whitespace-only lines as blank lines
+                // for block-termination purposes — they don't extend a
+                // paragraph. This loses the original spaces for serialization
+                // (round-trip is idempotent via blankLine -> "" -> blankLine).
                 flushRawBuffer()
                 blocks.append(.blankLine)
                 i += 1
                 continue
             }
 
-            rawBuffer.append(line)
+            // Paragraph line buffering: strip up to 3 leading spaces per
+            // CommonMark 4.8 (a paragraph is zero-or-more non-blank lines
+            // that cannot be interpreted as other kinds of blocks; up to
+            // 3 leading spaces are allowed). 4+ spaces would be an
+            // indented code block, which we don't support.
+            rawBuffer.append(stripUpTo3LeadingSpaces(line))
             i += 1
         }
 
@@ -2330,6 +2356,17 @@ public enum MarkdownParser {
     /// (`.` vs `)`) starts a new list.
     /// Returns: the bullet character for unordered, or the delimiter
     /// character for ordered (e.g. "." or ")").
+    /// Returns true if `marker` is an ordered-list marker (e.g. "2.", "10)")
+    /// whose starting number is not 1. Used to enforce CommonMark 5.3:
+    /// such a marker cannot interrupt a paragraph.
+    static func isOrderedListMarkerWithNonOneStart(_ marker: String) -> Bool {
+        // Ordered marker is digits + "." or ")".
+        guard marker.last == "." || marker.last == ")" else { return false }
+        let digits = String(marker.dropLast())
+        guard !digits.isEmpty, digits.allSatisfy({ $0.isNumber }) else { return false }
+        return Int(digits) != 1
+    }
+
     static func listMarkerType(_ marker: String) -> String {
         if marker == "-" || marker == "*" || marker == "+" {
             return marker
@@ -2386,7 +2423,12 @@ public enum MarkdownParser {
             i += 1
         } else if chars[i].isNumber {
             // Ordered marker: digits followed by `.` or `)`.
+            // CommonMark 5.2 caps the digit run at 9. 10+ digits is not
+            // a valid list marker (e.g. "1234567890. not ok").
+            let digitStart = i
             while i < chars.count, chars[i].isNumber { i += 1 }
+            let digitCount = i - digitStart
+            guard digitCount >= 1 && digitCount <= 9 else { return nil }
             guard i < chars.count, chars[i] == "." || chars[i] == ")" else {
                 return nil
             }
@@ -2471,33 +2513,41 @@ public enum MarkdownParser {
     /// strictly greater than `parentIndent`. Items whose indent falls
     /// below `siblingIndent` pop the recursion back to the caller.
     static func buildItemTree(
-        lines: [ParsedListLine], from: Int, parentIndent: Int,
+        lines: [ParsedListLine], from: Int,
+        parentContentColumn: Int,
         refDefs: [String: (url: String, title: String?)] = [:]
     ) -> (items: [ListItem], endIndex: Int) {
         guard from < lines.count else { return ([], from) }
-        let siblingIndent = lines[from].indent.count
-        // Must be strictly deeper than the parent scope; otherwise
-        // these lines belong to the caller.
-        guard siblingIndent > parentIndent else { return ([], from) }
 
+        // CommonMark 5.2 nesting rule: a list item is a CHILD of a
+        // preceding item iff its marker starts at a column >= the
+        // parent's content column (indent + marker + afterMarker).
+        // Otherwise it is a SIBLING at the current level.
+        //
+        // This tolerates siblings with differing indent (e.g. `- a\n - b`
+        // — both siblings because `- b` at indent 1 < content col 2 of
+        // `- a`). The first line that falls below parentContentColumn
+        // belongs to the caller and returns.
         var items: [ListItem] = []
         var i = from
         while i < lines.count {
             let cur = lines[i]
             let curIndent = cur.indent.count
-            if curIndent < siblingIndent { break }
-            if curIndent > siblingIndent {
-                // Should never happen — the previous iteration should
-                // have consumed deeper-indented lines as children. If
-                // it does (e.g. the very first line is deeper than a
-                // subsequent sibling at shallower indent), stop here.
-                break
-            }
+            // Shallower than the caller's content boundary — return.
+            if curIndent < parentContentColumn { break }
+            // Defensively: if this line is strictly a child of the
+            // LATEST sibling (indent >= that sibling's content column),
+            // the nested recursion should have consumed it. We land
+            // here only if the previous sibling didn't recurse (e.g.
+            // this is the first line at this level), in which case
+            // `curIndent` equals (or drops below) the current sibling
+            // indent we're about to set.
             let inline = parseInlines(cur.content, refDefs: refDefs)
-            // Try to collect children at a deeper indent immediately
-            // following this item.
+            let curContentColumn = curIndent + cur.marker.count + cur.afterMarker.count
             let (children, nextI) = buildItemTree(
-                lines: lines, from: i + 1, parentIndent: siblingIndent, refDefs: refDefs
+                lines: lines, from: i + 1,
+                parentContentColumn: curContentColumn,
+                refDefs: refDefs
             )
             items.append(ListItem(
                 indent: cur.indent,
@@ -2583,6 +2633,24 @@ public enum MarkdownParser {
     /// Check if a string is only whitespace (spaces/tabs).
     private static func isBlankLine(_ s: String) -> Bool {
         s.allSatisfy { $0 == " " || $0 == "\t" }
+    }
+
+    /// Strip up to 3 leading ASCII spaces from a line. Used when
+    /// buffering paragraph lines (CommonMark 4.8). 4+ leading spaces
+    /// would be an indented code block context, which we don't
+    /// currently distinguish; anything with 4+ leading spaces is
+    /// left alone so we preserve that content verbatim.
+    private static func stripUpTo3LeadingSpaces(_ s: String) -> String {
+        // Count the full leading-space run first.
+        var leadingSpaces = 0
+        for ch in s {
+            if ch == " " { leadingSpaces += 1 } else { break }
+        }
+        // If the run is 4+ spaces, don't touch it (indented-code
+        // context). If it's 1-3, strip those leading spaces.
+        if leadingSpaces >= 4 { return s }
+        if leadingSpaces == 0 { return s }
+        return String(s.dropFirst(leadingSpaces))
     }
 
     /// ASCII punctuation characters that can be backslash-escaped per CommonMark spec.
@@ -2811,7 +2879,11 @@ public enum MarkdownParser {
         if let parsed = parseListLine(line) {
             let spaceCount = parsed.indent.filter { $0 == " " }.count
                 + parsed.indent.filter { $0 == "\t" }.count * 4
-            if spaceCount <= 3 { return true }
+            // CommonMark 5.3: an ordered marker with start != 1 also
+            // does NOT interrupt a paragraph.
+            if spaceCount <= 3 && !isOrderedListMarkerWithNonOneStart(parsed.marker) {
+                return true
+            }
         }
         // HTML block start (types 1-6 can interrupt a paragraph; type 7 cannot)
         if let htmlType = detectHTMLBlock(line), htmlType <= 6 { return true }

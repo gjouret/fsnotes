@@ -74,6 +74,13 @@ struct CommonMarkHTMLRenderer {
             // Strip trailing whitespace from rendered paragraph content
             // (CommonMark: trailing spaces at end of paragraph are removed).
             var rendered = Self.renderInlines(inlines)
+            // Strip leading spaces per CommonMark 4.8 — the parser also
+            // strips up to 3 leading spaces from paragraph lines at
+            // block-open time; live Documents whose inline content
+            // carries stray leading spaces (e.g. after certain splice
+            // operations) must still compare equal to the re-parsed
+            // canonical form under HTML parity.
+            while rendered.hasPrefix(" ") { rendered = String(rendered.dropFirst()) }
             // Only strip trailing spaces (not newlines or other whitespace)
             while rendered.hasSuffix(" ") { rendered = String(rendered.dropLast()) }
             if rendered.isEmpty { return "" }
