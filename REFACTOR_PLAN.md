@@ -446,6 +446,18 @@ Scope-reduction. The original 2e scope (`TableElement` + `TableLayoutFragment` +
 
 **T2 trigger conditions:** if the user reports table-specific bugs that can't be fixed inside `InlineTableView`'s widget state (e.g. Find support, accessibility navigation through cells, copy/paste selection across cells), T2 becomes the resolution path. Until then, T1 is the ship state.
 
+**T2 triggered by user decision 2026-04-23.** Option A selected (complete T2 before Phase 4) over Option B (ship Phase 4 with tables as a half-win). Revised slice plan below produced by a design spike the same day; revised estimate: **9–13 days** (down from 15–25 in the original plan) because `TableCell { inline: [Inline] }`, `replaceTableCellInline`, `InlineRenderer.inlineTreeFromAttributedString`, and `DocumentEditApplier` all shipped in earlier phases. Storage shape: ONE `NSTextElement` per table, cells delimited by U+001F (UNIT SEPARATOR) within rows and U+001E (RECORD SEPARATOR) between rows. Bug #60 resolves "by construction" because native cell text is searchable by `NSTextFinder`.
+
+**T2 slice status:**
+- **T2-a — Foundation types (additive skeleton)** — ✅ SHIPPED 2026-04-23 (commit `f308894`). `TableElement` / `TableLayoutFragment` / `TableGeometry` added, no dispatch path constructs them yet. `TableGeometry` is a pure-function port of the widget's geometry code (15 tests). Dead code on disk until T2-b wires it in.
+- **T2-b — `TableElement` emission behind feature flag `FeatureFlag.nativeTableElements` (default OFF)** — ✅ SHIPPED 2026-04-23 (commit `523363f`). `TableTextRenderer` dispatches on the flag; flag-off = legacy U+FFFC attachment path (byte-identical). Flag-on = flat separator-encoded cell text with `.blockModelKind = .table`, `.tableHeader = true` on header cells. Content-storage delegate returns `TableElement`; layout-manager delegate routes to `TableLayoutFragment` (still a draw stub — T2-c). With flag on, `test_phase2eT2b_flagOn_bug60_findAcrossTableCells` PASSES. Flag default stays OFF until T2-c/d/e make the element visually + editorially useful.
+- **T2-c — `TableLayoutFragment` grid rendering (read-only)** — PENDING.
+- **T2-d — Cursor + keyboard navigation inside the grid** — PENDING.
+- **T2-e — Cell text editing via `replaceTableCellInline`** — PENDING.
+- **T2-f — Find + selection verification (flag flipped on in tests, Bug #60 default PASS)** — PENDING.
+- **T2-g — Hover + context menus + drag-reorder** — PENDING.
+- **T2-h — Widget deletion + flag removal (~2,800 LoC deleted)** — PENDING.
+
 ### What this phase provides "for free"
 - **Bug #60 (Find across tables) resolved by construction** — table cell text is now real content in `NSTextContentStorage`. `NSTextFinder` walks it natively.
 - **Selection across tables / code blocks / etc. works natively.**
@@ -906,7 +918,7 @@ Rationale over two-files: a theme bundles "a look" — the designer wants both v
 
 ### Migration plan (5 slices)
 
-**7.1 — Consolidate + extend `Theme` struct (additive, no wiring change).**
+**7.1 — Consolidate + extend `Theme` struct (additive, no wiring change). — ✅ SHIPPED 2026-04-23 (commit `850ae7b`).**
 - Rename `BlockStyleTheme` → `Theme` (or keep — bikeshed in review).
 - Add the "New — must be added" fields listed above.
 - Add `light/dark` CodableColor pairs where relevant; add `ThemeColors.resolved(for: NSAppearance)` helper.
@@ -914,7 +926,7 @@ Rationale over two-files: a theme bundles "a look" — the designer wants both v
 - Ship `Resources/Themes/Default.json` matching `Theme.default` byte-for-byte so load-then-save is idempotent.
 - **Exit:** new fields compile; `Theme.shared` loads from `Default.json`; zero callers changed yet.
 
-**7.2 — Wire `Theme` through `DocumentRenderer` + `InlineRenderer`.**
+**7.2 — Wire `Theme` through `DocumentRenderer` + `InlineRenderer`. — ✅ SHIPPED 2026-04-23 (commit `a445bf6`).**
 - Thread `theme:` parameter from `DocumentRenderer.render(_:)` into paragraph-style construction.
 - Replace `paragraphSpacingMultiplier` / `structuralBlockSpacingMultiplier` / `h{1..6}Spacing{Before,}Multiplier` file-locals with `theme.spacing.*`.
 - Replace `InlineRenderer.highlightColor` with `theme.colors.highlight.resolved(for:)`.
