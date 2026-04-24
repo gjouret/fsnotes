@@ -281,6 +281,17 @@ public enum MarkdownParser {
                             break
                         }
                         let ownerItem = parsedLines[ownerIdx!]
+                        // CommonMark rule 3: a list item that begins with
+                        // an empty first line (empty marker content) cannot
+                        // contain a non-blank block. If the owner's own
+                        // first line was empty AND this is the owner's
+                        // first continuation attempt, treat the blank as
+                        // terminating the list instead.
+                        if ownerItem.content.isEmpty
+                            && ownerItem.afterMarker.isEmpty
+                            && ownerItem.continuationLines.isEmpty {
+                            break
+                        }
                         let contentCol = ownerItem.indent.count
                             + ownerItem.marker.count + ownerItem.afterMarker.count
                         // Record the blank-line gap, then consume indented
@@ -344,18 +355,27 @@ public enum MarkdownParser {
                         continue
                     }
                     guard var parsed = parseListLine(l) else {
-                        // Non-list line without a preceding blank: if it
-                        // is indented to reach an existing item's content
-                        // column, it is a "lazy continuation" of that
-                        // item's first paragraph (CommonMark allows
-                        // un-prefixed continuation lines for list items
-                        // following the initial line).
+                        // Non-list line without a preceding blank.
                         //
-                        // Current behaviour: break the list. We keep that
-                        // behaviour for single-line non-list interrupts
-                        // because the inline content on the first line
-                        // was already committed to `firstParsed.content`
-                        // or the previous item.
+                        // Strict CommonMark calls for "lazy continuation"
+                        // here — appending the line to the last item's
+                        // first paragraph. We conservatively DO NOT do
+                        // that because the editor layer produces
+                        // `[list, paragraph]` Documents without an
+                        // explicit `.blankLine` separator (e.g. after
+                        // toggleList + exit list + type), and these
+                        // must round-trip. Treating the next line as
+                        // lazy continuation would fold it into the list
+                        // at re-parse, making the live Document and the
+                        // re-parsed Document inequivalent.
+                        //
+                        // Consequence: CommonMark examples #254, #286,
+                        // #287, #288, #290, #291 (multi-line first
+                        // paragraph) remain failing. Fixing them
+                        // requires editor changes that emit a
+                        // `.blankLine` block at list-to-paragraph
+                        // boundaries, which is out of scope for this
+                        // parser slice.
                         break
                     }
                     // CommonMark 5.3 / 5.4: a list ends when the marker
