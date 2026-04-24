@@ -2833,6 +2833,57 @@ public enum MarkdownParser {
         }
         let afterMarker = String(chars[afterStart..<i])
 
+        // CommonMark §5.2 indented-code-in-list-item rule: if the
+        // whitespace between the marker and the content expands to 5
+        // or more virtual columns, the content is an indented code
+        // block inside the list item. In that case the "afterMarker"
+        // is EXACTLY 1 virtual column (the minimum required to
+        // separate marker and content); the remaining columns belong
+        // to the item body as indented-code indentation.
+        //
+        // Example (spec #7): `-\t\tfoo`
+        //   marker `-` col 0, tab col 1→4 (3 cols), tab col 4→8 (4
+        //   cols). Total afterMarker width = 7 cols. Content col = 2
+        //   (marker + 1 col). Remaining 6 cols become the code
+        //   block's indent; after the code-block dedent strips 4,
+        //   the rendered output is `  foo`.
+        //
+        // Implementation: compute the virtual column width of
+        // afterMarker. If ≥ 5, rewrite the item as having a 1-column
+        // afterMarker with empty inline content, and stuff the
+        // expanded `indented-code indent + content` onto
+        // continuationLines so the buildItemTree inner re-parse picks
+        // it up as an indented code block.
+        let markerCol = indent.count + marker.count
+        var afterWidth = 0
+        do {
+            var vcol = markerCol
+            for ch in afterMarker {
+                if ch == " " { afterWidth += 1; vcol += 1 }
+                else if ch == "\t" {
+                    let w = 4 - (vcol % 4)
+                    afterWidth += w
+                    vcol += w
+                }
+            }
+        }
+        if afterWidth >= 5 {
+            let leftoverCols = afterWidth - 1
+            let contentIndent = String(repeating: " ", count: leftoverCols)
+            let content = String(chars[i..<chars.count])
+            // The continuation line is at content-col-2 relative indent;
+            // since buildItemTree's re-parse uses MarkdownParser.parse
+            // directly (no dedent), we provide the full indent-string
+            // so the inner parse recognizes indented code (≥ 4 cols).
+            var parsed = ParsedListLine(
+                indent: indent, marker: marker,
+                afterMarker: " ", checkbox: nil,
+                content: ""
+            )
+            parsed.continuationLines = [contentIndent + content]
+            return parsed
+        }
+
         // Detect checkbox: "[ ] ", "[x] ", "[X] " at the start of
         // content. Only for unordered markers ("-", "*", "+").
         let remaining = chars[i..<chars.count]
