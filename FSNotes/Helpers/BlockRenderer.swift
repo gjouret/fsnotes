@@ -446,10 +446,42 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let onScreen = webView.window?.screen != nil
         bmLog("🎭 BlockRenderer taking snapshot: points=\(width)×\(height) winScale=\(winScale) onScreen=\(onScreen)")
         webView.takeSnapshot(with: snapshotConfig) { [weak self] image, error in
-            let rep = image?.representations.first as? NSBitmapImageRep
-            bmLog("🎭 BlockRenderer snapshot result: image=\(image != nil ? "\(image!.size)" : "nil") pixelsWide=\(rep?.pixelsWide ?? -1) error=\(error?.localizedDescription ?? "none")")
+            // HiDPI v3 fix: `WKWebView.takeSnapshot` on Retina returns an
+            // `NSImage` whose sole representation is an `NSCIImageRep`
+            // (not `NSBitmapImageRep`). `NSCIImageRep` carries the point
+            // size but no reliable `pixelsWide`/`pixelsHigh` — Cocoa
+            // then treats the image as 1× at draw time and `image.draw(in:)`
+            // upscales 892 source pixels into 1784 device pixels on a 2×
+            // backing, producing visible blur.
+            //
+            // The disk-cache path already handles this correctly in
+            // `loadFromDisk` by rebuilding an explicit `NSBitmapImageRep`
+            // with `size` in points and `pixelsWide`/`pixelsHigh` in
+            // physical pixels. Do the same here so fresh captures have
+            // the same HiDPI rep that disk round-trips produce. This
+            // also makes `writeToDisk`'s subsequent `tiffRepresentation`
+            // deterministic — it now rasterizes from a bitmap rep of
+            // known pixel size rather than the CI rep's ambiguous
+            // backing.
+            var finalImage = image
+            if let raw = image,
+               let tiff = raw.tiffRepresentation,
+               let bmp = NSBitmapImageRep(data: tiff) {
+                let scale = webView.window?.backingScaleFactor ?? 2.0
+                let pointSize = NSSize(
+                    width: CGFloat(bmp.pixelsWide) / scale,
+                    height: CGFloat(bmp.pixelsHigh) / scale
+                )
+                bmp.size = pointSize
+                let rebuilt = NSImage(size: pointSize)
+                rebuilt.addRepresentation(bmp)
+                finalImage = rebuilt
+                bmLog("🎭 BlockRenderer snapshot rebuilt: points=\(pointSize) pixels=\(bmp.pixelsWide)×\(bmp.pixelsHigh) error=\(error?.localizedDescription ?? "none")")
+            } else {
+                bmLog("🎭 BlockRenderer snapshot result (no rebuild): image=\(image != nil ? "\(image!.size)" : "nil") error=\(error?.localizedDescription ?? "none")")
+            }
             DispatchQueue.main.async {
-                self?.completion?(image)
+                self?.completion?(finalImage)
                 self?.cleanup()
             }
         }

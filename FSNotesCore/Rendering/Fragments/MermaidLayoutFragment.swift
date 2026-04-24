@@ -263,6 +263,13 @@ public final class MermaidLayoutFragment: NSTextLayoutFragment {
         fragBmLog("🎭 draw: type=mermaid imgSize=\(image.size) targetRect=\(targetRect) scale=\(scale) resampling=\(scale < 1.0)")
 
         context.saveGState()
+        // HiDPI: TK2's default `interpolationQuality` is `.default`
+        // (Cocoa maps this to `.medium`, bicubic-flavoured). Any
+        // fractional scale — even 0.998× — resamples through that
+        // filter, softening SVG-rendered text edges. `.high` uses
+        // Lanczos on downscales and is the right choice for rasterised
+        // vector content at a Retina-backed context.
+        context.interpolationQuality = .high
         image.draw(in: targetRect)
         context.restoreGState()
     }

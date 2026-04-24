@@ -237,6 +237,9 @@ public final class MathLayoutFragment: NSTextLayoutFragment {
         fragBmLog("🎭 draw: type=math imgSize=\(image.size) targetRect=\(targetRect) scale=\(scale) resampling=\(scale < 1.0)")
 
         context.saveGState()
+        // HiDPI: see MermaidLayoutFragment.drawImage — `.high` avoids
+        // the default `.medium` bicubic softening on fractional scales.
+        context.interpolationQuality = .high
         image.draw(in: targetRect)
         context.restoreGState()
     }
