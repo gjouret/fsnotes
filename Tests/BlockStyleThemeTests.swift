@@ -211,4 +211,87 @@ class BlockStyleThemeTests: XCTestCase {
         XCTAssertEqual(decoded.paragraphSpacing, 24)
         XCTAssertEqual(decoded.headingFontScales, BlockStyleTheme.default.headingFontScales)
     }
+
+    // MARK: - Flat ↔ nested synthesis (drift regression)
+
+    /// `ThemeNestedGroups.synthesized(from:)` is the single source of truth
+    /// the save path uses to build the nested payload from the flat theme
+    /// (`saveActiveTheme` calls it every write). Every flat field that has
+    /// a nested counterpart MUST propagate — otherwise the on-disk nested
+    /// block drifts from the flat block as IBActions mutate flat values.
+    ///
+    /// This test mutates each flat field that has a nested counterpart,
+    /// synthesizes the nested view, and asserts the nested value tracks
+    /// the flat value. Pre-fix the assertions on `italic`/`bold`/
+    /// `lineHeightMultiple` would fail: the earlier synthesis only
+    /// propagated a subset of pairs.
+    func testSynthesizedNestedMirrorsAllFlatFields() {
+        var flat = BlockStyleTheme.default
+        // Pick values that differ from both the flat default AND the
+        // nested default so a missed field is detectable either way.
+        flat.noteFontName = "Avenir"            // flat default: nil
+        flat.noteFontSize = 17                  // flat default: 14
+        flat.codeFontName = "JetBrains Mono"    // flat default: "Source Code Pro"
+        flat.codeFontSize = 13                  // flat default: 14
+        // Pick markers that differ from BOTH flat and nested defaults so
+        // a missed propagation is visible regardless of which side the
+        // un-propagated nested was stuck at.
+        // flat defaults: italic="*", bold="__". nested defaults:
+        // italicMarker="*", boldMarker="**".
+        flat.italic = "_"                       // differs from both
+        flat.bold = "__"                        // matches flat default,
+                                                // differs from nested default
+        flat.lineHeightMultiple = 1.25          // flat default: 1.4 (nested default 1.0)
+        flat.paragraphSpacing = 7               // flat default: 12
+        flat.blockquoteBarInitialOffset = 3     // flat default: 2
+        flat.blockquoteBarSpacing = 5           // flat default: 10
+        flat.blockquoteBarWidth = 2             // flat default: 4
+
+        let nested = ThemeNestedGroups.synthesized(from: flat)
+
+        XCTAssertEqual(nested.typography.bodyFontName, "Avenir")
+        XCTAssertEqual(nested.typography.bodyFontSize, 17)
+        XCTAssertEqual(nested.typography.codeFontName, "JetBrains Mono")
+        XCTAssertEqual(nested.typography.codeFontSize, 13)
+        XCTAssertEqual(nested.typography.italicMarker, "_")
+        XCTAssertEqual(nested.typography.boldMarker, "__")
+        XCTAssertEqual(nested.spacing.lineHeightMultiple, 1.25)
+        XCTAssertEqual(nested.spacing.paragraphSpacing, 7)
+        XCTAssertEqual(nested.chrome.blockquoteBarInitialOffset, 3)
+        XCTAssertEqual(nested.chrome.blockquoteBarSpacing, 5)
+        XCTAssertEqual(nested.chrome.blockquoteBarWidth, 2)
+    }
+
+    /// End-to-end: encoding a mutated flat theme via `encodeWithNested`
+    /// (the `saveActiveTheme` path) and decoding it back must yield a
+    /// nested block that mirrors the flat block. Pre-fix, a decode of the
+    /// saved JSON would return nested values stuck at their compiled-in
+    /// defaults for the un-propagated pairs.
+    func testEncodeWithNestedRoundTripKeepsFlatAndNestedAligned() throws {
+        var flat = BlockStyleTheme.default
+        flat.noteFontName = "Avenir"
+        flat.italic = "_"
+        flat.bold = "__"  // differs from nested default "**"
+        flat.lineHeightMultiple = 1.25
+
+        let nested = ThemeNestedGroups.synthesized(from: flat)
+        let data = try BlockStyleTheme.encodeWithNested(flat: flat, nested: nested)
+
+        let (decodedFlat, decodedNested) = try BlockStyleTheme.theme(fromJSON: data)
+
+        // Flat side preserved.
+        XCTAssertEqual(decodedFlat.noteFontName, "Avenir")
+        XCTAssertEqual(decodedFlat.italic, "_")
+        XCTAssertEqual(decodedFlat.bold, "__")
+        XCTAssertEqual(decodedFlat.lineHeightMultiple, 1.25)
+
+        // Nested side agrees with flat.
+        XCTAssertEqual(decodedNested.typography.bodyFontName, decodedFlat.noteFontName)
+        XCTAssertEqual(decodedNested.typography.italicMarker, decodedFlat.italic)
+        XCTAssertEqual(decodedNested.typography.boldMarker, decodedFlat.bold)
+        XCTAssertEqual(
+            decodedNested.spacing.lineHeightMultiple,
+            decodedFlat.lineHeightMultiple
+        )
+    }
 }

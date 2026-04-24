@@ -672,15 +672,49 @@ public struct ThemeNestedGroups: Codable, Equatable {
     /// Synthesize nested groups from the flat `BlockStyleTheme`
     /// values so an older JSON (flat only) still yields a valid
     /// nested view.
+    ///
+    /// This function is also the single source of truth for the
+    /// nested view used at encode time (`saveActiveTheme` calls it to
+    /// build the `nested` payload that goes on disk alongside `flat`).
+    /// IBActions mutate flat fields only; the nested view is therefore
+    /// always re-derived from flat on save. Any flat field that has a
+    /// nested counterpart MUST propagate here — otherwise the on-disk
+    /// nested block drifts from flat over time (observed in the field:
+    /// user themes with `noteFontName = ".AppleSystemUIFont"` at the
+    /// flat layer but `typography.bodyFontName = "Helvetica"` in the
+    /// nested layer because the earlier synthesis didn't back-propagate
+    /// a subset of pairs).
+    ///
+    /// Complete pair list (flat → nested), kept in lock-step with the
+    /// declarations in `BlockStyleTheme` (see BlockStyleTheme.swift) and
+    /// `ThemeTypography` / `ThemeSpacing` / `ThemeChrome` above:
+    ///
+    /// - `noteFontName`              → `typography.bodyFontName`
+    /// - `noteFontSize`              → `typography.bodyFontSize`
+    /// - `codeFontName`              → `typography.codeFontName`
+    /// - `codeFontSize`              → `typography.codeFontSize`
+    /// - `italic`                    → `typography.italicMarker`
+    /// - `bold`                      → `typography.boldMarker`
+    /// - `lineHeightMultiple`        → `spacing.lineHeightMultiple`
+    /// - `paragraphSpacing`          → `spacing.paragraphSpacing`
+    /// - `blockquoteBarInitialOffset`→ `chrome.blockquoteBarInitialOffset`
+    /// - `blockquoteBarSpacing`      → `chrome.blockquoteBarSpacing`
+    /// - `blockquoteBarWidth`        → `chrome.blockquoteBarWidth`
     public static func synthesized(
         from flat: BlockStyleTheme
     ) -> ThemeNestedGroups {
         var nested = ThemeNestedGroups.default
+        // Typography
         nested.typography.bodyFontName = flat.noteFontName
         nested.typography.bodyFontSize = flat.noteFontSize
         nested.typography.codeFontName = flat.codeFontName
         nested.typography.codeFontSize = flat.codeFontSize
+        nested.typography.italicMarker = flat.italic
+        nested.typography.boldMarker = flat.bold
+        // Spacing
+        nested.spacing.lineHeightMultiple = flat.lineHeightMultiple
         nested.spacing.paragraphSpacing = flat.paragraphSpacing
+        // Chrome (blockquote)
         nested.chrome.blockquoteBarWidth = flat.blockquoteBarWidth
         nested.chrome.blockquoteBarSpacing = flat.blockquoteBarSpacing
         nested.chrome.blockquoteBarInitialOffset = flat.blockquoteBarInitialOffset
