@@ -564,6 +564,61 @@ public enum EditingOps {
         at storageIndex: Int,
         in projection: DocumentProjection
     ) throws -> EditResult {
+        // Empty-document insert: no blocks exist yet, so
+        // `blockContaining` can't locate one. Synthesize a new
+        // single-paragraph document containing `string`. Covers
+        // "type into a brand-new empty note" — without this, the
+        // first character the user types throws `notInsideBlock` and
+        // the `handleEditViaBlockModel` fallback re-fills the note
+        // with empty markdown, silently eating the typed character.
+        if projection.document.blocks.isEmpty && storageIndex == 0 {
+            var newBlocks: [Block] = []
+            if string.contains("\n") {
+                let segments = string.components(separatedBy: "\n")
+                for seg in segments {
+                    newBlocks.append(
+                        .paragraph(inline: [.text(seg)])
+                    )
+                }
+            } else {
+                newBlocks.append(.paragraph(inline: [.text(string)]))
+            }
+            let newDoc = Document(
+                blocks: newBlocks,
+                trailingNewline: projection.document.trailingNewline,
+                refDefs: projection.document.refDefs
+            )
+            let newProjection = DocumentProjection(
+                document: newDoc,
+                bodyFont: projection.bodyFont,
+                codeFont: projection.codeFont,
+                note: projection.note
+            )
+            let endOffset = (newProjection.attributed.string as NSString).length
+            var result = EditResult(
+                newProjection: newProjection,
+                spliceRange: NSRange(location: 0, length: 0),
+                spliceReplacement: newProjection.attributed
+            )
+            result.newCursorPosition = endOffset
+            result.contract = EditContract(
+                declaredActions: newBlocks.indices.map {
+                    EditAction.insertBlock(at: $0)
+                },
+                postCursor: DocumentCursor(
+                    blockIndex: newBlocks.count - 1,
+                    inlineOffset: string.utf16.count -
+                        (string.contains("\n") ?
+                            (string.components(separatedBy: "\n").dropLast().joined(separator: "\n")
+                                .utf16.count + 1)
+                            : 0)
+                ),
+                postSelectionLength: 0
+            )
+            result.annotateInverse(priorDoc: projection.document)
+            return result
+        }
+
         guard let (blockIndex, offsetInBlock) = projection.blockContaining(storageIndex: storageIndex) else {
             throw EditingError.notInsideBlock(storageIndex: storageIndex)
         }
