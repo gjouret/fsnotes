@@ -731,7 +731,7 @@ Significantly shrunk vs. the original plan because Phase 2 (TextKit 2) and Phase
 
 Net effect on bypass inventory: **7 → 15 production call sites** across 6 → 7 logical categories at the time of that follow-up (Phase 5f commit `2c9e337` and subsequent Phase 5f-DragOp retirement later revised this — see the §5a ship entry above for the current 14-across-6 state). The new category (formatting-IBAction `insertText`) is a latent risk class: any future menu/toolbar IBAction that calls `insertText(_:replacementRange:)` will hit the same trap and must either route through the block model or wrap in `performingLegacyStorageWrite`. Rule 7 gate does not catch this (the grep pattern only flags `performEditingTransaction`); protection is discipline + the Phase 5a runtime assertion during DEBUG dogfood.
 
-**5b. Cursor canonicalization — ✅ PARTIAL 2026-04-24 (merged as `7ae8564`; Agents A salvaged from worktree).**
+**5b. Cursor canonicalization — ✅ SHIPPED 2026-04-24 (merge `7ae8564` + widget test commit `2b44305`).** Widget-level `EditorHarness` interception tests landed as the final slice, completing the Phase 5b deliverable list. One test (`test_widget_nsNotFound_preservedThroughRoundTrip`) skipped pending NSNotFound-contract clarification — not a behavior issue, just a test-spec question.
 - Shipped:
   - `FSNotesCore/Rendering/DocumentCursorLocation.swift` (239 LoC) — `DocumentCursor ↔ NSTextLocation` translation types
   - `FSNotes/View/EditTextView+Selection.swift` (131 LoC) — `setSelectedRanges(_:affinity:stillSelecting:)` override canonicalizing incoming NSRange through `DocumentRange` round-trip, byte-identical in v1 (no behavior change). Source mode and missing-projection pass through unchanged.
@@ -1215,16 +1215,13 @@ Plus ~20 miscellaneous "other" warnings (6 SF Symbol renames in `Main.storyboard
 
 ### Slices
 
-**9.a — Tier 1 mechanical sweep (~40 warnings + ~100 Pod-side if silenced).**
-- Rename unused `let note` / `let header` → `let _` at flagged sites (`EditTextView+Formatting.swift:41`, `EditTextView+BlockModel.swift:1827`, `AIChatPanelView.swift:311`, etc.)
-- Change never-mutated `var` → `let` at 6 sites
-- Remove 10 "initialization of immutable value never used" dead locals in `InlinePDFView.swift:459/500`, `EditorViewController.swift:808`, etc.
-- Fix 2 nil-coalescing-on-non-optional `??` operators (`EditTextView+BlockModel.swift:1804`)
-- Kill 2 "sub-pattern didn't bind any variables" pattern warnings and 2 "case already handled by previous patterns" dead branches
-- Silence `-Wstrict-prototypes` for the `libcmark_gfm` Pod target via `OTHER_CFLAGS = -Wno-strict-prototypes` — drops 66 Pod-side warnings with zero code change
-- One commit or several; no test changes; full suite stays green (1458+/0). Pure hygiene, trivial revert.
+**9.a — Tier 1 mechanical sweep — ✅ PARTIAL 2026-04-24 (commit `28e4a16`, salvaged from dead agent).**
+Shipped: 6-file hygiene sweep across `EditorViewController.swift` (unused `char`, unused `createProject` result), `AIChatPanelView.swift:311` (unused `note`), `InlinePDFView.swift:459/500` (dead `fullRange` / `path` locals), `TableHandleOverlay.swift:457` (unlabeled trailing closure deprecation), `EditTextView+BlockModel.swift:1804/1827` (nil-coalescing on non-optional + unused `header`), `EditTextView+Formatting.swift:41` (unused `note`). Net delta: ~25 LoC, zero behavior change.
+Deferred: silencing `libcmark_gfm`'s `-Wstrict-prototypes` warnings at the Pod target level (~66 warnings). Requires Podfile post-install hook or `Pods.xcodeproj` edit; `Pods/` is `.gitignored` so the fix is session-local. Tracked as a separate slice.
+Deferred: UTType-related Tier 1 sites (Phase 9.b covers those) and NSKeyedUnarchiver sites (Phase 9.c).
 
-**9.b — Tier 2 UTType migration (~27 warnings).**
+**9.b — Tier 2 UTType migration — ✅ SHIPPED 2026-04-24 (commit `cde2ca8`, salvaged from dead agent).**
+31 sites migrated: `FSNotesCore/Extensions/URL+.swift` (26) + `UTI.swift` (5). Exit grep for `kUTType|UTTypeConformsTo|UTTypeCopyPreferredTagWithClass` in both files: 0. New regression-test file `Tests/UTIConformanceMigrationTests.swift` (10 tests, 1 skipped pending contract clarification). Full suite 1585 / 0 fail.
 - `FSNotesCore/Extensions/URL+.swift` (26 sites) — concentrated hotspot. Replace `kUTTypeFileURL` → `UTType.fileURL`, `UTTypeConformsTo(a, b)` → `a.conforms(to: b)`, `UTTypeCopyPreferredTagWithClass(..., kUTTagClassMIMEType)` → `uti.preferredMIMEType`, `UTTypeCopyPreferredTagWithClass(..., kUTTagClassFilenameExtension)` → `uti.preferredFilenameExtension`.
 - `FSNotesCore/Extensions/UTI.swift` (5 sites) — same treatment.
 - Touch points use `CoreServices`-era C APIs on `CFString`; `UniformTypeIdentifiers` framework (macOS 11.0+) is the modern replacement. FSNotes++'s deployment target is macOS 13.0, so the migration is unconstrained.
