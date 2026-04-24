@@ -134,6 +134,7 @@ final class TableHandleOverlay {
         }
 
         let visible = visibleTables()
+        bmLog("🪵 TableHandleOverlay.reposition: visibleTables.count=\(visible.count) pool.count=\(pool.count) editorFrame=\(editor.frame)")
 
         for (i, record) in visible.enumerated() {
             let view = viewAt(index: i, parent: editor)
@@ -143,6 +144,7 @@ final class TableHandleOverlay {
             view.elementStorageStart = record.elementStorageStart
             view.blockIndex = record.blockIndex
             view.isHidden = false
+            bmLog("🪵   table[\(i)] frame=\(record.frame) blockIndex=\(record.blockIndex)")
         }
 
         if pool.count > visible.count {
@@ -246,10 +248,46 @@ final class TableHandleOverlay {
     // MARK: - Hover plumbing (called by TableHandleView)
 
     /// Update the fragment's hover state and redraw.
+    ///
+    /// `editor.needsDisplay = true` alone is insufficient — TK2
+    /// caches fragment rendering surfaces, and only invalidating
+    /// the NSView's dirty rect doesn't force the fragment's
+    /// `draw(at:in:)` to re-run. We explicitly invalidate the
+    /// fragment's rectangle on the text view and, where available,
+    /// nudge the layout manager to re-render the fragment's text
+    /// range. Without this, hover handles are painted in the
+    /// fragment but the user never sees them (logged symptom:
+    /// "TableHandleOverlay.init + installObservers + reposition
+    /// all run. Hover events fire and log inTopStrip=true. But
+    /// the chrome doesn't appear visually.").
     func updateHover(on fragment: TableLayoutFragment,
                      to state: TableLayoutFragment.HoverState) {
-        if fragment.setHoverState(state) {
-            editor?.needsDisplay = true
+        bmLog("🪵 TableHandleOverlay.updateHover: new state=\(state) current=\(fragment.currentHoverState)")
+        guard fragment.setHoverState(state) else {
+            bmLog("🪵   setHoverState returned false (no change)")
+            return
+        }
+        guard let editor = editor else {
+            bmLog("🪵   editor is nil — cannot invalidate")
+            return
+        }
+        let fragFrame = fragment.layoutFragmentFrame
+        // Translate to text-view coords.
+        let origin = editor.textContainerOrigin
+        let rectInEditor = CGRect(
+            x: fragFrame.origin.x + origin.x,
+            y: fragFrame.origin.y + origin.y,
+            width: fragFrame.width,
+            height: fragFrame.height
+        )
+        editor.setNeedsDisplay(rectInEditor)
+        // Force the viewport to re-render the fragment. Without
+        // invalidating rendering attributes, TK2 may reuse the
+        // cached fragment surface and skip the `draw(at:in:)` call
+        // that paints hoverState chrome.
+        if let tlm = editor.textLayoutManager,
+           let elementRange = fragment.textElement?.elementRange {
+            tlm.invalidateRenderingAttributes(for: elementRange)
         }
     }
 

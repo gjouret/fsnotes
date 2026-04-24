@@ -120,6 +120,9 @@
             "backgroundActive": "#FFFFFF28"
         },
         "tableHandle": "#7A7A7ACC",
+        "tableGridLine": "#4A4A4AFF",
+        "tableHeaderFill": "#2A2A2AFF",
+        "tableZebraFill": "#1F1F1FFF",
         "tableResizePreview": "#0A84FFFF",
         "sourceMarker": "#7A7A7AFF",
         "foldedHeaderIndicatorForeground": "#C8C8C8FF",

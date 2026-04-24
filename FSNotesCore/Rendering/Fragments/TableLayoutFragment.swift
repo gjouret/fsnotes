@@ -56,17 +56,32 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     /// Grid line thickness. Matches `InlineTableView.gridLineWidth`.
     public static let gridLineWidth: CGFloat = 0.5
 
-    /// Grid line color. Matches the stroke color used in
-    /// `InlineTableView.drawGridLines` (white=0.4).
-    public static let gridLineColor = NSColor(calibratedWhite: 0.4, alpha: 1.0)
+    /// Grid line color. Resolves from `Theme.shared.chrome.tableGridLine`
+    /// per current appearance. Fallback matches the pre-theme value
+    /// (`white=0.4`).
+    public static var gridLineColor: NSColor {
+        Theme.shared.chrome.tableGridLine.resolvedForCurrentAppearance(
+            fallback: NSColor(calibratedWhite: 0.4, alpha: 1.0)
+        )
+    }
 
-    /// Header row background fill color. Matches
-    /// `InlineTableView.drawGridLines` (white=0.85).
-    public static let headerFillColor = NSColor(calibratedWhite: 0.85, alpha: 1.0)
+    /// Header row background fill color. Resolves from
+    /// `Theme.shared.chrome.tableHeaderFill` per current appearance.
+    /// Fallback matches the pre-theme value (`white=0.85`).
+    public static var headerFillColor: NSColor {
+        Theme.shared.chrome.tableHeaderFill.resolvedForCurrentAppearance(
+            fallback: NSColor(calibratedWhite: 0.85, alpha: 1.0)
+        )
+    }
 
-    /// Alternating body-row zebra-shading color. Matches
-    /// `InlineTableView.drawGridLines` (white=0.95).
-    public static let zebraFillColor = NSColor(calibratedWhite: 0.95, alpha: 1.0)
+    /// Alternating body-row zebra-shading color. Resolves from
+    /// `Theme.shared.chrome.tableZebraFill` per current appearance.
+    /// Fallback matches the pre-theme value (`white=0.95`).
+    public static var zebraFillColor: NSColor {
+        Theme.shared.chrome.tableZebraFill.resolvedForCurrentAppearance(
+            fallback: NSColor(calibratedWhite: 0.95, alpha: 1.0)
+        )
+    }
 
     // MARK: - Hover state (2e-T2-g)
     //

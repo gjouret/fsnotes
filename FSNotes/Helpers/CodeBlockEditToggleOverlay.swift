@@ -284,11 +284,14 @@ final class CodeBlockEditToggleOverlay {
 
         var out: [VisibleCodeBlock] = []
         var lastBlockStart: Int = -1
+        var fragmentClassHistogram: [String: Int] = [:]
 
         tlm.enumerateTextLayoutFragments(
             from: tlm.documentRange.location,
             options: [.ensuresLayout]
         ) { fragment in
+            let cls = String(describing: Swift.type(of: fragment))
+            fragmentClassHistogram[cls, default: 0] += 1
             guard fragment is CodeBlockLayoutFragment else { return true }
             guard let element = fragment.textElement,
                   let elementRange = element.elementRange
@@ -376,6 +379,7 @@ final class CodeBlockEditToggleOverlay {
             ))
             return true
         }
+        bmLog("🪵 CodeBlockEditToggleOverlay.visibleFragments: matched=\(out.count) fragmentClasses=\(fragmentClassHistogram)")
         return out
     }
 

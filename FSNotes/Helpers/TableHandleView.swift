@@ -51,6 +51,18 @@ final class TableHandleView: NSView {
         fatalError("init(coder:) not supported")
     }
 
+    /// Match the enclosing `EditTextView`'s coordinate system. Without
+    /// this, `localY = 0` maps to the BOTTOM of the view, and
+    /// `TableLayoutFragment.isInTopHandleStrip(localY:)` (which
+    /// matches `0 <= localY < handleBarHeight`) evaluates true on the
+    /// BOTTOM strip instead of the TOP. Result: hovering the top
+    /// handle strip fires no hover event and no column-handle chrome
+    /// ever appears. Flipping the view's coordinate system so y
+    /// increases downward realigns hit-testing with the fragment's
+    /// draw coords — top strip at localY=0..handleBarHeight, left
+    /// strip at localX=0..handleBarWidth, both top-left origin.
+    override var isFlipped: Bool { return true }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let old = trackingArea {

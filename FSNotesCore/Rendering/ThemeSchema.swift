@@ -434,6 +434,21 @@ public struct ThemeChrome: Codable, Equatable {
     /// existing themes that don't set it still load cleanly.
     public var tableHandle: ThemeColor
 
+    /// Grid-line color between table cells. Light mode default is
+    /// `white=0.4` (gray), dark mode should be noticeably darker so
+    /// lines stay visible on a dark background.
+    public var tableGridLine: ThemeColor
+
+    /// Header-row background fill. Light mode default is `white=0.85`.
+    /// Dark mode defaults to a dark gray that keeps contrast with
+    /// white body text.
+    public var tableHeaderFill: ThemeColor
+
+    /// Zebra-striping body-row background fill. Light mode default
+    /// `white=0.95`. Dark mode defaults to a slightly lighter variant
+    /// of the body background.
+    public var tableZebraFill: ThemeColor
+
     /// Table column drag-resize live-preview line color (Phase 2e
     /// T2-g.4). Default is macOS system-blue. Defaulted so themes
     /// predating T2-g.4 still load cleanly.
@@ -502,6 +517,15 @@ public struct ThemeChrome: Codable, Equatable {
         headingBorderOffsetBelowText: CGFloat = 1.0,
         codeBlockEditToggle: ThemeCodeBlockEditToggle = .default,
         tableHandle: ThemeColor = ThemeColor(hex: "#BBBBBBCC"),
+        tableGridLine: ThemeColor = ThemeColor(
+            light: "#666666FF", dark: "#4A4A4AFF"
+        ),
+        tableHeaderFill: ThemeColor = ThemeColor(
+            light: "#D9D9D9FF", dark: "#2A2A2AFF"
+        ),
+        tableZebraFill: ThemeColor = ThemeColor(
+            light: "#F2F2F2FF", dark: "#1F1F1FFF"
+        ),
         tableResizePreview: ThemeColor = ThemeColor(hex: "#007AFFFF"),
         sourceMarker: ThemeColor = ThemeColor(hex: "#999999FF"),
         foldedHeaderIndicatorForeground: ThemeColor = ThemeColor(hex: "#888888FF"),
@@ -528,6 +552,9 @@ public struct ThemeChrome: Codable, Equatable {
         self.headingBorderOffsetBelowText = headingBorderOffsetBelowText
         self.codeBlockEditToggle = codeBlockEditToggle
         self.tableHandle = tableHandle
+        self.tableGridLine = tableGridLine
+        self.tableHeaderFill = tableHeaderFill
+        self.tableZebraFill = tableZebraFill
         self.tableResizePreview = tableResizePreview
         self.sourceMarker = sourceMarker
         self.foldedHeaderIndicatorForeground = foldedHeaderIndicatorForeground
@@ -549,7 +576,8 @@ public struct ThemeChrome: Codable, Equatable {
              codeBlockCornerRadius, codeBlockHorizontalBleed, codeBlockBorderWidth,
              blockquoteBarWidth, blockquoteBarSpacing, blockquoteBarInitialOffset,
              hrThickness, headingBorderThickness, headingBorderOffsetBelowText,
-             codeBlockEditToggle, tableHandle, tableResizePreview,
+             codeBlockEditToggle, tableHandle, tableGridLine,
+             tableHeaderFill, tableZebraFill, tableResizePreview,
              sourceMarker,
              foldedHeaderIndicatorForeground,
              foldedHeaderIndicatorBackground,
@@ -595,6 +623,12 @@ public struct ThemeChrome: Codable, Equatable {
             ThemeCodeBlockEditToggle.self, forKey: .codeBlockEditToggle) ?? def.codeBlockEditToggle
         self.tableHandle = try c.decodeIfPresent(
             ThemeColor.self, forKey: .tableHandle) ?? def.tableHandle
+        self.tableGridLine = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .tableGridLine) ?? def.tableGridLine
+        self.tableHeaderFill = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .tableHeaderFill) ?? def.tableHeaderFill
+        self.tableZebraFill = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .tableZebraFill) ?? def.tableZebraFill
         self.tableResizePreview = try c.decodeIfPresent(
             ThemeColor.self, forKey: .tableResizePreview) ?? def.tableResizePreview
         self.sourceMarker = try c.decodeIfPresent(
