@@ -944,6 +944,62 @@ final class UIBugRegressionTests: XCTestCase {
     // the harness. Cell-click cursor placement is tracked separately
     // in `TableCellClickHarnessTests` (commit 427321b).
 
+    // Probe 36g: USER REPORTED — `<kbd>` rounded rectangle. True
+    // draw-layer test: render the kbd fragment to a bitmap,
+    // inspect pixel values for the expected stroke/fill color.
+    //
+    // Without the box, every non-text pixel in the rendered
+    // fragment would be the default background white. The kbd
+    // fragment's stroke is #CCCCCC (RGB 204,204,204) and fill is
+    // #FCFCFC (RGB 252,252,252); at least a handful of stroke
+    // pixels should appear on the box outline.
+    //
+    // We check for ANY pixel whose RGB is in a tight band around
+    // #CCCCCC (±8 per channel). If zero such pixels appear, the
+    // fragment didn't draw the rounded rectangle — the user's
+    // exact symptom.
+    func test_probe_kbdBox_actuallyDrawsStrokeColor() {
+        let h = EditorHarness(
+            markdown: "Press <kbd>Cmd</kbd> to copy.\n",
+            windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        guard let bitmap = h.renderFragmentToBitmap(
+            blockIndex: 0,
+            fragmentClass: "KbdBoxParagraphLayoutFragment"
+        ) else {
+            XCTFail(
+                "could not render KbdBoxParagraphLayoutFragment for " +
+                "block 0. Fragment dispatch may be wrong, or the " +
+                "block isn't 0, or there is no paragraph."
+            )
+            return
+        }
+        let (px, w, h2) = bitmap
+        var strokePixels = 0
+        let target: (UInt8, UInt8, UInt8) = (204, 204, 204)
+        let tolerance: UInt8 = 8
+        for y in 0..<h2 {
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                let r = px[i], g = px[i+1], b = px[i+2]
+                if abs(Int(r) - Int(target.0)) <= Int(tolerance) &&
+                   abs(Int(g) - Int(target.1)) <= Int(tolerance) &&
+                   abs(Int(b) - Int(target.2)) <= Int(tolerance) {
+                    strokePixels += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(
+            strokePixels, 10,
+            "KbdBoxParagraphLayoutFragment rendered no stroke-color " +
+            "pixels (expected >10 around #CCCCCC). The kbd box is " +
+            "NOT being drawn — matches the user's 'just changes the " +
+            "font' symptom. bitmap=\(w)x\(h2), strokePixels=" +
+            "\(strokePixels)"
+        )
+    }
+
     // Probe 36f: USER REPORTED — `<kbd>Cmd</kbd>` doesn't draw a
     // rounded rectangle; user sees only a font change. We can't
     // inspect the CGContext draw output from the snapshot, but we

@@ -148,6 +148,96 @@ extension EditorHarness {
     public func snapshot() -> EditorSnapshot {
         return EditorSnapshot.emit(from: editor)
     }
+
+    /// Render a single layout fragment into an RGBA8 bitmap by
+    /// calling `fragment.draw(at:in:)` directly on a CGContext.
+    /// Returns the pixel buffer + row-stride so tests can inspect
+    /// specific pixel values.
+    ///
+    /// This bypasses `cacheDisplay`'s limitation (per CLAUDE.md it
+    /// doesn't capture fragment-level draws), letting tests detect
+    /// draw-layer bugs like:
+    ///   - `<kbd>` missing rounded rectangle (kbd fragment)
+    ///   - `[...]` folded indicator missing (heading fragment)
+    ///   - HR line not drawn (hr fragment)
+    ///   - Dark-mode checkbox invisible (bullet fragment)
+    ///
+    /// Returns nil if no fragment of the given class exists.
+    public func renderFragmentToBitmap(
+        blockIndex: Int,
+        fragmentClass: String,
+        padding: CGFloat = 4.0
+    ) -> (pixels: [UInt8], width: Int, height: Int)? {
+        guard let tlm = editor.textLayoutManager,
+              let contentStorage = tlm.textContentManager
+                as? NSTextContentStorage
+        else { return nil }
+        tlm.ensureLayout(for: tlm.documentRange)
+        var targetFragment: NSTextLayoutFragment? = nil
+        let docStart = contentStorage.documentRange.location
+        let spans: [NSRange] = editor.documentProjection?.blockSpans
+            ?? []
+        guard blockIndex >= 0, blockIndex < spans.count else {
+            return nil
+        }
+        let targetSpan = spans[blockIndex]
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { fragment in
+            guard let elementRange = fragment.textElement?.elementRange else {
+                return true
+            }
+            let charIndex = contentStorage.offset(
+                from: docStart, to: elementRange.location
+            )
+            let cls = String(describing: Swift.type(of: fragment))
+            if cls == fragmentClass &&
+                NSLocationInRange(charIndex, targetSpan) {
+                targetFragment = fragment
+                return false
+            }
+            return true
+        }
+        guard let fragment = targetFragment else { return nil }
+
+        let frame = fragment.layoutFragmentFrame
+        let w = Int(frame.width.rounded() + 2 * padding)
+        let h = Int(frame.height.rounded() + 2 * padding)
+        guard w > 0, h > 0 else { return nil }
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = pixels.withUnsafeMutableBytes({ buf -> CGContext? in
+            guard let base = buf.baseAddress else { return nil }
+            return CGContext(
+                data: base, width: w, height: h,
+                bitsPerComponent: 8, bytesPerRow: w * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        }) else { return nil }
+
+        // Fill with a distinctive background so "nothing drawn"
+        // stays recognisable (white with alpha=255).
+        ctx.setFillColor(CGColor.white)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+
+        // Push the NSGraphicsContext so AppKit draws (NSColor.set,
+        // textLineFragment.locationForCharacter) resolve properly.
+        let nsCtx = NSGraphicsContext(
+            cgContext: ctx, flipped: false
+        )
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        defer { NSGraphicsContext.restoreGraphicsState() }
+
+        fragment.draw(
+            at: CGPoint(x: padding, y: padding),
+            in: ctx
+        )
+        return (pixels, w, h)
+    }
 }
 
 // MARK: - Builder
@@ -225,9 +315,13 @@ private struct EditorSnapshotBuilder {
                 out += ")"
             }
 
-            // Fragment dispatch.
+            // Fragment dispatch + geometry.
             if let frag = fragmentMap[idx] {
-                out += "\n    (fragment class=\(frag.className) count=\(frag.count))"
+                let h = Int(frag.height.rounded())
+                out += "\n    (fragment class=\(frag.className)" +
+                    " count=\(frag.count)" +
+                    " h=\(h)" +
+                    " lines=\(frag.lineCount))"
             }
 
             // Table structure.
@@ -352,6 +446,16 @@ private struct EditorSnapshotBuilder {
     private struct FragmentSummary {
         let className: String
         let count: Int
+        /// Bounding-box height of the fragment (first fragment for
+        /// the block). Zero-height fragments mean the fragment
+        /// isn't drawing anything, which is a common class of bug
+        /// (HR without a line, kbd box not painted, folded indicator
+        /// missing).
+        let height: CGFloat
+        /// Number of text line fragments in the fragment. Most
+        /// block fragments have 1; wrapped paragraphs / code blocks
+        /// have N. A kbd run that straddles a line break needs >1.
+        let lineCount: Int
     }
 
     /// Walk the layout manager's fragments and bucket them by
@@ -369,8 +473,8 @@ private struct EditorSnapshotBuilder {
         // fragment — offscreen editors often leave tails unlaid.
         tlm.ensureLayout(for: tlm.documentRange)
 
-        // (blockIndex -> [className]).
-        var buckets: [Int: [String]] = [:]
+        // (blockIndex -> [(className, height, lineCount)]).
+        var buckets: [Int: [(cls: String, h: CGFloat, lines: Int)]] = [:]
         tlm.enumerateTextLayoutFragments(
             from: tlm.documentRange.location,
             options: [.ensuresLayout]
@@ -386,21 +490,29 @@ private struct EditorSnapshotBuilder {
                     span.location == charIndex
             } ?? -1
             guard blockIdx >= 0 else { return true }
-            let cls = String(describing: type(of: fragment))
-            buckets[blockIdx, default: []].append(cls)
+            let cls = String(describing: Swift.type(of: fragment))
+            let h = fragment.layoutFragmentFrame.height
+            let lines = fragment.textLineFragments.count
+            buckets[blockIdx, default: []].append((cls, h, lines))
             return true
         }
 
         var out: [Int: FragmentSummary] = [:]
-        for (idx, classes) in buckets {
+        for (idx, entries) in buckets {
             // Pick the class that appears most often. Table /
             // CodeBlock / Heading fragments are one-per-block, so
             // this degenerates to "the only class present".
             var counts: [String: Int] = [:]
-            for c in classes { counts[c, default: 0] += 1 }
+            for e in entries { counts[e.cls, default: 0] += 1 }
             if let dominant = counts.max(by: { $0.value < $1.value }) {
+                // Geometry: use the first entry matching the dominant
+                // class.
+                let firstMatch = entries.first { $0.cls == dominant.key }
                 out[idx] = FragmentSummary(
-                    className: dominant.key, count: classes.count
+                    className: dominant.key,
+                    count: entries.count,
+                    height: firstMatch?.h ?? 0,
+                    lineCount: firstMatch?.lines ?? 0
                 )
             }
         }
