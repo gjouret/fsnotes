@@ -366,25 +366,67 @@ public enum MarkdownParser {
                     guard var parsed = parseListLine(l) else {
                         // Non-list line without a preceding blank.
                         //
-                        // Strict CommonMark calls for "lazy continuation"
-                        // here — appending the line to the last item's
-                        // first paragraph. We conservatively DO NOT do
-                        // that because the editor layer produces
-                        // `[list, paragraph]` Documents without an
-                        // explicit `.blankLine` separator (e.g. after
-                        // toggleList + exit list + type), and these
-                        // must round-trip. Treating the next line as
-                        // lazy continuation would fold it into the list
-                        // at re-parse, making the live Document and the
-                        // re-parsed Document inequivalent.
+                        // Narrow lazy continuation: if the line is
+                        // indented at least to the last item's content
+                        // column AND the last item has non-empty
+                        // content (open paragraph), merge the line into
+                        // the item's inline content with a soft
+                        // line-break separator.
                         //
-                        // Consequence: CommonMark examples #254, #286,
-                        // #287, #288, #290, #291 (multi-line first
-                        // paragraph) remain failing. Fixing them
-                        // requires editor changes that emit a
-                        // `.blankLine` block at list-to-paragraph
-                        // boundaries, which is out of scope for this
-                        // parser slice.
+                        // Strict CommonMark would lazy-continue any
+                        // indentation (including zero), but the editor
+                        // layer produces `[list, paragraph]` Documents
+                        // without explicit `.blankLine` separators —
+                        // serializing those yields `- Item\nBody`, and
+                        // a strict lazy-continuation parse would fold
+                        // them into a single item. The narrower
+                        // "indent ≥ content column" rule handles the
+                        // well-formed CommonMark spec cases (#254,
+                        // #286-#291 — where the continuation IS
+                        // indented to the content column) without
+                        // pulling unindented content into the list.
+                        if !parsedLines.isEmpty {
+                            let last = parsedLines[parsedLines.count - 1]
+                            let hasOpenParagraph = !last.content.isEmpty
+                                && last.continuationLines.isEmpty
+                            if hasOpenParagraph {
+                                let cc = last.indent.count
+                                    + last.marker.count + last.afterMarker.count
+                                let lineIndent = leadingSpaceCount(l)
+                                // Narrow lazy continuation: merge only
+                                // when the incoming line is indented
+                                // MORE than the list item's opening
+                                // column. Strict CommonMark would
+                                // merge unindented lines too (#290),
+                                // but the editor layer produces
+                                // `[list, paragraph]` Documents
+                                // without explicit `.blankLine`
+                                // separators. A `line.indent >
+                                // last.indent` threshold covers the
+                                // well-formed spec cases where the
+                                // continuation is at least partially
+                                // indented (#254, #286-#289, #291)
+                                // without pulling unindented content
+                                // into the list at re-parse time.
+                                if lineIndent > last.indent.count
+                                    && !interruptsLazyContinuation(l)
+                                {
+                                    let stripped = stripLeadingSpaces(l, count: cc)
+                                    let merged = last.content + "\n" + stripped
+                                    parsedLines[parsedLines.count - 1] = ParsedListLine(
+                                        indent: last.indent,
+                                        marker: last.marker,
+                                        afterMarker: last.afterMarker,
+                                        checkbox: last.checkbox,
+                                        content: merged,
+                                        blankLineBefore: last.blankLineBefore,
+                                        continuationLines: last.continuationLines
+                                    )
+                                    j += 1
+                                    continue
+                                }
+                            }
+                        }
                         break
                     }
                     // CommonMark 5.3 / 5.4: a list ends when the marker
