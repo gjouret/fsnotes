@@ -347,10 +347,19 @@ public enum MarkdownParser {
                             continuation.removeLast()
                         }
                         parsedLines[ownerIdx!].continuationLines = continuation
-                        // Any future item in this list that follows these
-                        // continuation lines is loose.
-                        hasBlankLines = true
-                        nextItemFollowsBlank = true
+                        // Looseness propagation: a continuation makes
+                        // the OWNER's list loose (captured via the
+                        // owner's .continuationBlocks in renderList).
+                        // The TOP-level list's looseness and the
+                        // "next-item-follows-blank" marker are only
+                        // set when the owner itself is a top-level
+                        // item; otherwise the blank is structurally
+                        // inside a nested owner and does not loosen
+                        // the outer list.
+                        if ownerItem.indent.count == topIndent {
+                            hasBlankLines = true
+                            nextItemFollowsBlank = true
+                        }
                         j = m
                         continue
                     }
@@ -627,15 +636,26 @@ public enum MarkdownParser {
     ///   "#Hello"      → nil  (missing required space after markers)
     ///   "####### too" → nil  (7 markers exceeds max of 6)
     private static func detectHeading(_ line: String) -> (level: Int, suffix: String)? {
-        guard let first = line.first, first == "#" else { return nil }
+        // CommonMark 4.2: up to 3 leading spaces before the opening `#`
+        // run are allowed. 4+ spaces would be an indented code block
+        // (which we don't support — falls through to paragraph).
+        var chars = Array(line)
+        var i = 0
+        var leading = 0
+        while i < chars.count, chars[i] == " ", leading < 3 {
+            leading += 1
+            i += 1
+        }
+        guard i < chars.count, chars[i] == "#" else { return nil }
 
         var level = 0
-        for ch in line {
-            if ch == "#" { level += 1 } else { break }
+        while i < chars.count, chars[i] == "#" {
+            level += 1
+            i += 1
         }
         guard level >= 1 && level <= 6 else { return nil }
 
-        let suffix = String(line.dropFirst(level))
+        let suffix = String(chars[i..<chars.count])
         // Valid heading: either suffix is empty (end of line) or begins
         // with a space/tab.
         if suffix.isEmpty { return (level, suffix) }
@@ -2265,21 +2285,36 @@ public enum MarkdownParser {
     /// Detect a setext heading underline: a line of `===` (H1) or `---` (H2).
     /// Returns the heading level (1 or 2) if the line is a valid underline.
     private static func detectSetextUnderline(_ line: String) -> Int? {
-        guard let first = line.first else { return nil }
-        if first == "=" {
-            // All characters must be '='
-            guard line.allSatisfy({ $0 == "=" }) else { return nil }
-            guard line.count >= 1 else { return nil }
-            return 1
+        // CommonMark 4.3: up to 3 leading spaces before the underline,
+        // followed by one-or-more `=` (H1) or `-` (H2) characters, then
+        // optional trailing whitespace.
+        var chars = Array(line)
+        var i = 0
+        var leading = 0
+        while i < chars.count, chars[i] == " ", leading < 3 {
+            leading += 1
+            i += 1
         }
-        if first == "-" {
-            // All characters must be '-'. Need at least 3 to disambiguate
-            // from a list marker.
-            guard line.allSatisfy({ $0 == "-" }) else { return nil }
-            guard line.count >= 3 else { return nil }
+        guard i < chars.count else { return nil }
+        let marker = chars[i]
+        guard marker == "=" || marker == "-" else { return nil }
+        let runStart = i
+        while i < chars.count, chars[i] == marker { i += 1 }
+        let runLen = i - runStart
+        // Allow trailing spaces/tabs.
+        while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
+        guard i == chars.count else { return nil }
+        if marker == "=" {
+            guard runLen >= 1 else { return nil }
+            return 1
+        } else {
+            // `-` underline needs at least 1 char per spec (disambiguation
+            // with HR requires the ENCLOSING context — a non-empty
+            // paragraph immediately above already gates the caller; HR
+            // detection runs here only when rawBuffer is empty).
+            guard runLen >= 1 else { return nil }
             return 2
         }
-        return nil
     }
 
     /// Check if the raw buffer (paragraph lines) is entirely wrapped in
@@ -2801,7 +2836,29 @@ public enum MarkdownParser {
             }
 
             // Try to parse starting at this line as a (possibly multi-line) link reference definition.
-            if let parsed = tryParseLinkRefDef(lines, startIndex: i, effectiveCount: effectiveCount) {
+            // CommonMark 4.7: a link reference definition cannot
+            // interrupt a paragraph. It must start at the beginning of
+            // a block — either the start of the document, after a
+            // blank line, or immediately after a non-paragraph block
+            // boundary (e.g. a previously-consumed ref-def, fence
+            // open/close, heading line). We approximate this with:
+            // "previous line is blank OR previous line was already
+            // consumed as a ref-def OR this is line 0".
+            let canStartBlock: Bool = {
+                if i == 0 { return true }
+                let prev = lines[i - 1]
+                if prev.isEmpty || isBlankLine(prev) { return true }
+                if consumed.contains(i - 1) { return true }
+                // ATX heading line on the previous line? Check detect.
+                if detectHeading(prev) != nil { return true }
+                // Fence open/close on the previous line?
+                if detectFenceOpen(prev) != nil { return true }
+                // Horizontal rule on the previous line?
+                if detectHorizontalRule(prev) != nil { return true }
+                return false
+            }()
+            if canStartBlock,
+               let parsed = tryParseLinkRefDef(lines, startIndex: i, effectiveCount: effectiveCount) {
                 let key = normalizeLabel(parsed.label)
                 // First definition wins (CommonMark rule).
                 if defs[key] == nil {
