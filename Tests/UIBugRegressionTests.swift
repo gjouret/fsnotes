@@ -944,6 +944,202 @@ final class UIBugRegressionTests: XCTestCase {
     // the harness. Cell-click cursor placement is tracked separately
     // in `TableCellClickHarnessTests` (commit 427321b).
 
+    // Probe 36d: USER REPORTED — deleting a list item wipes ALL
+    // glyphs from the todo list. After removing one item (structural
+    // delete via select-item-content + pressDelete), the remaining
+    // items should all still have CheckboxGlyphView mounted.
+    func test_probe_deleteTodoItem_preservesOtherGlyphs() {
+        let md = "- [ ] one\n- [ ] two\n- [ ] three\n"
+        let h = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        let before = h.snapshot()
+        let beforeCount = before.raw.components(
+            separatedBy: "(attachment-host class=CheckboxGlyphView"
+        ).count - 1
+        XCTAssertEqual(
+            beforeCount, 3,
+            "pre: expected 3 checkbox glyphs; got \(beforeCount)"
+        )
+
+        // Delete "two" including its newline — simulate user
+        // selecting one line of text and deleting.
+        guard let storage = h.editor.textStorage else {
+            XCTFail("no storage"); return
+        }
+        let twoRange = (storage.string as NSString).range(of: "two")
+        guard twoRange.location != NSNotFound else {
+            XCTFail("item 'two' text not found"); return
+        }
+        // Select "two" → pressDelete should delete selection.
+        h.selectRange(twoRange)
+        h.pressDelete()
+
+        // Re-layout so view providers re-mount.
+        if let tlm = h.editor.textLayoutManager {
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        if let tlm = h.editor.textLayoutManager {
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        let after = h.snapshot()
+        let afterCount = after.raw.components(
+            separatedBy: "(attachment-host class=CheckboxGlyphView"
+        ).count - 1
+        // After deleting "two" text, we still have 3 items (item
+        // structure unchanged — only text content changed). ALL 3
+        // checkbox glyphs must remain mounted.
+        XCTAssertEqual(
+            afterCount, 3,
+            "After deleting one list item's text, all 3 checkbox " +
+            "glyphs must remain mounted; got \(afterCount). " +
+            "Snapshot:\n\(after.raw.prefix(800))"
+        )
+    }
+
+    // Probe 36e: USER REPORTED — triple-click selects paragraph then
+    // press Delete; should delete the paragraph, NOT demote the list
+    // line below it. Simulated via selectRange(full-paragraph) +
+    // pressDelete (triple-click's selection effect without needing
+    // click event synthesis).
+    func test_probe_selectParagraphThenDelete_paragraphGone_listStays() {
+        let md = "paragraph text here\n\n- list line one\n- list line two\n"
+        let h = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        guard let storage = h.editor.textStorage else {
+            XCTFail("no storage"); return
+        }
+        let paraRange =
+            (storage.string as NSString).range(of: "paragraph text here")
+        if paraRange.location == NSNotFound {
+            XCTFail("paragraph not found"); return
+        }
+        h.selectRange(paraRange)
+        h.pressDelete()
+        let snap = h.snapshot()
+        let body = snap.raw
+        // Paragraph text should be gone.
+        XCTAssertFalse(
+            body.contains("paragraph text here"),
+            "Paragraph text should be deleted. Snapshot:\n" +
+            "\(body.prefix(500))"
+        )
+        // The list should remain (not demoted to paragraphs).
+        XCTAssertTrue(
+            body.contains("kind=list"),
+            "List below should remain a list (not demoted to " +
+            "paragraphs). Snapshot:\n\(body.prefix(500))"
+        )
+    }
+
+    // Probe 36c: USER REPORTED — selecting multiple paragraph lines
+    // and invoking Bullet List formats ONLY the first line. Expected:
+    // all selected paragraph lines become list items under one
+    // list block. Drives `toggleListViaBlockModel(marker: "-")`
+    // (the same path the Format menu's Bullet List calls).
+    func test_probe_multiLineSelection_toBulletList_formatsAllLines() {
+        let md = "line one\n\nline two\n\nline three\n"
+        let h = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        let len = h.editor.textStorage?.length ?? 0
+        // Select everything.
+        h.selectRange(NSRange(location: 0, length: len))
+        _ = h.editor.toggleListViaBlockModel(marker: "-")
+        let snap = h.snapshot()
+        let body = snap.raw
+        // A single combined `.list` block is the expected shape —
+        // wrapSelectionInSingleList path. The list should span all
+        // three lines (so "one", "two", "three" all appear inside
+        // the list, not in separate paragraphs).
+        XCTAssertTrue(
+            body.contains("kind=list"),
+            "multi-line selection → bullet list should produce a " +
+            "list block. Snapshot:\n\(body.prefix(500))"
+        )
+        // All three line texts should appear in the snapshot.
+        XCTAssertTrue(
+            body.contains("one"),
+            "bullet-list convert dropped 'one' from snapshot.\n" +
+            "Full snapshot:\n\(body)"
+        )
+        XCTAssertTrue(body.contains("two"))
+        XCTAssertTrue(body.contains("three"))
+        // Should NOT have any remaining paragraph blocks for the
+        // original lines — assert no `kind=paragraph` appears with
+        // "two" or "three" text in it. (If the bug is real — first
+        // line only — we'd see lines two/three still as paragraphs.)
+        let paragraphBlocks = body.components(
+            separatedBy: "kind=paragraph"
+        ).count - 1
+        XCTAssertEqual(
+            paragraphBlocks, 0,
+            "After bullet-list on 3-line selection, no paragraph " +
+            "blocks should remain; got \(paragraphBlocks). Snapshot:\n" +
+            "\(body.prefix(600))"
+        )
+    }
+
+    // Probe 36b: USER REPORTED — toggling one todo checkbox wipes
+    // ALL checkbox glyphs in the note. Routes through the same
+    // primitive a checkbox click fires (toggleTodoCheckboxViaBlockModel).
+    //
+    // NOTE: this probe passes in the offscreen harness but the bug
+    // reproduces in the live app — there's a gap between the
+    // harness state and the live click path we don't yet capture.
+    // Left as a green regression gate for the offscreen-observable
+    // invariant; live symptom tracked separately for XCUITest.
+    func test_probe_toggleOneTodo_preservesAllTodoGlyphs() {
+        let md = "- [ ] one\n- [ ] two\n- [ ] three\n"
+        let h = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        let before = h.snapshot()
+        let beforeCount = before.raw.components(
+            separatedBy: "(attachment-host class=CheckboxGlyphView"
+        ).count - 1
+        XCTAssertEqual(
+            beforeCount, 3,
+            "expected 3 checkbox glyphs before toggle; got " +
+            "\(beforeCount)"
+        )
+
+        // Toggle the first todo (position 0 = first list item).
+        _ = h.editor.toggleTodoCheckboxViaBlockModel(at: 0)
+
+        // Mirror the production post-edit sequence: TK2 re-lays the
+        // viewport, which re-mounts view-provider subviews. If the
+        // toggle invalidates all attachments instead of just the one,
+        // we see the wipe here.
+        if let tlm = h.editor.textLayoutManager {
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        if let tlm = h.editor.textLayoutManager {
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        let after = h.snapshot()
+        let afterCount = after.raw.components(
+            separatedBy: "(attachment-host class=CheckboxGlyphView"
+        ).count - 1
+        XCTAssertEqual(
+            afterCount, 3,
+            "toggling one todo must preserve all 3 checkbox glyphs; " +
+            "got \(afterCount) after toggle. Snapshot:\n" +
+            "\(after.raw.prefix(800))"
+        )
+    }
+
     // Probe 37: paste plain text into empty doc actually inserts it.
     func test_probe_pasteIntoEmpty_insertsText() {
         let h = EditorHarness(
