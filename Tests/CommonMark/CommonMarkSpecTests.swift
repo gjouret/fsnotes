@@ -236,6 +236,43 @@ class CommonMarkSpecTests: XCTestCase {
 
     // MARK: - Full compliance report
 
+    /// Dumps every failing example's full markdown, expected, and actual
+    /// HTML to ~/unit-tests/commonmark-failures.txt. Always passes — this
+    /// is a reporting test, useful for targeting parser fixes.
+    func test_000_dumpAllFailures() {
+        var out = "CommonMark failure dump\nSpec \(specVersion)\n\n"
+        let sections = [
+            "Tabs", "Backslash escapes",
+            "Entity and numeric character references",
+            "Precedence", "Thematic breaks", "ATX headings",
+            "Setext headings", "Indented code blocks",
+            "Fenced code blocks", "HTML blocks",
+            "Link reference definitions", "Paragraphs",
+            "Blank lines", "Block quotes", "List items", "Lists",
+            "Inlines", "Code spans",
+            "Emphasis and strong emphasis", "Links", "Images",
+            "Autolinks", "Raw HTML", "Hard line breaks",
+            "Soft line breaks", "Textual content"
+        ]
+        for section in sections {
+            let result = runSection(section)
+            if result.failures.isEmpty { continue }
+            out += "## \(section): \(result.passed)/\(result.total)\n\n"
+            for f in result.failures {
+                let ex = Self.allExamples.first(where: { $0.example == f.example })!
+                out += "### #\(f.example)\n"
+                out += "MD:       \(repr(ex.markdown))\n"
+                out += "expected: \(repr(f.expected))\n"
+                out += "actual:   \(repr(f.actual))\n\n"
+            }
+        }
+        let outputDir = NSHomeDirectory() + "/unit-tests"
+        try? FileManager.default.createDirectory(atPath: outputDir,
+                                                  withIntermediateDirectories: true)
+        try? out.write(toFile: "\(outputDir)/commonmark-failures.txt",
+                       atomically: true, encoding: .utf8)
+    }
+
     /// Runs ALL 652 examples and writes a compliance report.
     /// This test always passes — it's for reporting, not gating.
     func test_00_fullComplianceReport() {
