@@ -1263,9 +1263,49 @@ User reviews after each slice. 9.a can land without review (pure hygiene). 9.b a
 
 ---
 
-## Phase 10 — CommonMark Slice A (92.2% → ~95%)
+## Phase 10 — CommonMark Slice A (92.2% → 95.1%) ✅ SHIPPED 2026-04-24
 
-### Goal
+**Shipped**: commits `f9aa284 → 3018ff0` (14 commits, +19 tests). Final compliance **620/652 (95.1%)**. Full test suite 1494/0 passing. Rule-7 gate clean.
+
+### Per-bucket deltas
+
+| Bucket | Before | After | Δ |
+|---|---:|---:|---:|
+| Tabs | 7/11 | 10/11 | +3 |
+| Thematic breaks | 17/19 | 19/19 | +2 |
+| Setext headings | 26/27 | 27/27 | +1 |
+| Indented code blocks | 9/12 | 12/12 | +3 |
+| HTML blocks | 40/44 | 43/44 | +3 |
+| Link reference definitions | 24/27 | 26/27 | +2 |
+| Emphasis | 131/132 | 132/132 | +1 |
+| Raw HTML | 19/20 | 20/20 | +1 |
+| List items | 39/48 | 42/48 | +3 |
+| **Total** | **601/652 (92.2%)** | **620/652 (95.1%)** | **+19** |
+
+### Commits
+
+1. `f9aa284` — Raw HTML comment v0.31.2 short forms (`<!-->`, `<!--->`). +1 Raw HTML.
+2. `955a1cf` — Link ref def URL/title whitespace separator (spec #201). +1 Link ref defs.
+3. `671743e` — Link ref def multi-line label support (spec #208). +1 Link ref defs.
+4. `fe85858` — Tight-list heuristic refinement for single-block items (spec #61). +1 Thematic breaks.
+5. `70c9bfb` — HR beats list item at outer-list indent (spec #60). +1 Thematic breaks.
+6. `ccaea2f` — Setext underline not valid on lazy continuation (spec #93). +1 Setext headings.
+7. `59949c7` — Unicode Symbol categories count as punctuation for emphasis (spec #354). +1 Emphasis.
+8. `9157316` — Indented code blocks preserve trailing whitespace on blank-like lines (spec #112). +1 Indented code.
+9. `5c5f9b6` — Blockquote prefix partial tab consumption (spec #6). +1 Tabs.
+10. `82b7798` — `stripLeadingSpaces` preserves virtual-column layout (spec #5). +1 Tabs.
+11. `9cc4bec` — List item first-line indented-code detection (afterMarker ≥ 5 virtual cols, spec #7). +1 Tabs + 2 List items.
+12. `8b8f3fc` — HTML block capped at 3 leading spaces (spec #183, #184, #191). +3 HTML blocks + 1 Indented code.
+13. `b0c6991` — First-item `blankLineBefore` doesn't loose its list (spec #109). +1 Indented code.
+14. `20d859f` / `3018ff0` — Empty-content list item absorbs first indented line (spec #279). +1 List items.
+
+### Residual (32 / 652)
+
+- **Links (14)**: delimiter-stack rewrite territory. Tracked for potential Phase 12.
+- **Lists + List items (13)**: multi-block list items (code fence, blockquote, HTML block inside item body). Requires `ListItem.children: [Block]` refactor. Tracked for potential Phase 11 (Slice B).
+- **Tabs (1)** #9, **HTML blocks (1)** #175, **Link ref defs (1)** #218, **Block quotes (1)** #238, **Images (1)** #590 — each in Slice B family or a structural edge (container-aware ref-def collection, wikilink extension boundary).
+
+### Goal (original)
 
 Close the **19 easiest residual CommonMark failures** across 7 spec buckets, moving compliance from **601/652 (92.2%)** to **~620/652 (~95.2%)**. Each failing example in scope is narrow (edge cases, single-line fixes, or limited-scope parser tweaks); the effort profile matches "spec-conformance polish," not structural refactor.
 
