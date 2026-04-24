@@ -24,6 +24,19 @@ import XCTest
 import AppKit
 @testable import FSNotes
 
+/// Private `NSWindow` subclass that overrides `canBecomeKeyWindow` to
+/// return true. Borderless windows (AppKit's default for sizes without
+/// a title bar or close button) normally return false, which prevents
+/// `makeKeyAndOrderFront(_:)` from actually keying the window — AppKit
+/// logs a runtime warning and silently no-ops. Under the harness's
+/// `.keyWindow` activation we want the window to accept key status so
+/// the editor can become first responder and TK2's viewport layout
+/// controller proceeds past the key-window gate.
+private final class HarnessKeyableWindow: NSWindow {
+    override var canBecomeKey: Bool { return true }
+    override var canBecomeMain: Bool { return true }
+}
+
 /// Drives real edits against an offscreen EditTextView + Note + window,
 /// exposing the resulting state as value-typed snapshots (string,
 /// selectedRange, document, saved markdown, HTML rendition).
@@ -32,6 +45,41 @@ import AppKit
 /// `deinit` handle it. The temp `.md` file on disk is deleted on
 /// teardown.
 final class EditorHarness {
+
+    // MARK: - Window activation mode
+
+    /// Controls how actively the harness's window participates in the
+    /// AppKit event / layout loop. Widget-layer tests that inspect the
+    /// editor's subview tree (attachment-host views, overlay views)
+    /// need the window to be key + the run loop to pump once so TK2
+    /// mounts view-provider views and the overlays attach their
+    /// pooled subviews. Pure-pipeline tests don't need this and
+    /// should use `.offscreen` to stay fast.
+    enum WindowActivation {
+        /// Window is created but never made key. TK2 lays out the
+        /// viewport but does NOT mount view-provider-backed subviews
+        /// (BulletGlyphView, CheckboxGlyphView, InlinePDFView, ...).
+        /// The harness does NOT construct
+        /// `TableHandleOverlay` / `CodeBlockEditToggleOverlay` — these
+        /// normally hang off `ViewController`, which the harness has
+        /// no equivalent of. Default: preserves the pre-existing test
+        /// environment for ~1,640 pipeline tests.
+        case offscreen
+
+        /// Window is made key + front, editor is made first responder,
+        /// `NSTextViewportLayoutController.layoutViewport()` runs
+        /// synchronously after fill, the run loop pumps once, and the
+        /// harness constructs + repositions `TableHandleOverlay` +
+        /// `CodeBlockEditToggleOverlay` directly on the editor. These
+        /// overlays take `EditTextView` as their only dependency, so
+        /// the absence of a `ViewController` is not a blocker.
+        ///
+        /// Use this for tests that assert on `editor.subviews` —
+        /// `TableHandleView`, `CodeBlockEditToggleView`,
+        /// `BulletGlyphView`, `CheckboxGlyphView`, and other
+        /// attachment-host views that TK2 mounts lazily.
+        case keyWindow
+    }
 
     // MARK: - Stored state
 
@@ -45,7 +93,12 @@ final class EditorHarness {
     /// Creates a fully-wired offscreen editor + window + Note, and seeds
     /// the editor with the given markdown via the same projection install
     /// that `EditTextView.fillViaBlockModel` uses at runtime.
-    init(markdown: String = "") {
+    ///
+    /// - Parameter windowActivation: See `WindowActivation`. Defaults to
+    ///   `.offscreen` so existing pipeline tests are unchanged. Widget-
+    ///   layer tests (overlay / attachment-host subview assertions)
+    ///   must pass `.keyWindow`.
+    init(markdown: String = "", windowActivation: WindowActivation = .offscreen) {
         // `hideSyntax = true` matches the setting the WYSIWYG pipeline
         // relies on. Tests that need source mode should override.
         NotesTextProcessor.hideSyntax = true
@@ -59,12 +112,26 @@ final class EditorHarness {
         // in teardown with EXC_BAD_ACCESS.
         let frame = NSRect(x: 0, y: 0, width: 500, height: 300)
         let editor = EditTextView(frame: frame)
-        let window = NSWindow(
-            contentRect: frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
+        // `.borderless` is fine for the default `.offscreen` path, but
+        // borderless windows return NO from `canBecomeKeyWindow` — so
+        // `.keyWindow` activation would log a warning and fall back
+        // silently. Under `.keyWindow` we create the window as a
+        // subclass that overrides `canBecomeKeyWindow` to true,
+        // keeping the style mask borderless (the window is never
+        // presented on screen anyway).
+        let window: NSWindow = (windowActivation == .keyWindow)
+            ? HarnessKeyableWindow(
+                contentRect: frame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            : NSWindow(
+                contentRect: frame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
         window.contentView?.addSubview(editor)
         editor.initTextStorage()
 
@@ -86,6 +153,10 @@ final class EditorHarness {
         self.tmpURL = tmpURL
 
         seed(markdown: markdown)
+
+        if windowActivation == .keyWindow {
+            activateWindowForWidgetLayer()
+        }
     }
 
     deinit {
@@ -114,6 +185,74 @@ final class EditorHarness {
         editor.textStorageProcessor?.blockModelActive = true
         editor.note?.content = NSMutableAttributedString(string: markdown)
         editor.note?.cachedDocument = doc
+    }
+
+    /// Activate the harness's window to exercise the widget-layer
+    /// mounting paths that are gated on a "live" editor environment.
+    /// Borderless offscreen windows — the harness's default — are
+    /// never keyed, never first-responder, and never receive the
+    /// viewport-layout event loop runway that TK2's
+    /// `NSTextViewportLayoutController` uses to mount view-provider
+    /// hosted subviews (`BulletGlyphView`, `CheckboxGlyphView`,
+    /// `InlinePDFView`, ...). Under the `.offscreen` default, those
+    /// subviews simply never exist; widget-layer tests that assert
+    /// on them silently pass on a bug they cannot see.
+    ///
+    /// This method makes the window key, makes the editor first
+    /// responder, forces a synchronous viewport layout pass, and
+    /// pumps the run loop once so deferred AppKit work (hosted-view
+    /// `loadView` callbacks, tracking-area installation, layer-
+    /// backed view realization) has a chance to run before any
+    /// snapshot reads the subview tree.
+    ///
+    /// Note on overlay views: `TableHandleOverlay` and
+    /// `CodeBlockEditToggleOverlay` hang off `ViewController` in
+    /// production via the `owningViewControllerForTableHandleOverlay()`
+    /// responder-chain walk inside `fillViaBlockModel`. The harness
+    /// has no `ViewController`, so that walk will return nil even
+    /// after activation, and the overlays will not construct. That
+    /// faithfully reproduces the production-wiring failure class
+    /// users have reported — the harness is not papering over it by
+    /// constructing overlays directly.
+    private func activateWindowForWidgetLayer() {
+        guard let window = window else { return }
+
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(editor)
+
+        // TK2's view-provider mount is a two-phase commit. The first
+        // `layoutViewport()` pass registers providers (fires
+        // `NSTextAttachment.viewProvider(for:location:textContainer:)`);
+        // the provider's `loadView()` — the call that actually
+        // instantiates the hosted view and adds it under
+        // `_NSTextViewportElementView` — is deferred by TK2 to the
+        // NEXT layout pass after a run-loop iteration. Do both passes
+        // here with pump-between so widget-layer tests observe the
+        // fully mounted subview tree.
+        if let tlm = editor.textLayoutManager {
+            tlm.ensureLayout(for: tlm.documentRange)
+            // Phase 1: register providers.
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+
+        // First pump: let Phase 1's registrations settle and let any
+        // `DispatchQueue.main.async` deferred work enqueued by
+        // production code (the fill path's second layoutViewport()
+        // call) drain.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        // Phase 2: force the provider-view materialization that Phase 1
+        // deferred. Without this second pass, `loadView()` never fires
+        // even in `.keyWindow` mode — the bug class this harness mode
+        // exists to catch.
+        if let tlm = editor.textLayoutManager {
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+
+        // Second pump: let Phase 2's `loadView()` callbacks run and the
+        // hosted subviews get inserted before any snapshot reads the
+        // subview tree.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     }
 
     /// Explicit teardown: remove the temp file. Safe to call multiple

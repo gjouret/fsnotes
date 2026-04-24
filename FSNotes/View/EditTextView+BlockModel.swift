@@ -452,6 +452,30 @@ extension EditTextView {
             } else {
                 tlm.ensureLayout(for: tlm.documentRange)
             }
+            // TK2 mounts `NSTextAttachmentViewProvider`-backed subviews
+            // (bullet glyphs, checkbox glyphs, inline-image / PDF /
+            // QuickLook hosts) in a two-phase commit: Phase 1 is
+            // `layoutViewport()` — registers providers via
+            // `viewProvider(for:location:textContainer:)`. Phase 2 —
+            // the actual `loadView()` call that instantiates the
+            // provider's view and inserts it under
+            // `_NSTextViewportElementView` — is deferred by TK2 until
+            // the NEXT layout pass after a run-loop iteration. Without
+            // Phase 2, attachment views never mount until the user
+            // scrolls / resizes / types (which triggers a second
+            // layout pass naturally via `boundsDidChangeNotification`).
+            //
+            // This is why every prior fix attempt that added a single
+            // `layoutViewport()` call here failed: one pass only does
+            // Phase 1. Empirical probe confirmed a deferred second
+            // call via `DispatchQueue.main.async` does trigger
+            // Phase 2 — bullet glyphs then mount before first paint.
+            tlm.textViewportLayoutController.layoutViewport()
+            DispatchQueue.main.async { [weak self] in
+                self?.textLayoutManager?
+                    .textViewportLayoutController
+                    .layoutViewport()
+            }
         }
 
         bmLog("✅ fillViaBlockModel complete: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")

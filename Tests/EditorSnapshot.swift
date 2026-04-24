@@ -472,19 +472,44 @@ private struct EditorSnapshotBuilder {
     ) {
         var overlays: [Int: [ObservedSubview]] = [:]
         var attachments: [Int: [ObservedSubview]] = [:]
-        for v in editor.subviews {
+
+        // Recurse through the full editor view hierarchy. Overlay
+        // controllers (`TableHandleOverlay`, `CodeBlockEditToggleOverlay`)
+        // add their subviews directly to `editor.subviews`, so those
+        // sit at depth 1. TK2's view-provider-hosted views (BulletGlyphView,
+        // CheckboxGlyphView, InlineImageView, InlinePDFView,
+        // InlineQuickLookView) are mounted by `NSTextViewportLayoutController`
+        // as subviews of `_NSTextContentView` → `_NSTextViewportElementView`
+        // — a depth of 3 or 4 under the text view. A shallow one-level
+        // walk misses them entirely, which is the walker bug behind
+        // Bug #6 in UIBugRegressionTests.
+        var visited = Set<ObjectIdentifier>()
+        var queue: [NSView] = editor.subviews
+        while let v = queue.first {
+            queue.removeFirst()
+            let key = ObjectIdentifier(v)
+            if visited.contains(key) { continue }
+            visited.insert(key)
+            queue.append(contentsOf: v.subviews)
+
             let cls = String(describing: type(of: v))
             let isOverlay = Self.overlayClassNames.contains(cls)
             let isAttachmentHost = Self.attachmentHostClassNames.contains(cls)
             guard isOverlay || isAttachmentHost else { continue }
 
+            // Convert frame to the editor's coordinate space so
+            // `blockIndex(forY:)` compares against fragment y-ranges
+            // emitted in editor coords.
+            let frameInEditor = v.superview?.convert(v.frame, to: editor)
+                ?? v.frame
+
             let observation = ObservedSubview(
                 className: cls,
                 visible: !v.isHidden,
-                frame: v.frame
+                frame: frameInEditor
             )
             let blockIdx = blockIndex(
-                forY: v.frame.minY,
+                forY: frameInEditor.minY,
                 blockYRanges: blockYRanges,
                 blockCount: blockCount
             )

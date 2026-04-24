@@ -87,7 +87,8 @@ final class UIBugRegressionTests: XCTestCase {
             options: strictExpectedFailureOptions()
         )
         let h = EditorHarness(
-            markdown: "| a | b |\n|---|---|\n| 1 | 2 |"
+            markdown: "| a | b |\n|---|---|\n| 1 | 2 |",
+            windowActivation: .keyWindow
         )
         defer { h.teardown() }
         let snap = h.snapshot()
@@ -110,7 +111,8 @@ final class UIBugRegressionTests: XCTestCase {
             options: strictExpectedFailureOptions()
         )
         let h = EditorHarness(
-            markdown: "```swift\nlet x = 1\n```"
+            markdown: "```swift\nlet x = 1\n```",
+            windowActivation: .keyWindow
         )
         defer { h.teardown() }
         let snap = h.snapshot()
@@ -190,22 +192,22 @@ final class UIBugRegressionTests: XCTestCase {
 
     // MARK: - Bug 6: bullet list glyphs mount on fill
 
-    /// EXPECTED TO FAIL — per user report, bullet glyphs do not
-    /// mount as subviews until the editor scrolls. First-fill
-    /// snapshot finds no `BulletGlyphView` subviews.
+    /// Regression gate: bullet glyphs must mount as subviews on the
+    /// first fill (no scroll required). TK2 parents attachment-host
+    /// subviews via `NSTextAttachmentViewProvider.loadView`, which
+    /// fires only after the viewport has been laid out AND the run
+    /// loop has ticked once. Production calls `layoutViewport()`
+    /// twice around a `DispatchQueue.main.async` boundary to satisfy
+    /// this two-phase contract.
     ///
-    /// When the fix lands, the snapshot must show at least one
-    /// `BulletGlyphView` attachment-host subview on the list block
-    /// (three list items → three bullet glyphs after they all
-    /// mount).
+    /// Historical bug (2026-04-24): glyphs didn't mount until the
+    /// user scrolled. Fixed by the two-phase pump in
+    /// `EditTextView.fillViaBlockModel`.
     func test_bulletList_mountsGlyphsOnFill() {
-        XCTExpectFailure(
-            "Known bug 2026-04-24: bullet glyphs don't mount as " +
-            "subviews until first scroll. Snapshot right after fill " +
-            "finds no BulletGlyphView attachment-host subviews.",
-            options: strictExpectedFailureOptions()
+        let h = EditorHarness(
+            markdown: "- one\n- two\n- three\n",
+            windowActivation: .keyWindow
         )
-        let h = EditorHarness(markdown: "- one\n- two\n- three\n")
         defer { h.teardown() }
         let snap = h.snapshot()
         snap.assertContains(
@@ -213,15 +215,13 @@ final class UIBugRegressionTests: XCTestCase {
         )
     }
 
-    /// Same failure class as bullets, different attachment class.
+    /// Same mount contract as bullets; checkbox glyphs must appear
+    /// on first fill without a scroll.
     func test_checkboxList_mountsGlyphsOnFill() {
-        XCTExpectFailure(
-            "Known bug 2026-04-24: checkbox glyphs don't mount as " +
-            "subviews until first scroll. Same failure class as the " +
-            "bullet-glyph test.",
-            options: strictExpectedFailureOptions()
+        let h = EditorHarness(
+            markdown: "- [ ] a\n- [x] b\n",
+            windowActivation: .keyWindow
         )
-        let h = EditorHarness(markdown: "- [ ] a\n- [x] b\n")
         defer { h.teardown() }
         let snap = h.snapshot()
         snap.assertContains(
