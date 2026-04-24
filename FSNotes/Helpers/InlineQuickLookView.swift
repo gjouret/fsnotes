@@ -6,11 +6,18 @@
 //  render any file type that QuickLook supports (.numbers, .pages, .key,
 //  .docx, .xlsx, .pptx, .rtf, .zip, etc.) inline in the note editor.
 //
-//  Architecture (mirrors InlinePDFView):
-//  - InlineQuickLookView wraps a QLPreviewView with an "Open" button
-//  - QuickLookAttachmentCell hosts the view as a live subview
-//  - QuickLookAttachmentProcessor scans textStorage for non-image
-//    attachments and replaces them with QuickLook viewers
+//  Architecture (mirrors InlinePDFView, TK2):
+//  - InlineQuickLookView wraps a QLPreviewView with an "Open" button.
+//  - QuickLookNSTextAttachment stores value types only (URL + size).
+//    It does NOT cache an InlineQuickLookView; the view is built fresh
+//    by the provider each time TK2 attaches it.
+//  - QuickLookAttachmentViewProvider constructs a fresh InlineQuickLookView
+//    in loadView(), seeded from the attachment's URL + size. This
+//    mirrors the image / PDF pattern and avoids a scroll-recycle bug
+//    where a cached QLPreviewView loses its rendered thumbnail after
+//    being detached from the window and reattached.
+//  - QuickLookAttachmentProcessor scans textStorage for non-image,
+//    non-PDF attachments and replaces them with attachment characters.
 //
 
 import Cocoa
@@ -35,12 +42,23 @@ class InlineQuickLookView: NSView {
 
     /// Maximum height for the preview (scales with note font).
     private var maxHeight: CGFloat {
-        return max(400, UserDefaultsManagement.noteFont.pointSize * 30)
+        return Self.maxHeight(forFontSize: UserDefaultsManagement.noteFont.pointSize)
     }
 
     /// Toolbar height derived from note font.
     private var toolbarHeight: CGFloat {
-        return ceil(UserDefaultsManagement.noteFont.pointSize * 2.8)
+        return Self.toolbarHeight(forFontSize: UserDefaultsManagement.noteFont.pointSize)
+    }
+
+    /// Font-derived maximum preview height. Static so the processor
+    /// path can compute size from URL + container width alone.
+    static func maxHeight(forFontSize fontSize: CGFloat) -> CGFloat {
+        return max(400, fontSize * 30)
+    }
+
+    /// Font-derived toolbar height. Static to mirror `maxHeight`.
+    static func toolbarHeight(forFontSize fontSize: CGFloat) -> CGFloat {
+        return ceil(fontSize * 2.8)
     }
 
     // MARK: - Init
@@ -163,6 +181,20 @@ class InlineQuickLookView: NSView {
 
     /// Compute the ideal size for this QuickLook viewer.
     func computeSize(forWidth width: CGFloat) -> NSSize {
+        return Self.computeSize(
+            forWidth: width,
+            maxHeight: maxHeight,
+            toolbarHeight: toolbarHeight
+        )
+    }
+
+    /// Pure size computation. Exposed as a static helper so the
+    /// processor path can compute size without building a live view.
+    static func computeSize(
+        forWidth width: CGFloat,
+        maxHeight: CGFloat,
+        toolbarHeight: CGFloat
+    ) -> NSSize {
         // Use a reasonable preview height — about the same as the PDF viewer.
         let previewHeight = min(maxHeight, max(300, width * 0.6))
         return NSSize(width: width, height: previewHeight + toolbarHeight)
@@ -222,46 +254,50 @@ class QuickLookAttachmentCell: NSTextAttachmentCell {
 
 // MARK: - QuickLookAttachmentViewProvider (TK2)
 
-/// TK2-idiomatic view provider that vends the live `InlineQuickLookView`
-/// for rendering in the text layout. Apple handles positioning via the
-/// view provider; we just return the pre-built NSView.
+/// TK2-idiomatic view provider that builds a fresh `InlineQuickLookView`
+/// in `loadView()` from the attachment's stored URL + size. Apple
+/// handles positioning.
+///
+/// Building a new view (with its own fresh `QLPreviewView` child) on
+/// every call is the same pattern `ImageAttachmentViewProvider` uses. It
+/// prevents the scroll-recycle bug where a cached `QLPreviewView` loses
+/// its thumbnail after being detached from the window and reattached —
+/// the user would see the attachment frame without the preview content.
 ///
 /// See: https://developer.apple.com/documentation/appkit/nstextattachmentviewprovider
 final class QuickLookAttachmentViewProvider: NSTextAttachmentViewProvider {
 
-    let inlineView: InlineQuickLookView
-
-    init(inlineView: InlineQuickLookView,
-         textAttachment: NSTextAttachment,
-         parentView: NSView?,
-         textLayoutManager: NSTextLayoutManager?,
-         location: NSTextLocation) {
-        self.inlineView = inlineView
-        super.init(textAttachment: textAttachment,
-                   parentView: parentView,
-                   textLayoutManager: textLayoutManager,
-                   location: location)
-        self.tracksTextAttachmentViewBounds = true
-    }
-
     override func loadView() {
-        // Attach the live view the processor built. Apple positions it.
-        self.view = inlineView
+        guard let attachment = textAttachment as? QuickLookNSTextAttachment else {
+            super.loadView()
+            return
+        }
+        let view = InlineQuickLookView(
+            url: attachment.fileURL,
+            containerWidth: attachment.size.width
+        )
+        view.frame = NSRect(origin: .zero, size: attachment.size)
+        self.view = view
     }
 }
 
 // MARK: - QuickLookNSTextAttachment (TK2)
 
-/// NSTextAttachment subclass that carries a live `InlineQuickLookView`
-/// and vends a `QuickLookAttachmentViewProvider` for TK2 layout.
+/// NSTextAttachment subclass that stores value types only (the file URL
+/// and the size computed once at construction) and vends a
+/// `QuickLookAttachmentViewProvider`. The live `InlineQuickLookView` +
+/// its hosted `QLPreviewView` are built fresh by the provider on each
+/// `loadView()` call — see the provider's doc comment for why.
 ///
 /// See: https://developer.apple.com/documentation/appkit/nstextattachment/3773879-viewprovider
 final class QuickLookNSTextAttachment: NSTextAttachment {
 
-    let inlineView: InlineQuickLookView
+    let fileURL: URL
+    let size: NSSize
 
-    init(inlineView: InlineQuickLookView, size: NSSize) {
-        self.inlineView = inlineView
+    init(url: URL, size: NSSize) {
+        self.fileURL = url
+        self.size = size
         super.init(data: nil, ofType: nil)
         self.bounds = NSRect(origin: .zero, size: size)
     }
@@ -270,16 +306,33 @@ final class QuickLookNSTextAttachment: NSTextAttachment {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Compute size for a QuickLook attachment without building a live
+    /// view. Size is derived from container width + font size only —
+    /// the file content does not affect the preview box dimensions.
+    static func computeSize(
+        forWidth width: CGFloat,
+        fontSize: CGFloat = UserDefaultsManagement.noteFont.pointSize
+    ) -> NSSize {
+        let maxH = InlineQuickLookView.maxHeight(forFontSize: fontSize)
+        let tbH = InlineQuickLookView.toolbarHeight(forFontSize: fontSize)
+        return InlineQuickLookView.computeSize(
+            forWidth: width,
+            maxHeight: maxH,
+            toolbarHeight: tbH
+        )
+    }
+
     override func viewProvider(for parentView: NSView?,
                                location: NSTextLocation,
                                textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
-        return QuickLookAttachmentViewProvider(
-            inlineView: inlineView,
+        let provider = QuickLookAttachmentViewProvider(
             textAttachment: self,
             parentView: parentView,
             textLayoutManager: textContainer?.textLayoutManager,
             location: location
         )
+        provider.tracksTextAttachmentViewBounds = true
+        return provider
     }
 }
 
@@ -334,11 +387,8 @@ enum QuickLookAttachmentProcessor {
             if excludedExtensions.contains(ext) { return }
             guard !ext.isEmpty else { return }
 
-            let qlView = InlineQuickLookView(url: url, containerWidth: containerWidth)
-            let size = qlView.computeSize(forWidth: containerWidth)
-            qlView.frame = NSRect(origin: .zero, size: size)
-
-            let newAttachment = QuickLookNSTextAttachment(inlineView: qlView, size: size)
+            let size = QuickLookNSTextAttachment.computeSize(forWidth: containerWidth)
+            let newAttachment = QuickLookNSTextAttachment(url: url, size: size)
 
             bmLog("📎   PENDING @\(range.location): \(url.lastPathComponent)")
             replacements.append((range, newAttachment))

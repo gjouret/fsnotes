@@ -8,13 +8,18 @@
 //
 //  Architecture (TK2):
 //  - InlinePDFView wraps a PDFView with controls (toolbar, thumbnail sidebar)
-//  - PDFNSTextAttachment subclass holds a reference to the InlinePDFView
-//    and vends a PDFAttachmentViewProvider via viewProvider(for:location:textContainer:)
-//  - PDFAttachmentViewProvider (NSTextAttachmentViewProvider) hands the
-//    live InlinePDFView to TK2, which handles viewport lifecycle and
-//    subview positioning itself
+//  - PDFNSTextAttachment subclass stores value types only (URL + size).
+//    It does NOT cache an InlinePDFView; the view is built fresh by the
+//    provider each time TK2 attaches it to a window.
+//  - PDFAttachmentViewProvider (NSTextAttachmentViewProvider) constructs
+//    a fresh InlinePDFView in loadView(), seeded from the attachment's
+//    URL + size. Building on every loadView() mirrors the image pattern
+//    in ImageAttachmentViewProvider and is required because scroll-
+//    recycled views lose their PDFKit render state when the outer
+//    wrapper is reattached to the window.
 //  - PDFAttachmentProcessor scans textStorage for ![](*.pdf) patterns
-//    and replaces them with attachment characters
+//    and replaces them with attachment characters. It computes size
+//    from the URL via PDFNSTextAttachment.computeSize(forURL:width:).
 //
 
 import Cocoa
@@ -46,12 +51,12 @@ class InlinePDFView: NSView {
 
     /// Maximum height for the PDF viewer (scales with note font).
     private var maxHeight: CGFloat {
-        return max(400, UserDefaultsManagement.noteFont.pointSize * 30)
+        return Self.maxHeight(forFontSize: UserDefaultsManagement.noteFont.pointSize)
     }
 
     /// Toolbar height derived from note font.
     private var toolbarHeight: CGFloat {
-        return ceil(UserDefaultsManagement.noteFont.pointSize * 2.8)
+        return Self.toolbarHeight(forFontSize: UserDefaultsManagement.noteFont.pointSize)
     }
 
     /// Thumbnail sidebar width.
@@ -275,18 +280,44 @@ class InlinePDFView: NSView {
     /// With horizontal layout, height is based on a single page
     /// (pages scroll sideways, not vertically).
     func computeSize(forWidth width: CGFloat) -> NSSize {
-        guard let document = pdfView.document,
-              let firstPage = document.page(at: 0) else {
+        return Self.computeSize(
+            firstPageBounds: pdfView.document?.page(at: 0)?.bounds(for: .mediaBox),
+            width: width,
+            maxHeight: maxHeight,
+            toolbarHeight: toolbarHeight
+        )
+    }
+
+    /// Pure size computation. Exposed as a static helper so the
+    /// processor path can compute size from a URL without building a
+    /// live `InlinePDFView` first — attachments now store `URL + size`
+    /// and let the view provider build the view on demand.
+    static func computeSize(
+        firstPageBounds pageRect: NSRect?,
+        width: CGFloat,
+        maxHeight: CGFloat,
+        toolbarHeight: CGFloat
+    ) -> NSSize {
+        guard let pageRect = pageRect, pageRect.width > 0 else {
             return NSSize(width: width, height: maxHeight)
         }
-
-        let pageRect = firstPage.bounds(for: .mediaBox)
 
         // Scale page to fit width; height is one page tall.
         let scale = width / pageRect.width
         let scaledPageHeight = pageRect.height * scale
 
         return NSSize(width: width, height: min(scaledPageHeight, maxHeight) + toolbarHeight)
+    }
+
+    /// Font-derived maximum preview height. Static so the processor
+    /// can compute size from URL + container width without a live view.
+    static func maxHeight(forFontSize fontSize: CGFloat) -> CGFloat {
+        return max(400, fontSize * 30)
+    }
+
+    /// Font-derived toolbar height. Static to mirror `maxHeight`.
+    static func toolbarHeight(forFontSize fontSize: CGFloat) -> CGFloat {
+        return ceil(fontSize * 2.8)
     }
 
     // MARK: - Actions
@@ -353,24 +384,55 @@ class InlinePDFView: NSView {
 
 // MARK: - PDFNSTextAttachment (TK2)
 
-/// TK2 `NSTextAttachment` subclass that holds a reference to the live
-/// `InlinePDFView` and vends a `PDFAttachmentViewProvider` so TextKit 2
-/// can host the view directly. Under TK2,
+/// TK2 `NSTextAttachment` subclass that stores value types only — the
+/// file URL and the size computed once at construction. The live
+/// `InlinePDFView` + its hosted `PDFView` are built fresh by
+/// `PDFAttachmentViewProvider.loadView()` on each call. Under TK2,
 /// `NSTextAttachmentCell.draw(withFrame:in:characterIndex:layoutManager:)`
 /// is never called — view hosting must go through
 /// `NSTextAttachmentViewProvider`.
+///
+/// Value-type ownership matters for scroll recycling. When TK2 scrolls
+/// a PDF fragment out of the viewport and back, the outer wrapper is
+/// reattached to the window, but `PDFView`'s render state does not
+/// survive detach/reattach — the user sees the frame without the PDF
+/// content. Building a fresh `InlinePDFView` on every `loadView()` call
+/// sidesteps that whole class of bugs; PDFKit's own caching keeps the
+/// re-instantiation cost negligible.
 class PDFNSTextAttachment: NSTextAttachment {
 
-    let inlinePDFView: InlinePDFView
+    let fileURL: URL
+    let size: NSSize
 
-    init(inlineView: InlinePDFView, size: NSSize) {
-        self.inlinePDFView = inlineView
+    init(url: URL, size: NSSize) {
+        self.fileURL = url
+        self.size = size
         super.init(data: nil, ofType: nil)
         self.bounds = NSRect(origin: .zero, size: size)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Compute size for a PDF attachment without building a live view.
+    /// Loads the PDF document, reads the first page's media-box bounds,
+    /// and delegates to `InlinePDFView.computeSize`. Returns a sensible
+    /// default if the PDF cannot be opened.
+    static func computeSize(
+        forURL url: URL,
+        width: CGFloat,
+        fontSize: CGFloat = UserDefaultsManagement.noteFont.pointSize
+    ) -> NSSize {
+        let maxH = InlinePDFView.maxHeight(forFontSize: fontSize)
+        let tbH = InlinePDFView.toolbarHeight(forFontSize: fontSize)
+        let firstPageBounds = PDFDocument(url: url)?.page(at: 0)?.bounds(for: .mediaBox)
+        return InlinePDFView.computeSize(
+            firstPageBounds: firstPageBounds,
+            width: width,
+            maxHeight: maxH,
+            toolbarHeight: tbH
+        )
     }
 
     override func viewProvider(for parentView: NSView?,
@@ -389,9 +451,15 @@ class PDFNSTextAttachment: NSTextAttachment {
 
 // MARK: - PDFAttachmentViewProvider (TK2)
 
-/// `NSTextAttachmentViewProvider` that hands the already-constructed
-/// `InlinePDFView` to TextKit 2. TK2 handles adding the view to the
-/// text view's hierarchy and positioning it within the viewport.
+/// `NSTextAttachmentViewProvider` that constructs a fresh `InlinePDFView`
+/// from the attachment's stored URL + size on every `loadView()` call.
+/// TK2 handles adding the view to the text view's hierarchy and
+/// positioning it within the viewport.
+///
+/// Building fresh on every call (rather than caching the view on the
+/// attachment) is the same pattern used by `ImageAttachmentViewProvider`.
+/// It guarantees scroll-recycled attachments get a fully-initialized
+/// `PDFView` every time TK2 decides to re-host the attachment.
 class PDFAttachmentViewProvider: NSTextAttachmentViewProvider {
 
     override func loadView() {
@@ -399,7 +467,12 @@ class PDFAttachmentViewProvider: NSTextAttachmentViewProvider {
             super.loadView()
             return
         }
-        self.view = attachment.inlinePDFView
+        let view = InlinePDFView(
+            url: attachment.fileURL,
+            containerWidth: attachment.size.width
+        )
+        view.frame = NSRect(origin: .zero, size: attachment.size)
+        self.view = view
     }
 }
 
@@ -494,11 +567,8 @@ enum PDFAttachmentProcessor {
                 return
             }
 
-            let pdfViewWidget = InlinePDFView(url: url, containerWidth: containerWidth)
-            let size = pdfViewWidget.computeSize(forWidth: containerWidth)
-            pdfViewWidget.frame = NSRect(origin: .zero, size: size)
-
-            let newAttachment = PDFNSTextAttachment(inlineView: pdfViewWidget, size: size)
+            let size = PDFNSTextAttachment.computeSize(forURL: url, width: containerWidth)
+            let newAttachment = PDFNSTextAttachment(url: url, size: size)
 
             bmLog("📄   PENDING @\(range.location): \(url.lastPathComponent)")
             replacements.append((range, newAttachment))
@@ -563,11 +633,8 @@ enum PDFAttachmentProcessor {
                   let fileURL = note.getAttachmentFileUrl(name: cleanPath),
                   FileManager.default.fileExists(atPath: fileURL.path) else { continue }
 
-            let pdfViewWidget = InlinePDFView(url: fileURL, containerWidth: containerWidth)
-            let size = pdfViewWidget.computeSize(forWidth: containerWidth)
-            pdfViewWidget.frame = NSRect(origin: .zero, size: size)
-
-            let attachment = PDFNSTextAttachment(inlineView: pdfViewWidget, size: size)
+            let size = PDFNSTextAttachment.computeSize(forURL: fileURL, width: containerWidth)
+            let attachment = PDFNSTextAttachment(url: fileURL, size: size)
 
             let replacement = NSMutableAttributedString(attachment: attachment)
             let repRange = NSRange(location: 0, length: replacement.length)

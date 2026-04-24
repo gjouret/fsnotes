@@ -96,6 +96,8 @@
 		DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */; };
 		P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */; };
 		P5AD000000000000000000B1 /* Phase5aDeleteBypassFixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */; };
+		P6AR000000000000000000B1 /* Phase6AttachmentScrollRecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P6AR000000000000000000F1 /* Phase6AttachmentScrollRecycleTests.swift */; };
+		P6IRS00000000000000000B4 /* Phase6ImageResizeSpliceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P6IRS00000000000000000F4 /* Phase6ImageResizeSpliceTests.swift */; };
 		P5FD000000000000000000B1 /* Phase5fDragOperationBypassRetirementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */; };
 		P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */; };
 		P5BW000000000000000000B1 /* Phase5bWidgetInterceptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */; };
@@ -1214,6 +1216,8 @@
 		DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplierTests.swift; sourceTree = "<group>"; };
 		P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aSingleWritePathTests.swift; sourceTree = "<group>"; };
 		P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aDeleteBypassFixTests.swift; sourceTree = "<group>"; };
+		P6AR000000000000000000F1 /* Phase6AttachmentScrollRecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase6AttachmentScrollRecycleTests.swift; sourceTree = "<group>"; };
+		P6IRS00000000000000000F4 /* Phase6ImageResizeSpliceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase6ImageResizeSpliceTests.swift; sourceTree = "<group>"; };
 		P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5fDragOperationBypassRetirementTests.swift; sourceTree = "<group>"; };
 		P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5bCursorCanonicalizationTests.swift; sourceTree = "<group>"; };
 		P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5bWidgetInterceptionTests.swift; sourceTree = "<group>"; };
@@ -2616,6 +2620,8 @@
 				DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */,
 				P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */,
 				P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */,
+				P6AR000000000000000000F1 /* Phase6AttachmentScrollRecycleTests.swift */,
+				P6IRS00000000000000000F4 /* Phase6ImageResizeSpliceTests.swift */,
 				P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */,
 				P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */,
 				P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */,
@@ -4143,6 +4149,8 @@
 				DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */,
 				P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */,
 				P5AD000000000000000000B1 /* Phase5aDeleteBypassFixTests.swift in Sources */,
+				P6AR000000000000000000B1 /* Phase6AttachmentScrollRecycleTests.swift in Sources */,
+				P6IRS00000000000000000B4 /* Phase6ImageResizeSpliceTests.swift in Sources */,
 				P5FD000000000000000000B1 /* Phase5fDragOperationBypassRetirementTests.swift in Sources */,
 				P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */,
 				P5BW000000000000000000B1 /* Phase5bWidgetInterceptionTests.swift in Sources */,

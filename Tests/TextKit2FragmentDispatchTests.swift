@@ -1012,9 +1012,8 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         // independent of processor routing.
         let pdfURL = makeTempFile(ext: "pdf")
         defer { try? FileManager.default.removeItem(at: pdfURL) }
-        let pdfView = InlinePDFView(url: pdfURL, containerWidth: 600)
         let pdfAttachment = PDFNSTextAttachment(
-            inlineView: pdfView,
+            url: pdfURL,
             size: NSSize(width: 600, height: 400)
         )
         let pdfProvider = pdfAttachment.viewProvider(
@@ -1040,9 +1039,8 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         // QuickLook side — same shape.
         let qlURL = makeTempFile(ext: "docx", bytes: Data([0x50, 0x4B, 0x03, 0x04]))
         defer { try? FileManager.default.removeItem(at: qlURL) }
-        let qlView = InlineQuickLookView(url: qlURL, containerWidth: 600)
         let qlAttachment = QuickLookNSTextAttachment(
-            inlineView: qlView,
+            url: qlURL,
             size: NSSize(width: 600, height: 400)
         )
         let qlProvider = qlAttachment.viewProvider(
