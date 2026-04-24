@@ -262,10 +262,17 @@ struct CommonMarkHTMLRenderer {
     // MARK: - Blockquote rendering
 
     private func renderBlockquote(_ lines: [BlockquoteLine]) -> String {
-        // Reconstruct the inner markdown by serializing each line's inlines
-        // and re-parsing as a document to get proper nested block structure.
+        // Reconstruct the inner markdown by serializing each line's
+        // inlines AND preserving the nested-blockquote prefix —
+        // `line.level - 1` `>` markers, separated by a single space
+        // (CommonMark canonical form). Re-parse the result as a
+        // document so nested <blockquote> elements emerge from
+        // recursion into renderBlock.
         let innerLines = lines.map { line -> String in
-            MarkdownSerializer.serializeInlines(line.inline)
+            let innerPrefix = line.level > 1
+                ? String(repeating: "> ", count: line.level - 1)
+                : ""
+            return innerPrefix + MarkdownSerializer.serializeInlines(line.inline)
         }
         let innerMarkdown = innerLines.joined(separator: "\n") + "\n"
 
