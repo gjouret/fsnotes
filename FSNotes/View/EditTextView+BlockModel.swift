@@ -100,6 +100,7 @@ extension EditTextView {
         static var editingCodeBlocks = 7
         static var compositionSession = 8
         static var preSessionFoldState = 9
+        static var setMarkedTextInFlight = 10
     }
 
     // MARK: - Phase 5e composition session
@@ -139,6 +140,29 @@ extension EditTextView {
         set {
             objc_setAssociatedObject(
                 self, &AssociatedKeys.preSessionFoldState, newValue,
+                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+            )
+        }
+    }
+
+    /// Re-entrance guard for `setMarkedText`. AppKit's default
+    /// `NSTextView.setMarkedText` may internally call `insertText`
+    /// while it writes the marked characters into storage. Without
+    /// this guard our `insertText` override would mistake that
+    /// internal call for a commit (replacementRange matches the
+    /// marked range we just recorded) and fire the canonical commit
+    /// flow from inside super.setMarkedText — double-committing.
+    /// When this flag is true, `insertText` falls through to super
+    /// unchanged.
+    var setMarkedTextInFlight: Bool {
+        get {
+            return (objc_getAssociatedObject(
+                self, &AssociatedKeys.setMarkedTextInFlight
+            ) as? Bool) ?? false
+        }
+        set {
+            objc_setAssociatedObject(
+                self, &AssociatedKeys.setMarkedTextInFlight, newValue,
                 .OBJC_ASSOCIATION_RETAIN_NONATOMIC
             )
         }
@@ -876,20 +900,24 @@ extension EditTextView {
         // Mark note as modified.
         note?.cacheHash = nil
 
-        // Register undo. Use the responder-chain undoManager (which
-        // MainWindowController.windowWillReturnUndoManager routes to
-        // editorUndoManager). Fall back to editorViewController's copy.
-        let um = self.undoManager ?? editorViewController?.editorUndoManager
-        if let um = um {
-            um.registerUndo(withTarget: self) { target in
-                target.restoreBlockModelState(
-                    projection: oldProjection,
-                    cursorRange: oldCursorRange,
-                    actionName: actionName
-                )
-            }
-            um.setActionName(actionName)
-        }
+        // Phase 5f: record into the structured journal instead of
+        // registering a closure-based undo. The journal's `record`
+        // fires ONE `NSUndoManager.registerUndo` so the Edit menu's
+        // Undo command continues to work; that registration is the
+        // single surviving site outside `applyDocumentEdit` scope
+        // (commit 6 grep-gate enforces). The legacy
+        // `restoreBlockModelState` closure path is retired below.
+        let postCursor = NSRange(location: cursorPos, length: selLen)
+        let coalesce = coalesceClass(forActionName: actionName)
+        let entry = makeJournalEntry(
+            result: result,
+            priorDoc: oldProjection.document,
+            cursorBefore: oldCursorRange,
+            cursorAfter: postCursor,
+            actionName: actionName,
+            coalesce: coalesce
+        )
+        undoJournal.record(entry, on: self)
 
         // Restore pending inline traits. Any selectionDidChange that
         // fired during the edit may have cleared them (consume-once
@@ -914,86 +942,13 @@ extension EditTextView {
         return count
     }
 
-    /// Restore a previous block-model state (used by undo/redo).
-    private func restoreBlockModelState(
-        projection: DocumentProjection,
-        cursorRange: NSRange,
-        actionName: String
-    ) {
-        guard let storage = textStorage else { return }
-
-        // Capture current state for redo BEFORE restoring.
-        guard let currentProjection = documentProjection else { return }
-        let currentCursor = selectedRange()
-
-        // Replace textStorage with the old rendered output.
-        // Use setAttributedString for a clean full replacement —
-        // replaceCharacters can produce garbled output when replacing
-        // the entire storage with an attributed string.
-        // Suppress NSTextView's automatic undo registration during the
-        // full-storage replacement (same reasoning as applyEditResult).
-        let umRestore = self.undoManager ?? editorViewController?.editorUndoManager
-        umRestore?.disableUndoRegistration()
-        textStorageProcessor?.isRendering = true
-        // Phase 5a: undo/redo restores a snapshot via a full
-        // `setAttributedString` — it's not a fill (the editor has been
-        // open, state exists) nor an `applyDocumentEdit` splice (we're
-        // swapping wholesale to a prior projection). Flag as legacy
-        // until Phase 5f routes undo/redo through an inverse
-        // `EditContract` via `applyDocumentEdit`.
-        // TODO(Phase 5f): replace with
-        //   DocumentEditApplier.applyDocumentEdit(
-        //     priorDoc: currentProjection.document,
-        //     newDoc: projection.document,
-        //     …)
-        //   once the undo journal emits inverse contracts.
-        StorageWriteGuard.performingLegacyStorageWrite {
-            storage.beginEditing()
-            storage.setAttributedString(projection.attributed)
-            storage.endEditing()
-        }
-        textStorageProcessor?.isRendering = false
-        umRestore?.enableUndoRegistration()
-
-        // Restore projection and cursor.
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
-        documentProjection = projection
-        let safeCursor = NSRange(
-            location: min(cursorRange.location, storage.length),
-            length: min(cursorRange.length, max(0, storage.length - cursorRange.location))
-        )
-        setSelectedRange(safeCursor)
-        scrollRangeToVisible(safeCursor)
-
-        // Phase 2a: do NOT read `self.layoutManager` under TextKit 2.
-        if textLayoutManager == nil,
-           let lm = layoutManager,
-           let tc = textContainer {
-            let glyphRange = lm.glyphRange(for: tc)
-            lm.invalidateDisplay(forGlyphRange: glyphRange)
-        }
-        needsDisplay = true
-
-        // `InlinePDFView` / `InlineQuickLookView` use TK2 view providers
-        // and are managed by AppKit — no manual orphan cleanup needed.
-        // Native tables render via `TableLayoutFragment` (no subview
-        // lifecycle to manage).
-
-        note?.cacheHash = nil
-
-        // Register redo.
-        let um = self.undoManager ?? editorViewController?.editorUndoManager
-        if let um = um {
-            um.registerUndo(withTarget: self) { target in
-                target.restoreBlockModelState(
-                    projection: currentProjection,
-                    cursorRange: currentCursor,
-                    actionName: actionName
-                )
-            }
-            um.setActionName(actionName)
-        }
-    }
+    // Phase 5f: `restoreBlockModelState` was retired with the
+    // UndoJournal wire-in above. The journal's `undo(on:)` /
+    // `redo(on:)` methods (with `applyInverseHook` / `applyForwardHook`
+    // installed in `EditTextView+UndoJournal.swift`) deliver the
+    // inverse splice through `DocumentEditApplier.applyDocumentEdit`
+    // — the 5a-authorized single write path. No setAttributedString
+    // full-storage swap, no legacy guard wrap, no closure pairing.
 
     // MARK: - Edit interception
 

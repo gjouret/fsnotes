@@ -91,6 +91,7 @@
 		P5B0000000000000000000B1 /* DocumentCursorLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F1 /* DocumentCursorLocation.swift */; };
 		P5E0000000000000000000B1 /* CompositionSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5E0000000000000000000F1 /* CompositionSession.swift */; };
 		P5FJ000000000000000000B1 /* UndoJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FJ000000000000000000F1 /* UndoJournal.swift */; };
+		P5FW000000000000000000B1 /* EditTextView+UndoJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FW000000000000000000F1 /* EditTextView+UndoJournal.swift */; };
 		P5ET000000000000000000B1 /* Phase5eCompositionSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */; };
 		DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */; };
 		P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */; };
@@ -1202,6 +1203,7 @@
 		P5B0000000000000000000F1 /* DocumentCursorLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentCursorLocation.swift; sourceTree = "<group>"; };
 		P5E0000000000000000000F1 /* CompositionSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionSession.swift; sourceTree = "<group>"; };
 		P5FJ000000000000000000F1 /* UndoJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoJournal.swift; sourceTree = "<group>"; };
+		P5FW000000000000000000F1 /* EditTextView+UndoJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+UndoJournal.swift"; sourceTree = "<group>"; };
 		P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5eCompositionSessionTests.swift; sourceTree = "<group>"; };
 		DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplierTests.swift; sourceTree = "<group>"; };
 		P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aSingleWritePathTests.swift; sourceTree = "<group>"; };
@@ -2360,6 +2362,7 @@
 				D797004B1F3DD10700BAD94D /* EditTextView.swift */,
 				11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */,
 				FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */,
+				P5FW000000000000000000F1 /* EditTextView+UndoJournal.swift */,
 				P5B0000000000000000000F2 /* EditTextView+Selection.swift */,
 				11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */,
 				ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */,
@@ -3678,6 +3681,7 @@
 				110E40A52EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */,
 				11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
 				41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */,
+				P5FW000000000000000000B1 /* EditTextView+UndoJournal.swift in Sources */,
 				P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */,
 				11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				ETVT000000000000000000B1 /* EditTextView+ThemeObserver.swift in Sources */,

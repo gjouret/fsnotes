@@ -253,6 +253,10 @@ extension EditTextView {
         }
 
         undoManager?.removeAllActions(withTarget: self)
+        // Phase 5f: clear per-note undo journal on note switch. Undo
+        // stacks are per-note by design — switching notes should not
+        // allow Cmd-Z to roll back through the other note's edits.
+        undoJournal.reset()
         registerHandoff(note: note)
         viewDelegate?.breakUndoTimer.invalidate()
 
