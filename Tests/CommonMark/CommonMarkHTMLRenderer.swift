@@ -303,13 +303,39 @@ struct CommonMarkHTMLRenderer {
         // (CommonMark canonical form). Re-parse the result as a
         // document so nested <blockquote> elements emerge from
         // recursion into renderBlock.
-        let innerLines = lines.map { line -> String in
+        //
+        // CommonMark §4.3: a setext heading underline MAY NOT be a
+        // lazy continuation line of an outer block. Spec #93:
+        //     > foo
+        //     bar
+        //     ===
+        // — the `===` is lazy-continued into the blockquote paragraph
+        // and is NOT a setext underline. Our parser correctly captures
+        // all three lines as blockquote content, but the inner re-parse
+        // loses that context and would treat `===` as a setext
+        // underline. Guard against that by escaping the lead character
+        // of any lazy-continuation line (empty prefix) whose content
+        // matches a setext-underline pattern — the backslash prevents
+        // the inner parse from recognizing the underline without
+        // affecting the rendered output.
+        var renderedLines: [String] = []
+        for line in lines {
             let innerPrefix = line.level > 1
                 ? String(repeating: "> ", count: line.level - 1)
                 : ""
-            return innerPrefix + MarkdownSerializer.serializeInlines(line.inline)
+            let body = MarkdownSerializer.serializeInlines(line.inline)
+            let isLazy = line.prefix.isEmpty
+            let trimmed = body.trimmingCharacters(in: .whitespaces)
+            let looksLikeSetextUnderline =
+                !trimmed.isEmpty
+                && (trimmed.allSatisfy { $0 == "=" } || trimmed.allSatisfy { $0 == "-" })
+            if isLazy && looksLikeSetextUnderline {
+                renderedLines.append(innerPrefix + "\\" + body)
+            } else {
+                renderedLines.append(innerPrefix + body)
+            }
         }
-        let innerMarkdown = innerLines.joined(separator: "\n") + "\n"
+        let innerMarkdown = renderedLines.joined(separator: "\n") + "\n"
 
         // Re-parse the inner content as a document
         let innerDoc = MarkdownParser.parse(innerMarkdown)
