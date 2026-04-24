@@ -299,12 +299,13 @@ class PreferencesEditorViewController: NSViewController {
 
     @IBAction func lineSpacing(_ sender: NSSlider) {
         let newMultiple = CGFloat(1 + sender.floatValue / 10)
-        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
-        // `lineHeightMultiple` has no flat-field storage on BlockStyleTheme
-        // (it lives in the synthesized ThemeSpacing group), so we only
-        // dual-write to UD this slice; a later 7.5 slice adds flat storage
-        // on the Theme schema and will mutate `Theme.shared` here too.
-        UserDefaultsManagement.editorLineSpacing = 1
+        // The slider controls `lineHeightMultiple` (NSParagraphStyle's
+        // multi-line factor). It does NOT control `editorLineSpacing`
+        // (NSParagraphStyle.lineSpacing — the inter-line gap). Earlier
+        // code hardcoded `editorLineSpacing = 1` on every tick, which
+        // silently overwrote the theme's configured value (e.g. 4pt in
+        // `default-theme.json`). Removed so the theme's editorLineSpacing
+        // value survives slider drags.
         UserDefaultsManagement.lineHeightMultiple = newMultiple
         persistActiveTheme()
 
