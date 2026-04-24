@@ -6,7 +6,7 @@
 //  collapse to a single disk write after the debounce window elapses.
 //
 //  Continuous `NSSlider` IBActions (`lineSpacing`, `marginSize`,
-//  `lineWidth`, `imagesWidth`) tick at ~60Hz during a drag; each tick
+//  `lineWidth`) tick at ~60Hz during a drag; each tick
 //  calls `persistActiveTheme()` → `saveActiveThemeDebounced()`. The
 //  contract under test: after 10 rapid-fire calls, exactly one JSON
 //  file write lands at the destination path once the debounce

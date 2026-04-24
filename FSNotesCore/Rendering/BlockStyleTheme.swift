@@ -73,9 +73,6 @@ public struct BlockStyleTheme: Codable, Equatable {
     /// Left/right editor margin in points.
     public var marginSize: CGFloat
 
-    /// Embedded image display width in points.
-    public var imagesWidth: CGFloat
-
     // ── Phase 7.5.c flat fields ──────────────────────────────────────
     //
     // These three fields used to live only inside the synthesized nested
@@ -262,7 +259,6 @@ public struct BlockStyleTheme: Codable, Equatable {
         editorLineSpacing: CGFloat,
         lineWidth: CGFloat,
         marginSize: CGFloat,
-        imagesWidth: CGFloat,
         headingFontScales: [CGFloat],
         headingSpacingBefore: [CGFloat],
         headingSpacingAfter: [CGFloat],
@@ -304,7 +300,6 @@ public struct BlockStyleTheme: Codable, Equatable {
         self.editorLineSpacing = editorLineSpacing
         self.lineWidth = lineWidth
         self.marginSize = marginSize
-        self.imagesWidth = imagesWidth
         self.lineHeightMultiple = lineHeightMultiple
         self.italic = italic
         self.bold = bold
@@ -349,7 +344,7 @@ public struct BlockStyleTheme: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case noteFontName, noteFontSize, codeFontName, codeFontSize
-        case editorLineSpacing, lineWidth, marginSize, imagesWidth
+        case editorLineSpacing, lineWidth, marginSize
         case lineHeightMultiple, italic, bold
         case headingFontScales, headingSpacingBefore, headingSpacingAfter
         case paragraphSpacing
@@ -376,7 +371,6 @@ public struct BlockStyleTheme: Codable, Equatable {
         self.editorLineSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .editorLineSpacing) ?? def.editorLineSpacing
         self.lineWidth = try c.decodeIfPresent(CGFloat.self, forKey: .lineWidth) ?? def.lineWidth
         self.marginSize = try c.decodeIfPresent(CGFloat.self, forKey: .marginSize) ?? def.marginSize
-        self.imagesWidth = try c.decodeIfPresent(CGFloat.self, forKey: .imagesWidth) ?? def.imagesWidth
         // Phase 7.5.c flat fields — tolerate missing for pre-7.5.c themes.
         self.lineHeightMultiple = try c.decodeIfPresent(CGFloat.self, forKey: .lineHeightMultiple) ?? def.lineHeightMultiple
         self.italic = try c.decodeIfPresent(String.self, forKey: .italic) ?? def.italic
@@ -422,7 +416,6 @@ public struct BlockStyleTheme: Codable, Equatable {
         try c.encode(editorLineSpacing, forKey: .editorLineSpacing)
         try c.encode(lineWidth, forKey: .lineWidth)
         try c.encode(marginSize, forKey: .marginSize)
-        try c.encode(imagesWidth, forKey: .imagesWidth)
         try c.encode(lineHeightMultiple, forKey: .lineHeightMultiple)
         try c.encode(italic, forKey: .italic)
         try c.encode(bold, forKey: .bold)
@@ -476,7 +469,6 @@ extension BlockStyleTheme {
         editorLineSpacing: 4,
         lineWidth: 1000,
         marginSize: 20,
-        imagesWidth: 450,
         // Heading
         headingFontScales: [2.0, 1.7, 1.4, 1.2, 1.1, 1.05],
         headingSpacingBefore: [1.2, 1.0, 0.9, 0.8, 0.7, 0.6],

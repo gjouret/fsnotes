@@ -102,7 +102,6 @@ class BlockStyleThemeTests: XCTestCase {
         XCTAssertEqual(t.editorLineSpacing, 4)
         XCTAssertEqual(t.lineWidth, 1000)
         XCTAssertEqual(t.marginSize, 20)
-        XCTAssertEqual(t.imagesWidth, 450)
     }
 
     func testDefaultFonts() {

@@ -120,7 +120,12 @@ enum ImageAttachmentHydrator {
         if let editorWidth = editor.enclosingScrollView?.contentView.bounds.width {
             return editorWidth - 40
         }
-        return CGFloat(UserDefaultsManagement.imagesWidth)
+        // Last-resort fallback — reached only if the editor has neither
+        // a text container nor an enclosing scroll view (typically
+        // during early startup or in detached test contexts). 450pt
+        // was the historical default from the retired "Images Width"
+        // preference.
+        return 450
     }
 
     private static func loadImage(

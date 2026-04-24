@@ -95,7 +95,6 @@ public class UserDefaultsManagement {
         static let HidePreviewKey = "hidePreview"
         static let HidePreviewImages = "hidePreviewImages"
         static let iCloudDrive = "iCloudDrive"
-        static let ImagesWidthKey = "imagesWidthKey"
         static let IndentUsing = "indentUsing"
         static let InlineTags = "inlineTags"
         static let IsFirstLaunch = "isFirstLaunch"
@@ -165,7 +164,7 @@ public class UserDefaultsManagement {
     //
     // The editor typography / layout properties below (codeFontName,
     // codeFontSize, fontName, fontSize, editorLineSpacing,
-    // lineHeightMultiple, lineWidth, marginSize, imagesWidth, italic,
+    // lineHeightMultiple, lineWidth, marginSize, italic,
     // bold) are computed proxies over `Theme.shared`. Getters read
     // from Theme each call (no caching — a `Theme.shared = ...` swap
     // is visible to readers immediately). Setters mutate Theme and
@@ -691,15 +690,6 @@ public class UserDefaultsManagement {
         get { BlockStyleTheme.shared.lineHeightMultiple }
         set {
             BlockStyleTheme.shared.lineHeightMultiple = newValue
-            UserDefaultsManagement.postTheme75cChange()
-        }
-    }
-
-    // Phase 7.5.c proxy — reads/writes through `Theme.shared.imagesWidth`.
-    static var imagesWidth: Float {
-        get { Float(BlockStyleTheme.shared.imagesWidth) }
-        set {
-            BlockStyleTheme.shared.imagesWidth = CGFloat(newValue)
             UserDefaultsManagement.postTheme75cChange()
         }
     }
@@ -1920,7 +1910,6 @@ public class UserDefaultsManagement {
         static let lineHeightMultiple = "lineHeightMultipleKey"
         static let lineWidth = "lineWidth"
         static let marginSize = "marginSize"
-        static let imagesWidth = "imagesWidthKey"
         static let italic = "italicKeyed"
         static let bold = "boldKeyed"
     }
@@ -1965,9 +1954,6 @@ public class UserDefaultsManagement {
         if let v = defaults.object(forKey: LegacyProxyKeys.marginSize) as? Float {
             BlockStyleTheme.shared.marginSize = CGFloat(v)
         }
-        if let v = defaults.object(forKey: LegacyProxyKeys.imagesWidth) as? Float {
-            BlockStyleTheme.shared.imagesWidth = CGFloat(v)
-        }
 
         // Markers.
         if let v = defaults.object(forKey: LegacyProxyKeys.italic) as? String {
@@ -1987,7 +1973,6 @@ public class UserDefaultsManagement {
             LegacyProxyKeys.fontName, LegacyProxyKeys.fontSize,
             LegacyProxyKeys.editorLineSpacing, LegacyProxyKeys.lineHeightMultiple,
             LegacyProxyKeys.lineWidth, LegacyProxyKeys.marginSize,
-            LegacyProxyKeys.imagesWidth,
             LegacyProxyKeys.italic, LegacyProxyKeys.bold
         ] {
             defaults.removeObject(forKey: key)

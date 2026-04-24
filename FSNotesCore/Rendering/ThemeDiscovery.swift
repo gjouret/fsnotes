@@ -406,7 +406,7 @@ extension BlockStyleTheme {
     // MARK: - Phase 7.5.a: Debounced save helper
     //
     // Continuous `NSSlider` IBActions (`lineSpacing`, `marginSize`,
-    // `lineWidth`, `imagesWidth`) fire ~60×/sec during a drag. Each
+    // `lineWidth`) fire ~60×/sec during a drag. Each
     // tick currently calls `persistActiveTheme()` → `saveActiveTheme()`
     // which serializes the full Theme JSON and writes it atomically.
     // That's a ~60×/sec disk write during a drag — wasteful and a

@@ -3622,13 +3622,6 @@ Olena Hlushcneko</string>
                                     <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
                                 </textFieldCell>
                             </textField>
-                            <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="dmd-5j-kY7">
-                                <rect key="frame" x="145" y="277" width="290" height="28"/>
-                                <sliderCell key="cell" state="on" alignment="left" minValue="400" maxValue="1000" doubleValue="1000" tickMarkPosition="above" numberOfTickMarks="10" sliderType="linear" id="csk-Ct-cff"/>
-                                <connections>
-                                    <action selector="imagesWidth:" target="ssC-ed-19K" id="SCj-iP-0p1"/>
-                                </connections>
-                            </slider>
                             <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="gl0-rI-S66">
                                 <rect key="frame" x="145" y="253" width="290" height="28"/>
                                 <sliderCell key="cell" state="on" alignment="left" minValue="10" maxValue="200" doubleValue="50" tickMarkPosition="above" numberOfTickMarks="10" sliderType="linear" id="UC2-tH-UtC"/>
@@ -3643,14 +3636,6 @@ Olena Hlushcneko</string>
                                     <action selector="lineWidth:" target="ssC-ed-19K" id="sMF-LC-b8U"/>
                                 </connections>
                             </slider>
-                            <textField focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Vrr-sG-fOD">
-                                <rect key="frame" x="33" y="285" width="91" height="16"/>
-                                <textFieldCell key="cell" lineBreakMode="clipping" alignment="right" title="Images Width:" id="ltm-qj-nke">
-                                    <font key="font" metaFont="system"/>
-                                    <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
-                                    <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
-                                </textFieldCell>
-                            </textField>
                             <textField focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="3el-ze-TIn">
                                 <rect key="frame" x="33" y="261" width="91" height="16"/>
                                 <textFieldCell key="cell" lineBreakMode="clipping" alignment="right" title="Margin Size:" id="r69-B6-vT3">
@@ -3879,7 +3864,6 @@ Olena Hlushcneko</string>
                         <outlet property="clickableLinks" destination="mLR-t7-nz0" id="Obm-sY-z1U"/>
                         <outlet property="codeBlockHighlight" destination="Kcg-vn-Dwj" id="7yz-yx-8Tu"/>
                         <outlet property="codeFontPreview" destination="B07-UG-KXb" id="3G7-e5-Ckw"/>
-                        <outlet property="imagesWidth" destination="dmd-5j-kY7" id="cti-S4-1DA"/>
                         <outlet property="inEditorFocus" destination="cj1-ab-Sv6" id="KG5-A9-BXB"/>
                         <outlet property="indentUsing" destination="RxO-oS-Sa7" id="PVx-5A-VrQ"/>
                         <outlet property="inlineTags" destination="XOm-C4-sCs" id="HFO-i5-dZl"/>

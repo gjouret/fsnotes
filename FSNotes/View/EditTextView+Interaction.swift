@@ -678,6 +678,7 @@ extension EditTextView {
         if let editorWidth = enclosingScrollView?.contentView.bounds.width {
             return editorWidth - 40
         }
-        return CGFloat(UserDefaultsManagement.imagesWidth)
+        // Last-resort fallback — see ImageAttachmentHydrator.containerMaxWidth.
+        return 450
     }
 }

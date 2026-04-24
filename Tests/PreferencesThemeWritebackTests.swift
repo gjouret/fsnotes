@@ -126,7 +126,6 @@ final class PreferencesThemeWritebackTests: XCTestCase {
         mutable.codeFontSize = 15
         mutable.marginSize = 42
         mutable.lineWidth = 720
-        mutable.imagesWidth = 333
         BlockStyleTheme.shared = mutable
 
         let userDir = tmpRoot.appendingPathComponent("user-themes")
@@ -141,7 +140,6 @@ final class PreferencesThemeWritebackTests: XCTestCase {
         XCTAssertEqual(reloaded.codeFontSize, 15)
         XCTAssertEqual(reloaded.marginSize, 42)
         XCTAssertEqual(reloaded.lineWidth, 720)
-        XCTAssertEqual(reloaded.imagesWidth, 333)
     }
 
     // MARK: - saveActiveTheme updates currentThemeName

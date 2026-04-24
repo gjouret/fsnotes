@@ -1264,7 +1264,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             if let editorWidth = editor?.enclosingScrollView?.contentView.bounds.width {
                 return editorWidth - 40
             }
-            return CGFloat(UserDefaultsManagement.imagesWidth)
+            // Last-resort fallback — see ImageAttachmentHydrator.containerMaxWidth.
+            return 450
         #endif
     }
 

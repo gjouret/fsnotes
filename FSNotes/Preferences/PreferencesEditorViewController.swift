@@ -18,7 +18,6 @@ class PreferencesEditorViewController: NSViewController {
     @IBOutlet weak var inEditorFocus: NSButton!
     @IBOutlet weak var autocloseBrackets: NSButton!
     @IBOutlet weak var lineSpacing: NSSlider!
-    @IBOutlet weak var imagesWidth: NSSlider!
     @IBOutlet weak var lineWidth: NSSlider!
     @IBOutlet weak var marginSize: NSSlider!
     @IBOutlet weak var inlineTags: NSButton!
@@ -55,7 +54,6 @@ class PreferencesEditorViewController: NSViewController {
         markdownCodeTheme.selectItem(withTitle: UserDefaultsManagement.codeTheme.getName())
 
         lineSpacing.floatValue = Float((UserDefaultsManagement.lineHeightMultiple - 1) * 10)
-        imagesWidth.floatValue = UserDefaultsManagement.imagesWidth
         lineWidth.floatValue = UserDefaultsManagement.lineWidth
 
         marginSize.floatValue = UserDefaultsManagement.marginSize
@@ -324,29 +322,6 @@ class PreferencesEditorViewController: NSViewController {
         }
     }
 
-    @IBAction func imagesWidth(_ sender: NSSlider) {
-        Theme.shared.imagesWidth = CGFloat(sender.floatValue)
-        // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
-        UserDefaultsManagement.imagesWidth = sender.floatValue
-        persistActiveTheme()
-
-        var temporary = URL(fileURLWithPath: NSTemporaryDirectory())
-        temporary.appendPathComponent("ThumbnailsBig")
-        try? FileManager.default.removeItem(at: temporary)
-
-        let editors = AppDelegate.getEditTextViews()
-        for editor in editors {
-            if let _ = editor.note, let evc = editor.editorViewController {
-                // Phase 4.4: both WYSIWYG (block-model) and source-mode
-                // (SourceRenderer) re-render via `refillEditArea()` —
-                // the legacy `NotesTextProcessor.highlight(note.content)`
-                // call was retired in 4.4.
-                evc.disablePreview()
-                evc.refillEditArea()
-            }
-        }
-    }
-
     @IBAction func lineWidth(_ sender: NSSlider) {
         Theme.shared.lineWidth = CGFloat(sender.floatValue)
         // Phase 7.5 transitional: dual-write to UD until proxy slice lands.
@@ -507,7 +482,7 @@ class PreferencesEditorViewController: NSViewController {
     // failure (e.g. permissions).
     //
     // Continuous `NSSlider` IBActions (`lineSpacing`, `marginSize`,
-    // `lineWidth`, `imagesWidth`) tick at ~60Hz during a drag; writing
+    // `lineWidth`) tick at ~60Hz during a drag; writing
     // the full Theme JSON on every tick is wasteful. Route through the
     // debounced helper so the disk write is coalesced to one after
     // 150ms of quiescence. `didChangeNotification` still fires per-tick

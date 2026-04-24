@@ -28,7 +28,6 @@ public protocol EditorPreferencesProvider {
     var lineWidth: CGFloat { get }
     var marginSize: CGFloat { get }
     var editorLineSpacing: CGFloat { get }
-    var imagesWidth: CGFloat { get }
     var codeBlockHighlight: Bool { get }
     var searchHighlight: Bool { get }
     var wysiwygMode: Bool { get }
@@ -46,7 +45,6 @@ public struct EditorPreferences: EditorPreferencesProvider {
     public var lineWidth: CGFloat { CGFloat(UserDefaultsManagement.lineWidth) }
     public var marginSize: CGFloat { CGFloat(UserDefaultsManagement.marginSize) }
     public var editorLineSpacing: CGFloat { CGFloat(UserDefaultsManagement.editorLineSpacing) }
-    public var imagesWidth: CGFloat { CGFloat(UserDefaultsManagement.imagesWidth) }
     public var codeBlockHighlight: Bool { UserDefaultsManagement.codeBlockHighlight }
     public var searchHighlight: Bool { UserDefaultsManagement.searchHighlight }
     public var wysiwygMode: Bool { UserDefaultsManagement.wysiwygMode }

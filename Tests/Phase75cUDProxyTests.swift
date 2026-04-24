@@ -129,15 +129,6 @@ final class Phase75cUDProxyTests: XCTestCase {
         )
     }
 
-    func test_phase75c_readImagesWidth_readsFromTheme() {
-        BlockStyleTheme.shared.imagesWidth = 333
-        XCTAssertEqual(
-            UserDefaultsManagement.imagesWidth, 333,
-            accuracy: 0.0001,
-            "imagesWidth getter must read through Theme.shared.imagesWidth"
-        )
-    }
-
     // MARK: - Write-proxy: UD setter mutates Theme.shared + posts notification
 
     func test_phase75c_writeNoteFontName_mutatesTheme() {
@@ -275,21 +266,6 @@ final class Phase75cUDProxyTests: XCTestCase {
         wait(for: [expectation], timeout: 2.0)
     }
 
-    func test_phase75c_writeImagesWidth_mutatesTheme() {
-        BlockStyleTheme.shared.imagesWidth = 450
-        let expectation = self.expectation(
-            forNotification: BlockStyleTheme.didChangeNotification,
-            object: nil, handler: nil
-        )
-        UserDefaultsManagement.imagesWidth = 600
-
-        XCTAssertEqual(
-            BlockStyleTheme.shared.imagesWidth, 600, accuracy: 0.0001,
-            "Setter must mutate Theme.shared.imagesWidth"
-        )
-        wait(for: [expectation], timeout: 2.0)
-    }
-
     // MARK: - Migration: legacy UD keys → Theme.shared
 
     /// Seed raw legacy UD keys, run the migration, verify Theme.shared
@@ -308,7 +284,6 @@ final class Phase75cUDProxyTests: XCTestCase {
         defaults.set(Float(1.6), forKey: "lineHeightMultipleKey")
         defaults.set(Float(880), forKey: "lineWidth")
         defaults.set(Float(33), forKey: "marginSize")
-        defaults.set(Float(520), forKey: "imagesWidthKey")
         defaults.set("_", forKey: "italicKeyed")
         defaults.set("**", forKey: "boldKeyed")
 
@@ -329,7 +304,6 @@ final class Phase75cUDProxyTests: XCTestCase {
         XCTAssertEqual(BlockStyleTheme.shared.lineHeightMultiple, 1.6, accuracy: 0.0001)
         XCTAssertEqual(BlockStyleTheme.shared.lineWidth, 880)
         XCTAssertEqual(BlockStyleTheme.shared.marginSize, 33)
-        XCTAssertEqual(BlockStyleTheme.shared.imagesWidth, 520)
         XCTAssertEqual(BlockStyleTheme.shared.italic, "_")
         XCTAssertEqual(BlockStyleTheme.shared.bold, "**")
 
@@ -342,7 +316,6 @@ final class Phase75cUDProxyTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: "lineHeightMultipleKey"))
         XCTAssertNil(defaults.object(forKey: "lineWidth"))
         XCTAssertNil(defaults.object(forKey: "marginSize"))
-        XCTAssertNil(defaults.object(forKey: "imagesWidthKey"))
         XCTAssertNil(defaults.object(forKey: "italicKeyed"))
         XCTAssertNil(defaults.object(forKey: "boldKeyed"))
 
@@ -408,7 +381,6 @@ final class Phase75cUDProxyTests: XCTestCase {
             "editorLineSpacing": 4,
             "lineWidth": 1000,
             "marginSize": 20,
-            "imagesWidth": 450,
             "headingFontScales": [2.0, 1.7, 1.4, 1.2, 1.1, 1.05],
             "headingSpacingBefore": [1.2, 1.0, 0.9, 0.8, 0.7, 0.6],
             "headingSpacingAfter": [0.67, 0.5, 0.4, 0.35, 0.3, 0.25],
