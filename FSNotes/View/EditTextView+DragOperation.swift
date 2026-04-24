@@ -111,33 +111,56 @@ extension EditTextView
             let urls = try? NSKeyedUnarchiver.unarchivedObject(ofClasses: [NSArray.self, NSURL.self], from: archivedData) as? [URL],
             let url = urls.first,
             let draggableNote = Storage.shared().getBy(url: url),
-            let textStorage = self.textStorage
+            self.textStorage != nil
         else { return false }
-        
+
         let title = "[[\(draggableNote.title)]]"
-        
+
         DispatchQueue.main.async {
             self.window?.makeFirstResponder(self)
-            
-            // Phase 5f: grouping retired — the `shouldChangeText` →
-            // `applyEditResultWithUndo` flow journals one entry per
-            // call. Note that `textStorage.replaceCharacters` here is
-            // a direct storage write that bypasses the block-model
-            // pipeline; that's a pre-existing 5a bypass tracked for a
-            // future slice (brief §9).
-            if self.shouldChangeText(in: replacementRange, replacementString: title) {
-                StorageWriteGuard.performingLegacyStorageWrite {
-                    textStorage.replaceCharacters(in: replacementRange, with: title)
-                }
-                self.didChangeText()
 
+            // Phase 5f follow-up: route the wiki-link insertion through
+            // `handleEditViaBlockModel` — the sanctioned 5a write path.
+            // `applyEditResultWithUndo` handles undo registration (no
+            // `shouldChangeText` / `didChangeText` pairing needed). In
+            // source mode `documentProjection` is nil so the block-model
+            // path returns false; fall back to AppKit's `insertText`,
+            // which mutates storage through the source-mode branch
+            // (`sourceRendererActive=true`) — that branch is explicitly
+            // exempt from the Phase 5a assertion and is NOT a bypass.
+            if self.handleEditViaBlockModel(in: replacementRange, replacementString: title) {
+                self.setSelectedRange(NSRange(location: replacementRange.location + title.count, length: 0))
+            } else {
+                self.insertText(title, replacementRange: replacementRange)
                 self.setSelectedRange(NSRange(location: replacementRange.location + title.count, length: 0))
             }
 
             self.undoManager?.setActionName("Insert Note Reference")
         }
-        
+
         return true
+    }
+
+    /// Build the markdown representation of a dropped URL. Web URLs
+    /// (`isWebURL == true`) render as `[title](absoluteString)` inline
+    /// links; local file paths render as `![title](path)` image syntax
+    /// — matching the serialized form produced by
+    /// `NSMutableAttributedString.unloadImagesAndFiles()` at save time,
+    /// so the block-model parser resolves it to a `.image` inline on
+    /// the next re-parse pass.
+    ///
+    /// This helper is pure on its inputs so the markdown-construction
+    /// logic can be unit-tested without the async URL-fetch dance
+    /// `handleURLs` performs at runtime.
+    static func markdownForDroppedURL(isWebURL: Bool, webTitle: String?, webURLString: String?, filePath: String?) -> String? {
+        if isWebURL, let webURLString = webURLString {
+            let title = webTitle ?? (URL(string: webURLString)?.lastPathComponent ?? webURLString)
+            return "[\(title)](\(webURLString))"
+        }
+        if let filePath = filePath {
+            return "![](\(filePath))"
+        }
+        return nil
     }
 
     public func handleURLs(_ pasteboard: NSPasteboard, note: Note, replacementRange: NSRange) -> Bool {
@@ -148,64 +171,64 @@ extension EditTextView
 
         let group = DispatchGroup()
         let total = urls.count
-        var results = Array<NSAttributedString?>(repeating: nil, count: total)
+        var results = Array<String?>(repeating: nil, count: total)
 
         for (index, url) in urls.enumerated() {
             group.enter()
             fetchDataFromURL(url: url) { data, error in
                 defer { group.leave() }
                 guard let data = data, error == nil else { return }
-                
+
                 if url.isWebURL {
                     let title = self.getHTMLTitle(from: data) ?? url.lastPathComponent
-                    let text = "[\(title)](\(url.absoluteString))"
-                    results[index] = NSAttributedString(string: text)
-                } else if let filePath = ImagesProcessor.writeFile(data: data, url: url, note: note),
-                          let fileURL = note.getAttachmentFileUrl(
-                            name: filePath.removingPercentEncoding ?? filePath
-                          ) {
-                    let attributed = NSMutableAttributedString(
-                        url: fileURL,
-                        title: "",
-                        path: filePath
+                    results[index] = EditTextView.markdownForDroppedURL(
+                        isWebURL: true,
+                        webTitle: title,
+                        webURLString: url.absoluteString,
+                        filePath: nil
                     )
-                    results[index] = attributed
+                } else if let filePath = ImagesProcessor.writeFile(data: data, url: url, note: note) {
+                    // Image-syntax markdown matches the serialized form
+                    // `NSMutableAttributedString.unloadImagesAndFiles`
+                    // produces at save time; the parser resolves it to
+                    // a `.image` inline on the next re-parse pass.
+                    results[index] = EditTextView.markdownForDroppedURL(
+                        isWebURL: false,
+                        webTitle: nil,
+                        webURLString: nil,
+                        filePath: filePath
+                    )
                 }
             }
         }
-        
+
         group.notify(queue: .main) {
-            let final = NSMutableAttributedString()
-            for i in 0..<total {
-                guard let part = results[i] else { continue }
-                final.append(part)
-                if i < total - 1 {
-                    final.append(NSAttributedString(string: "\n\n"))
-                }
-            }
-            
+            let finalMarkdown = results.compactMap { $0 }.joined(separator: "\n\n")
+
             self.window?.makeFirstResponder(self)
-            
-            guard let textStorage = self.textStorage else {
 
-                self.insertText(final, replacementRange: replacementRange)
+            // Phase 5f follow-up: route the dropped-URL insertion through
+            // `handleEditViaBlockModel` — the sanctioned 5a write path.
+            // `applyEditResultWithUndo` registers undo (no
+            // `shouldChangeText` / `didChangeText` pairing needed). The
+            // RC4 `reparseCurrentBlockInlines` step inside
+            // `handleEditViaBlockModel` re-parses the inserted markdown
+            // so `[title](url)` becomes a `.link` inline and
+            // `![](path)` becomes a `.image` inline — the same visual
+            // result the old direct-storage path produced, now with
+            // `Document ↔ NSTextContentStorage` in sync.
+            if self.handleEditViaBlockModel(in: replacementRange, replacementString: finalMarkdown) {
                 self.setSelectedRange(
-                    NSRange(location: replacementRange.location + final.length, length: 0)
+                    NSRange(location: replacementRange.location + finalMarkdown.count, length: 0)
                 )
-                self.viewDelegate?.notesTableView.reloadRow(note: note)
-                return
-            }
-
-            // Phase 5f: grouping retired (see "Insert Note Reference"
-            // above). Direct storage write is a pre-existing 5a bypass.
-            if self.shouldChangeText(in: replacementRange, replacementString: final.string) {
-                StorageWriteGuard.performingLegacyStorageWrite {
-                    textStorage.replaceCharacters(in: replacementRange, with: final)
-                }
-                self.didChangeText()
-
+            } else {
+                // Source mode (or block-model unavailable): AppKit's
+                // `insertText` mutates storage through the source-mode
+                // branch (`sourceRendererActive=true`), which is
+                // explicitly exempt from the Phase 5a assertion.
+                self.insertText(finalMarkdown, replacementRange: replacementRange)
                 self.setSelectedRange(
-                    NSRange(location: replacementRange.location + final.length, length: 0)
+                    NSRange(location: replacementRange.location + finalMarkdown.count, length: 0)
                 )
             }
 
