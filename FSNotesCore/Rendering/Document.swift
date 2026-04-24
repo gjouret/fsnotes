@@ -293,6 +293,16 @@ public struct ListItem: Equatable {
     /// Used for tight/loose detection and round-trip serialization.
     public let blankLineBefore: Bool
 
+    /// Blocks that appear *inside* this list item after the initial
+    /// inline paragraph — e.g. continuation paragraphs, fenced code
+    /// blocks, blockquotes — separated from the first line by a blank
+    /// line and indented to the item's content column. Empty for
+    /// simple one-line items. When non-empty, the containing list is
+    /// automatically "loose". Included in HTML rendering and markdown
+    /// serialization; opaque to editor FSMs, which operate on the
+    /// first inline line.
+    public let continuationBlocks: [Block]
+
     public init(
         indent: String,
         marker: String,
@@ -300,7 +310,8 @@ public struct ListItem: Equatable {
         checkbox: Checkbox? = nil,
         inline: [Inline],
         children: [ListItem],
-        blankLineBefore: Bool = false
+        blankLineBefore: Bool = false,
+        continuationBlocks: [Block] = []
     ) {
         self.indent = indent
         self.marker = marker
@@ -309,6 +320,7 @@ public struct ListItem: Equatable {
         self.inline = inline
         self.children = children
         self.blankLineBefore = blankLineBefore
+        self.continuationBlocks = continuationBlocks
     }
 
     /// Whether this item is a todo (has a checkbox).

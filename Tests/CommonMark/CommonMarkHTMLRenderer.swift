@@ -163,8 +163,11 @@ struct CommonMarkHTMLRenderer {
         let isOrdered = Self.isOrderedMarker(items[0].marker)
         // A list is loose if the parser flagged it OR any item has
         // blankLineBefore (covers nested lists which don't carry the
-        // top-level loose flag).
-        let isLoose = loose || items.contains(where: { $0.blankLineBefore })
+        // top-level loose flag) OR any item has continuation blocks
+        // (multi-block items are always loose per CommonMark).
+        let isLoose = loose
+            || items.contains(where: { $0.blankLineBefore })
+            || items.contains(where: { !$0.continuationBlocks.isEmpty })
         let isTight = !isLoose && Self.detectTightList(items)
 
         var output = ""
@@ -192,7 +195,8 @@ struct CommonMarkHTMLRenderer {
 
         // Render the item's own inline content
         let inlineHTML = Self.renderInlines(item.inline)
-        let isEmpty = inlineHTML.isEmpty && item.children.isEmpty
+        let hasContinuation = !item.continuationBlocks.isEmpty
+        let isEmpty = inlineHTML.isEmpty && item.children.isEmpty && !hasContinuation
 
         if item.isTodo {
             let checkbox = item.isChecked
@@ -201,11 +205,15 @@ struct CommonMarkHTMLRenderer {
             if tight {
                 content += "<li>\(checkbox)\(inlineHTML)"
             } else {
-                content += "<li><p>\(checkbox)\(inlineHTML)</p>\n"
+                content += "<li>\n<p>\(checkbox)\(inlineHTML)</p>\n"
             }
         } else if isEmpty {
             // Empty list item: no <p> wrapper regardless of tight/loose.
             content += "<li>"
+        } else if inlineHTML.isEmpty && hasContinuation {
+            // No first-line content but later blocks — treat the first
+            // continuation block as the visible content of the item.
+            content += "<li>\n"
         } else {
             if tight {
                 content += "<li>\(inlineHTML)"
@@ -214,9 +222,19 @@ struct CommonMarkHTMLRenderer {
             }
         }
 
+        // Render continuation blocks (multi-block items).
+        for block in item.continuationBlocks {
+            if case .blankLine = block { continue }
+            content += renderBlock(block, inTightList: false)
+        }
+
         // Render children (nested list items)
         if !item.children.isEmpty {
-            content += "\n"
+            // For loose items the <li> is already multi-line; for tight
+            // we need an explicit newline before the nested <ul>/<ol>.
+            if tight && !hasContinuation {
+                content += "\n"
+            }
             content += renderList(item.children)
         }
 

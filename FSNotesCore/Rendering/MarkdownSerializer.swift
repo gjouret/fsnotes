@@ -140,10 +140,32 @@ public enum MarkdownSerializer {
         }
         let firstLine = item.indent + normalizedMarker + item.afterMarker
             + cbPart + serializeInlines(item.inline)
-        if item.children.isEmpty { return firstLine }
+
+        // Continuation blocks (multi-block items). Re-indent by the
+        // item's content column so the re-parsed form matches.
+        var result = firstLine
+        if !item.continuationBlocks.isEmpty {
+            let contentCol = item.indent.count + normalizedMarker.count
+                + item.afterMarker.count
+            let indent = String(repeating: " ", count: contentCol)
+            let innerDoc = Document(blocks: item.continuationBlocks,
+                                    trailingNewline: false, refDefs: [:])
+            // Round-trip individual blocks; blockquote separators etc.
+            // are preserved via block boundaries.
+            let innerMD = MarkdownSerializer.serialize(innerDoc)
+            // Prepend blank line (multi-block items are always loose).
+            result += "\n\n"
+            let innerLines = innerMD.split(separator: "\n", omittingEmptySubsequences: false)
+            let indented = innerLines.map { line -> String in
+                line.isEmpty ? "" : indent + String(line)
+            }
+            result += indented.joined(separator: "\n")
+        }
+
+        if item.children.isEmpty { return result }
         let childLines = item.children.map { serializeItem($0) }
             .joined(separator: "\n")
-        return firstLine + "\n" + childLines
+        return result + "\n" + childLines
     }
     
     /// Whether a marker is an ordered list marker (e.g. "1.", "2)").

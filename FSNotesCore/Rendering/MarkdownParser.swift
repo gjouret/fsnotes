@@ -236,6 +236,11 @@ public enum MarkdownParser {
                 var parsedLines: [ParsedListLine] = [firstParsed]
                 var hasBlankLines = false
                 var nextItemFollowsBlank = false
+                // Track the number of *consecutive* blank lines between
+                // the current position and the previous content line.
+                // Two or more consecutive blanks still terminate the list
+                // when followed by non-indented content, but single
+                // blanks within indented continuations are preserved.
                 var j = i + 1
                 while j < lines.count {
                     let l = lines[j]
@@ -243,14 +248,16 @@ public enum MarkdownParser {
                         break
                     }
                     if l.isEmpty {
-                        // Blank line: peek ahead for another list item
-                        // that belongs to this list. For top-level items,
-                        // the marker type must match. For nested items
-                        // (deeper indent), any marker type is allowed.
+                        // Blank line: peek ahead.
                         var k = j + 1
                         while k < lines.count && lines[k].isEmpty { k += 1 }
-                        if k < lines.count,
-                           let nextParsed = parseListLine(lines[k]) {
+                        // End of input or trailing-newline synthetic empty.
+                        if k >= lines.count
+                            || (k == lines.count - 1 && lines[k].isEmpty && markdown.hasSuffix("\n"))
+                        {
+                            break
+                        }
+                        if let nextParsed = parseListLine(lines[k]) {
                             let nextIndent = nextParsed.indent.count
                             if nextIndent == topIndent && Self.listMarkerType(nextParsed.marker) != listType {
                                 // Top-level item with different marker type — new list.
@@ -261,11 +268,96 @@ public enum MarkdownParser {
                             nextItemFollowsBlank = true
                             j = k
                             continue
-                        } else {
+                        }
+                        // Next non-blank line is NOT a list marker. If it
+                        // is indented to at least some existing item's
+                        // content column, attach it (and any further
+                        // indented-or-blank lines) as continuation of the
+                        // deepest-matching existing item.
+                        let nextLine = lines[k]
+                        let nextIndentCount = leadingSpaceCount(nextLine)
+                        let ownerIdx = deepestOwner(in: parsedLines, forIndent: nextIndentCount)
+                        if ownerIdx == nil {
                             break
                         }
+                        let ownerItem = parsedLines[ownerIdx!]
+                        let contentCol = ownerItem.indent.count
+                            + ownerItem.marker.count + ownerItem.afterMarker.count
+                        // Record the blank-line gap, then consume indented
+                        // (or blank) lines. Stop at the first line whose
+                        // indent is less than contentCol AND is non-blank
+                        // AND is not a list marker of this list (list
+                        // markers are handled by the outer loop).
+                        // Preserve the blanks between the item and the
+                        // continuation to distinguish tight vs loose.
+                        var continuation = parsedLines[ownerIdx!].continuationLines
+                        // Prepend blank gap
+                        for _ in j..<k { continuation.append("") }
+                        var m = k
+                        while m < lines.count {
+                            let line2 = lines[m]
+                            if m == lines.count - 1 && line2.isEmpty && markdown.hasSuffix("\n") {
+                                break
+                            }
+                            if line2.isEmpty {
+                                // Keep consuming blanks — they may sit
+                                // between continuation blocks.
+                                continuation.append("")
+                                m += 1
+                                continue
+                            }
+                            let lineIndentCount = leadingSpaceCount(line2)
+                            // If it's a list marker, decide whether it
+                            // belongs to this list before taking over.
+                            if let maybeMarker = parseListLine(line2) {
+                                // A marker at indent < contentCol breaks
+                                // out of this item's continuation and
+                                // returns control to the outer loop.
+                                if maybeMarker.indent.count < contentCol {
+                                    break
+                                }
+                                // Otherwise it's a nested list marker
+                                // inside the continuation — fold it into
+                                // the continuation text rather than
+                                // promoting to a new item.
+                            }
+                            if lineIndentCount < contentCol {
+                                break
+                            }
+                            // Strip contentCol leading spaces (CommonMark
+                            // indentation removal). The continuation is
+                            // re-parsed as an inner document.
+                            continuation.append(stripLeadingSpaces(line2, count: contentCol))
+                            m += 1
+                        }
+                        // Trim trailing blanks — they belong outside the
+                        // item.
+                        while let last = continuation.last, last.isEmpty {
+                            continuation.removeLast()
+                        }
+                        parsedLines[ownerIdx!].continuationLines = continuation
+                        // Any future item in this list that follows these
+                        // continuation lines is loose.
+                        hasBlankLines = true
+                        nextItemFollowsBlank = true
+                        j = m
+                        continue
                     }
-                    guard var parsed = parseListLine(l) else { break }
+                    guard var parsed = parseListLine(l) else {
+                        // Non-list line without a preceding blank: if it
+                        // is indented to reach an existing item's content
+                        // column, it is a "lazy continuation" of that
+                        // item's first paragraph (CommonMark allows
+                        // un-prefixed continuation lines for list items
+                        // following the initial line).
+                        //
+                        // Current behaviour: break the list. We keep that
+                        // behaviour for single-line non-list interrupts
+                        // because the inline content on the first line
+                        // was already committed to `firstParsed.content`
+                        // or the previous item.
+                        break
+                    }
                     // CommonMark 5.3 / 5.4: a list ends when the marker
                     // type changes — at ANY level where the new item is
                     // a sibling, not a child, of any item we've already
@@ -2388,6 +2480,11 @@ public enum MarkdownParser {
         let checkbox: Checkbox?   // "[ ]", "[x]", "[X]" for todo items
         let content: String       // remainder of the line after checkbox/afterMarker
         var blankLineBefore: Bool = false // true if blank line(s) preceded this item
+        /// Raw continuation lines attached to this item after a blank
+        /// line — already dedented by the item's content column, with
+        /// blank-line separators preserved as empty strings. Parsed at
+        /// buildItemTree time into `ListItem.continuationBlocks`.
+        var continuationLines: [String] = []
     }
 
     /// Detect whether `line` is a list item. Rules:
@@ -2549,6 +2646,21 @@ public enum MarkdownParser {
                 parentContentColumn: curContentColumn,
                 refDefs: refDefs
             )
+            // Parse any continuation lines attached at collection time
+            // into a block sequence. Uses the parser recursively (note:
+            // this is idempotent because continuation text has already
+            // been dedented by the item's content column).
+            let continuationBlocks: [Block]
+            if cur.continuationLines.isEmpty {
+                continuationBlocks = []
+            } else {
+                let inner = cur.continuationLines.joined(separator: "\n") + "\n"
+                let innerDoc = MarkdownParser.parse(inner)
+                continuationBlocks = innerDoc.blocks.filter {
+                    if case .blankLine = $0 { return false }
+                    return true
+                }
+            }
             items.append(ListItem(
                 indent: cur.indent,
                 marker: cur.marker,
@@ -2556,11 +2668,76 @@ public enum MarkdownParser {
                 checkbox: cur.checkbox,
                 inline: inline,
                 children: children,
-                blankLineBefore: cur.blankLineBefore
+                blankLineBefore: cur.blankLineBefore,
+                continuationBlocks: continuationBlocks
             ))
             i = nextI
         }
         return (items, i)
+    }
+
+    // MARK: - List continuation helpers (CommonMark container-block rules)
+
+    /// Count of leading space characters (tabs expanded to 4-stop tabstops).
+    /// Used to determine whether a continuation line is indented enough
+    /// to belong to an enclosing list item.
+    private static func leadingSpaceCount(_ line: String) -> Int {
+        var col = 0
+        for ch in line {
+            if ch == " " { col += 1 }
+            else if ch == "\t" { col += 4 - (col % 4) }
+            else { break }
+        }
+        return col
+    }
+
+    /// Strip `count` leading columns of whitespace from `line`, counting
+    /// tabs as 4-stop tabstops. If the line has fewer leading columns
+    /// than `count`, returns the trimmed remainder. Used to dedent
+    /// continuation lines inside a list item by the item's content
+    /// column.
+    private static func stripLeadingSpaces(_ line: String, count: Int) -> String {
+        var col = 0
+        var idx = line.startIndex
+        while idx < line.endIndex && col < count {
+            let ch = line[idx]
+            if ch == " " {
+                col += 1
+                idx = line.index(after: idx)
+            } else if ch == "\t" {
+                let tabWidth = 4 - (col % 4)
+                if col + tabWidth > count {
+                    // Partial tab: emit the overflow as spaces.
+                    let overflow = (col + tabWidth) - count
+                    col += tabWidth
+                    idx = line.index(after: idx)
+                    return String(repeating: " ", count: overflow) + line[idx...]
+                }
+                col += tabWidth
+                idx = line.index(after: idx)
+            } else {
+                break
+            }
+        }
+        return String(line[idx...])
+    }
+
+    /// Find the deepest existing parsed item whose content column is
+    /// ≤ `indent`. Returns nil if no item is a valid owner. "Deepest"
+    /// means the item most recently pushed onto the list, which is
+    /// what makes nested-list continuation work (continuations attach
+    /// to the innermost container that can host them).
+    private static func deepestOwner(in parsed: [ParsedListLine], forIndent indent: Int) -> Int? {
+        var bestIdx: Int? = nil
+        var bestCol = -1
+        for (idx, p) in parsed.enumerated() {
+            let col = p.indent.count + p.marker.count + p.afterMarker.count
+            if col <= indent && col > bestCol {
+                bestIdx = idx
+                bestCol = col
+            }
+        }
+        return bestIdx
     }
 
     // MARK: - Link reference definition collection
