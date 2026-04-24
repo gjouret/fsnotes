@@ -290,4 +290,103 @@ final class EditContractInverseTests: XCTestCase {
         XCTAssertNil(result.contract,
                      "annotateInverse on a nil contract must not materialize one")
     }
+
+    // MARK: - Structural-primitive round-trip coverage (Tier B)
+
+    /// Every Tier B primitive the brief enumerates must round-trip
+    /// through `buildInverse → applyInverse`. These tests are cheap —
+    /// we're verifying the generic tier picker localizes correctly
+    /// for each primitive's diff shape.
+
+    func test_toggleInlineTrait_bold_inverseRestoresPriorDoc() throws {
+        let before = project("hello world")
+        let priorDoc = before.document
+        let result = try EditingOps.toggleInlineTrait(
+            .bold,
+            range: NSRange(location: 0, length: 5),
+            in: before
+        )
+        let strategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: priorDoc,
+            newDoc: result.newProjection.document
+        )
+        let recovered = strategy.applyInverse(to: result.newProjection.document)
+        XCTAssertEqual(recovered, priorDoc,
+                       "toggleInlineTrait(bold) must round-trip")
+    }
+
+    func test_toggleBlockquote_inverseRestoresPriorDoc() throws {
+        let before = project("a paragraph\n\nanother")
+        let priorDoc = before.document
+        let result = try EditingOps.toggleBlockquote(at: 2, in: before)
+        let strategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: priorDoc,
+            newDoc: result.newProjection.document
+        )
+        let recovered = strategy.applyInverse(to: result.newProjection.document)
+        XCTAssertEqual(recovered, priorDoc,
+                       "toggleBlockquote must round-trip")
+    }
+
+    func test_insertHorizontalRule_inverseRestoresPriorDoc() throws {
+        let before = project("Top\n\nBottom")
+        let priorDoc = before.document
+        let result = try EditingOps.insertHorizontalRule(at: 3, in: before)
+        let strategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: priorDoc,
+            newDoc: result.newProjection.document
+        )
+        let recovered = strategy.applyInverse(to: result.newProjection.document)
+        XCTAssertEqual(recovered, priorDoc,
+                       "insertHorizontalRule must round-trip")
+    }
+
+    func test_toggleList_inverseRestoresPriorDoc() throws {
+        let before = project("First\n\nSecond")
+        let priorDoc = before.document
+        let result = try EditingOps.toggleList(at: 2, in: before)
+        let strategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: priorDoc,
+            newDoc: result.newProjection.document
+        )
+        let recovered = strategy.applyInverse(to: result.newProjection.document)
+        XCTAssertEqual(recovered, priorDoc,
+                       "toggleList must round-trip")
+    }
+
+    func test_crossBlockDelete_merge_inverseRestoresPriorDoc() throws {
+        let before = project("First\n\nSecond")
+        let priorDoc = before.document
+        // Delete spans the inter-block break — triggers the
+        // merge-adjacent path.
+        let result = try EditingOps.delete(
+            range: NSRange(location: 5, length: 1),
+            in: before
+        )
+        let strategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: priorDoc,
+            newDoc: result.newProjection.document
+        )
+        let recovered = strategy.applyInverse(to: result.newProjection.document)
+        XCTAssertEqual(recovered, priorDoc,
+                       "Cross-block merge delete must round-trip")
+    }
+
+    func test_setImageSize_inverseRestoresPriorDoc() throws {
+        let before = project("![alt](x.png)")
+        let priorDoc = before.document
+        let result = try EditingOps.setImageSize(
+            blockIndex: 0,
+            inlinePath: [0],
+            newWidth: 200,
+            in: before
+        )
+        let strategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: priorDoc,
+            newDoc: result.newProjection.document
+        )
+        let recovered = strategy.applyInverse(to: result.newProjection.document)
+        XCTAssertEqual(recovered, priorDoc,
+                       "setImageSize must round-trip")
+    }
 }
