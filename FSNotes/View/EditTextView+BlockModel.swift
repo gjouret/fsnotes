@@ -907,17 +907,29 @@ extension EditTextView {
         // single surviving site outside `applyDocumentEdit` scope
         // (commit 6 grep-gate enforces). The legacy
         // `restoreBlockModelState` closure path is retired below.
-        let postCursor = NSRange(location: cursorPos, length: selLen)
-        let coalesce = coalesceClass(forActionName: actionName)
-        let entry = makeJournalEntry(
-            result: result,
-            priorDoc: oldProjection.document,
-            cursorBefore: oldCursorRange,
-            cursorAfter: postCursor,
-            actionName: actionName,
-            coalesce: coalesce
-        )
-        undoJournal.record(entry, on: self)
+        //
+        // Phase 5f ↔ 5e composition boundary (brief §5): while an IME
+        // composition is active, marked-text writes land directly in
+        // storage via `setMarkedText`; we must NOT journal those
+        // transient edits. On commit, the editor's
+        // `unmarkText`/`insertText` path builds exactly ONE
+        // `EditContract.replace` and routes it through this function
+        // — at which point `compositionSession.isActive` has already
+        // flipped to false and the record proceeds normally. On
+        // abort, no `applyEditResultWithUndo` call is made at all.
+        if !compositionSession.isActive {
+            let postCursor = NSRange(location: cursorPos, length: selLen)
+            let coalesce = coalesceClass(forActionName: actionName)
+            let entry = makeJournalEntry(
+                result: result,
+                priorDoc: oldProjection.document,
+                cursorBefore: oldCursorRange,
+                cursorAfter: postCursor,
+                actionName: actionName,
+                coalesce: coalesce
+            )
+            undoJournal.record(entry, on: self)
+        }
 
         // Restore pending inline traits. Any selectionDidChange that
         // fired during the edit may have cleared them (consume-once
