@@ -55,6 +55,16 @@ public enum MarkdownSerializer {
     private static func serialize(block: Block) -> String {
         switch block {
         case .codeBlock(_, let content, let fence):
+            // Unfenced (indented) code block: fence.length == 0 is
+            // a sentinel from the parser for CommonMark 4.4 indented
+            // code blocks. Re-emit each content line prefixed with 4
+            // spaces to round-trip.
+            if fence.length == 0 {
+                let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+                return lines.map { line in
+                    line.isEmpty ? "" : "    " + String(line)
+                }.joined(separator: "\n")
+            }
             let fenceChar: Character = fence.character == .backtick ? "`" : "~"
             let fenceString = String(repeating: String(fenceChar), count: fence.length)
             let openLine = fenceString + fence.infoRaw

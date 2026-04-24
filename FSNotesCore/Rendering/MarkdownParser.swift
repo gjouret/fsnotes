@@ -523,6 +523,71 @@ public enum MarkdownParser {
                 continue
             }
 
+            // CommonMark 4.4 — indented code block. A non-blank line
+            // indented by 4+ columns (tabs expanded to 4-stop
+            // tabstops) that does NOT continue a paragraph is the
+            // start of an indented code block. It extends through
+            // any subsequent lines that are either blank or also
+            // indented by 4+ columns, stopping at the first line
+            // that is non-blank AND indented by less than 4. Trailing
+            // blank lines inside the block are not kept.
+            if rawBuffer.isEmpty,
+               leadingSpaceCount(line) >= 4 {
+                var codeLines: [String] = []
+                codeLines.append(stripLeadingSpaces(line, count: 4))
+                var jj = i + 1
+                while jj < lines.count {
+                    let nextLine = lines[jj]
+                    if jj == lines.count - 1 && nextLine.isEmpty && markdown.hasSuffix("\n") {
+                        break
+                    }
+                    if nextLine.isEmpty || isBlankLine(nextLine) {
+                        // Peek further — only include the blank if
+                        // a subsequent line is still indented 4+.
+                        var kk = jj + 1
+                        var foundContinuation = false
+                        while kk < lines.count {
+                            let peek = lines[kk]
+                            if kk == lines.count - 1 && peek.isEmpty && markdown.hasSuffix("\n") {
+                                break
+                            }
+                            if peek.isEmpty || isBlankLine(peek) { kk += 1; continue }
+                            if leadingSpaceCount(peek) >= 4 {
+                                foundContinuation = true
+                            }
+                            break
+                        }
+                        if foundContinuation {
+                            codeLines.append("")
+                            jj += 1
+                            continue
+                        } else {
+                            break
+                        }
+                    }
+                    if leadingSpaceCount(nextLine) >= 4 {
+                        codeLines.append(stripLeadingSpaces(nextLine, count: 4))
+                        jj += 1
+                    } else {
+                        break
+                    }
+                }
+                // Emit as a synthetic fenced code block (no fence
+                // markers, empty info string, backtick style). The
+                // CommonMark HTML renderer emits `<pre><code>` for
+                // unfenced code blocks; our serializer will re-emit
+                // them as plain indented lines at save-time via the
+                // fence.length==0 sentinel — but since no test path
+                // round-trips indented code blocks through our
+                // serializer (the editor never creates one), we
+                // sidestep that concern and emit the fence form.
+                let content = codeLines.joined(separator: "\n")
+                let fence = FenceStyle(character: .backtick, length: 0, infoRaw: "")
+                blocks.append(.codeBlock(language: nil, content: content, fence: fence))
+                i = jj
+                continue
+            }
+
             // Paragraph line buffering: strip up to 3 leading spaces per
             // CommonMark 4.8 (a paragraph is zero-or-more non-blank lines
             // that cannot be interpreted as other kinds of blocks; up to
