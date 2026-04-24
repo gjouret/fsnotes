@@ -1149,6 +1149,97 @@ Rejected alternatives: hidden fences via `foregroundColor = .clear` + negative k
 
 ---
 
+## Phase 9 — Compiler-warning cleanup (Tier 1–3)
+
+### Goal
+
+Bring the build from **209 compiler warnings** (baseline at commit `e1e700d`, ARM64 Debug macOS) down to **under 20**, a level where any new warning becomes a signal rather than being lost in noise. Gate the residual against regressions via a Rule 7 grep-gate pattern + a `.build-warning-baseline` file.
+
+### Motivation
+
+The anomaly-detection step in `xcode-build-deploy` (`diff build.log.prev build.log | rg '(error|warning):'`) is where real regressions should surface first. Today it surfaces dozens of already-known deprecations every build — real signal gets buried. macOS 26 and Xcode 17 have begun promoting some previously-soft deprecations to hard errors, so sitting on the backlog increases the chance of a future toolchain update breaking the build outright.
+
+### Breakdown (actual count as of commit `e1e700d`)
+
+| Tier | Category | Count | Source | Effort |
+|---|---|---|---|---|
+| 1 | Unused locals, dead patterns, `var`→`let`, unused `immutable value` | ~40 | Our code | ~1 hr mechanical |
+| 2 | UTType migration (`kUTTypeFileURL`, `UTTypeConformsTo`, `UTTypeCopyPreferredTagWithClass` → `UTType` class) | ~27 | `URL+.swift` (26), `UTI.swift` (5), misc | ~1 day |
+| 3 | `NSKeyedUnarchiver.unarchiveObject(with:)` → `unarchivedObject(ofClass:from:)`; `NSWorkspace.open(_:options:configuration:)` → modern URL API; `NSColor.current` → `performAsCurrentDrawingAppearance:` / `currentDrawingAppearance` | ~15 | `EditTextView+Clipboard.swift`, `EditTextView+DragOperation.swift`, `ViewController+Web.swift`, `AppDelegate.swift`, `OutlineHeaderView.swift`, `PreferencesGitViewController.swift` | ~half day |
+| 4 | Third-party Pods (`libcmark_gfm`, `MASShortcut`, `SSZipArchive`) | ~100 | `Pods/*` | **DEFERRED** — fork-and-patch cost exceeds value; silence via Pod target warning flags |
+
+In scope: **Tiers 1–3 only**. Tier 4 (third-party Pods, ~100 warnings) stays deferred — the right mitigation is to silence the warning bucket at the Pod target level via `OTHER_CFLAGS = -Wno-strict-prototypes -Wno-deprecated-declarations` (or equivalent), which is a separate short task that can ship inside slice 9.a if cheap.
+
+Plus ~20 miscellaneous "other" warnings (6 SF Symbol renames in `Main.storyboard`, 3 AppIntents framework-missing notices, assorted Swift semantic hints) — absorb into the relevant slice or ignore if cosmetic-only.
+
+### Slices
+
+**9.a — Tier 1 mechanical sweep (~40 warnings + ~100 Pod-side if silenced).**
+- Rename unused `let note` / `let header` → `let _` at flagged sites (`EditTextView+Formatting.swift:41`, `EditTextView+BlockModel.swift:1827`, `AIChatPanelView.swift:311`, etc.)
+- Change never-mutated `var` → `let` at 6 sites
+- Remove 10 "initialization of immutable value never used" dead locals in `InlinePDFView.swift:459/500`, `EditorViewController.swift:808`, etc.
+- Fix 2 nil-coalescing-on-non-optional `??` operators (`EditTextView+BlockModel.swift:1804`)
+- Kill 2 "sub-pattern didn't bind any variables" pattern warnings and 2 "case already handled by previous patterns" dead branches
+- Silence `-Wstrict-prototypes` for the `libcmark_gfm` Pod target via `OTHER_CFLAGS = -Wno-strict-prototypes` — drops 66 Pod-side warnings with zero code change
+- One commit or several; no test changes; full suite stays green (1458+/0). Pure hygiene, trivial revert.
+
+**9.b — Tier 2 UTType migration (~27 warnings).**
+- `FSNotesCore/Extensions/URL+.swift` (26 sites) — concentrated hotspot. Replace `kUTTypeFileURL` → `UTType.fileURL`, `UTTypeConformsTo(a, b)` → `a.conforms(to: b)`, `UTTypeCopyPreferredTagWithClass(..., kUTTagClassMIMEType)` → `uti.preferredMIMEType`, `UTTypeCopyPreferredTagWithClass(..., kUTTagClassFilenameExtension)` → `uti.preferredFilenameExtension`.
+- `FSNotesCore/Extensions/UTI.swift` (5 sites) — same treatment.
+- Touch points use `CoreServices`-era C APIs on `CFString`; `UniformTypeIdentifiers` framework (macOS 11.0+) is the modern replacement. FSNotes++'s deployment target is macOS 13.0, so the migration is unconstrained.
+- **Regression risk:** UTType conformance behaviour has subtle differences (tag-class lookups may return different canonical values for edge types). Add a data-driven test that exercises the migrated sites against a corpus of extensions (`md`, `textbundle`, `png`, `pdf`, `mov`, `mp4`, `svg`, `webp`) and asserts MIME/filename-extension resolutions match pre-migration behaviour. Keep the test tiny — one `XCTestCase` class with a table.
+
+**9.c — Tier 3 AppKit API modernization (~15 warnings).**
+- `NSKeyedUnarchiver.unarchiveObject(with:)` at 4 sites (`EditTextView+Clipboard.swift:129/263`, `EditTextView+DragOperation.swift:96`, `ViewController+Web.swift:322`) → `NSKeyedUnarchiver.unarchivedObject(ofClass:from:)`. Apple's new API requires declaring the expected top-level class explicitly — a genuine API improvement.
+- `NSWorkspace.open(_:options:configuration:)` (`EditTextView+Input.swift:178`) → `openURL:configuration:completionHandler:`.
+- `NSColor.current` (`AppDelegate.swift:197`, `OutlineHeaderView.swift:38`, misc) → `performAsCurrentDrawingAppearance:` for drawing blocks; `currentDrawingAppearance` for read-only accessors.
+- `NSWorkspace.openFile(_:withApplication:)` (`PreferencesGitViewController.swift:81`) → modern open API.
+- `allowedFileTypes` (`PreferencesEditorViewController.swift:206`) → `allowedContentTypes` (takes `[UTType]`; depends on 9.b landing first).
+- **Regression risk:** clipboard and drag paths touch real user data. Add round-trip tests for each migrated API — serialise + deserialise + assert equality against known fixtures. No manual dogfood required (tests cover every changed surface).
+
+**9.d — Grep-gate + warning-budget docs.**
+- New `scripts/rule7-gate.sh` banned patterns:
+  - `kUTType[A-Z]` (re-introduction of deprecated UTI tag APIs)
+  - `NSKeyedUnarchiver\.unarchiveObject` (pre-10.14 API)
+  - `NSColor\.current\b` (not followed by `DrawingAppearance`)
+  - `NSWorkspace.*openFile\(.*withApplication:`
+  - `allowedFileTypes =` on panels (UTType-era migration)
+- Update `CLAUDE.md` "Build Environment" section with a warning-budget line: any commit that pushes `rg -c '\bwarning:' /tmp/xcode-build.log` above the committed baseline is a regression.
+- Add a `.build-warning-baseline` file in repo root; `xcode-build-deploy` skill learns to diff against it as part of the anomaly scan.
+
+### Exit criteria
+
+- `rg -c '\bwarning:' /tmp/xcode-build.log` returns **< 20** (baseline was 209).
+- All pre-existing tests pass; new UTType + clipboard-serialisation tests pass.
+- Rule 7 gate clean on the new patterns.
+- `.build-warning-baseline` committed; `xcode-build-deploy` skill documents the baseline check.
+- Third-party Pod warnings (Tier 4) silenced at the Pod target level OR explicitly excluded from the baseline count.
+
+### Estimate
+
+- 9.a: 1–2 hrs (mechanical, parallelizable).
+- 9.b: ~1 day (UTType migration + regression tests).
+- 9.c: ~half day (API migration + round-trip tests).
+- 9.d: ~1 hr (gate + doc).
+
+**Total: ~2 days focused work, ~4 days calendar with review.**
+
+### Rollback
+
+Per-slice revertible. 9.a is pure hygiene — trivial revert. 9.b / 9.c have regression tests; if a test catches a behaviour change post-migration, revert that specific site and re-plan.
+
+### Non-goals
+
+- Not closing every warning. Third-party Pods (Tier 4, ~100) stay silenced-at-target, not fixed at source.
+- Not touching the 6 SF Symbol deprecation warnings in `Main.storyboard` — cosmetic-only, won't break anything until Apple actually removes the deprecated names.
+- Not introducing new Swift concurrency refactors to silence "sending '…' risks data race" warnings (if they appear) — those are structural and belong in a dedicated phase, not a cleanup sweep.
+
+### Checkpoints
+
+User reviews after each slice. 9.a can land without review (pure hygiene). 9.b and 9.c warrant review before merging because the behaviour-change risk is non-zero even with test coverage.
+
+---
+
 ## Reuse of existing functions / utilities
 
 - `makeFullPipelineEditor()` — currently in Tests/; absorbed into `EditorHarness.init`
