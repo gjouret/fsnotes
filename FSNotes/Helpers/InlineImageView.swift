@@ -10,11 +10,16 @@
 //  `InlineImageView` (an `NSImageView` subclass) to TextKit 2. TK2 then
 //  owns the view's lifecycle, position, and viewport visibility.
 //
-//  This file covers Slices 1–4 of the image-resize TK2 migration:
+//  This file covers Slices 1–4 of the image-resize TK2 migration plus
+//  Phase 2f.5 (live invalidation):
 //    - Slice 1: minimal display
 //    - Slice 2: hit-testing + size measurement plumbing
 //    - Slice 3: click-to-select and handle-overlay drawing
-//    - Slice 4: drag-to-resize with width-hint commit (this slice)
+//    - Slice 4: drag-to-resize with width-hint commit
+//    - Phase 2f.5: live TK2 layout invalidation mid-drag so surrounding
+//      text reflows in real time while the user drags a corner handle
+//      (previously the view frame grew but the surrounding line
+//      geometry only updated on mouseUp — visible "text jumps" effect).
 //
 //  The TK1 path in `ImageAttachmentHydrator.swift` (via
 //  `FSNTextAttachmentCell`) is untouched by this file and remains in
@@ -96,7 +101,61 @@ public final class ImageAttachmentViewProvider: NSTextAttachmentViewProvider {
             guard let self = self, let imageView = imageView else { return }
             self.commitResize(from: imageView, newWidth: newWidth)
         }
+        // Phase 2f.5: live mid-drag invalidation. As the user drags a
+        // corner handle, the view's frame grows (see
+        // `InlineImageView.mouseDragged`), but the surrounding line
+        // fragments won't reflow until something invalidates layout on
+        // the hosting `NSTextLayoutManager`. `tracksTextAttachmentViewBounds`
+        // above nudges TK2 when the view's bounds observably change,
+        // but the nudge is not guaranteed to fire on every drag step,
+        // and TK2 still reads `attachment.bounds` (not the view frame)
+        // for line-fragment sizing. Update both explicitly on every
+        // drag tick so text reflow is immediate.
+        imageView.onResizeLiveUpdate = { [weak self] newSize in
+            guard let self = self else { return }
+            Self.applyLiveResize(
+                attachment: self.textAttachment,
+                newSize: newSize,
+                textLayoutManager: self.textLayoutManager,
+                location: self.location
+            )
+        }
         self.view = imageView
+    }
+
+    /// Pure helper extracted for Phase 2f.5 unit-testability. Given a
+    /// live-drag tick (new proposed view size) and the TK2 triple
+    /// (attachment, layout manager, location), update
+    /// `attachment.bounds` and invalidate layout for the attachment's
+    /// single-character range so the hosting line fragment re-measures.
+    ///
+    /// No-op if any input is missing or the location → NSTextRange
+    /// conversion fails (the document may have mutated between the
+    /// drag start and this tick). Returns `true` iff invalidation was
+    /// actually issued — the boolean is for test assertions, callers
+    /// don't need to read it.
+    @discardableResult
+    public static func applyLiveResize(
+        attachment: NSTextAttachment?,
+        newSize: NSSize,
+        textLayoutManager: NSTextLayoutManager?,
+        location: NSTextLocation?
+    ) -> Bool {
+        guard let attachment = attachment else { return false }
+        // Update attachment bounds so TK2 line-fragment sizing sees
+        // the new dimensions. The bounds origin is kept at .zero — TK2
+        // positions the attachment via the view-provider, not via a
+        // non-zero bounds origin.
+        attachment.bounds = NSRect(origin: .zero, size: newSize)
+
+        guard let tlm = textLayoutManager,
+              let tcs = tlm.textContentManager as? NSTextContentStorage,
+              let loc = location,
+              let endLoc = tcs.location(loc, offsetBy: 1),
+              let range = NSTextRange(location: loc, end: endLoc)
+        else { return false }
+        tlm.invalidateLayout(for: range)
+        return true
     }
 
     /// Resolve the hosting `EditTextView` + storage character index for
@@ -156,6 +215,16 @@ public class InlineImageView: NSImageView {
     /// `ImageAttachmentViewProvider.loadView()` wires this to route
     /// through `EditTextView.commitImageResize`.
     public var onResizeCommit: ((CGFloat) -> Void)?
+
+    /// Phase 2f.5: callback fired on every `mouseDragged` tick while a
+    /// resize is in progress. The argument is the proposed new view
+    /// size (width, height). `ImageAttachmentViewProvider.loadView()`
+    /// wires this to `applyLiveResize`, which updates
+    /// `attachment.bounds` and invalidates the hosting fragment's
+    /// layout so surrounding text reflows in real time. Without this
+    /// the view frame grows but the text around it doesn't move until
+    /// mouseUp — visible "text jumps" at commit.
+    public var onResizeLiveUpdate: ((NSSize) -> Void)?
 
     // MARK: - Drag state (Slice 4)
 
@@ -240,11 +309,19 @@ public class InlineImageView: NSImageView {
         // Live visual update. No EditingOps call here — that runs once
         // on mouseUp. Resizing the frame re-triggers draw(...) which
         // repositions the handle overlay to match.
+        let newSize = NSSize(width: newWidth, height: newHeight)
         frame = NSRect(
             x: frame.origin.x, y: frame.origin.y,
-            width: newWidth, height: newHeight
+            width: newSize.width, height: newSize.height
         )
         needsDisplay = true
+
+        // Phase 2f.5: notify the provider so it can update
+        // `attachment.bounds` and invalidate the hosting TK2 fragment.
+        // This keeps surrounding line fragments in sync with the
+        // live-resizing image — without it, text reflow only happens
+        // at commit time and the user sees a visible "jump".
+        onResizeLiveUpdate?(newSize)
     }
 
     public override func mouseUp(with event: NSEvent) {
