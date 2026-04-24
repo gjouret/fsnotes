@@ -578,7 +578,21 @@ public enum MarkdownParser {
                             break
                         }
                         if foundContinuation {
-                            codeLines.append("")
+                            // CommonMark §4.4: a whitespace-only line
+                            // inside an indented code block keeps its
+                            // whitespace beyond the 4-column dedent.
+                            // Spec #112:
+                            //     chunk1
+                            //           <- six spaces
+                            //       chunk2
+                            // yields `chunk1\n  \n  chunk2` — the
+                            // six-space line becomes "  " (2 spaces),
+                            // not an empty line.
+                            if leadingSpaceCount(nextLine) >= 4 {
+                                codeLines.append(stripLeadingSpaces(nextLine, count: 4))
+                            } else {
+                                codeLines.append("")
+                            }
                             jj += 1
                             continue
                         } else {
