@@ -597,7 +597,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         if editedMask.contains(.editedCharacters) &&
            blockModelActive &&
            !sourceRendererActive &&
-           !StorageWriteGuard.isAnyAuthorized {
+           !StorageWriteGuard.isAnyAuthorized &&
+           !compositionAllows(editedRange: editedRange) {
             let symbols = Thread.callStackSymbols.prefix(12).joined(separator: "\n  ")
             assertionFailure("""
                 Phase 5a violation: NSTextContentStorage character mutation \
@@ -626,6 +627,35 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 textView.needsDisplay = true
             }
         }
+    }
+
+    /// Phase 5e — sanctioned exemption to the 5a single-write-path
+    /// rule. Returns true when an active IME composition is in flight
+    /// AND `editedRange` lies entirely inside the session's
+    /// `markedRange`. Marked-text writes by AppKit's default
+    /// `NSTextInputClient` machinery go through this path: they bypass
+    /// `shouldChangeText` and `applyDocumentEdit`, but they are
+    /// permitted because on commit (`unmarkText` / `insertText`
+    /// targeting the marked range) the whole composed run is folded
+    /// back into `Document` as one authorized `EditContract`.
+    ///
+    /// Reads `editor?.compositionSession` — the per-editor state
+    /// stored via `objc_setAssociatedObject`. In tests or at any
+    /// moment where the editor reference is nil, returns `false` (no
+    /// exemption), matching the assertion's previous behavior.
+    ///
+    /// The exemption is NOT wrapped in `StorageWriteGuard`: composition
+    /// is not "legacy" — it is a permanent, documented architectural
+    /// exemption (per Phase 5e brief §3). Body delegates to the pure
+    /// predicate `compositionAllowsEdit(editedRange:session:)` so
+    /// unit tests can exercise the policy without an editor.
+    private func compositionAllows(editedRange: NSRange) -> Bool {
+        guard let editor = self.editor else { return false }
+        guard editor.compositionSession.isActive else { return false }
+        return compositionAllowsEdit(
+            editedRange: editedRange,
+            session: editor.compositionSession
+        )
     }
 #endif
 

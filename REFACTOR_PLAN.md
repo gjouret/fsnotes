@@ -791,7 +791,25 @@ Preserve marked-text (uncommitted CJK / dead-key / emoji-picker) input without v
 ### Rollback
 Atomic. The 5a assertion gate is the one externally visible change; reverting the composition-session code restores pre-5e behavior (which is "IME broken," so rollback means reverting 5a too or accepting broken IME temporarily — document this in the rollback checklist).
 
-**5f. Undo / Redo via Document journaling**
+**5f. Undo / Redo via Document journaling** ✅ SHIPPED (2026-04-24)
+
+Delivered across 6 commits (1, 3–6 landed as `a5b8fcf`, `e7b0ef9`,
+`119edca`, `828869e`, `2c9e337`; commit 2's Tier B tests absorbed
+into 5e's `302c9e1`). Six commits total including absorbed content.
+
+- `EditContract.InverseStrategy` (3 tiers) + `buildInverse` generic
+  picker at `FSNotesCore/Rendering/EditContract.swift`.
+- `UndoJournal` type with coalescing FSM at
+  `FSNotesCore/Rendering/UndoJournal.swift` (485 LoC).
+- Wire-in retires `restoreBlockModelState` closure path; single
+  surviving `NSUndoManager.registerUndo` call lives in
+  `UndoJournal.record`. Undo / redo replay through
+  `DocumentEditApplier.applyDocumentEdit`.
+- 5e composition boundary: `applyEditResultWithUndo` gates
+  `undoJournal.record` on `compositionSession.isActive == false`.
+- 8 legacy `begin/endUndoGrouping` pairs retired.
+- 38 unit tests (22 inverse + 16 journal). Memory cap property test
+  passes for 10K entries.
 
 ### Goal
 `NSUndoManager` operates on `Document` snapshots or inverse `EditContract`s, not on `NSTextStorage`. Every `EditingOps` primitive already emits an `EditContract` (landed in Phase 1); undo captures the before-state; `NSUndoManager` invokes replay via `applyDocumentEdit` using the captured state. Redo fidelity includes cursor + selection.

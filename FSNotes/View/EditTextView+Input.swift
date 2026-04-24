@@ -185,6 +185,19 @@ extension EditTextView {
     }
 
     override func shouldChangeText(in range: NSRange, replacementString: String?) -> Bool {
+        // Phase 5e: during `setMarkedText`, AppKit routes its storage
+        // write through `shouldChangeText` → `insertText`. Do NOT
+        // fold marked-text writes into the block model — they are
+        // transient composition state that gets committed as ONE
+        // EditContract in `commitCompositionSession`. Returning true
+        // lets super do its default marked-text storage write; the
+        // 5a DEBUG assertion's `compositionAllows` clause permits
+        // the write because the session is active and the range is
+        // inside `markedRange`.
+        if setMarkedTextInFlight {
+            return super.shouldChangeText(in: range, replacementString: replacementString)
+        }
+
         guard let note = self.note else {
             return super.shouldChangeText(in: range, replacementString: replacementString)
         }
@@ -399,10 +412,49 @@ extension EditTextView {
     ) {
         let markedString = (string as? NSAttributedString)?.string
             ?? (string as? String) ?? ""
+        let markedUTF16Length = (markedString as NSString).length
 
         // Entry path: no active session, non-empty marked string.
         if !compositionSession.isActive && !markedString.isEmpty {
             beginCompositionSession(replacementRange: replacementRange)
+        }
+
+        // Capture the start location of the eventual write BEFORE super
+        // runs. Rationale: `markedRange()` is unreliable in offscreen
+        // test contexts (returns NSNotFound) and in some TK2 layouts;
+        // we track the range ourselves so commit/abort have an
+        // authoritative range to revert. The start location is the
+        // session's markedRange.location (held stable across updates),
+        // or the current selection if session just started with a
+        // `{NSNotFound, 0}` replacementRange.
+        let sessionStart: Int
+        if compositionSession.isActive {
+            sessionStart = compositionSession.markedRange.location
+        } else {
+            // About to become inactive — empty marked string while
+            // already inactive; nothing to track.
+            sessionStart = selectedRange.location
+        }
+
+        // Re-entrance guard: AppKit's default `NSTextView.setMarkedText`
+        // may internally call `insertText(_:replacementRange:)` to do
+        // the actual storage write. Our `insertText` override must not
+        // interpret that internal call as a commit.
+        let priorFlag = setMarkedTextInFlight
+        setMarkedTextInFlight = true
+        defer { setMarkedTextInFlight = priorFlag }
+
+        // Expand `session.markedRange` to cover the full run super is
+        // about to write, so the 5a `compositionAllows` exemption
+        // permits the intermediate storage writes that fire during
+        // super's internal insertText. The length reflects what
+        // super will leave in storage; location stays at sessionStart.
+        if compositionSession.isActive {
+            var session = compositionSession
+            session.markedRange = NSRange(
+                location: sessionStart, length: markedUTF16Length
+            )
+            compositionSession = session
         }
 
         super.setMarkedText(
@@ -410,54 +462,102 @@ extension EditTextView {
             replacementRange: replacementRange
         )
 
-        // Refresh the recorded marked range to match what AppKit actually
-        // wrote. `super` may have normalized `replacementRange` (e.g.
-        // `{NSNotFound, 0}` → current selection) before committing it to
-        // storage; `markedRange()` reports the authoritative post-call
-        // range.
+        // Refresh the recorded marked range. We compute the range
+        // ourselves (`sessionStart` + `markedUTF16Length`) rather than
+        // reading `markedRange()`:
+        //
+        //   - In the live app, NSTextView has already performed the
+        //     storage replace via its NSTextInputClient plumbing
+        //     before returning from super. Our computed range matches
+        //     what was just written.
+        //
+        //   - In offscreen test contexts, `markedRange()` returns
+        //     unreliable values (NSNotFound, or a stale {0, 0}) because
+        //     the NSTextInputContext is not hooked up. Computing the
+        //     range ourselves keeps the session authoritative without
+        //     requiring a real input context.
+        //
+        // The anchor location for a composition stays stable across
+        // updates (`sessionStart` = the location captured at session
+        // entry); only the length changes as the user refines the
+        // marked run.
         if compositionSession.isActive {
             var session = compositionSession
-            session.markedRange = markedRange()
+            session.markedRange = NSRange(
+                location: sessionStart, length: markedUTF16Length
+            )
             compositionSession = session
         }
     }
 
     /// Called by AppKit when the user commits the marked run (return /
     /// space / candidate click / non-accent key after dead-key, etc.).
+    /// The committed final characters are already in storage at
+    /// `session.markedRange` after `super.unmarkText()` returns.
     ///
-    /// Commit 2 stub: delegates to `super` and clears the session. The
-    /// session-clear path will be replaced in commit 4 with the
-    /// `applyEditResultWithUndo`-backed commit that produces one
-    /// `EditContract` for the final text.
+    /// Flow:
+    ///   1. Capture `session` (so we can read its markedRange after
+    ///      super potentially mutates `markedRange()`).
+    ///   2. Read `finalString` = storage substring at markedRange.
+    ///   3. Call super (unmarks — keeps the committed characters as
+    ///      plain text).
+    ///   4. Route through the canonical commit path: revert storage
+    ///      to the pre-marked state, clear the session, then apply
+    ///      the committed text via `EditingOps.insert` +
+    ///      `applyEditResultWithUndo` — one atomic undo step.
     override func unmarkText() {
-        if compositionSession.isActive {
+        guard compositionSession.isActive else {
             super.unmarkText()
-            endCompositionSessionStubbed()
-        } else {
-            super.unmarkText()
+            return
         }
+        let session = compositionSession
+        // Capture finalString BEFORE super runs — super's behavior is
+        // implementation-defined, but in practice it leaves the marked
+        // characters in storage and clears only the "marked" flag.
+        let finalString = readFinalString(at: session.markedRange)
+        super.unmarkText()
+        commitCompositionSession(session: session, finalString: finalString)
     }
 
-    /// Called by AppKit for the standard typing path AND as one of the
-    /// commit entry points for composition (when the IME delivers a
-    /// finalized string that should replace the marked run).
+    /// Called by AppKit for the standard typing path AND as the
+    /// commit entry point when the IME delivers a finalized string
+    /// that should replace the marked run (candidate click, dead-key
+    /// + next letter).
     ///
     /// While composition is active with a `replacementRange` targeting
     /// the marked range (or `{NSNotFound, 0}`, per NSTextInputClient
-    /// convention for "use the current marked range"), treat this as a
-    /// commit and delegate to `unmarkText`-equivalent flow. Otherwise
-    /// fall through to `super` — the normal typing path.
+    /// convention for "use the current marked range"), treat this as
+    /// a commit: finalString comes from the `string` argument, not
+    /// from storage. We intercept BEFORE super runs so AppKit doesn't
+    /// do its own marked-text-replace storage write (that would trip
+    /// 5a once the session is cleared below).
     ///
-    /// Commit 2 stub: delegates to `super`. Commit 4 routes the commit
-    /// path through `applyEditResultWithUndo`.
+    /// Normal typing (no active session) flows unchanged through super.
     override func insertText(_ string: Any, replacementRange: NSRange) {
+        // Re-entrance: AppKit's `setMarkedText` may internally call
+        // `insertText` to perform the marked-text storage write.
+        // During setMarkedText the `setMarkedTextInFlight` flag is
+        // set; pass through to super so it can do its work without
+        // us mistakenly interpreting the write as a commit.
+        if setMarkedTextInFlight {
+            super.insertText(string, replacementRange: replacementRange)
+            return
+        }
+
         if compositionSession.isActive {
             let targetsMarkedRange =
                 replacementRange.location == NSNotFound ||
                 NSEqualRanges(replacementRange, compositionSession.markedRange)
             if targetsMarkedRange {
-                super.insertText(string, replacementRange: replacementRange)
-                endCompositionSessionStubbed()
+                let session = compositionSession
+                let finalString = (string as? NSAttributedString)?.string
+                    ?? (string as? String) ?? ""
+                // Commit path — build the final edit ourselves; don't
+                // let super write the final characters into storage
+                // directly. `commitCompositionSession` reverts the
+                // marked-run storage and routes through the canonical
+                // 5a-authorized path.
+                commitCompositionSession(session: session, finalString: finalString)
                 return
             }
         }
@@ -507,12 +607,97 @@ extension EditTextView {
         )
     }
 
-    /// Commit-2 stub end-of-session. Clears `isActive` and resets the
-    /// session to `.inactive`. Commit 4 replaces this with the full
-    /// `applyEditResultWithUndo`-backed commit path that builds one
-    /// `EditContract` from the final string and drains `pendingEdits`.
-    private func endCompositionSessionStubbed() {
+    /// Read the final string from storage at `range`. Returns the
+    /// empty string when the range is out-of-bounds or storage is
+    /// torn down.
+    private func readFinalString(at range: NSRange) -> String {
+        guard let storage = textStorage else { return "" }
+        let end = range.location + range.length
+        guard range.location >= 0, end <= storage.length else { return "" }
+        if range.length == 0 { return "" }
+        return (storage.string as NSString).substring(with: range)
+    }
+
+    /// End-of-session canonical commit.
+    ///
+    /// Steps:
+    ///   1. Revert the marked-run storage back to empty at
+    ///      `session.markedRange`, so `NSTextContentStorage` matches
+    ///      `documentProjection` (which never saw the marked updates
+    ///      — Document is still in its pre-composition state).
+    ///   2. Clear the composition session (both `compositionSession`
+    ///      and `preSessionFoldState`).
+    ///   3. If `finalString` is non-empty, route one
+    ///      `EditingOps.insert` call through `applyEditResultWithUndo`
+    ///      — the canonical Phase 5a-authorized path. One `EditContract`,
+    ///      one undo entry, one journaled edit per committed composition.
+    ///   4. Drain `session.pendingEdits` (no-op in commit 4 — the
+    ///      queue is populated only if external writers are deferred,
+    ///      which requires commit 4's applyEditResultWithUndo-entry
+    ///      guard).
+    ///
+    /// Abort case (`finalString.isEmpty`): steps 1 + 2 only. Document
+    /// is unchanged, so no undo entry is created. Matches the
+    /// "composition abort leaves no undo trace" contract in the 5e
+    /// brief §5.3.
+    private func commitCompositionSession(
+        session: CompositionSession,
+        finalString: String
+    ) {
+        guard let storage = textStorage else {
+            compositionSession = .inactive
+            preSessionFoldState = nil
+            return
+        }
+
+        let revertRange = clampedRange(session.markedRange, to: storage.length)
+        let insertLocation = revertRange.location
+
+        // Step 1: revert marked-run storage. This edit lands inside
+        // `session.markedRange` while composition is still active, so
+        // the 5a `compositionAllows` exemption permits it. We don't
+        // wrap in `StorageWriteGuard.performingLegacyStorageWrite` —
+        // this is the sanctioned exemption path, not a legacy bypass.
+        if revertRange.length > 0 {
+            storage.beginEditing()
+            storage.replaceCharacters(in: revertRange, with: "")
+            storage.endEditing()
+        }
+
+        // Step 2: clear session BEFORE the applyEditResultWithUndo
+        // call below. The canonical edit path runs under
+        // `StorageWriteGuard.performingApplyDocumentEdit` — composition
+        // must no longer be active, or the storage-writer would be
+        // "allowed twice" and the DEBUG semantics get murky.
         compositionSession = .inactive
         preSessionFoldState = nil
+
+        // Step 3: canonical commit. Empty finalString = abort;
+        // Document unchanged, no undo entry.
+        guard !finalString.isEmpty else { return }
+        guard let projection = documentProjection else {
+            bmLog("⛔ commitComposition: no projection after revert")
+            return
+        }
+
+        do {
+            let result = try EditingOps.insert(
+                finalString, at: insertLocation, in: projection
+            )
+            applyEditResultWithUndo(result, actionName: "Type")
+        } catch {
+            bmLog("⛔ commitComposition insert failed: \(error)")
+        }
+    }
+
+    /// Clamp `range` to `[0, storageLength]` so out-of-bounds input
+    /// doesn't crash `replaceCharacters`. Defensive — should not
+    /// happen under normal flow, but AppKit has been known to pass
+    /// stale ranges during view tear-down.
+    private func clampedRange(_ range: NSRange, to storageLength: Int) -> NSRange {
+        let loc = max(0, min(range.location, storageLength))
+        let maxLen = max(0, storageLength - loc)
+        let len = max(0, min(range.length, maxLen))
+        return NSRange(location: loc, length: len)
     }
 }

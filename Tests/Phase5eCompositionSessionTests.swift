@@ -153,3 +153,129 @@ final class Phase5eCompositionSessionTests: XCTestCase {
             editedRange: NSRange(location: 0, length: 6), session: session))
     }
 }
+
+// MARK: - Live editor composition flow (harness-driven)
+
+final class Phase5eCompositionFlowTests: XCTestCase {
+
+    // MARK: Session lifecycle
+
+    func test_flow_beginComposition_transitionsToActive() {
+        let harness = EditorHarness(markdown: "Hello world")
+        defer { harness.teardown() }
+        XCTAssertFalse(harness.compositionSession.isActive)
+        harness.moveCursor(to: 5)
+        harness.beginComposition(marked: "か")
+        XCTAssertTrue(harness.compositionSession.isActive)
+        XCTAssertEqual(harness.compositionSession.markedRange.location, 5)
+    }
+
+    func test_flow_updateComposition_extendsMarkedRange() {
+        let harness = EditorHarness(markdown: "ABC")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 3)
+        harness.beginComposition(marked: "か")
+        let initialLen = harness.compositionSession.markedRange.length
+        harness.updateComposition(marked: "かな")
+        XCTAssertTrue(harness.compositionSession.isActive)
+        XCTAssertGreaterThan(harness.compositionSession.markedRange.length, initialLen)
+    }
+
+    // MARK: Commit
+
+    func test_flow_commitComposition_foldsIntoDocument() {
+        let harness = EditorHarness(markdown: "Hi")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 2)
+        harness.beginComposition(marked: "か")
+        harness.updateComposition(marked: "かな")
+        harness.commitComposition(final: "漢字")
+        XCTAssertFalse(harness.compositionSession.isActive)
+        // Document should reflect the committed text.
+        XCTAssertEqual(harness.contentString, "Hi漢字")
+    }
+
+    func test_flow_commitComposition_cursorLandsAfterFinal() {
+        let harness = EditorHarness(markdown: "Hi")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 2)
+        harness.beginComposition(marked: "か")
+        harness.commitComposition(final: "漢")
+        // Cursor should be AFTER the committed character.
+        let sel = harness.selectedRange
+        XCTAssertEqual(sel.length, 0)
+        XCTAssertEqual(sel.location, 2 + ("漢" as NSString).length)
+    }
+
+    // MARK: Abort
+
+    func test_flow_abortComposition_revertsStorage() {
+        let harness = EditorHarness(markdown: "Hi")
+        defer { harness.teardown() }
+        let originalString = harness.contentString
+        harness.moveCursor(to: 2)
+        harness.beginComposition(marked: "か")
+        harness.updateComposition(marked: "かなa")
+        harness.abortComposition()
+        XCTAssertFalse(harness.compositionSession.isActive)
+        // Storage should match pre-marked state.
+        XCTAssertEqual(harness.contentString, originalString)
+    }
+
+    // MARK: Commit as single edit
+
+    func test_flow_commit_producesOneContract() {
+        let harness = EditorHarness(markdown: "Hi")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 2)
+        // Before composition: clear any prior contract.
+        let contractCountBefore = (harness.editor.lastEditContract != nil) ? 1 : 0
+        harness.beginComposition(marked: "か")
+        harness.updateComposition(marked: "かな")
+        harness.updateComposition(marked: "かなs")
+        // The marked-text updates should NOT populate lastEditContract —
+        // they don't flow through applyEditResultWithUndo.
+        XCTAssertEqual((harness.editor.lastEditContract != nil) ? 1 : 0, contractCountBefore)
+        harness.commitComposition(final: "漢字")
+        // After commit: one new contract.
+        XCTAssertNotNil(harness.editor.lastEditContract)
+    }
+
+    func test_flow_abort_producesNoContract() {
+        let harness = EditorHarness(markdown: "Hi")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 2)
+        harness.editor.lastEditContract = nil
+        harness.beginComposition(marked: "か")
+        harness.abortComposition()
+        // Abort must not register a contract (Document unchanged).
+        XCTAssertNil(harness.editor.lastEditContract)
+    }
+
+    // MARK: Integration: typing after commit resumes normal path
+
+    func test_flow_typingAfterCommit_normalPath() {
+        let harness = EditorHarness(markdown: "Hi")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 2)
+        harness.beginComposition(marked: "か")
+        harness.commitComposition(final: "漢")
+        // Ordinary typing: must go through the standard insertText path
+        // (no composition active), land in Document.
+        harness.editor.insertText(" after", replacementRange: harness.editor.selectedRange())
+        XCTAssertEqual(harness.contentString, "Hi漢 after")
+    }
+
+    // MARK: Anchor cursor captured at session start
+
+    func test_flow_anchorCursor_capturedAtStart() {
+        let harness = EditorHarness(markdown: "Hello world")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 6)
+        harness.beginComposition(marked: "か")
+        // Anchor cursor should reflect offset 6 in block 0.
+        let anchor = harness.compositionSession.anchorCursor
+        XCTAssertEqual(anchor.blockPath.first, 0)
+        XCTAssertEqual(anchor.inlineOffset, 6)
+    }
+}

@@ -239,6 +239,129 @@ final class EditorHarness {
         assertLastContract(file: file, line: line)
     }
 
+    // MARK: - Phase 5e: IME composition
+
+    /// Begin an IME composition session at the current selection with
+    /// the given marked string. Routes through the real
+    /// `setMarkedText` override — the same NSTextInputClient entry
+    /// point a live IME would drive. After this call, the editor's
+    /// `compositionSession.isActive` is `true`.
+    ///
+    /// Offscreen-test caveat: TK2's `setMarkedText` plumbing relies on
+    /// a live `NSTextInputContext` + responder chain that borderless
+    /// offscreen windows lack. We call our `EditTextView.setMarkedText`
+    /// override (which drives the session transition) and then mutate
+    /// storage directly under the composition exemption to simulate
+    /// the storage-write half that TK2 would do in a live window. This
+    /// keeps the test path behaviorally equivalent to the live path
+    /// without requiring a real NSTextInputContext.
+    func beginComposition(marked: String) {
+        let sel = editor.selectedRange()
+        simulateSetMarkedText(marked, replacementRange: sel)
+    }
+
+    /// Update the marked run during an active composition. Routes
+    /// through the same `setMarkedText` override. Marked range is
+    /// refreshed from `editor.compositionSession.markedRange` — the
+    /// authoritative post-write range.
+    func updateComposition(marked: String) {
+        let markedRange = editor.compositionSession.markedRange
+        simulateSetMarkedText(marked, replacementRange: markedRange)
+    }
+
+    /// Offscreen-test equivalent of AppKit's marked-text storage
+    /// write. Calls `EditTextView.setMarkedText` to drive session
+    /// lifecycle (entry/update), then — because offscreen TK2
+    /// doesn't route NSTextInputClient through to storage — performs
+    /// the storage `replaceCharacters` directly under the
+    /// composition exemption that the 5a assertion recognises.
+    private func simulateSetMarkedText(_ marked: String, replacementRange: NSRange) {
+        guard let storage = editor.textStorage else { return }
+
+        let beforeLen = storage.length
+        let replacedLen = (replacementRange.location == NSNotFound)
+            ? 0 : replacementRange.length
+        let expectedDelta = (marked as NSString).length - replacedLen
+
+        editor.setMarkedText(
+            marked,
+            selectedRange: NSRange(location: (marked as NSString).length, length: 0),
+            replacementRange: replacementRange
+        )
+
+        let actualDelta = storage.length - beforeLen
+        let writeLocation: Int
+        if replacementRange.location == NSNotFound {
+            writeLocation = editor.selectedRange().location
+                - (marked as NSString).length
+        } else {
+            writeLocation = replacementRange.location
+        }
+
+        // If super's setMarkedText did the storage write (live path),
+        // just refresh the session's markedRange and return. If not
+        // (offscreen path), perform the write ourselves under the
+        // composition exemption the 5a assertion recognises.
+        var session = editor.compositionSession
+        session.markedRange = NSRange(
+            location: writeLocation, length: (marked as NSString).length
+        )
+        editor.compositionSession = session
+
+        if actualDelta == expectedDelta {
+            return
+        }
+
+        let writeRange = (replacementRange.location == NSNotFound)
+            ? NSRange(location: editor.selectedRange().location, length: 0)
+            : replacementRange
+        let clamped = NSRange(
+            location: min(max(writeRange.location, 0), storage.length),
+            length: min(writeRange.length, max(0, storage.length - writeRange.location))
+        )
+        storage.beginEditing()
+        storage.replaceCharacters(in: clamped, with: marked)
+        storage.endEditing()
+    }
+
+    /// Commit the active composition with the given final string.
+    /// Routes through `insertText(_:replacementRange:)` targeting the
+    /// current marked range — the standard commit entry point. After
+    /// this call, `compositionSession.isActive` is `false` and the
+    /// final text is reflected in both storage and `Document`.
+    ///
+    /// Asserts the resulting contract via the harness's standard
+    /// `assertLastContract` path. Non-empty `final` produces one
+    /// `EditContract.modifyInline` (or a block-boundary action if
+    /// the commit crosses a block) from
+    /// `EditingOps.insert(_:at:in:)`.
+    func commitComposition(
+        final: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let markedRange = editor.compositionSession.markedRange
+        editor.insertText(final, replacementRange: markedRange)
+        assertLastContract(file: file, line: line)
+    }
+
+    /// Abort the active composition. Equivalent to committing with
+    /// an empty string — reverts storage to the pre-marked state,
+    /// clears the session, produces NO `EditContract` (Document is
+    /// unchanged). The harness's contract assertion is suppressed
+    /// by design: abort does not invoke `applyEditResultWithUndo`,
+    /// so `lastEditContract` is not refreshed.
+    func abortComposition() {
+        let markedRange = editor.compositionSession.markedRange
+        editor.insertText("", replacementRange: markedRange)
+    }
+
+    /// Read-only accessor for tests that need to inspect composition
+    /// state (e.g. to assert `isActive == true` mid-session).
+    var compositionSession: CompositionSession {
+        editor.compositionSession
+    }
+
     // MARK: - Contract enforcement
 
     /// Phase 1 exit criterion: every scripted input that lands a
