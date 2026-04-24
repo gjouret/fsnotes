@@ -154,6 +154,8 @@
 		11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
 		C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
 		41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
+		P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F2 /* EditTextView+Selection.swift */; };
+		P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F2 /* EditTextView+Selection.swift */; };
 		11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
 		11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
 		11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
@@ -1232,6 +1234,7 @@
 		110E40A32EA039AA00C62F49 /* EditTextView+DragOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+DragOperation.swift"; sourceTree = "<group>"; };
 		11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+NoteState.swift"; sourceTree = "<group>"; };
 		FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+BlockModel.swift"; sourceTree = "<group>"; };
+		P5B0000000000000000000F2 /* EditTextView+Selection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Selection.swift"; sourceTree = "<group>"; };
 		11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Formatting.swift"; sourceTree = "<group>"; };
 		11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Appearance.swift"; sourceTree = "<group>"; };
 		11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Interaction.swift"; sourceTree = "<group>"; };
@@ -2339,6 +2342,7 @@
 				D797004B1F3DD10700BAD94D /* EditTextView.swift */,
 				11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */,
 				FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */,
+				P5B0000000000000000000F2 /* EditTextView+Selection.swift */,
 				11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */,
 				ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */,
 				11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */,
@@ -3648,6 +3652,7 @@
 				110E40A52EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */,
 				11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
 				41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */,
+				P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */,
 				11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				ETVT000000000000000000B1 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C22F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
@@ -3913,6 +3918,7 @@
 				110E40A42EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */,
 				11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
 				C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */,
+				P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */,
 				11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				ETVT000000000000000000B2 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C12F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
