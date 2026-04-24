@@ -1867,9 +1867,22 @@ public enum MarkdownParser {
     ) -> (html: String, endIndex: Int)? {
         guard start < chars.count, chars[start] == "<" else { return nil }
 
-        // HTML comment: <!-- ... -->
+        // HTML comment (CommonMark 0.31.2 § 6.6):
+        //   `<!-->`, `<!--->`, or `<!--` + content + `-->`
+        // where content does not contain the literal string `-->`.
+        // The short forms `<!-->` (empty comment) and `<!--->` are new
+        // in v0.31.2 and MUST be recognized before the long form.
         if start + 3 < chars.count &&
            chars[start + 1] == "!" && chars[start + 2] == "-" && chars[start + 3] == "-" {
+            // Short form `<!-->` (5 chars starting at `start`).
+            if start + 4 < chars.count && chars[start + 4] == ">" {
+                return (String(chars[start...(start + 4)]), start + 5)
+            }
+            // Short form `<!--->` (6 chars).
+            if start + 5 < chars.count && chars[start + 4] == "-" && chars[start + 5] == ">" {
+                return (String(chars[start...(start + 5)]), start + 6)
+            }
+            // Long form: `<!--` content `-->`.
             var j = start + 4
             while j + 2 < chars.count {
                 if chars[j] == "-" && chars[j + 1] == "-" && chars[j + 2] == ">" {
