@@ -85,6 +85,10 @@ final class EditorHarness {
 
     private var window: NSWindow?
     private(set) var editor: EditTextView
+    /// The Note owned by this harness. Exposed for tests that need
+    /// to re-fill with mutated state (e.g. `cachedFoldState`) or
+    /// assert post-edit markdown on save.
+    private(set) var note: Note!
     private var tmpURL: URL
     private var torndown = false
 
@@ -150,6 +154,7 @@ final class EditorHarness {
 
         self.window = window
         self.editor = editor
+        self.note = note
         self.tmpURL = tmpURL
 
         seed(markdown: markdown)
