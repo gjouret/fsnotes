@@ -103,6 +103,8 @@
 		P5BW000000000000000000B1 /* Phase5bWidgetInterceptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */; };
 		P5D4000000000000000000B1 /* Phase5dCrossAppPasteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5D4000000000000000000F1 /* Phase5dCrossAppPasteTests.swift */; };
 		FHID000000000000000000B1 /* FoldedHeaderIndicatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FHID000000000000000000F1 /* FoldedHeaderIndicatorTests.swift */; };
+		IMBL000000000000000000B1 /* InlineMathBaseline.swift in Sources */ = {isa = PBXBuildFile; fileRef = IMBL000000000000000000F1 /* InlineMathBaseline.swift */; };
+		IMBT000000000000000000B1 /* InlineMathBaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */; };
 		THOW000000000000000000B1 /* TableHandleOverlayWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */; };
 		UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */; };
 		P5DS000000000000000000B1 /* Phase5dCopyPasteSlicingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */; };
@@ -1225,6 +1227,8 @@
 		P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5bWidgetInterceptionTests.swift; sourceTree = "<group>"; };
 		P5D4000000000000000000F1 /* Phase5dCrossAppPasteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5dCrossAppPasteTests.swift; sourceTree = "<group>"; };
 		FHID000000000000000000F1 /* FoldedHeaderIndicatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldedHeaderIndicatorTests.swift; sourceTree = "<group>"; };
+		IMBL000000000000000000F1 /* InlineMathBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineMathBaseline.swift; sourceTree = "<group>"; };
+		IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineMathBaselineTests.swift; sourceTree = "<group>"; };
 		THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleOverlayWiringTests.swift; sourceTree = "<group>"; };
 		UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTIConformanceMigrationTests.swift; sourceTree = "<group>"; };
 		P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5dCopyPasteSlicingTests.swift; sourceTree = "<group>"; };
@@ -1761,6 +1765,7 @@
 				HDR0000000000000000000F1 /* HeadingRenderer.swift */,
 				PRR0000000000000000000F1 /* ParagraphRenderer.swift */,
 				INR0000000000000000000F1 /* InlineRenderer.swift */,
+				IMBL000000000000000000F1 /* InlineMathBaseline.swift */,
 				LSR0000000000000000000F1 /* ListRenderer.swift */,
 				HRR0000000000000000000F1 /* HorizontalRuleRenderer.swift */,
 				TTR0000000000000000000F1 /* TableTextRenderer.swift */,
@@ -2631,6 +2636,7 @@
 				P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */,
 				P5D4000000000000000000F1 /* Phase5dCrossAppPasteTests.swift */,
 				FHID000000000000000000F1 /* FoldedHeaderIndicatorTests.swift */,
+				IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */,
 				THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */,
 				UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */,
 				P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */,
@@ -3527,6 +3533,7 @@
 				HDR0000000000000000000B1 /* HeadingRenderer.swift in Sources */,
 				PRR0000000000000000000B1 /* ParagraphRenderer.swift in Sources */,
 				INR0000000000000000000B1 /* InlineRenderer.swift in Sources */,
+				IMBL000000000000000000B1 /* InlineMathBaseline.swift in Sources */,
 				LSR0000000000000000000B1 /* ListRenderer.swift in Sources */,
 				HRR0000000000000000000B1 /* HorizontalRuleRenderer.swift in Sources */,
 				TTR0000000000000000000B1 /* TableTextRenderer.swift in Sources */,
@@ -4162,6 +4169,7 @@
 				P5BW000000000000000000B1 /* Phase5bWidgetInterceptionTests.swift in Sources */,
 				P5D4000000000000000000B1 /* Phase5dCrossAppPasteTests.swift in Sources */,
 				FHID000000000000000000B1 /* FoldedHeaderIndicatorTests.swift in Sources */,
+				IMBT000000000000000000B1 /* InlineMathBaselineTests.swift in Sources */,
 				THOW000000000000000000B1 /* TableHandleOverlayWiringTests.swift in Sources */,
 				UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */,
 				P5DS000000000000000000B1 /* Phase5dCopyPasteSlicingTests.swift in Sources */,

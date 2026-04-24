@@ -2674,13 +2674,23 @@ extension EditTextView {
 
                     let attachment = NSTextAttachment()
                     attachment.image = image
-                    // Use bounds-based sizing for inline attachments (no cell needed).
-                    // y offset centers vertically relative to baseline.
-                    attachment.bounds = NSRect(
-                        x: 0,
-                        y: -(scaledSize.height - lineHeight) / 2,
-                        width: scaledSize.width,
-                        height: scaledSize.height
+                    // Bounds for inline math: use baseline-aligned bounds
+                    // via `InlineMathBaseline.bounds(imageSize:font:)`. The
+                    // old formula `-(scaledSize.height - lineHeight) / 2`
+                    // centered the image on the LINE BOX, not on the
+                    // TEXT BASELINE — so inline math rendered visibly
+                    // above the surrounding text's baseline (reported
+                    // 2026-04-24). The new helper returns `y = -abs(font.descender)`,
+                    // placing the image's bottom at the text descender
+                    // so the MathJax expression's internal baseline
+                    // aligns with the surrounding text baseline.
+                    let bodyFont = (storage.attribute(
+                        .font,
+                        at: max(0, range.location - 1),
+                        effectiveRange: nil
+                    ) as? NSFont) ?? NSFont.systemFont(ofSize: 14)
+                    attachment.bounds = InlineMathBaseline.bounds(
+                        imageSize: scaledSize, font: bodyFont
                     )
 
                     let attachmentString = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
