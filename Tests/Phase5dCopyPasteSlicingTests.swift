@@ -273,4 +273,79 @@ final class Phase5dCopyPasteSlicingTests: XCTestCase {
         XCTAssertTrue(md!.contains("first"))
         XCTAssertTrue(md!.contains("second"))
     }
+
+    // MARK: - Paste (our markdown) — parse + insertFragment end-to-end
+
+    func test_5d_paste_markdown_simpleText_mergesIntoParagraph() throws {
+        // Paste plain text into the middle of a paragraph. The single
+        // paragraph fragment merges into the host paragraph, yielding
+        // one combined paragraph.
+        let proj = project("hello world\n")
+        let fragment = MarkdownParser.parse("XYZ")
+        let cursor = DocumentCursor(blockIndex: 0, inlineOffset: 6)
+        let result = try EditingOps.insertFragment(fragment, at: cursor, in: proj)
+        let md = MarkdownSerializer.serialize(result.newProjection.document)
+        XCTAssertTrue(md.contains("hello XYZworld"), "got: \(md)")
+    }
+
+    func test_5d_paste_markdown_multiBlock_inserts() throws {
+        // Paste a two-paragraph block of markdown (with blank-line
+        // separator) at the end of a host paragraph. Expected: host
+        // paragraph extended with the first pasted paragraph, followed
+        // by a blank-line separator, followed by the second pasted
+        // paragraph as its own block.
+        let proj = project("host para\n")
+        let fragment = MarkdownParser.parse("para A\n\npara B")
+        // Cursor at end of host paragraph.
+        let cursor = DocumentCursor(blockIndex: 0, inlineOffset: 9)
+        let result = try EditingOps.insertFragment(fragment, at: cursor, in: proj)
+        XCTAssertGreaterThanOrEqual(
+            result.newProjection.document.blocks.count,
+            proj.document.blocks.count + 1
+        )
+        let md = MarkdownSerializer.serialize(result.newProjection.document)
+        XCTAssertTrue(md.contains("host parapara A"), "got: \(md)")
+        XCTAssertTrue(md.contains("para B"), "got: \(md)")
+    }
+
+    func test_5d_paste_markdown_preservesInlineFormatting() throws {
+        // Paste markdown with bold/italic/link — the primitive parses,
+        // then inserts, and the resulting document must contain the
+        // corresponding `Inline.*` nodes (not flat text).
+        let proj = project("prefix \n")
+        let fragment = MarkdownParser.parse("**bold** and _italic_")
+        let cursor = DocumentCursor(blockIndex: 0, inlineOffset: 7)
+        let result = try EditingOps.insertFragment(fragment, at: cursor, in: proj)
+        // Inspect the block: it should be a paragraph whose inline
+        // tree contains a `.bold` and an `.italic` node.
+        guard case .paragraph(let inline) = result.newProjection.document.blocks[0] else {
+            XCTFail("expected paragraph"); return
+        }
+        let hasBold = inline.contains { if case .bold = $0 { return true }; return false }
+        let hasItalic = inline.contains { if case .italic = $0 { return true }; return false }
+        XCTAssertTrue(hasBold, "expected bold inline, got: \(inline)")
+        XCTAssertTrue(hasItalic, "expected italic inline, got: \(inline)")
+    }
+
+    func test_5d_paste_markdown_atEndOfBlock_preservesStructure() throws {
+        // Host: heading + paragraph. Paste a paragraph at end of the
+        // heading (cursor at end of heading text). Behavior: heading
+        // stays heading; fragment lands as a new paragraph after.
+        // (Heading target falls into the non-paragraph branch of
+        // `insertFragment` — inserts fragment as sibling block.)
+        let proj = project("# title\n\nbody\n")
+        let fragment = MarkdownParser.parse("new para")
+        let cursor = DocumentCursor(blockIndex: 0, inlineOffset: 6)
+        let result = try EditingOps.insertFragment(fragment, at: cursor, in: proj)
+        XCTAssertEqual(
+            result.newProjection.document.blocks.count,
+            proj.document.blocks.count + 1
+        )
+        // Heading block (index 0) must still be a heading.
+        if case .heading = result.newProjection.document.blocks[0] {
+            // expected
+        } else {
+            XCTFail("heading block changed kind: \(result.newProjection.document.blocks[0])")
+        }
+    }
 }
