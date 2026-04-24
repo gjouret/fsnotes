@@ -90,6 +90,7 @@
 		P5A0000000000000000000B1 /* StorageWriteGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5A0000000000000000000F1 /* StorageWriteGuard.swift */; };
 		P5B0000000000000000000B1 /* DocumentCursorLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F1 /* DocumentCursorLocation.swift */; };
 		P5E0000000000000000000B1 /* CompositionSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5E0000000000000000000F1 /* CompositionSession.swift */; };
+		P5FJ000000000000000000B1 /* UndoJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FJ000000000000000000F1 /* UndoJournal.swift */; };
 		P5ET000000000000000000B1 /* Phase5eCompositionSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */; };
 		DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */; };
 		P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */; };
@@ -1006,6 +1007,7 @@
 		TK2FS000000000000000000B1 /* TextKit2FinderSpikeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TK2FS000000000000000000F1 /* TextKit2FinderSpikeTests.swift */; };
 		ECT0000000000000000000B1 /* EditContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECT0000000000000000000F1 /* EditContractTests.swift */; };
 		P5FI000000000000000000B1 /* EditContractInverseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FI000000000000000000F1 /* EditContractInverseTests.swift */; };
+		P5FT000000000000000000B1 /* UndoJournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FT000000000000000000F1 /* UndoJournalTests.swift */; };
 		HCCT000000000000000000B1 /* HarnessContractCoverageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HCCT000000000000000000F1 /* HarnessContractCoverageTests.swift */; };
 		TK2B000000000000000000B1 /* TextKit2BaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TK2B000000000000000000F1 /* TextKit2BaselineTests.swift */; };
 		SPOS000000000000000000B1 /* ScrollPositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SPOS000000000000000000F1 /* ScrollPositionTests.swift */; };
@@ -1199,6 +1201,7 @@
 		P5A0000000000000000000F1 /* StorageWriteGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageWriteGuard.swift; sourceTree = "<group>"; };
 		P5B0000000000000000000F1 /* DocumentCursorLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentCursorLocation.swift; sourceTree = "<group>"; };
 		P5E0000000000000000000F1 /* CompositionSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionSession.swift; sourceTree = "<group>"; };
+		P5FJ000000000000000000F1 /* UndoJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoJournal.swift; sourceTree = "<group>"; };
 		P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5eCompositionSessionTests.swift; sourceTree = "<group>"; };
 		DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplierTests.swift; sourceTree = "<group>"; };
 		P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aSingleWritePathTests.swift; sourceTree = "<group>"; };
@@ -1644,6 +1647,7 @@
 		TK2FS000000000000000000F1 /* TextKit2FinderSpikeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextKit2FinderSpikeTests.swift; sourceTree = "<group>"; };
 		ECT0000000000000000000F1 /* EditContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditContractTests.swift; sourceTree = "<group>"; };
 		P5FI000000000000000000F1 /* EditContractInverseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditContractInverseTests.swift; sourceTree = "<group>"; };
+		P5FT000000000000000000F1 /* UndoJournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoJournalTests.swift; sourceTree = "<group>"; };
 		HCCT000000000000000000F1 /* HarnessContractCoverageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessContractCoverageTests.swift; sourceTree = "<group>"; };
 		TK2B000000000000000000F1 /* TextKit2BaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextKit2BaselineTests.swift; sourceTree = "<group>"; };
 		SPOS000000000000000000F1 /* ScrollPositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollPositionTests.swift; sourceTree = "<group>"; };
@@ -1764,6 +1768,7 @@
 				P5A0000000000000000000F1 /* StorageWriteGuard.swift */,
 				P5B0000000000000000000F1 /* DocumentCursorLocation.swift */,
 				P5E0000000000000000000F1 /* CompositionSession.swift */,
+				P5FJ000000000000000000F1 /* UndoJournal.swift */,
 				BREF000000000000000000F1 /* BlockRef.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
 				AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */,
@@ -2585,6 +2590,7 @@
 				TK2FS000000000000000000F1 /* TextKit2FinderSpikeTests.swift */,
 				ECT0000000000000000000F1 /* EditContractTests.swift */,
 				P5FI000000000000000000F1 /* EditContractInverseTests.swift */,
+				P5FT000000000000000000F1 /* UndoJournalTests.swift */,
 				HCCT000000000000000000F1 /* HarnessContractCoverageTests.swift */,
 				TK2B000000000000000000F1 /* TextKit2BaselineTests.swift */,
 				SPOS000000000000000000F1 /* ScrollPositionTests.swift */,
@@ -3517,6 +3523,7 @@
 				P5A0000000000000000000B1 /* StorageWriteGuard.swift in Sources */,
 				P5B0000000000000000000B1 /* DocumentCursorLocation.swift in Sources */,
 				P5E0000000000000000000B1 /* CompositionSession.swift in Sources */,
+				P5FJ000000000000000000B1 /* UndoJournal.swift in Sources */,
 				BREF000000000000000000B1 /* BlockRef.swift in Sources */,
 				FTFL000000000000000000B1 /* FeatureFlag.swift in Sources */,
 				AE6D47605A4C62BABAE54290 /* Note+FileOps.swift in Sources */,
@@ -4103,6 +4110,7 @@
 				TK2FS000000000000000000B1 /* TextKit2FinderSpikeTests.swift in Sources */,
 				ECT0000000000000000000B1 /* EditContractTests.swift in Sources */,
 				P5FI000000000000000000B1 /* EditContractInverseTests.swift in Sources */,
+				P5FT000000000000000000B1 /* UndoJournalTests.swift in Sources */,
 				HCCT000000000000000000B1 /* HarnessContractCoverageTests.swift in Sources */,
 				TK2B000000000000000000B1 /* TextKit2BaselineTests.swift in Sources */,
 				SPOS000000000000000000B1 /* ScrollPositionTests.swift in Sources */,
