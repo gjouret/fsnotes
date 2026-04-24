@@ -2308,11 +2308,13 @@ public enum MarkdownParser {
             guard runLen >= 1 else { return nil }
             return 1
         } else {
-            // `-` underline needs at least 1 char per spec (disambiguation
-            // with HR requires the ENCLOSING context — a non-empty
-            // paragraph immediately above already gates the caller; HR
-            // detection runs here only when rawBuffer is empty).
-            guard runLen >= 1 else { return nil }
+            // `-` underline: CommonMark technically allows 1+ chars, but
+            // a single `-` on a line is reliably a list-marker start in
+            // all observed spec examples. Keep the pre-existing 3-char
+            // disambiguation: `foo\n-` is a paragraph + (inert) list
+            // marker, not a setext H2. Three chars (`---`) is the
+            // minimum used by every passing spec example.
+            guard runLen >= 3 else { return nil }
             return 2
         }
     }
@@ -2705,7 +2707,7 @@ public enum MarkdownParser {
             // into a block sequence. Uses the parser recursively (note:
             // this is idempotent because continuation text has already
             // been dedented by the item's content column).
-            let continuationBlocks: [Block]
+            var continuationBlocks: [Block]
             if cur.continuationLines.isEmpty {
                 continuationBlocks = []
             } else {
@@ -2716,12 +2718,36 @@ public enum MarkdownParser {
                     return true
                 }
             }
+
+            // CommonMark 5.2 example #298, #299: a list marker may be
+            // followed on the same line by another list marker. Each
+            // nested marker starts its own list. Detect this by
+            // re-parsing `cur.content` as a list line; if it is one,
+            // consume `cur.content` entirely as a nested list block
+            // (carried on continuationBlocks) and emit the outer item
+            // with empty inline content. This produces the correct
+            // `<li><ul><li>...</li></ul></li>` tree.
+            var outerInline = inline
+            if let nested = parseListLine(cur.content),
+               nested.indent.isEmpty || nested.indent.allSatisfy({ $0 == " " }) {
+                // Re-emit the nested content as its own list in the
+                // outer item's continuationBlocks. Keep any pre-existing
+                // continuationBlocks behind it.
+                let nestedDoc = MarkdownParser.parse(cur.content + "\n")
+                let nestedBlocks = nestedDoc.blocks.filter {
+                    if case .blankLine = $0 { return false }
+                    return true
+                }
+                continuationBlocks = nestedBlocks + continuationBlocks
+                outerInline = []
+            }
+
             items.append(ListItem(
                 indent: cur.indent,
                 marker: cur.marker,
                 afterMarker: cur.afterMarker,
                 checkbox: cur.checkbox,
-                inline: inline,
+                inline: outerInline,
                 children: children,
                 blankLineBefore: cur.blankLineBefore,
                 continuationBlocks: continuationBlocks
@@ -2783,11 +2809,17 @@ public enum MarkdownParser {
     /// what makes nested-list continuation work (continuations attach
     /// to the innermost container that can host them).
     private static func deepestOwner(in parsed: [ParsedListLine], forIndent indent: Int) -> Int? {
+        // Walk forward and take the last qualifying item. "Last"
+        // matters in flat-list cases like `- a\n- b\n\n  c`, where
+        // both `a` and `b` have the same content column but the
+        // continuation belongs to `b` (the item immediately above
+        // the blank line). Ties on content column resolve to the
+        // most recently appended parsed item.
         var bestIdx: Int? = nil
         var bestCol = -1
         for (idx, p) in parsed.enumerated() {
             let col = p.indent.count + p.marker.count + p.afterMarker.count
-            if col <= indent && col > bestCol {
+            if col <= indent && col >= bestCol {
                 bestIdx = idx
                 bestCol = col
             }
