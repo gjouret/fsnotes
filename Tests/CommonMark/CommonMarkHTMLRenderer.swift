@@ -95,6 +95,10 @@ struct CommonMarkHTMLRenderer {
             } else {
                 lang = trimmedInfo
             }
+            // Unescape ASCII-punctuation backslash escapes first
+            // (CommonMark #24: `foo\+bar` in info string becomes
+            // `foo+bar` in the rendered class attribute).
+            lang = Self.unescapeBackslashes(lang)
             // Decode entities in the info string (CommonMark spec)
             lang = Self.decodeEntitiesInString(lang)
             // CommonMark: code block content ends with a newline (unless empty).
@@ -544,14 +548,18 @@ struct CommonMarkHTMLRenderer {
             }
         }
 
-        // Unescape backslash sequences in the URL
+        // Unescape backslash sequences in the URL AND the title
+        // (CommonMark: ASCII punctuation backslash-escapes apply in
+        // both). Example #506: `title \"&quot;"` — the `\"` sequence
+        // must unescape to a literal `"` before HTML-escaping.
         url = unescapeBackslashes(url)
+        if let t = title { title = unescapeBackslashes(t) }
 
         return (url, title)
     }
 
     /// Remove backslash escapes before ASCII punctuation characters.
-    private static func unescapeBackslashes(_ s: String) -> String {
+    internal static func unescapeBackslashes(_ s: String) -> String {
         var result = ""
         let chars = Array(s)
         var i = 0
@@ -813,8 +821,12 @@ struct CommonMarkHTMLRenderer {
         for ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~" {
             safe.insert(ch)
         }
-        // Reserved characters used as delimiters (keep as-is in URLs)
-        for ch in ":/?#[]@!$&'()*+,;=" {
+        // Reserved characters used as delimiters (keep as-is in URLs).
+        // `[` and `]` are EXCLUDED here — per CommonMark spec examples
+        // (autolink #603) square brackets in URLs percent-encode to
+        // %5B / %5D. They are not valid delimiter characters in the
+        // path/query sections of a URL.
+        for ch in ":/?#@!$&'()*+,;=" {
             safe.insert(ch)
         }
         // Percent sign itself (already-encoded sequences)
