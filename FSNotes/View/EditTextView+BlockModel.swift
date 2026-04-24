@@ -472,38 +472,28 @@ extension EditTextView {
             // Phase 2 — bullet glyphs then mount before first paint.
             tlm.textViewportLayoutController.layoutViewport()
             DispatchQueue.main.async { [weak self] in
-                self?.textLayoutManager?
+                guard let self = self else { return }
+                self.textLayoutManager?
                     .textViewportLayoutController
                     .layoutViewport()
+                // Deferred to Phase 2 (after TK2 mounts view-provider
+                // subviews + fragment frames settle). Reposition
+                // inside the fill path ran BEFORE Phase 2, so
+                // `visibleTables()` saw stale / unlaid fragment
+                // frames and `reposition()` attached handles at
+                // wrong positions (or not at all). Running it here
+                // — after the second `layoutViewport()` + a
+                // run-loop tick — guarantees fragment frames are
+                // final.
+                if let vc =
+                    self.owningViewControllerForTableHandleOverlay() {
+                    vc.tableHandleOverlay.reposition()
+                    vc.codeBlockEditToggleOverlay.reposition()
+                }
             }
         }
 
         bmLog("✅ fillViaBlockModel complete: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")
-
-        // Trigger `TableHandleOverlay` lazy construction on the owning
-        // `ViewController`. The overlay's `installObservers()` wires
-        // `NSText.didChangeNotification` and `NSView.boundsDidChangeNotification`
-        // observers that auto-call `reposition()` on subsequent text +
-        // scroll events — but installObservers only fires once, on
-        // first read of the `tableHandleOverlay` lazy getter. Phase 2e
-        // T2-g.1 (commit `2590522`) documented this wiring in a comment
-        // at `ViewController+Events.swift:383` ("Production wiring: call
-        // `tableHandleOverlay.reposition()` after a note is filled") but
-        // the call site was never written. Without it the overlay is
-        // never constructed and hover handles never appear. `reposition()`
-        // is idempotent + cheap when there are no visible tables.
-        if let vc = owningViewControllerForTableHandleOverlay() {
-            vc.tableHandleOverlay.reposition()
-            // Same-shape wire-up for the Phase 8 `</>` code-block edit
-            // toggle overlay: the getter is a lazy associated-object on
-            // `ViewController`; its first read constructs the overlay
-            // and installs scroll/text-change observers. Without this
-            // call the `</>` buttons never appear on fenced code blocks.
-            // `reposition()` is idempotent and cheap when no code
-            // blocks are visible. See commit `08506d3` for the parallel
-            // table-handle fix.
-            vc.codeBlockEditToggleOverlay.reposition()
-        }
 
         return true
     }

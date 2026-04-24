@@ -944,6 +944,45 @@ final class UIBugRegressionTests: XCTestCase {
     // the harness. Cell-click cursor placement is tracked separately
     // in `TableCellClickHarnessTests` (commit 427321b).
 
+    // Probe 36h: USER REPORTED — table row+column handles don't
+    // appear. Explicitly construct a TableHandleOverlay bound to
+    // the harness editor and invoke `reposition()` directly (the
+    // production path via `owningViewControllerForTableHandleOverlay`
+    // returns nil in the harness). Then snapshot the editor
+    // subview tree and assert TableHandleView subviews exist.
+    func test_probe_tableHandleOverlay_directReposition_mountsHandles() {
+        let h = EditorHarness(
+            markdown: "| a | b |\n|---|---|\n| 1 | 2 |",
+            windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+
+        // The harness doesn't route through ViewController, so the
+        // fill path's `owningViewControllerForTableHandleOverlay()`
+        // returned nil. Drive the overlay path directly here.
+        let overlay = TableHandleOverlay(editor: h.editor)
+        overlay.reposition()
+
+        // Force a layout pass so any subview-frame changes settle.
+        if let tlm = h.editor.textLayoutManager {
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        // Count TableHandleView subviews under the editor. The
+        // recursive walker in EditorSnapshot finds them.
+        let snap = h.snapshot()
+        let handleCount = snap.raw.components(
+            separatedBy: "class=TableHandleView"
+        ).count - 1
+        XCTAssertGreaterThan(
+            handleCount, 0,
+            "After direct TableHandleOverlay.reposition(), expected " +
+            "at least one TableHandleView subview; got 0. " +
+            "Snapshot:\n\(snap.raw.prefix(600))"
+        )
+    }
+
     // Probe 36g: USER REPORTED — `<kbd>` rounded rectangle. True
     // draw-layer test: render the kbd fragment to a bitmap,
     // inspect pixel values for the expected stroke/fill color.
