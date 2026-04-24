@@ -28,6 +28,44 @@
 
 import AppKit
 
+// MARK: - File-local diagnostic log
+
+/// Writes to `<project-root>/logs/block-model.log` — same file the app-target
+/// `bmLog` writes to. Kept file-local because this file lives in
+/// `FSNotesCore`, which can't see the app-target `bmLog`.
+private let fragmentLogURL: URL = {
+    let sourceFile = URL(fileURLWithPath: #filePath)
+    let projectRoot = sourceFile
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let logsDir = projectRoot.appendingPathComponent("logs")
+    try? FileManager.default.createDirectory(
+        at: logsDir, withIntermediateDirectories: true)
+    return logsDir.appendingPathComponent("block-model.log")
+}()
+
+private let fragmentLogDateFormatter: DateFormatter = {
+    let df = DateFormatter()
+    df.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+    return df
+}()
+
+private func fragBmLog(_ message: String) {
+    let line = "[\(fragmentLogDateFormatter.string(from: Date()))] \(message)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    if FileManager.default.fileExists(atPath: fragmentLogURL.path) {
+        if let handle = try? FileHandle(forWritingTo: fragmentLogURL) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        }
+    } else {
+        try? data.write(to: fragmentLogURL)
+    }
+}
+
 public final class DisplayMathLayoutFragment: NSTextLayoutFragment {
 
     // MARK: - State
@@ -190,6 +228,8 @@ public final class DisplayMathLayoutFragment: NSTextLayoutFragment {
             height: scaledSize.height
         )
 
+        fragBmLog("🎭 draw: type=displayMath imgSize=\(image.size) targetRect=\(targetRect) scale=\(scale) resampling=\(scale < 1.0)")
+
         context.saveGState()
         image.draw(in: targetRect)
         context.restoreGState()
@@ -245,11 +285,22 @@ public final class DisplayMathLayoutFragment: NSTextLayoutFragment {
                 from: nil,
                 options: [.ensuresLayout]
             ) { _ in true }
+            // See `MermaidLayoutFragment.invalidateOwnLayout` for the full
+            // rationale: `invalidateIntrinsicContentSize()` is a no-op on
+            // `EditTextView`; explicit `setFrameSize` (grow-only) based
+            // on the layout manager's usage bounds is what actually
+            // extends the scroll view's max scroll extent.
             if let tv = textView {
-                tv.invalidateIntrinsicContentSize()
-                tv.needsLayout = true
+                let usageHeight = tlm.usageBoundsForTextContainer.height
+                let insetV = tv.textContainerInset.height * 2
+                let currentW = tv.frame.width
+                let targetHeight = usageHeight + insetV
+                if targetHeight > tv.frame.height {
+                    tv.setFrameSize(NSSize(width: currentW, height: targetHeight))
+                }
                 tv.needsDisplay = true
             }
+            fragBmLog("🎭 frag async: usageH=\(tlm.usageBoundsForTextContainer.height) tvFrameH=\(tlm.textContainer?.textView?.frame.height ?? -1)")
         }
     }
 }
