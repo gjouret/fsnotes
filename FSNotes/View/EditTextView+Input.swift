@@ -561,6 +561,36 @@ extension EditTextView {
                 return
             }
         }
+
+        // Phase 5a: when the block-model is active, route
+        // non-composition typing through `handleEditViaBlockModel`
+        // instead of `super.insertText`. AppKit's internal
+        // `_insertText:replacementRange:` writes directly to
+        // `NSTextContentStorage` without going through
+        // `shouldChangeTextInRange`, which makes `super.insertText`
+        // an unauthorized storage-write path that trips the 5a
+        // debug assertion. Routing through the block-model keeps
+        // typing on the canonical applyDocumentEdit path.
+        //
+        // TSM / IME paths can deliver text here without first
+        // calling `shouldChangeText` (candidate click commits, dead-
+        // key finals, some hardware-keyboard paths on macOS 26).
+        // This intercept handles all of them uniformly.
+        if documentProjection != nil {
+            let finalString: String =
+                (string as? NSAttributedString)?.string ??
+                (string as? String) ??
+                ""
+            let targetRange: NSRange =
+                (replacementRange.location == NSNotFound)
+                    ? selectedRange()
+                    : replacementRange
+            if handleEditViaBlockModel(
+                in: targetRange, replacementString: finalString
+            ) {
+                return
+            }
+        }
         super.insertText(string, replacementRange: replacementRange)
     }
 
