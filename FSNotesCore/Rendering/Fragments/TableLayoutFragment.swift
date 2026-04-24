@@ -106,6 +106,13 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         case none
         case column(Int)
         case row(Int)
+        /// Mouse is anywhere inside the table. Both the column and row
+        /// handle chrome are drawn at the given column and row index so
+        /// the user sees handles for the cell they are over. Matches
+        /// the TK1 `InlineTableView` UX where hovering anywhere in the
+        /// grid showed a column handle at the top of the current
+        /// column and a row handle on the left of the current row.
+        case cell(column: Int, row: Int)
     }
 
     private var hoverState: HoverState = .none
@@ -455,6 +462,56 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             context.addPath(path)
             context.fillPath()
             context.restoreGState()
+
+        case .cell(let col, let row):
+            // Paint both the column pill (top strip) and the row pill
+            // (left strip). Same geometry as the individual cases.
+            if col >= 0, col < columnWidths.count {
+                var x = gridLeft
+                for i in 0..<col { x += columnWidths[i] }
+                let width = columnWidths[col]
+                let pillInset: CGFloat = max(2, width * 0.16)
+                let pillRect = CGRect(
+                    x: x + pillInset,
+                    y: topStripY + 2,
+                    width: max(0, width - 2 * pillInset),
+                    height: TableGeometry.handleBarHeight - 4
+                )
+                context.saveGState()
+                context.setFillColor(fill.cgColor)
+                let radius = min(pillRect.height / 2, 4)
+                let path = CGPath(
+                    roundedRect: pillRect,
+                    cornerWidth: radius, cornerHeight: radius,
+                    transform: nil
+                )
+                context.addPath(path)
+                context.fillPath()
+                context.restoreGState()
+            }
+            if row >= 0, row < rowHeights.count {
+                var y = gridTop
+                for i in 0..<row { y += rowHeights[i] }
+                let height = rowHeights[row]
+                let pillInset: CGFloat = max(2, height * 0.16)
+                let pillRect = CGRect(
+                    x: containerOriginX + 2,
+                    y: y + pillInset,
+                    width: TableGeometry.handleBarWidth - 4,
+                    height: max(0, height - 2 * pillInset)
+                )
+                context.saveGState()
+                context.setFillColor(fill.cgColor)
+                let radius = min(pillRect.width / 2, 4)
+                let path = CGPath(
+                    roundedRect: pillRect,
+                    cornerWidth: radius, cornerHeight: radius,
+                    transform: nil
+                )
+                context.addPath(path)
+                context.fillPath()
+                context.restoreGState()
+            }
         }
     }
 

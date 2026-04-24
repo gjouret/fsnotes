@@ -129,6 +129,25 @@ public enum SourceRenderer {
                 value: BlockModelKind.sourceMarkdown.rawValue,
                 range: fullRange
             )
+            // Apply the appearance-aware system label color to every
+            // run that doesn't already carry a foreground. Without
+            // this, source-mode text in dark mode renders in a dark
+            // color against the dark editor background (invisible).
+            // `SourceLayoutFragment` overpaints `.markerRange` runs
+            // in the theme marker color regardless, so this base
+            // color only applies to non-marker body text — which is
+            // exactly what we want.
+            out.enumerateAttribute(
+                .foregroundColor, in: fullRange, options: []
+            ) { value, subRange, _ in
+                if value == nil {
+                    out.addAttribute(
+                        .foregroundColor,
+                        value: PlatformColor.label,
+                        range: subRange
+                    )
+                }
+            }
         }
         return out
     }

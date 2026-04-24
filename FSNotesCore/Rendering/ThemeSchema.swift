@@ -521,10 +521,10 @@ public struct ThemeChrome: Codable, Equatable {
             light: "#666666FF", dark: "#4A4A4AFF"
         ),
         tableHeaderFill: ThemeColor = ThemeColor(
-            light: "#D9D9D9FF", dark: "#2A2A2AFF"
+            light: "#D9D9D9FF", dark: "#3A3A3AFF"
         ),
         tableZebraFill: ThemeColor = ThemeColor(
-            light: "#F2F2F2FF", dark: "#1F1F1FFF"
+            light: "#F2F2F2FF", dark: "#2E2E2EFF"
         ),
         tableResizePreview: ThemeColor = ThemeColor(hex: "#007AFFFF"),
         sourceMarker: ThemeColor = ThemeColor(hex: "#999999FF"),

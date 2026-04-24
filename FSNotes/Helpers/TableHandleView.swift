@@ -126,13 +126,30 @@ final class TableHandleView: NSView {
             clearHover()
             return
         }
+        // TK1 UX: hovering anywhere inside the table shows handles
+        // for the column + row the cursor is currently over. Don't
+        // require the user to find the narrow 11pt strip — the old
+        // `InlineTableView` widget showed both handles whenever the
+        // mouse was anywhere in the grid, and that's how users
+        // discovered them.
+        let col = fragment.columnAt(localX: pt.x)
+        let row = fragment.rowAt(localY: pt.y)
+        if let col = col, let row = row {
+            overlay.updateHover(
+                on: fragment, to: .cell(column: col, row: row)
+            )
+            return
+        }
+        // Edge case: mouse is inside bounds but outside the grid
+        // (e.g. over the left or top strip itself before the first
+        // cell). Fall back to column- or row-only hover.
         if fragment.isInTopHandleStrip(localY: pt.y),
-           let col = fragment.columnAt(localX: pt.x) {
+           let col = col {
             overlay.updateHover(on: fragment, to: .column(col))
             return
         }
         if fragment.isInLeftHandleStrip(localX: pt.x),
-           let row = fragment.rowAt(localY: pt.y) {
+           let row = row {
             overlay.updateHover(on: fragment, to: .row(row))
             return
         }
