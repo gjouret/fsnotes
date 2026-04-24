@@ -52,7 +52,26 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     private static func loadFromDisk(key: String) -> NSImage? {
         let url = diskCacheFile(forKey: key)
         guard let data = try? Data(contentsOf: url),
-              let image = NSImage(data: data) else { return nil }
+              let rep = NSBitmapImageRep(data: data) else { return nil }
+        // PNG carries no NSImage-understood scale metadata, so the
+        // default `NSImage(data:)` path synthesizes a 1× rep with
+        // `size = pixelSize`. `WKWebView.takeSnapshot` captures at the
+        // screen's backing scale (2× on Retina), so the on-disk PNG
+        // pixels are 2× the displayed points. Reading back at 1× made
+        // the fragment's draw code treat the image as 1× and
+        // down-scale it — visibly blurry. Rebuild the image with an
+        // explicit scale so `NSImage.size` is in points and the rep's
+        // pixel count reflects the HiDPI capture. Matches the assumption
+        // `NSWindow.makeOffscreen` / `takeSnapshot` already make at
+        // capture time.
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let sizeInPoints = NSSize(
+            width: CGFloat(rep.pixelsWide) / scale,
+            height: CGFloat(rep.pixelsHigh) / scale
+        )
+        rep.size = sizeInPoints
+        let image = NSImage(size: sizeInPoints)
+        image.addRepresentation(rep)
         return image
     }
 
@@ -63,6 +82,28 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let url = diskCacheFile(forKey: key)
         try? png.write(to: url, options: .atomic)
     }
+
+    #if DEBUG
+    /// Debug-only test hook for the HiDPI disk-cache round-trip tests
+    /// (see `Tests/BlockRendererDiskCacheScaleTests.swift`). Mirrors
+    /// `writeToDisk` verbatim — kept as a thin wrapper so the production
+    /// helper stays `private` and release builds don't expose the
+    /// internal cache surface.
+    static func _testOnly_writeToDisk(image: NSImage, key: String) {
+        writeToDisk(image: image, key: key)
+    }
+
+    /// Debug-only test hook mirroring `loadFromDisk`.
+    static func _testOnly_loadFromDisk(key: String) -> NSImage? {
+        loadFromDisk(key: key)
+    }
+
+    /// Debug-only hook to surface the cache file URL for a given key,
+    /// so tests can clean up after themselves deterministically.
+    static func _testOnly_diskCacheFile(forKey key: String) -> URL {
+        diskCacheFile(forKey: key)
+    }
+    #endif
 
     // Keep strong references to active renderers so they aren't deallocated
     // while the WKWebView is still loading (navigationDelegate is weak)

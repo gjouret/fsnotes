@@ -1003,6 +1003,7 @@
 		EHN0000000000000000000B1 /* EditorHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = EHN0000000000000000000F1 /* EditorHarness.swift */; };
 		PDFX000000000000000000B1 /* PDFExporterMeasurementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */; };
 		ASRS0000000000000000000B1 /* AsyncRenderScrollExtentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ASRS0000000000000000000F1 /* AsyncRenderScrollExtentTests.swift */; };
+		BRDCS000000000000000000B1 /* BlockRendererDiskCacheScaleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BRDCS000000000000000000F1 /* BlockRendererDiskCacheScaleTests.swift */; };
 		DHR0000000000000000000B1 /* DocumentHTMLRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DHR0000000000000000000F1 /* DocumentHTMLRenderer.swift */; };
 		INV0000000000000000000B1 /* Invariants.swift in Sources */ = {isa = PBXBuildFile; fileRef = INV0000000000000000000F1 /* Invariants.swift */; };
 		REFHW000000000000000000B1 /* ReferenceHTMLWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = REFHW000000000000000000F1 /* ReferenceHTMLWriter.swift */; };
@@ -1646,6 +1647,7 @@
 		EHN0000000000000000000F1 /* EditorHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorHarness.swift; sourceTree = "<group>"; };
 		PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFExporterMeasurementTests.swift; sourceTree = "<group>"; };
 		ASRS0000000000000000000F1 /* AsyncRenderScrollExtentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncRenderScrollExtentTests.swift; sourceTree = "<group>"; };
+		BRDCS000000000000000000F1 /* BlockRendererDiskCacheScaleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRendererDiskCacheScaleTests.swift; sourceTree = "<group>"; };
 		DHR0000000000000000000F1 /* DocumentHTMLRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentHTMLRenderer.swift; sourceTree = "<group>"; };
 		INV0000000000000000000F1 /* Invariants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Invariants.swift; sourceTree = "<group>"; };
 		REFHW000000000000000000F1 /* ReferenceHTMLWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceHTMLWriter.swift; sourceTree = "<group>"; };
@@ -2591,6 +2593,7 @@
 				EHN0000000000000000000F1 /* EditorHarness.swift */,
 				PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */,
 				ASRS0000000000000000000F1 /* AsyncRenderScrollExtentTests.swift */,
+				BRDCS000000000000000000F1 /* BlockRendererDiskCacheScaleTests.swift */,
 				DHR0000000000000000000F1 /* DocumentHTMLRenderer.swift */,
 				INV0000000000000000000F1 /* Invariants.swift */,
 				REFHW000000000000000000F1 /* ReferenceHTMLWriter.swift */,
@@ -4114,6 +4117,7 @@
 				EHN0000000000000000000B1 /* EditorHarness.swift in Sources */,
 				PDFX000000000000000000B1 /* PDFExporterMeasurementTests.swift in Sources */,
 				ASRS0000000000000000000B1 /* AsyncRenderScrollExtentTests.swift in Sources */,
+				BRDCS000000000000000000B1 /* BlockRendererDiskCacheScaleTests.swift in Sources */,
 				DHR0000000000000000000B1 /* DocumentHTMLRenderer.swift in Sources */,
 				INV0000000000000000000B1 /* Invariants.swift in Sources */,
 				REFHW000000000000000000B1 /* ReferenceHTMLWriter.swift in Sources */,
