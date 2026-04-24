@@ -1240,6 +1240,95 @@ User reviews after each slice. 9.a can land without review (pure hygiene). 9.b a
 
 ---
 
+## Phase 10 — CommonMark Slice A (92.2% → ~95%)
+
+### Goal
+
+Close the **19 easiest residual CommonMark failures** across 7 spec buckets, moving compliance from **601/652 (92.2%)** to **~620/652 (~95.2%)**. Each failing example in scope is narrow (edge cases, single-line fixes, or limited-scope parser tweaks); the effort profile matches "spec-conformance polish," not structural refactor.
+
+### Context
+
+Phase 6's "CommonMark ≥ 90%" exit criterion cleared at 92.2% on 2026-04-24 via Batch N+9D (11 commits, +62 tests, `bc73625 → 1c52da0`). Agent D's final commit `1c52da0` documented the residual-51 analysis in `CLAUDE.md` — Slice A targets buckets 3–9 of that analysis; Slice B (list-item multi-block content) and Slice C (Links delimiter-stack) are larger bets tracked as potential Phase 11 / Phase 12.
+
+### Scope per bucket
+
+| Bucket | Current | Target | Failing examples | Fix type |
+|---|---:|---:|---|---|
+| **HTML blocks** | 36/40 | 40/40 | 4 indented-code-inside-HTML-block edges | Parser: HTML-block continuation rules near 4-space indent |
+| **Tabs** | 7/11 | 11/11 | 4 tab expansion in container prefix contexts | Parser: tab-to-4-stop expansion when prefix is a blockquote `>` or list marker |
+| **Indented code blocks** | 9/12 | 12/12 | 3 boundary cases inside list items / blockquotes | Parser: nested-container interaction (partial overlap with Slice B) |
+| **Link ref defs** | 24/27 | 27/27 | 3 multi-line label + 1 bracket-precedence edge | Parser: `[a\nb]: url` multi-line label, single precedence case |
+| **Thematic breaks** | 17/19 | 19/19 | 2 `* * *` list-vs-HR disambiguation in list context | Parser: ambiguity resolution at list-item interior |
+| **Block quotes + Setext headings** | 24/25 + 26/27 | 25/25 + 27/27 | 2 — same root cause (spec example #93): lazy-continuation interacts with setext underline | Parser: single fix for both buckets |
+| **Emphasis + Raw HTML + Images** | — | — | 3 single-test edges | Fix opportunistically |
+
+**Total**: **19 tests** closed; gap from current `601 / 652 = 92.2%` to `620 / 652 = 95.1%`.
+
+### Deferred (out of Slice A scope)
+
+- **Slice B — List items + Lists (14 tests, ~1 week)**: requires `ListItem.children: [ListItem]` → `[Block]` refactor with ~107 call-site updates across `EditingOps`, `SourceRenderer`, `ListEditingFSM`. Real user impact (code blocks inside bullet lists is a common pattern). Tracked for Phase 11.
+- **Slice C — Links delimiter-stack (14 tests, ~1–2 weeks)**: CommonMark-faithful bracket / link / image precedence rewrite (link-in-link literalization, autolink inside link text, wikilink edges). Pre-existing TODO. Tracked for Phase 12.
+
+### Slices
+
+**10.a — Tabs + trivial single-test edges (~9 tests, ~1 day).**
+- Tabs (4): extend tab-expansion logic to fire inside container prefixes (`> \tfoo` / `- \tfoo`), not just at paragraph start
+- Thematic breaks (2): `* * *` inside a list item should prefer the list marker continuation over the HR, per spec example #29
+- Block quotes + Setext (2): fix the shared #93 lazy-continuation interaction
+- Singles (1 each from Emphasis / Raw HTML / Images if they are spec-trivia one-liners)
+
+**10.b — HTML blocks + Indented code (~7 tests, ~1 day).**
+- HTML blocks (4): indented-code content inside HTML blocks — the spec says HTML block content is raw until a blank line; our parser currently mis-dispatches when the inside contains a 4-space-indented line
+- Indented code blocks (3): content that's indented code *inside* a list item or blockquote — narrow fix, partial overlap with Slice B but doesn't require the `children: [Block]` restructure
+
+**10.c — Link ref defs (~3 tests, ~half day).**
+- Multi-line reference labels: `[a\nb]: url` — accept newline in label during normalization
+- One bracket-precedence edge — likely single-line fix
+
+**10.d — Docs update.**
+- Update `CLAUDE.md` "CommonMark Spec Compliance" section with new headline figure (`620/652 = ~95.2%`) and refreshed bucket classification
+- Update this plan entry with ship commits + new per-bucket residuals
+- Mark Phase 10 ✅ SHIPPED
+
+### Exit criteria
+
+- CommonMark compliance ≥ 95% (≥ 620/652)
+- No regression on any currently-passing test (monotonic non-decrease per commit)
+- `rg -c 'failed' ~/unit-tests/commonmark-failures.txt` shows the closed buckets empty
+- Full suite green: ≥ 1459/0 (Slice A adds no new tests beyond the CM corpus re-runs)
+- Rule 7 gate clean
+- `CLAUDE.md` + `REFACTOR_PLAN.md` updated
+
+### Estimate
+
+- 10.a: ~1 day
+- 10.b: ~1 day
+- 10.c: ~half day
+- 10.d: ~1 hour
+
+**Total: ~3 days focused, ~4–5 days calendar.**
+
+### Rollback
+
+Per-slice revertible. Each slice is self-contained in `MarkdownParser.swift` (+ occasional `MarkdownSerializer.swift` tweak). A regression in one slice doesn't affect the others.
+
+### Non-goals
+
+- Not attempting Slice B (list-item `[Block]` children refactor) — too large for a "polish" phase, needs its own scoping
+- Not attempting Slice C (Links delimiter-stack) — spec-conformance trivia vs. user-visible-value ratio is poor; best deferred until after Phase 5 + 6 land
+- Not pursuing spec conformance for its own sake past 95% — the last ~5% is edge cases real users don't hit
+
+### Dependencies
+
+- **None blocking**. Touches `MarkdownParser.swift` + `MarkdownSerializer.swift` + `Tests/CommonMark/` only. Does not conflict with any in-flight Phase 5 work.
+- Agent D's residual-51 analysis in `CLAUDE.md` (commit `1c52da0`) is the scope document.
+
+### Checkpoints
+
+User reviews after each slice lands. Each is small enough (≤ half-day) that review is fast. The 95% number is the exit signal; if a slice can't close its entire bucket, that's fine — ship partial progress and move on.
+
+---
+
 ## Reuse of existing functions / utilities
 
 - `makeFullPipelineEditor()` — currently in Tests/; absorbed into `EditorHarness.init`
