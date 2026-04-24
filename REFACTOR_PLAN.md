@@ -1278,13 +1278,21 @@ Deferred: UTType-related Tier 1 sites (Phase 9.b covers those) and NSKeyedUnarch
 - Touch points use `CoreServices`-era C APIs on `CFString`; `UniformTypeIdentifiers` framework (macOS 11.0+) is the modern replacement. FSNotes++'s deployment target is macOS 13.0, so the migration is unconstrained.
 - **Regression risk:** UTType conformance behaviour has subtle differences (tag-class lookups may return different canonical values for edge types). Add a data-driven test that exercises the migrated sites against a corpus of extensions (`md`, `textbundle`, `png`, `pdf`, `mov`, `mp4`, `svg`, `webp`) and asserts MIME/filename-extension resolutions match pre-migration behaviour. Keep the test tiny — one `XCTestCase` class with a table.
 
-**9.c — Tier 3 AppKit API modernization (~15 warnings).**
-- `NSKeyedUnarchiver.unarchiveObject(with:)` at 4 sites (`EditTextView+Clipboard.swift:129/263`, `EditTextView+DragOperation.swift:96`, `ViewController+Web.swift:322`) → `NSKeyedUnarchiver.unarchivedObject(ofClass:from:)`. Apple's new API requires declaring the expected top-level class explicitly — a genuine API improvement.
-- `NSWorkspace.open(_:options:configuration:)` (`EditTextView+Input.swift:178`) → `openURL:configuration:completionHandler:`.
-- `NSColor.current` (`AppDelegate.swift:197`, `OutlineHeaderView.swift:38`, misc) → `performAsCurrentDrawingAppearance:` for drawing blocks; `currentDrawingAppearance` for read-only accessors.
-- `NSWorkspace.openFile(_:withApplication:)` (`PreferencesGitViewController.swift:81`) → modern open API.
-- `allowedFileTypes` (`PreferencesEditorViewController.swift:206`) → `allowedContentTypes` (takes `[UTType]`; depends on 9.b landing first).
-- **Regression risk:** clipboard and drag paths touch real user data. Add round-trip tests for each migrated API — serialise + deserialise + assert equality against known fixtures. No manual dogfood required (tests cover every changed surface).
+**9.c — Tier 3 AppKit API modernization — ✅ PARTIAL 2026-04-24.**
+Shipped (6 call sites, 5 warnings resolved — `EditTextView+Input.swift:178` counted as 2 because the single line carried both `open(_:options:configuration:)` and `.default` warnings):
+- `FSNotes/View/EditTextView+DragOperation.swift:96` — `unarchiveTopLevelObjectWithData(data) as? NSAttributedString` → `unarchivedObject(ofClass: NSAttributedString.self, from: data)`.
+- `FSNotes/ViewController+Web.swift:322` — `unarchiveObject(with: accessData) as? [URL: Data]` → `try? unarchivedObject(ofClasses: [NSDictionary.self, NSURL.self, NSData.self], from: accessData) as? [URL: Data]` (matches the existing pattern in `PreferencesWebViewController.swift` for the same pasteboard data shape).
+- `FSNotes/View/EditTextView+Input.swift:178` — `NSWorkspace.shared.open(url, options: .default, configuration: [:])` → `NSWorkspace.shared.open(url)` (the bare `open(_: URL) -> Bool` overload is not deprecated; return value was already discarded, so behavior is identical).
+- `FSNotes/AppDelegate.swift:197` — `NSAppearance.current.isDark` → `NSApp.effectiveAppearance.isDark` (non-drawing context — reading "is the app in dark mode?" for `UserDataService.instance.isDark` wiring).
+- `FSNotesCore/Business/SidebarItem.swift:210` — same substitution inside `getIcon(name:white:)`.
+- `FSNotes/View/OutlineHeaderView.swift:38` — drawing context. `NSAppearance.current.isDark` → `NSAppearance.currentDrawing().isDark`.
+
+Deferred — reported to user instead of shipping:
+- `FSNotes/View/EditTextView+Clipboard.swift:140 / 275 / 327` — 3× `unarchiveTopLevelObjectWithData`. Off-limits for this slice (file was recently touched by Phase 5d C4 and carries churn risk per agent instructions). Next slice.
+- `FSNotes/ViewController+Notes.swift:857` — `openFile(path, withApplication: UserDefaultsManagement.externalEditor)`. The modern `open([URL], withApplicationAt: appURL, configuration:, completionHandler:)` needs an app URL; the repo stores only an app *name* string. Resolving name→URL has edge cases (`/Applications`, `~/Applications`, app-with-different-display-name, bundle-id mismatch) and shipping the rewrite would risk silent behavior change.
+- `FSNotes/Preferences/PreferencesGitViewController.swift:81` — `openFile(storage.path, withApplication: "Terminal.app")`. Same name→URL issue as above; tracked together.
+
+Warning delta verified: clean build before/after, Swift deprecation warnings (excluding Pods and storyboards) dropped from 23 → 18. Rule-7 gate clean. Full suite 1645 / 0 failures.
 
 **9.d — Grep-gate + warning-budget docs.**
 - New `scripts/rule7-gate.sh` banned patterns:

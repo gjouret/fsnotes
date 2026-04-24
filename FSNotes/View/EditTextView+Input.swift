@@ -175,7 +175,7 @@ extension EditTextView {
                 if link.isValidEmail(), let mail = URL(string: "mailto:\(link)") {
                     NSWorkspace.shared.open(mail)
                 } else if let url = URL(string: link) {
-                    _ = try? NSWorkspace.shared.open(url, options: .default, configuration: [:])
+                    NSWorkspace.shared.open(url)
                 }
             }
             return

@@ -93,7 +93,7 @@ extension EditTextView
         insertText("", replacementRange: removeRange)
 
         guard let data = pasteboard.data(forType: NSPasteboard.attributed),
-              let attributedString = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSAttributedString else { return false }
+              let attributedString = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data) else { return false }
 
         // drop
         insertText(attributedString, replacementRange: insertRange)

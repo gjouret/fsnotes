@@ -319,7 +319,7 @@ extension EditorViewController {
         var privateKeyURL: URL?
         
         if let accessData = UserDefaultsManagement.sftpAccessData,
-            let bookmarks = NSKeyedUnarchiver.unarchiveObject(with: accessData) as? [URL: Data] {
+            let bookmarks = try? NSKeyedUnarchiver.unarchivedObject(ofClasses: [NSDictionary.self, NSURL.self, NSData.self], from: accessData) as? [URL: Data] {
             for bookmark in bookmarks {
                 if bookmark.key.path.hasSuffix(".pub") {
                     publicKeyURL = bookmark.key
