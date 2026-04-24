@@ -88,9 +88,11 @@
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
 		DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA0000000000000000000F1 /* DocumentEditApplier.swift */; };
 		P5A0000000000000000000B1 /* StorageWriteGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5A0000000000000000000F1 /* StorageWriteGuard.swift */; };
+		P5B0000000000000000000B1 /* DocumentCursorLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F1 /* DocumentCursorLocation.swift */; };
 		DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */; };
 		P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */; };
 		P5AD000000000000000000B1 /* Phase5aDeleteBypassFixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */; };
+		P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */; };
 		BREF000000000000000000B1 /* BlockRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = BREF000000000000000000F1 /* BlockRef.swift */; };
 		CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */; };
 		FTFL000000000000000000B1 /* FeatureFlag.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTFL000000000000000000F1 /* FeatureFlag.swift */; };
@@ -154,6 +156,8 @@
 		11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
 		C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
 		41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
+		P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F2 /* EditTextView+Selection.swift */; };
+		P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F2 /* EditTextView+Selection.swift */; };
 		11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
 		11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
 		11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
@@ -1189,9 +1193,11 @@
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
 		DEA0000000000000000000F1 /* DocumentEditApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplier.swift; sourceTree = "<group>"; };
 		P5A0000000000000000000F1 /* StorageWriteGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageWriteGuard.swift; sourceTree = "<group>"; };
+		P5B0000000000000000000F1 /* DocumentCursorLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentCursorLocation.swift; sourceTree = "<group>"; };
 		DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplierTests.swift; sourceTree = "<group>"; };
 		P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aSingleWritePathTests.swift; sourceTree = "<group>"; };
 		P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aDeleteBypassFixTests.swift; sourceTree = "<group>"; };
+		P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5bCursorCanonicalizationTests.swift; sourceTree = "<group>"; };
 		BREF000000000000000000F1 /* BlockRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRef.swift; sourceTree = "<group>"; };
 		CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleTests.swift; sourceTree = "<group>"; };
 		FTFL000000000000000000F1 /* FeatureFlag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureFlag.swift; sourceTree = "<group>"; };
@@ -1232,6 +1238,7 @@
 		110E40A32EA039AA00C62F49 /* EditTextView+DragOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+DragOperation.swift"; sourceTree = "<group>"; };
 		11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+NoteState.swift"; sourceTree = "<group>"; };
 		FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+BlockModel.swift"; sourceTree = "<group>"; };
+		P5B0000000000000000000F2 /* EditTextView+Selection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Selection.swift"; sourceTree = "<group>"; };
 		11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Formatting.swift"; sourceTree = "<group>"; };
 		11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Appearance.swift"; sourceTree = "<group>"; };
 		11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Interaction.swift"; sourceTree = "<group>"; };
@@ -1747,6 +1754,7 @@
 				THM7400000000000000000F1 /* ThemeDiscovery.swift */,
 				DEA0000000000000000000F1 /* DocumentEditApplier.swift */,
 				P5A0000000000000000000F1 /* StorageWriteGuard.swift */,
+				P5B0000000000000000000F1 /* DocumentCursorLocation.swift */,
 				BREF000000000000000000F1 /* BlockRef.swift */,
 				B8852B50A2749E42226C8379 /* EditorPreferences.swift */,
 				AFE671661EA5E89C1BEDDCEE /* SyncPreferences.swift */,
@@ -2338,6 +2346,7 @@
 				D797004B1F3DD10700BAD94D /* EditTextView.swift */,
 				11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */,
 				FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */,
+				P5B0000000000000000000F2 /* EditTextView+Selection.swift */,
 				11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */,
 				ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */,
 				11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */,
@@ -2574,6 +2583,7 @@
 				DEAT00000000000000000F01 /* DocumentEditApplierTests.swift */,
 				P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */,
 				P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */,
+				P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */,
 				TGET000000000000000000F1 /* TableGeometryTests.swift */,
 				CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */,
 				TEET000000000000000000F1 /* TableElementEmissionTests.swift */,
@@ -3493,6 +3503,7 @@
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
 				DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */,
 				P5A0000000000000000000B1 /* StorageWriteGuard.swift in Sources */,
+				P5B0000000000000000000B1 /* DocumentCursorLocation.swift in Sources */,
 				BREF000000000000000000B1 /* BlockRef.swift in Sources */,
 				FTFL000000000000000000B1 /* FeatureFlag.swift in Sources */,
 				AE6D47605A4C62BABAE54290 /* Note+FileOps.swift in Sources */,
@@ -3647,6 +3658,7 @@
 				110E40A52EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */,
 				11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
 				41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */,
+				P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */,
 				11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				ETVT000000000000000000B1 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C22F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
@@ -3912,6 +3924,7 @@
 				110E40A42EA039CE00C62F49 /* EditTextView+DragOperation.swift in Sources */,
 				11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */,
 				C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */,
+				P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */,
 				11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				ETVT000000000000000000B2 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C12F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
@@ -4084,6 +4097,7 @@
 				DEAT00000000000000000B01 /* DocumentEditApplierTests.swift in Sources */,
 				P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */,
 				P5AD000000000000000000B1 /* Phase5aDeleteBypassFixTests.swift in Sources */,
+				P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */,
 				TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */,
 				CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */,
 				TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */,
