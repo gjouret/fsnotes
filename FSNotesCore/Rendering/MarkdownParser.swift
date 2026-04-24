@@ -2336,8 +2336,17 @@ public enum MarkdownParser {
         return false
     }
 
-    /// Returns true if `ch` is a Unicode punctuation character (ASCII
-    /// punctuation + Unicode general categories Pc, Pd, Pe, Pf, Pi, Po, Ps).
+    /// Returns true if `ch` is a Unicode punctuation character.
+    ///
+    /// CommonMark 0.31.2 §6.2 (backslash escapes, emphasis flanking):
+    /// "A Unicode punctuation character is a character in the Unicode
+    /// Pc, Pd, Pe, Pf, Pi, Po, or Ps (punctuation), or Sc, Sk, Sm, So
+    /// (symbol) general category; or an ASCII punctuation character."
+    ///
+    /// The v0.31.2 broadening to include the S categories fixes cases
+    /// like `*£*bravo.` (spec #354) where the currency symbol `£`
+    /// (category Sc) must be treated as punctuation for flanking
+    /// purposes so the surrounding `*` doesn't become emphasis.
     private static func isUnicodePunctuation(_ ch: Character) -> Bool {
         // Fast path: ASCII punctuation
         if isPunctuationChar(ch) { return true }
@@ -2346,7 +2355,8 @@ public enum MarkdownParser {
             switch scalar.properties.generalCategory {
             case .connectorPunctuation, .dashPunctuation, .closePunctuation,
                  .finalPunctuation, .initialPunctuation, .otherPunctuation,
-                 .openPunctuation:
+                 .openPunctuation,
+                 .currencySymbol, .modifierSymbol, .mathSymbol, .otherSymbol:
                 return true
             default:
                 return false
