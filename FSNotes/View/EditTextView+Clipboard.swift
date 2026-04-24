@@ -252,6 +252,43 @@ extension EditTextView {
             }
         }
 
+        // Phase 5d commit 4: cross-app attributed-string paste.
+        // Pasteboards from Pages / Word / Safari / Mail usually
+        // carry `.rtf` / `NSPasteboard.attributed` alongside a plain
+        // string. When the block model is active, prefer the
+        // attributed-string representation so bold / italic / strike
+        // / underline / link runs round-trip into markdown inlines.
+        // Plain string falls through to the legacy markdown-paste
+        // branch below for clipboards that carry only raw text.
+        //
+        // Skip when we already handled an image (the image loop above
+        // returns early). Skip when no string is on the pasteboard,
+        // since pure attributed-string-only pasteboards are rare and
+        // the attributed-string read below is keyed by the same
+        // `.attributed` type the source-mode branch reads.
+        if documentProjection != nil,
+           NSPasteboard.general.string(forType: .fileURL) == nil {
+            var attributedCandidate: NSAttributedString? = nil
+            if let rtfdData = NSPasteboard.general.data(
+                forType: NSPasteboard.attributed
+            ), let decoded = try? NSKeyedUnarchiver
+                .unarchiveTopLevelObjectWithData(rtfdData)
+                as? NSAttributedString {
+                attributedCandidate = decoded
+            } else if let rtfData = NSPasteboard.general.data(
+                forType: .rtf
+            ), let decoded = NSAttributedString(
+                rtf: rtfData, documentAttributes: nil
+            ) {
+                attributedCandidate = decoded
+            }
+            if let attr = attributedCandidate,
+               attr.length > 0,
+               insertAttributedStringFragmentViaBlockModel(attr) {
+                return
+            }
+        }
+
         if let clipboard = NSPasteboard.general.string(forType: .string),
            NSPasteboard.general.string(forType: .fileURL) == nil {
             let trimmed = clipboard.trim()
@@ -259,7 +296,7 @@ extension EditTextView {
             // Phase 5d: markdown paste path. When the block model is
             // active and the target block is a paragraph / blank line,
             // parse the pasteboard markdown into a Document fragment
-            // and splice it via `EditingOps.insertFragment` — the
+            // and splice it via `EditingOps.replaceFragment` — the
             // single-primitive paste contract. For other block kinds
             // (list, heading, blockquote, code block) we fall back to
             // the legacy `insertText` path, which routes through
@@ -506,43 +543,215 @@ extension EditTextView {
         let fragment = MarkdownParser.parse(markdown)
         if fragment.blocks.isEmpty { return true }
 
-        // Collapse any non-empty selection first. Routes through the
-        // block-model delete path so the Document stays in sync. After
-        // the delete the cursor lands at the collapsed location.
+        // Phase 5d commit 4: resolve the target block BEFORE any
+        // delete so the block-kind gate checks the pre-edit state.
+        // Non-paragraph block kinds (list, heading, blockquote, code
+        // block) have kind-aware paste FSMs that callers reach via
+        // `EditingOps.insert(_:at:in:)`; this path only handles the
+        // paragraph / blank-line case. Collapsed-selection target
+        // uses the cursor; non-empty selection uses the selection's
+        // start, because the post-delete cursor lands there.
         let sel = selectedRange()
-        if sel.length > 0 {
-            _ = handleEditViaBlockModel(in: sel, replacementString: "")
-        }
-
-        // Re-read the latest projection after the optional delete.
-        guard let curProjection = documentProjection else { return false }
-
-        // Resolve the cursor in block-model coordinates.
-        let storageIdx = selectedRange().location
-        guard let (blockIndex, offsetInBlock) = curProjection
-            .blockContaining(storageIndex: storageIdx) else {
+        let gateIdx = sel.location
+        guard let (blockIndex, _) = projection
+            .blockContaining(storageIndex: gateIdx) else {
             return false
         }
-        let targetBlock = curProjection.document.blocks[blockIndex]
-
-        // Only handle the paragraph / blank line / empty-paragraph case
-        // via `insertFragment` — other block kinds have kind-aware
-        // paste FSMs that callers should use instead. Blank lines are
-        // treated as paragraph-kind for fragment insertion.
-        switch targetBlock {
+        switch projection.document.blocks[blockIndex] {
         case .paragraph, .blankLine:
             break
         default:
             return false
         }
 
-        let cursor = DocumentCursor(
-            blockIndex: blockIndex, inlineOffset: offsetInBlock
-        )
+        // Fuse delete-then-insert into a single EditResult via
+        // `replaceFragment`. Pre-commit-4 this was two calls
+        // (`handleEditViaBlockModel` delete + `insertFragment`),
+        // each registering its own undo entry — the user had to
+        // hit undo twice to restore the pre-paste document. The
+        // primitive emits one contract; one undo.
         do {
             breakUndoCoalescing()
-            let result = try EditingOps.insertFragment(
-                fragment, at: cursor, in: curProjection
+            let result = try EditingOps.replaceFragment(
+                range: sel, with: fragment, in: projection
+            )
+            applyEditResultWithUndo(result, actionName: "Paste")
+            breakUndoCoalescing()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Phase 5d commit 4: pure converter from a cross-app
+    /// `NSAttributedString` (pasteboard-sourced) to a `Document`.
+    /// Preserves the traits that map to markdown inlines (bold,
+    /// italic, strikethrough, underline, link, code, highlight) and
+    /// drops everything else (font family, font size, foreground /
+    /// background color outside the highlight-match tolerance,
+    /// paragraph style, kern, baseline offset). Attachment runs are
+    /// stripped — they don't round-trip through markdown and, when
+    /// both an image and an attributed string are on the pasteboard,
+    /// the image branch of `paste()` handles the image separately.
+    ///
+    /// Paragraph splitting:
+    ///  - `\n\n` (double newline, the CommonMark paragraph break)
+    ///    and `\u{2028}` (Unicode line separator, emitted by Pages /
+    ///    Safari on Shift+Enter) split the attributed string into
+    ///    separate `Block.paragraph` values.
+    ///  - Single `\n` inside a segment stays within the paragraph,
+    ///    where `InlineRenderer.inlineTreeFromAttributedString`
+    ///    translates it into a `.rawHTML("<br>")` inline — the same
+    ///    inverse of the live table-cell edit path.
+    ///
+    /// The heavy lifting is delegated to
+    /// `InlineRenderer.inlineTreeFromAttributedString` — the existing
+    /// inverse of `InlineRenderer.render` from the table-cell edit
+    /// refactor. Using the same converter keeps paste symmetric with
+    /// how rendered cell text round-trips through the block model.
+    static func documentFromAttributedString(
+        _ attributed: NSAttributedString
+    ) -> Document {
+        if attributed.length == 0 {
+            return Document(blocks: [], trailingNewline: false)
+        }
+
+        // 1. Strip attachment runs. NSTextAttachment carries a
+        //    U+FFFC object-replacement char; if we left it in, the
+        //    inline converter would faithfully preserve it and the
+        //    serializer would round-trip a stray FFFC into markdown.
+        //    Build a cleaned copy that excludes those ranges.
+        let cleaned = NSMutableAttributedString()
+        attributed.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: attributed.length),
+            options: []
+        ) { value, range, _ in
+            if value == nil {
+                cleaned.append(
+                    attributed.attributedSubstring(from: range)
+                )
+            }
+            // else: attachment run — drop entirely.
+        }
+        if cleaned.length == 0 {
+            return Document(blocks: [], trailingNewline: false)
+        }
+
+        // 2. Split into paragraph segments on `\n\n` (double newline)
+        //    and `\u{2028}` (Unicode line separator). Single `\n`
+        //    stays inside a segment.
+        let segments = splitAttributedIntoParagraphSegments(cleaned)
+
+        // 3. Convert each segment via InlineRenderer's inverse and
+        //    wrap as a paragraph block. Empty segments (produced by
+        //    consecutive separators) collapse to `.blankLine` blocks.
+        var blocks: [Block] = []
+        for segment in segments {
+            if segment.length == 0 {
+                blocks.append(.blankLine)
+                continue
+            }
+            let inlines = InlineRenderer
+                .inlineTreeFromAttributedString(segment)
+            if inlines.isEmpty {
+                blocks.append(.blankLine)
+            } else {
+                blocks.append(.paragraph(inline: inlines))
+            }
+        }
+        return Document(blocks: blocks, trailingNewline: false)
+    }
+
+    /// Split an attributed string on hard paragraph separators —
+    /// `\n\n` (double newline) and `\u{2028}` (Unicode line
+    /// separator, emitted by Pages / Safari / web browsers on
+    /// Shift+Enter) — preserving the attributes on each segment.
+    ///
+    /// Returns segments without trailing newlines; single `\n`
+    /// characters remain inside their segment (handled downstream
+    /// by `InlineRenderer.inlineTreeFromAttributedString` as
+    /// `.rawHTML("<br>")`).
+    private static func splitAttributedIntoParagraphSegments(
+        _ attributed: NSAttributedString
+    ) -> [NSAttributedString] {
+        let s = attributed.string as NSString
+        let length = attributed.length
+        if length == 0 { return [] }
+
+        var segments: [NSAttributedString] = []
+        var segStart = 0
+        var i = 0
+        while i < length {
+            let ch = s.character(at: i)
+
+            // \u{2028} → single-char separator.
+            if ch == 0x2028 {
+                let segRange = NSRange(
+                    location: segStart, length: i - segStart
+                )
+                segments.append(
+                    attributed.attributedSubstring(from: segRange)
+                )
+                segStart = i + 1
+                i += 1
+                continue
+            }
+
+            // \n\n → two-char separator. A lone \n is treated as a
+            // soft break and kept inside the segment.
+            if ch == 0x0A,
+               i + 1 < length,
+               s.character(at: i + 1) == 0x0A {
+                let segRange = NSRange(
+                    location: segStart, length: i - segStart
+                )
+                segments.append(
+                    attributed.attributedSubstring(from: segRange)
+                )
+                segStart = i + 2
+                i += 2
+                continue
+            }
+            i += 1
+        }
+        if segStart < length {
+            let segRange = NSRange(
+                location: segStart, length: length - segStart
+            )
+            segments.append(
+                attributed.attributedSubstring(from: segRange)
+            )
+        }
+        return segments
+    }
+
+    /// Phase 5d commit 4: paste an `NSAttributedString` through the
+    /// block model. Converts the attributed string to a `Document`
+    /// fragment (preserving bold / italic / strike / underline /
+    /// link traits), then routes through `EditingOps.replaceFragment`
+    /// so a non-empty selection is fused into ONE undo step.
+    ///
+    /// Returns `true` when the paste was handled and the caller
+    /// should skip the pasteboard fallthrough; `false` when no
+    /// projection is active or the converted fragment is empty.
+    /// Always routes the splice through `applyEditResultWithUndo`
+    /// so `DocumentEditApplier` performs the single authorized
+    /// storage write.
+    @discardableResult
+    func insertAttributedStringFragmentViaBlockModel(
+        _ attributed: NSAttributedString
+    ) -> Bool {
+        guard let projection = documentProjection else { return false }
+
+        let fragment = Self.documentFromAttributedString(attributed)
+        if fragment.blocks.isEmpty { return false }
+
+        let sel = selectedRange()
+        do {
+            breakUndoCoalescing()
+            let result = try EditingOps.replaceFragment(
+                range: sel, with: fragment, in: projection
             )
             applyEditResultWithUndo(result, actionName: "Paste")
             breakUndoCoalescing()

@@ -2936,6 +2936,145 @@ public enum EditingOps {
         return result
     }
 
+    /// Phase 5d commit 4: replace a storage `range` with a Document
+    /// `fragment` in a single `EditResult` / `EditContract`. Fuses
+    /// "delete selection then insert fragment" so the user sees ONE
+    /// undo step. Used by the paste path (both markdown-over-selection
+    /// and attributed-string-over-selection) to eliminate the former
+    /// two-undo-step behavior.
+    ///
+    /// Semantics:
+    ///  - Empty selection (`range.length == 0`): behaves exactly like
+    ///    `insertFragment(fragment, at: cursor, in: projection)` with
+    ///    the cursor resolved from `range.location`.
+    ///  - Empty fragment: degenerates to a pure delete of `range` —
+    ///    same result as `delete(range:)`.
+    ///  - Non-empty selection + non-empty fragment: delete the range
+    ///    on the intermediate projection, insert the fragment at the
+    ///    collapsed cursor, then rebuild ONE splice (`spliceRange` +
+    ///    `spliceReplacement`) by narrowing a whole-document diff
+    ///    from the original projection's attributed string to the
+    ///    final projection's attributed string. The fused splice is
+    ///    character-narrowed exactly the same way `narrowSplice`
+    ///    narrows any other block-level replace — so the resulting
+    ///    range/replacement lengths are bounded by the LCS delta,
+    ///    which satisfies the narrowed-splice contract the tests
+    ///    assert (`spliceRange.length <= differing-chars`).
+    ///
+    /// Cursor: lands at `range.location + <rendered-length-of-fragment>`
+    /// for the paragraph-insert case, mirroring `insertFragment`'s
+    /// cursor placement after the appended fragment content.
+    public static func replaceFragment(
+        range: NSRange,
+        with fragment: Document,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        // Path 1: empty selection → plain insertFragment at the cursor.
+        if range.length == 0 {
+            guard let (blockIndex, offsetInBlock) = projection
+                .blockContaining(storageIndex: range.location) else {
+                throw EditingError.notInsideBlock(
+                    storageIndex: range.location
+                )
+            }
+            let cursor = DocumentCursor(
+                blockIndex: blockIndex, inlineOffset: offsetInBlock
+            )
+            return try insertFragment(fragment, at: cursor, in: projection)
+        }
+
+        // Path 2: non-empty selection + empty fragment → pure delete.
+        if fragment.blocks.isEmpty {
+            return try delete(range: range, in: projection)
+        }
+
+        // Path 3: non-empty selection + non-empty fragment.
+        //
+        // Compose internally as delete → insertFragment on the
+        // intermediate projection, then rebuild ONE EditResult with a
+        // narrowed splice over the original→final document diff. The
+        // intermediate EditResults are discarded after we extract the
+        // final projection — we produce one contract describing the
+        // fused operation, not two.
+        let deleteResult = try delete(range: range, in: projection)
+        let intermediate = deleteResult.newProjection
+
+        // Resolve the cursor in the intermediate projection at the
+        // collapsed deletion point. `range.location` is preserved
+        // across the delete because `delete` pulls the tail forward
+        // to occupy the deleted span.
+        guard let (blockIndex, offsetInBlock) = intermediate
+            .blockContaining(storageIndex: range.location) else {
+            throw EditingError.notInsideBlock(
+                storageIndex: range.location
+            )
+        }
+        let cursor = DocumentCursor(
+            blockIndex: blockIndex, inlineOffset: offsetInBlock
+        )
+        let insertResult = try insertFragment(
+            fragment, at: cursor, in: intermediate
+        )
+        let finalProjection = insertResult.newProjection
+
+        // Narrow the splice between the ORIGINAL projection and the
+        // FINAL projection. `narrowSplice` does character-only LCS
+        // prefix/suffix stripping, which gives us the minimal
+        // differing-chars splice the test harness asserts. For the
+        // whole-document window we pass oldRange = full original and
+        // newReplacement = full final; narrowSplice narrows both
+        // sides symmetrically.
+        let oldFullRange = NSRange(
+            location: 0, length: projection.attributed.length
+        )
+        let newFullRange = NSRange(
+            location: 0, length: finalProjection.attributed.length
+        )
+        let newFullReplacement = finalProjection.attributed
+            .attributedSubstring(from: newFullRange)
+        var fused = narrowSplice(
+            oldAttributedString: projection.attributed,
+            oldRange: oldFullRange,
+            newReplacement: newFullReplacement,
+            newProjection: finalProjection
+        )
+
+        // Cursor: immediately after the inserted fragment content in
+        // the final projection. `insertFragment` already computed this
+        // correctly for its own (intermediate-based) coordinate system;
+        // the insert runs on `intermediate`, whose storage layout from
+        // `range.location` forward matches the final projection byte-
+        // for-byte within the inserted region. So `insertResult
+        // .newCursorPosition` — which is the cursor in the final
+        // projection's coordinates — is what we want.
+        fused.newCursorPosition = insertResult.newCursorPosition
+        fused.newSelectionLength = 0
+
+        // Build a fused EditContract from the declared actions of both
+        // sub-operations. The harness consumer cares about (a) cursor
+        // landing in the right block and (b) the declared structural
+        // deltas matching the observed diff. We keep both sets of
+        // declared actions — the intermediate delete produced some
+        // (modifyInline / replaceBlock / deleteBlock) and the insert
+        // produced others (replaceBlock / insertBlock / mergeAdjacent).
+        // Concatenating them reflects the composite operation.
+        var fusedActions: [EditAction] = []
+        if let deleteContract = deleteResult.contract {
+            fusedActions.append(contentsOf: deleteContract.declaredActions)
+        }
+        if let insertContract = insertResult.contract {
+            fusedActions.append(contentsOf: insertContract.declaredActions)
+        }
+        fused.contract = EditContract(
+            declaredActions: fusedActions,
+            postCursor: finalProjection.cursor(
+                atStorageIndex: fused.newCursorPosition
+            ),
+            postSelectionLength: 0
+        )
+        return fused
+    }
+
     /// Sum the rendered length of an inline tree. Used by
     /// `insertFragment` to position the post-insert cursor just after
     /// the appended fragment content (before any trailing `after`
