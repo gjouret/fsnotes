@@ -823,6 +823,15 @@ public enum MarkdownParser {
     /// Detect whether a line starts an HTML block and return the type
     /// (1–7) if so. Returns nil if the line is not an HTML block start.
     private static func detectHTMLBlock(_ line: String) -> Int? {
+        // CommonMark §4.6: an HTML block may have up to 3 leading
+        // spaces of indentation. A line with 4+ leading columns of
+        // whitespace is an indented code block context (when no
+        // paragraph is open), not an HTML block.
+        var leadingSpaces = 0
+        for ch in line {
+            if ch == " " { leadingSpaces += 1 } else { break }
+        }
+        guard leadingSpaces <= 3 else { return nil }
         let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
         guard trimmed.hasPrefix("<") else { return nil }
         let trimmedStr = String(trimmed)
