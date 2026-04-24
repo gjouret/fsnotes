@@ -98,6 +98,50 @@ extension EditTextView {
         static var lastEditContract = 5
         static var preEditProjection = 6
         static var editingCodeBlocks = 7
+        static var compositionSession = 8
+        static var preSessionFoldState = 9
+    }
+
+    // MARK: - Phase 5e composition session
+
+    /// Transient IME composition state for this editor. Never nil —
+    /// defaults to `.inactive` when no composition is in flight.
+    /// `NSTextInputClient` overrides on `EditTextView` (setMarkedText,
+    /// unmarkText, insertText) read/write this; the 5a DEBUG assertion
+    /// in `TextStorageProcessor.didProcessEditing` reads it via
+    /// `compositionAllowsEdit` to decide whether a storage mutation is
+    /// a sanctioned marked-range write.
+    public var compositionSession: CompositionSession {
+        get {
+            return (objc_getAssociatedObject(
+                self, &AssociatedKeys.compositionSession
+            ) as? CompositionSession) ?? .inactive
+        }
+        set {
+            objc_setAssociatedObject(
+                self, &AssociatedKeys.compositionSession, newValue,
+                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+            )
+        }
+    }
+
+    /// Fold state captured at composition start. IME placement
+    /// doesn't know about collapsed blocks, so the composition
+    /// override unfolds the containing block on entry and re-folds
+    /// on commit using this snapshot. Nil when no composition is
+    /// active or no fold state was captured.
+    public var preSessionFoldState: Set<Int>? {
+        get {
+            return objc_getAssociatedObject(
+                self, &AssociatedKeys.preSessionFoldState
+            ) as? Set<Int>
+        }
+        set {
+            objc_setAssociatedObject(
+                self, &AssociatedKeys.preSessionFoldState, newValue,
+                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+            )
+        }
     }
 
     /// Phase 8 — Code-Block Edit Toggle (Slice 3).
