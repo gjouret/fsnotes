@@ -2996,30 +2996,84 @@ public enum MarkdownParser {
     /// than `count`, returns the trimmed remainder. Used to dedent
     /// continuation lines inside a list item by the item's content
     /// column.
+    ///
+    /// CommonMark §2.2 (tab handling): tabs are virtual — their
+    /// expansion depends on the column where they sit. When this
+    /// function consumes tabs for the dedent, any REMAINING tabs in
+    /// the line would re-expand at a different column in any
+    /// downstream re-parse (because the line has shifted left).
+    /// To preserve the original column layout, we expand all
+    /// post-dedent leading whitespace (spaces + tabs) to explicit
+    /// spaces using the original virtual-column positions. Non-tab
+    /// content after the whitespace is appended verbatim.
     private static func stripLeadingSpaces(_ line: String, count: Int) -> String {
+        let chars = Array(line)
         var col = 0
-        var idx = line.startIndex
-        while idx < line.endIndex && col < count {
-            let ch = line[idx]
+        var idx = 0
+        // Step 1: consume leading whitespace up to `count` virtual cols.
+        while idx < chars.count && col < count {
+            let ch = chars[idx]
             if ch == " " {
                 col += 1
-                idx = line.index(after: idx)
+                idx += 1
             } else if ch == "\t" {
                 let tabWidth = 4 - (col % 4)
                 if col + tabWidth > count {
-                    // Partial tab: emit the overflow as spaces.
+                    // Partial tab — overflow stays as leading spaces.
                     let overflow = (col + tabWidth) - count
                     col += tabWidth
-                    idx = line.index(after: idx)
-                    return String(repeating: " ", count: overflow) + line[idx...]
+                    idx += 1
+                    // After the partial tab, any further leading
+                    // whitespace (spaces / tabs) needs to be expanded
+                    // to its original column layout, then the rest of
+                    // the line tacked on.
+                    var tail: [Character] = Array(repeating: " ", count: overflow)
+                    var vcol = col
+                    while idx < chars.count {
+                        let c2 = chars[idx]
+                        if c2 == " " {
+                            tail.append(" ")
+                            vcol += 1
+                            idx += 1
+                        } else if c2 == "\t" {
+                            let w = 4 - (vcol % 4)
+                            for _ in 0..<w { tail.append(" ") }
+                            vcol += w
+                            idx += 1
+                        } else {
+                            break
+                        }
+                    }
+                    tail.append(contentsOf: chars[idx..<chars.count])
+                    return String(tail)
                 }
                 col += tabWidth
-                idx = line.index(after: idx)
+                idx += 1
             } else {
                 break
             }
         }
-        return String(line[idx...])
+        // Step 2: expand any remaining leading whitespace tabs into
+        // spaces relative to the dedented column origin.
+        var tail: [Character] = []
+        var vcol = 0
+        while idx < chars.count {
+            let c2 = chars[idx]
+            if c2 == " " {
+                tail.append(" ")
+                vcol += 1
+                idx += 1
+            } else if c2 == "\t" {
+                let w = 4 - ((col - count + vcol) % 4)
+                for _ in 0..<w { tail.append(" ") }
+                vcol += w
+                idx += 1
+            } else {
+                break
+            }
+        }
+        tail.append(contentsOf: chars[idx..<chars.count])
+        return String(tail)
     }
 
     /// Find the deepest existing parsed item whose content column is
