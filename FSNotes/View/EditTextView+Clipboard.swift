@@ -137,7 +137,7 @@ extension EditTextView {
         // (which runs through insertText → block-model splice) handle it.
         if documentProjection == nil,
            let rtfdData = NSPasteboard.general.data(forType: NSPasteboard.attributed),
-           let attributed = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(rtfdData) as? NSAttributedString {
+           let attributed = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: rtfdData) {
             breakUndoCoalescing()
             insertText(attributed, replacementRange: selectedRange())
             breakUndoCoalescing()
@@ -272,8 +272,10 @@ extension EditTextView {
             if let rtfdData = NSPasteboard.general.data(
                 forType: NSPasteboard.attributed
             ), let decoded = try? NSKeyedUnarchiver
-                .unarchiveTopLevelObjectWithData(rtfdData)
-                as? NSAttributedString {
+                .unarchivedObject(
+                    ofClass: NSAttributedString.self,
+                    from: rtfdData
+                ) {
                 attributedCandidate = decoded
             } else if let rtfData = NSPasteboard.general.data(
                 forType: .rtf
@@ -324,7 +326,7 @@ extension EditTextView {
         var plainText: String?
 
         if let rtfd = NSPasteboard.general.data(forType: NSPasteboard.attributed),
-           let attributedString = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(rtfd) as? NSAttributedString {
+           let attributedString = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: rtfd) {
             let mutable = NSMutableAttributedString(attributedString: attributedString)
             plainText = mutable.unloadAttachments().string
         } else if let clipboard = NSPasteboard.general.string(forType: .string),
