@@ -127,15 +127,64 @@ final class UTIConformanceMigrationTests: XCTestCase {
         XCTAssertEqual("pdf".fileExtensionUTI, "com.adobe.pdf")
     }
 
-    /// Unknown inputs: the test author's original expectation (nil for
-    /// everything) was incorrect. Apple's `UTType(filenameExtension:)`
-    /// returns a dynamic `dyn.*` UTI for unrecognized extensions — this
-    /// is documented platform behavior, not a migration leak. Skipping
-    /// pending a rewrite that asserts the actual contract (e.g.
-    /// `.conforms(to: .data) == true` for dynamic types, or nil for
-    /// strings with disallowed characters).
-    func test_unknown_inputs_resolve_to_nil() throws {
-        throw XCTSkip("Dynamic UTI contract pending rewrite — see comment")
+    // MARK: - Unknown-input asymmetry
+    //
+    // The three `UTType` initializers behave differently on inputs the
+    // system does not recognize. The earlier single "nil for everything"
+    // test conflated them; the tests below pin each leg of the asymmetry
+    // so a future platform shift surfaces at the correct site.
+    //
+    // Empirically on current macOS:
+    //
+    //   - `UTType(filenameExtension:)` synthesises a dynamic `dyn.*`
+    //     identifier for any syntactically valid extension it does not
+    //     recognize. The synthesised type conforms to `.data`. Therefore
+    //     `String.fileExtensionUTI` is NOT nil for unknown extensions.
+    //
+    //   - `UTType(mimeType:)` ALSO synthesises a dynamic UTI when the
+    //     input is well-formed `type/subtype` shape (e.g.
+    //     `application/x-foo`). It returns nil only when the input is
+    //     not MIME-shaped at all (no slash, etc.). This contradicts the
+    //     initial framing that MIME lookup "never synthesises"; the real
+    //     dividing line is input well-formedness, not corpus membership.
+    //
+    //   - `UTType(_: String)` parses its argument as a UTI identifier
+    //     (reverse-DNS or `dyn.*` shape). Freeform strings containing
+    //     whitespace or other non-identifier characters return nil, so
+    //     `String.utiMimeType` is nil for garbage input.
+
+    /// Unknown filename extensions are synthesised into a dynamic UTI
+    /// whose identifier starts with `dyn.` and whose type conforms to
+    /// `.data`. This is Apple's documented fallback, not a migration bug.
+    func test_unknown_extension_returns_dynamic_UTI() {
+        let dynIdent = "zzzzz-no-such-ext".fileExtensionUTI
+        XCTAssertNotNil(dynIdent,
+                        "unknown extensions synthesise a dynamic UTI (not nil)")
+        XCTAssertTrue(dynIdent?.hasPrefix("dyn.") ?? false,
+                      "dynamic UTI identifier should start with 'dyn.' (got \(dynIdent ?? "nil"))")
+        if let ident = dynIdent, let uti = UTType(ident) {
+            XCTAssertTrue(uti.conforms(to: .data),
+                          "synthesised dynamic UTI must conform to .data")
+        } else {
+            XCTFail("dynamic UTI failed to round-trip through UTType(_:)")
+        }
+    }
+
+    /// Malformed MIME strings (no `type/subtype` shape) return nil.
+    /// `UTType(mimeType:)` DOES synthesise dynamic UTIs for well-formed
+    /// but unknown MIME types — see the block comment above — so the nil
+    /// boundary is shape, not corpus membership.
+    func test_malformed_mime_type_returns_nil() {
+        XCTAssertNil("not-a-mime-type".mimeTypeUTI,
+                     "MIME strings without a slash must return nil")
+    }
+
+    /// Garbage input to `UTType(_: String)` (freeform, non-UTI-shaped)
+    /// returns nil — the initializer only accepts reverse-DNS or `dyn.*`
+    /// identifiers.
+    func test_unknown_uti_identifier_returns_nil() {
+        XCTAssertNil("this is definitely not a UTI".utiMimeType,
+                     "garbage UTI identifier must return nil")
     }
 
     // MARK: - Conformance relationships
