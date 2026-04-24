@@ -200,8 +200,15 @@ struct CommonMarkHTMLRenderer {
             }
             return false
         }
+        // `blankLineBefore` on the FIRST item of a list records the
+        // blank-line gap between the list and the previous outer
+        // context (e.g. a parent item or a preceding paragraph). That
+        // gap doesn't make THIS list loose — CommonMark's loose
+        // definition requires blank lines between SIBLING items. Only
+        // consider blankLineBefore from index 1 onward.
+        let hasInterItemBlank = items.dropFirst().contains(where: { $0.blankLineBefore })
         let isLoose = loose
-            || items.contains(where: { $0.blankLineBefore })
+            || hasInterItemBlank
             || items.contains(where: itemHasLoosenessSignal)
         let isTight = !isLoose && Self.detectTightList(items)
 
