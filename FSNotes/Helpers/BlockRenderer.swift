@@ -83,6 +83,40 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         try? png.write(to: url, options: .atomic)
     }
 
+    /// Rebuild an `NSImage` produced by `WKWebView.takeSnapshot` into a
+    /// bitmap-backed HiDPI image.
+    ///
+    /// On Retina, `takeSnapshot` returns an `NSImage` whose sole rep is
+    /// an `NSCIImageRep`. That rep carries a point-sized `.size` but no
+    /// reliable `pixelsWide`/`pixelsHigh`, so Cocoa's `bestRepresentation`
+    /// picker treats the image as 1× at draw time and `image.draw(in:)`
+    /// upscales 892 source pixels into 1784 device pixels on a 2× backing
+    /// — visible blur.
+    ///
+    /// The fix: round-trip through `tiffRepresentation` + `NSBitmapImageRep`,
+    /// set the bitmap rep's `.size` to `pixelSize / backingScale`, and wrap
+    /// it in a freshly sized `NSImage`. The resulting image has `.size` in
+    /// points and a rep reporting `pixelsWide`/`pixelsHigh` in physical
+    /// pixels — the canonical HiDPI shape. Matches the `loadFromDisk`
+    /// reconstruction so fresh captures and disk round-trips produce
+    /// byte-equivalent representations downstream.
+    ///
+    /// Returns nil if `tiffRepresentation` or the bitmap rep decode
+    /// fails — callers should fall back to the original image in that
+    /// case rather than dropping the frame.
+    static func rebuildHiDPIImage(from image: NSImage, backingScale: CGFloat) -> NSImage? {
+        guard let tiff = image.tiffRepresentation,
+              let bmp = NSBitmapImageRep(data: tiff) else { return nil }
+        let pointSize = NSSize(
+            width: CGFloat(bmp.pixelsWide) / backingScale,
+            height: CGFloat(bmp.pixelsHigh) / backingScale
+        )
+        bmp.size = pointSize
+        let rebuilt = NSImage(size: pointSize)
+        rebuilt.addRepresentation(bmp)
+        return rebuilt
+    }
+
     #if DEBUG
     /// Debug-only test hook for the HiDPI disk-cache round-trip tests
     /// (see `Tests/BlockRendererDiskCacheScaleTests.swift`). Mirrors
@@ -102,6 +136,16 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     /// so tests can clean up after themselves deterministically.
     static func _testOnly_diskCacheFile(forKey key: String) -> URL {
         diskCacheFile(forKey: key)
+    }
+
+    /// Debug-only test hook for the HiDPI v3 `takeSnapshot` rebuild
+    /// (see `Tests/BlockRendererDiskCacheScaleTests.swift`). Thin
+    /// wrapper around `rebuildHiDPIImage` so tests can drive the
+    /// helper directly with a simulated `takeSnapshot` input. Returns
+    /// the original image if the rebuild fails rather than nil, so
+    /// assertions on shape can distinguish "rebuilt" from "pass-through".
+    static func _testOnly_rebuildHiDPIImage(from image: NSImage, backingScale: CGFloat) -> NSImage {
+        return rebuildHiDPIImage(from: image, backingScale: backingScale) ?? image
     }
     #endif
 
@@ -463,20 +507,14 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             // deterministic — it now rasterizes from a bitmap rep of
             // known pixel size rather than the CI rep's ambiguous
             // backing.
+            let scale = webView.window?.backingScaleFactor ?? 2.0
             var finalImage = image
             if let raw = image,
-               let tiff = raw.tiffRepresentation,
-               let bmp = NSBitmapImageRep(data: tiff) {
-                let scale = webView.window?.backingScaleFactor ?? 2.0
-                let pointSize = NSSize(
-                    width: CGFloat(bmp.pixelsWide) / scale,
-                    height: CGFloat(bmp.pixelsHigh) / scale
-                )
-                bmp.size = pointSize
-                let rebuilt = NSImage(size: pointSize)
-                rebuilt.addRepresentation(bmp)
+               let rebuilt = BlockRenderer.rebuildHiDPIImage(from: raw, backingScale: scale) {
                 finalImage = rebuilt
-                bmLog("🎭 BlockRenderer snapshot rebuilt: points=\(pointSize) pixels=\(bmp.pixelsWide)×\(bmp.pixelsHigh) error=\(error?.localizedDescription ?? "none")")
+                let repPixels = (rebuilt.representations.first as? NSBitmapImageRep)
+                    .map { "\($0.pixelsWide)×\($0.pixelsHigh)" } ?? "unknown"
+                bmLog("🎭 BlockRenderer snapshot rebuilt: points=\(rebuilt.size) pixels=\(repPixels) error=\(error?.localizedDescription ?? "none")")
             } else {
                 bmLog("🎭 BlockRenderer snapshot result (no rebuild): image=\(image != nil ? "\(image!.size)" : "nil") error=\(error?.localizedDescription ?? "none")")
             }
