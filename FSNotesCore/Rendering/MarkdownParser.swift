@@ -407,6 +407,35 @@ public enum MarkdownParser {
                         // pulling unindented content into the list.
                         if !parsedLines.isEmpty {
                             let last = parsedLines[parsedLines.count - 1]
+                            // CommonMark §5.2: the first non-blank line
+                            // following an EMPTY-content list item is
+                            // the item's content if it's indented to
+                            // at least the item's content column. Spec
+                            // #279: `-   \n  foo\n` → the empty item
+                            // owns `foo` as its content via this rule.
+                            // We handle it by promoting `foo` into the
+                            // last parsedLine's `content` field.
+                            if last.content.isEmpty
+                                && last.continuationLines.isEmpty
+                                && !interruptsLazyContinuation(l) {
+                                let cc = last.indent.count
+                                    + last.marker.count + last.afterMarker.count
+                                let lineIndent = leadingSpaceCount(l)
+                                if lineIndent >= cc {
+                                    let stripped = stripLeadingSpaces(l, count: cc)
+                                    parsedLines[parsedLines.count - 1] = ParsedListLine(
+                                        indent: last.indent,
+                                        marker: last.marker,
+                                        afterMarker: last.afterMarker,
+                                        checkbox: last.checkbox,
+                                        content: stripped,
+                                        blankLineBefore: last.blankLineBefore,
+                                        continuationLines: last.continuationLines
+                                    )
+                                    j += 1
+                                    continue
+                                }
+                            }
                             let hasOpenParagraph = !last.content.isEmpty
                                 && last.continuationLines.isEmpty
                             if hasOpenParagraph {
@@ -2928,9 +2957,24 @@ public enum MarkdownParser {
         }
 
         let content = String(chars[contentStart..<chars.count])
+        // CommonMark §5.2: if the content of the first line is blank
+        // (empty or only-whitespace), the item's content column is the
+        // marker column + marker length + 1 — the afterMarker defaults
+        // to a single virtual column regardless of its actual width on
+        // the source line. Collapse afterMarker to " " in that case so
+        // the downstream content-column arithmetic (continuation,
+        // nesting, lazy continuation) uses the canonical value.
+        // Spec #279: `-   \n  foo\n` expects `<ul><li>foo</li></ul>`
+        // — the continuation `  foo` at col 2 attaches to the item
+        // whose content column is 2, not 4.
+        let contentIsBlank = content.isEmpty
+            || content.allSatisfy({ $0 == " " || $0 == "\t" })
+        let normalizedAfter = (contentIsBlank && !afterMarker.isEmpty)
+            ? " "
+            : afterMarker
         return ParsedListLine(
             indent: indent, marker: marker,
-            afterMarker: afterMarker, checkbox: checkbox,
+            afterMarker: normalizedAfter, checkbox: checkbox,
             content: content
         )
     }
