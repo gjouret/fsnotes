@@ -167,11 +167,42 @@ struct CommonMarkHTMLRenderer {
         let isOrdered = Self.isOrderedMarker(items[0].marker)
         // A list is loose if the parser flagged it OR any item has
         // blankLineBefore (covers nested lists which don't carry the
-        // top-level loose flag) OR any item has continuation blocks
-        // (multi-block items are always loose per CommonMark).
+        // top-level loose flag) OR any item contains a continuation
+        // block sequence that actually introduces a blank-line
+        // separation. A single non-paragraph continuation block with
+        // no blank lines (e.g. an HR emitted for a list item whose
+        // content is `* * *`, or a single fenced code block with no
+        // preceding blank) does NOT by itself make the list loose —
+        // CommonMark's looseness rule requires either blank lines
+        // between items or blank lines between blocks within an item.
+        let itemHasLoosenessSignal: (ListItem) -> Bool = { item in
+            guard !item.continuationBlocks.isEmpty else { return false }
+            // Two or more non-blank continuation blocks, or a blank
+            // line between the item's first-line content and its
+            // continuation, both signal loose. We approximate the
+            // second case by checking for a `.blankLine` in the
+            // continuation stream (parser emits these when there was
+            // a blank line separation between the inline body and
+            // the block).
+            let nonBlank = item.continuationBlocks.filter {
+                if case .blankLine = $0 { return false }
+                return true
+            }
+            if nonBlank.count >= 2 { return true }
+            if item.continuationBlocks.contains(where: {
+                if case .blankLine = $0 { return true }
+                return false
+            }) { return true }
+            // Continuation is a single paragraph — traditionally
+            // rendered as loose (the item becomes `<li><p>...</p>`).
+            if nonBlank.count == 1, case .paragraph = nonBlank[0] {
+                return true
+            }
+            return false
+        }
         let isLoose = loose
             || items.contains(where: { $0.blankLineBefore })
-            || items.contains(where: { !$0.continuationBlocks.isEmpty })
+            || items.contains(where: itemHasLoosenessSignal)
         let isTight = !isLoose && Self.detectTightList(items)
 
         var output = ""
