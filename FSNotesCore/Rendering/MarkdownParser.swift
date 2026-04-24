@@ -412,23 +412,40 @@ public enum MarkdownParser {
                             // the item's content if it's indented to
                             // at least the item's content column. Spec
                             // #279: `-   \n  foo\n` → the empty item
-                            // owns `foo` as its content via this rule.
-                            // We handle it by promoting `foo` into the
-                            // last parsedLine's `content` field.
+                            // owns `foo` as its content. We handle
+                            // this only for the simple paragraph case:
+                            // the line must not look like a block
+                            // starter (fence, heading, HR, list, etc.)
+                            // because those should route via
+                            // continuationLines → buildItemTree's
+                            // inner re-parse.
                             if last.content.isEmpty
                                 && last.continuationLines.isEmpty
                                 && !interruptsLazyContinuation(l) {
+                                // For empty-content items the
+                                // CommonMark content column is
+                                // markerCol + markerLen + 1 regardless
+                                // of the actual afterMarker (which may
+                                // be zero when the marker sits at EOL,
+                                // e.g. `-\n  foo\n`).
                                 let cc = last.indent.count
-                                    + last.marker.count + last.afterMarker.count
+                                    + last.marker.count + max(1, last.afterMarker.count)
                                 let lineIndent = leadingSpaceCount(l)
-                                if lineIndent >= cc {
-                                    let stripped = stripLeadingSpaces(l, count: cc)
+                                let dedented = stripLeadingSpaces(l, count: cc)
+                                let isBlockStarter =
+                                    detectFenceOpen(dedented) != nil
+                                    || detectHeading(dedented) != nil
+                                    || detectHorizontalRule(dedented) != nil
+                                    || parseListLine(dedented) != nil
+                                    || detectBlockquoteLine(dedented) != nil
+                                    || leadingSpaceCount(dedented) >= 4
+                                if lineIndent >= cc && !isBlockStarter {
                                     parsedLines[parsedLines.count - 1] = ParsedListLine(
                                         indent: last.indent,
                                         marker: last.marker,
                                         afterMarker: last.afterMarker,
                                         checkbox: last.checkbox,
-                                        content: stripped,
+                                        content: dedented,
                                         blankLineBefore: last.blankLineBefore,
                                         continuationLines: last.continuationLines
                                     )
