@@ -2707,6 +2707,223 @@ public enum EditingOps {
         return parts.joined(separator: "\n")
     }
 
+    // MARK: - Phase 5d: fragment insertion
+
+    /// Phase 5d paste primitive: insert a `Document` fragment into an
+    /// existing projection at the given cursor.
+    ///
+    /// Behavior:
+    ///  - Empty fragment → no-op `EditResult` (splice range zero-length
+    ///    at cursor, empty replacement, cursor unchanged).
+    ///  - Cursor in a paragraph: fragment is spliced between the two
+    ///    halves of the paragraph. When the first/last fragment block is
+    ///    also a paragraph, its inlines are concatenated with the
+    ///    surrounding halves — this preserves inline formatting across
+    ///    the insertion boundary (same semantics as `pasteIntoParagraph`).
+    ///  - Cursor in any other block kind (heading, list, blockquote,
+    ///    code block, etc.): the fragment is inserted BETWEEN blocks —
+    ///    before the target block if cursor is at offset 0, otherwise
+    ///    after the target block. This is the conservative path for
+    ///    block kinds that have richer per-kind paste FSMs
+    ///    (`pasteIntoList`, `pasteIntoHeading`, `pasteIntoBlockquote`) —
+    ///    callers wanting kind-aware fragment splicing should round-trip
+    ///    the fragment through `MarkdownSerializer.serialize` and use
+    ///    `EditingOps.insert` instead, which reuses those FSMs.
+    ///
+    /// Returned `EditContract` declares:
+    ///   - `.replaceBlock(at: blockIndex)` for the target block (always,
+    ///     because we re-emit it possibly merged with fragment halves).
+    ///   - `.insertBlock(at: blockIndex + 1 + step)` for each additional
+    ///     block the fragment contributed (post-coalesce delta).
+    ///   - `.mergeAdjacent(firstIndex: blockIndex)` when the replacement
+    ///     coalesced fewer blocks than were submitted (e.g. two adjacent
+    ///     lists merged by `coalesceAdjacentLists`).
+    ///
+    /// - Parameters:
+    ///   - fragment: the Document to splice in. `fragment.trailingNewline`
+    ///     is ignored (fragment is not being serialized back to disk).
+    ///   - cursor: insertion point in `projection` terms. `blockPath`
+    ///     must resolve to a block index in `projection`; `inlineOffset`
+    ///     is the render offset within that block.
+    ///   - projection: the host projection to insert into.
+    public static func insertFragment(
+        _ fragment: Document,
+        at cursor: DocumentCursor,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        // Empty / trivial fragment: no-op splice at the cursor's
+        // storage location.
+        let fragmentBlocks = fragment.blocks
+        if fragmentBlocks.isEmpty {
+            let cursorStorage = projection.storageIndex(for: cursor)
+            return EditResult(
+                newProjection: projection,
+                spliceRange: NSRange(location: cursorStorage, length: 0),
+                spliceReplacement: NSAttributedString(string: ""),
+                newCursorPosition: cursorStorage,
+                newSelectionLength: 0,
+                contract: EditContract(
+                    declaredActions: [],
+                    postCursor: cursor,
+                    postSelectionLength: 0
+                )
+            )
+        }
+
+        guard let blockIndex = cursor.blockPath.first,
+              blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.unsupported(
+                reason: "insertFragment: cursor blockPath does not resolve in projection"
+            )
+        }
+        let targetBlock = projection.document.blocks[blockIndex]
+        let offsetInBlock = cursor.inlineOffset
+
+        // Paragraph path: splice fragment between the two halves. This
+        // mirrors `pasteIntoParagraph` but takes pre-parsed blocks
+        // instead of markdown text.
+        if case .paragraph(let inline) = targetBlock {
+            let (before, after) = splitInlines(inline, at: offsetInBlock)
+            var pastedBlocks = fragmentBlocks
+
+            if !before.isEmpty, !pastedBlocks.isEmpty,
+               case .paragraph(let firstInline) = pastedBlocks.first! {
+                pastedBlocks[0] = .paragraph(inline: before + firstInline)
+            } else if !before.isEmpty {
+                pastedBlocks.insert(.paragraph(inline: before), at: 0)
+            }
+
+            if !after.isEmpty, !pastedBlocks.isEmpty,
+               case .paragraph(let lastInline) = pastedBlocks.last! {
+                pastedBlocks[pastedBlocks.count - 1] = .paragraph(
+                    inline: lastInline + after
+                )
+            } else if !after.isEmpty {
+                pastedBlocks.append(.paragraph(inline: after))
+            }
+
+            if pastedBlocks.isEmpty {
+                pastedBlocks.append(.paragraph(inline: before + after))
+            }
+
+            var result = try replaceBlocks(
+                atIndex: blockIndex, with: pastedBlocks, in: projection
+            )
+
+            // Cursor lands at the end of the pasted fragment content
+            // inside the resulting block range. Compute by walking
+            // the result's blockSpans: the last block of the fragment
+            // occupies index `blockIndex + pastedBlocks.count - 1`
+            // pre-coalesce. Post-coalesce (lists merging) may shift.
+            // Fall back to the end of the last modified block's span.
+            let endIndex = min(
+                blockIndex + pastedBlocks.count - 1,
+                result.newProjection.document.blocks.count - 1
+            )
+            let endSpan = result.newProjection.blockSpans[endIndex]
+            // Anchor cursor to end of the trailing fragment block, minus
+            // the `after` inline length (so cursor lands right after the
+            // inserted fragment proper, before the original trailing
+            // text that got appended to the last block).
+            let afterLen = inlinesRenderedLength(after)
+            let cursorStorage = endSpan.location + endSpan.length - afterLen
+            result.newCursorPosition = max(0, cursorStorage)
+
+            let pasteDelta = result.newProjection.document.blocks.count
+                - projection.document.blocks.count
+            var actions: [EditAction] = [.replaceBlock(at: blockIndex)]
+            if pasteDelta > 0 {
+                for step in 0..<pasteDelta {
+                    actions.append(.insertBlock(at: blockIndex + 1 + step))
+                }
+            } else if pasteDelta < 0 {
+                for _ in 0..<(-pasteDelta) {
+                    actions.append(.mergeAdjacent(firstIndex: blockIndex))
+                }
+            }
+            result.contract = EditContract(
+                declaredActions: actions,
+                postCursor: result.newProjection.cursor(
+                    atStorageIndex: result.newCursorPosition
+                ),
+                postSelectionLength: 0
+            )
+            return result
+        }
+
+        // Non-paragraph target: insert the fragment as sibling blocks.
+        // At offset 0 insert before; otherwise insert after. This is a
+        // conservative, generic path — kind-aware splicing (e.g. paste
+        // list-into-list item-merging) stays in the specialized FSM
+        // paths reachable via `EditingOps.insert(_:at:in:)`.
+        let insertAfter = offsetInBlock > 0
+        let insertIndex = insertAfter ? blockIndex + 1 : blockIndex
+        var newBlocks = projection.document.blocks
+        newBlocks.insert(contentsOf: fragmentBlocks, at: insertIndex)
+
+        // Use replaceBlockRange over the entire affected span so we get
+        // a proper EditResult. We replace [blockIndex, blockIndex] with
+        // the union — depending on direction, either keep target first
+        // or last. Simpler: replaceBlockRange with the target block and
+        // the fragment inserted on the correct side.
+        let replacementBlocks: [Block]
+        if insertAfter {
+            replacementBlocks = [targetBlock] + fragmentBlocks
+        } else {
+            replacementBlocks = fragmentBlocks + [targetBlock]
+        }
+        var result = try replaceBlockRange(
+            blockIndex...blockIndex,
+            with: replacementBlocks,
+            in: projection
+        )
+
+        // Cursor: immediately after the last inserted fragment block.
+        let fragmentLastIndex: Int = insertAfter
+            ? blockIndex + fragmentBlocks.count
+            : blockIndex + fragmentBlocks.count - 1
+        let clampedLastIdx = min(
+            fragmentLastIndex,
+            result.newProjection.document.blocks.count - 1
+        )
+        let lastSpan = result.newProjection.blockSpans[clampedLastIdx]
+        result.newCursorPosition = lastSpan.location + lastSpan.length
+
+        let pasteDelta = result.newProjection.document.blocks.count
+            - projection.document.blocks.count
+        var actions: [EditAction] = [.replaceBlock(at: blockIndex)]
+        if pasteDelta > 0 {
+            for step in 0..<pasteDelta {
+                actions.append(.insertBlock(at: blockIndex + 1 + step))
+            }
+        } else if pasteDelta < 0 {
+            for _ in 0..<(-pasteDelta) {
+                actions.append(.mergeAdjacent(firstIndex: blockIndex))
+            }
+        }
+        result.contract = EditContract(
+            declaredActions: actions,
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            ),
+            postSelectionLength: 0
+        )
+        return result
+    }
+
+    /// Sum the rendered length of an inline tree. Used by
+    /// `insertFragment` to position the post-insert cursor just after
+    /// the appended fragment content (before any trailing `after`
+    /// inlines that were merged onto the last fragment block).
+    private static func inlinesRenderedLength(_ inlines: [Inline]) -> Int {
+        var total = 0
+        for node in inlines {
+            total += inlineLength(node)
+        }
+        return total
+    }
+
     // MARK: - Multi-line paste
 
     /// Paste a multi-line string into a paragraph at the given render

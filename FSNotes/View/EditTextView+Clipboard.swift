@@ -64,10 +64,21 @@ extension EditTextView {
         // italic, links, wikilinks, etc.) instead of landing as plain
         // rendered text. The branches below are source-mode legacy:
         // they read `paragraph.string`, which strips all markers.
+        //
+        // Phase 5d: also write an RTF representation of the selected
+        // attributed string when available, for cross-app fidelity
+        // (paste into Pages / TextEdit / Mail preserves bold/italic/
+        // links visually). RTF is only written when the conversion
+        // succeeds; the markdown string is always the primary type.
         if let mdCopy = copyAsMarkdownViaBlockModel() {
             let pb = NSPasteboard.general
             pb.clearContents()
-            pb.declareTypes([.string], owner: nil)
+            if let rtfData = rtfDataForCopy() {
+                pb.declareTypes([.rtf, .string], owner: nil)
+                pb.setData(rtfData, forType: .rtf)
+            } else {
+                pb.declareTypes([.string], owner: nil)
+            }
             pb.setString(mdCopy, forType: .string)
             return
         }
@@ -243,7 +254,23 @@ extension EditTextView {
 
         if let clipboard = NSPasteboard.general.string(forType: .string),
            NSPasteboard.general.string(forType: .fileURL) == nil {
-            let attributed = NSMutableAttributedString(string: clipboard.trim())
+            let trimmed = clipboard.trim()
+
+            // Phase 5d: markdown paste path. When the block model is
+            // active and the target block is a paragraph / blank line,
+            // parse the pasteboard markdown into a Document fragment
+            // and splice it via `EditingOps.insertFragment` — the
+            // single-primitive paste contract. For other block kinds
+            // (list, heading, blockquote, code block) we fall back to
+            // the legacy `insertText` path, which routes through
+            // `EditingOps.insert` and its kind-aware paste FSMs
+            // (`pasteIntoList` / `pasteIntoHeading` / `pasteIntoBlockquote`).
+            if documentProjection != nil,
+               insertMarkdownFragmentViaBlockModel(trimmed) {
+                return
+            }
+
+            let attributed = NSMutableAttributedString(string: trimmed)
 
             breakUndoCoalescing()
             insertText(attributed, replacementRange: selectedRange())
@@ -452,6 +479,114 @@ extension EditTextView {
         return cells
     }
 
+    /// Phase 5d: paste the supplied markdown by parsing it as a
+    /// Document and splicing it into the current projection via
+    /// `EditingOps.insertFragment`. Used by the paste handler when
+    /// plain-text markdown is on the pasteboard AND the active
+    /// selection lands in a block kind whose fragment-insert semantics
+    /// are well-defined (paragraph: split+merge; blank line: replace).
+    /// For block kinds with richer paste FSMs (list, heading,
+    /// blockquote, code block), callers should route through
+    /// `EditingOps.insert(_:at:in:)` — which dispatches to
+    /// `pasteIntoList` / `pasteIntoHeading` / `pasteIntoBlockquote`
+    /// kind-aware helpers — instead.
+    ///
+    /// - Returns: `true` when the fragment was inserted (and the
+    ///   pasteboard is considered handled); `false` when the projection
+    ///   or target block kind isn't supported by this path and the
+    ///   caller should fall back. A non-empty selection at the
+    ///   insertion point is first deleted via the block-model delete
+    ///   path, then the fragment is inserted at the collapsed cursor.
+    @discardableResult
+    func insertMarkdownFragmentViaBlockModel(_ markdown: String) -> Bool {
+        guard let projection = documentProjection else { return false }
+
+        // Parse once: empty fragments are handled as a no-op by the
+        // primitive below, but we can also short-circuit here.
+        let fragment = MarkdownParser.parse(markdown)
+        if fragment.blocks.isEmpty { return true }
+
+        // Collapse any non-empty selection first. Routes through the
+        // block-model delete path so the Document stays in sync. After
+        // the delete the cursor lands at the collapsed location.
+        let sel = selectedRange()
+        if sel.length > 0 {
+            _ = handleEditViaBlockModel(in: sel, replacementString: "")
+        }
+
+        // Re-read the latest projection after the optional delete.
+        guard let curProjection = documentProjection else { return false }
+
+        // Resolve the cursor in block-model coordinates.
+        let storageIdx = selectedRange().location
+        guard let (blockIndex, offsetInBlock) = curProjection
+            .blockContaining(storageIndex: storageIdx) else {
+            return false
+        }
+        let targetBlock = curProjection.document.blocks[blockIndex]
+
+        // Only handle the paragraph / blank line / empty-paragraph case
+        // via `insertFragment` — other block kinds have kind-aware
+        // paste FSMs that callers should use instead. Blank lines are
+        // treated as paragraph-kind for fragment insertion.
+        switch targetBlock {
+        case .paragraph, .blankLine:
+            break
+        default:
+            return false
+        }
+
+        let cursor = DocumentCursor(
+            blockIndex: blockIndex, inlineOffset: offsetInBlock
+        )
+        do {
+            breakUndoCoalescing()
+            let result = try EditingOps.insertFragment(
+                fragment, at: cursor, in: curProjection
+            )
+            applyEditResultWithUndo(result, actionName: "Paste")
+            breakUndoCoalescing()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Phase 5d: build an RTF representation of the current selection
+    /// for cross-app fidelity (Pages, TextEdit, Mail etc. read `.rtf`
+    /// natively). Returns nil when:
+    ///   - there is no selection or the paragraph under the cursor
+    ///     can't be resolved, or
+    ///   - the RTF serialization fails for any reason.
+    /// Callers treat RTF as optional; the canonical copy type remains
+    /// markdown via `copyAsMarkdownViaBlockModel`.
+    ///
+    /// The attributed substring comes straight from text storage's
+    /// rendered output (no marker re-injection), so the RTF carries
+    /// the visual styling a reader of the note would see.
+    func rtfDataForCopy() -> Data? {
+        let sel = selectedRange()
+        let range: NSRange
+        if sel.length > 0 {
+            range = sel
+        } else if let paragraphRange = getParagraphRange() {
+            range = paragraphRange
+        } else {
+            return nil
+        }
+        guard let attributed = attributedSubstring(
+            forProposedRange: range, actualRange: nil
+        ) else {
+            return nil
+        }
+        return try? attributed.data(
+            from: NSRange(location: 0, length: attributed.length),
+            documentAttributes: [
+                .documentType: NSAttributedString.DocumentType.rtf
+            ]
+        )
+    }
+
     /// Copy the current selection (or the paragraph under the cursor
     /// when the selection is empty) as MARKDOWN via the block-model
     /// pipeline. Returns nil when we're not in block-model mode or
@@ -484,6 +619,17 @@ extension EditTextView {
     /// Pure helper: serialize the markdown for a textStorage range
     /// against a projection. Extracted from `copyAsMarkdownViaBlockModel`
     /// so it can be unit-tested without an editor instance.
+    ///
+    /// Phase 5d: whole-block slicing now routes through
+    /// `DocumentProjection.slice(in:)` + `MarkdownSerializer.serialize`
+    /// (the single-primitive copy contract). Partial overlap of non-
+    /// paragraph blocks (e.g. copying a single rendered line out of a
+    /// list block) remains on `partialBlockMarkdown` because
+    /// `slice(in:)` degrades partial structural-block overlap to plain
+    /// text — the list-line branch of `partialBlockMarkdown` produces
+    /// the marker-preserved `"- item"` output that existing tests
+    /// require. Paragraph partial overlap goes through the same
+    /// `splitInlines` path in both helpers, so the output is identical.
     static func markdownForCopy(
         projection: DocumentProjection, range: NSRange
     ) -> String? {
@@ -502,13 +648,13 @@ extension EditTextView {
             let fullyCovered = (overlapStart == span.location && overlapEnd == NSMaxRange(span))
 
             if fullyCovered {
-                // Wrap in a single-block Document to reuse the public
-                // `serialize` entry point. `trailingNewline: false`
-                // prevents a stray "\n" from being appended.
-                let singleBlockDoc = Document(
-                    blocks: [block], trailingNewline: false
+                // Phase 5d: use DocumentProjection.slice for the whole-
+                // block case — single primitive, same output as the
+                // pre-5d single-block Document wrapping.
+                let sliced = projection.slice(
+                    in: NSRange(location: span.location, length: span.length)
                 )
-                parts.append(MarkdownSerializer.serialize(singleBlockDoc))
+                parts.append(MarkdownSerializer.serialize(sliced))
             } else {
                 parts.append(partialBlockMarkdown(
                     block, from: inBlockStart, to: inBlockEnd,

@@ -215,4 +215,95 @@ public struct DocumentProjection {
         }
         return indices
     }
+
+    /// Phase 5d copy: return a `Document` whose blocks cover exactly the
+    /// given storage `range`. Blocks fully contained in the range are
+    /// copied verbatim; the first/last block, if only partially covered,
+    /// is sliced down to just the inline run within the overlap.
+    ///
+    /// Partial slicing is only defined for block kinds whose storage
+    /// representation maps 1:1 to an inline tree (`.paragraph`,
+    /// `.blockquote`). Other kinds — `.heading`, `.codeBlock`, `.list`,
+    /// `.table`, `.horizontalRule`, `.htmlBlock`, `.blankLine` — return
+    /// either the full block (when fully covered) or an empty-paragraph
+    /// stand-in (when only partially covered). This matches the
+    /// existing copy-as-markdown behavior in `EditTextView+Clipboard`
+    /// which also falls back to `.paragraph` inline text for partial
+    /// structural-block overlap.
+    ///
+    /// The returned `Document` always carries `trailingNewline: false`
+    /// so that `MarkdownSerializer.serialize` on it produces pasteboard-
+    /// appropriate markdown (no stray trailing newline).
+    public func slice(in range: NSRange) -> Document {
+        let indices = blockIndices(overlapping: range)
+        guard !indices.isEmpty else {
+            return Document(blocks: [], trailingNewline: false)
+        }
+
+        let rangeEnd = range.location + range.length
+        var outBlocks: [Block] = []
+
+        for idx in indices {
+            let span = blockSpans[idx]
+            let block = document.blocks[idx]
+            let overlapStart = max(span.location, range.location)
+            let overlapEnd = min(span.location + span.length, rangeEnd)
+            let inBlockStart = overlapStart - span.location
+            let inBlockEnd = overlapEnd - span.location
+            let fullyCovered = (overlapStart == span.location
+                                 && overlapEnd == span.location + span.length)
+
+            if fullyCovered {
+                outBlocks.append(block)
+                continue
+            }
+
+            // Partial coverage: slice the block's inline tree to just
+            // the overlap range. Fall back to the plain-text substring
+            // for block kinds that don't carry a simple inline tree.
+            switch block {
+            case .paragraph(let inline):
+                let (_, rest) = EditingOps.splitInlines(inline, at: inBlockStart)
+                let (middle, _) = EditingOps.splitInlines(rest, at: inBlockEnd - inBlockStart)
+                outBlocks.append(.paragraph(inline: middle))
+            case .blockquote(let qLines):
+                // Blockquote storage puts each line on its own rendered
+                // line joined by "\n". A partial overlap could start
+                // mid-line and end mid-line across the block. Simple
+                // slice: take the rendered substring, strip any leading
+                // ">" prefixes, re-parse as a paragraph. This mirrors
+                // the plain-text fallback used by `partialBlockMarkdown`.
+                let nsAttr = attributed
+                let rawRange = NSRange(
+                    location: span.location + inBlockStart,
+                    length: inBlockEnd - inBlockStart
+                )
+                let sliced = nsAttr.attributedSubstring(from: rawRange).string
+                if sliced.isEmpty {
+                    continue
+                }
+                outBlocks.append(.paragraph(inline: [.text(sliced)]))
+            default:
+                // Structural kinds (.heading, .codeBlock, .list, .table,
+                // .horizontalRule, .htmlBlock, .blankLine): emit an
+                // approximation as plain paragraph text. Full-block
+                // selection is the expected path; partial slicing of
+                // structural kinds is a degenerate case and we stay
+                // consistent with the existing copy-as-markdown plain-
+                // text fallback.
+                let nsAttr = attributed
+                let rawRange = NSRange(
+                    location: span.location + inBlockStart,
+                    length: inBlockEnd - inBlockStart
+                )
+                let sliced = nsAttr.attributedSubstring(from: rawRange).string
+                if sliced.isEmpty {
+                    continue
+                }
+                outBlocks.append(.paragraph(inline: [.text(sliced)]))
+            }
+        }
+
+        return Document(blocks: outBlocks, trailingNewline: false)
+    }
 }
