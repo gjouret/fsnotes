@@ -243,12 +243,29 @@ public final class MathLayoutFragment: NSTextLayoutFragment {
     }
 
     /// Invalidate this fragment's layout so TK2 re-runs draw with the
-    /// image now populated. `NSTextLayoutFragment` does not expose a
-    /// direct `invalidateLayout()` — we go through the owning layout
-    /// manager with `rangeInElement` (an `NSTextRange`).
+    /// image now populated, AND force the enclosing `NSTextView` to
+    /// refresh its document-view height so `NSScrollView` extends its
+    /// max scroll extent to cover the newly-taller fragment. See the
+    /// matching routine in `MermaidLayoutFragment` for the full
+    /// rationale (same bug class, same fix).
     private func invalidateOwnLayout() {
         guard let tlm = textLayoutManager else { return }
         let range = self.rangeInElement
         tlm.invalidateLayout(for: range)
+
+        weak var textView = tlm.textContainer?.textView
+
+        DispatchQueue.main.async { [weak tlm] in
+            guard let tlm = tlm else { return }
+            tlm.enumerateTextLayoutFragments(
+                from: nil,
+                options: [.ensuresLayout]
+            ) { _ in true }
+            if let tv = textView {
+                tv.invalidateIntrinsicContentSize()
+                tv.needsLayout = true
+                tv.needsDisplay = true
+            }
+        }
     }
 }

@@ -289,15 +289,59 @@ public final class MermaidLayoutFragment: NSTextLayoutFragment {
     }
 
     /// Invalidate this fragment's layout so TK2 re-runs draw with the
-    /// image now populated. `NSTextLayoutFragment` does not expose a
-    /// direct `invalidateLayout()` — we go through the owning layout
-    /// manager with `rangeInElement` mapped into the content storage's
-    /// coordinate space.
+    /// image now populated, AND force the enclosing `NSTextView` to
+    /// refresh its document-view height so `NSScrollView` extends its
+    /// max scroll extent to cover the newly-taller fragment.
+    ///
+    /// Why both steps are needed: `NSTextLayoutFragment` does not expose
+    /// a direct `invalidateLayout()`, so we go through the owning layout
+    /// manager with `rangeInElement` (an `NSTextRange`). That invalidates
+    /// this one fragment — but `NSTextView`'s frame height is driven by
+    /// `NSTextLayoutManager.usageBoundsForTextContainer`, which is only
+    /// refreshed after a full fragment enumeration with `.ensuresLayout`
+    /// (the pattern documented in `PDFExporter.measureUsedRectTK2`).
+    /// A per-fragment invalidate does NOT cause TK2 to re-query usage
+    /// bounds — the scroll view then stops short of the rendered
+    /// bitmap's bottom (the "scrollbar doesn't reach the end of a large
+    /// mermaid diagram" bug).
+    ///
+    /// Fix: after invalidating our own range, enumerate every fragment
+    /// with `.ensuresLayout` on the next run-loop tick (the completion
+    /// we're in may have been fired synchronously from inside a draw
+    /// pass — the async hop keeps us out of re-entrant layout) and poke
+    /// the text view so it re-reads `usageBoundsForTextContainer`.
     private func invalidateOwnLayout() {
         guard let tlm = textLayoutManager else { return }
-        // Prefer the fragment's own `rangeInElement` (an NSTextRange
-        // directly) when available.
         let range = self.rangeInElement
         tlm.invalidateLayout(for: range)
+
+        // Capture the text view weakly. Text container → text view is
+        // the documented back-reference under both TK1 and TK2; the
+        // container itself is strongly referenced by the layout manager.
+        weak var textView = tlm.textContainer?.textView
+
+        DispatchQueue.main.async { [weak tlm] in
+            guard let tlm = tlm else { return }
+            // Force a full-document layout pass so
+            // `usageBoundsForTextContainer` reflects the new fragment
+            // height. Same idiom `PDFExporter.measureUsedRectTK2` uses
+            // to produce an accurate used-rect for print/export.
+            tlm.enumerateTextLayoutFragments(
+                from: nil,
+                options: [.ensuresLayout]
+            ) { _ in true }
+
+            // Prompt NSTextView to re-read usage bounds and resize its
+            // frame. `invalidateIntrinsicContentSize()` is the API that
+            // actually triggers the resize under macOS 26's TK2 —
+            // `needsLayout = true` alone does not cause NSTextView to
+            // re-query the layout manager's usage bounds. `needsDisplay`
+            // is additionally set so any reveal-on-resize repaint runs.
+            if let tv = textView {
+                tv.invalidateIntrinsicContentSize()
+                tv.needsLayout = true
+                tv.needsDisplay = true
+            }
+        }
     }
 }
