@@ -119,18 +119,22 @@ extension EditTextView
         DispatchQueue.main.async {
             self.window?.makeFirstResponder(self)
             
-            guard let undoManager = self.undoManager else { return }
-            undoManager.beginUndoGrouping()
-            
+            // Phase 5f: grouping retired — the `shouldChangeText` →
+            // `applyEditResultWithUndo` flow journals one entry per
+            // call. Note that `textStorage.replaceCharacters` here is
+            // a direct storage write that bypasses the block-model
+            // pipeline; that's a pre-existing 5a bypass tracked for a
+            // future slice (brief §9).
             if self.shouldChangeText(in: replacementRange, replacementString: title) {
-                textStorage.replaceCharacters(in: replacementRange, with: title)
+                StorageWriteGuard.performingLegacyStorageWrite {
+                    textStorage.replaceCharacters(in: replacementRange, with: title)
+                }
                 self.didChangeText()
-                
+
                 self.setSelectedRange(NSRange(location: replacementRange.location + title.count, length: 0))
             }
-            
-            undoManager.endUndoGrouping()
-            undoManager.setActionName("Insert Note Reference")
+
+            self.undoManager?.setActionName("Insert Note Reference")
         }
         
         return true
@@ -182,9 +186,8 @@ extension EditTextView
             
             self.window?.makeFirstResponder(self)
             
-            guard let undoManager = self.undoManager,
-                  let textStorage = self.textStorage else {
-                
+            guard let textStorage = self.textStorage else {
+
                 self.insertText(final, replacementRange: replacementRange)
                 self.setSelectedRange(
                     NSRange(location: replacementRange.location + final.length, length: 0)
@@ -192,21 +195,22 @@ extension EditTextView
                 self.viewDelegate?.notesTableView.reloadRow(note: note)
                 return
             }
-            
-            undoManager.beginUndoGrouping()
-            
+
+            // Phase 5f: grouping retired (see "Insert Note Reference"
+            // above). Direct storage write is a pre-existing 5a bypass.
             if self.shouldChangeText(in: replacementRange, replacementString: final.string) {
-                textStorage.replaceCharacters(in: replacementRange, with: final)
+                StorageWriteGuard.performingLegacyStorageWrite {
+                    textStorage.replaceCharacters(in: replacementRange, with: final)
+                }
                 self.didChangeText()
-                
+
                 self.setSelectedRange(
                     NSRange(location: replacementRange.location + final.length, length: 0)
                 )
             }
-            
-            undoManager.endUndoGrouping()
-            undoManager.setActionName("Insert URLs")
-            
+
+            self.undoManager?.setActionName("Insert URLs")
+
             self.viewDelegate?.notesTableView.reloadRow(note: note)
         }
 

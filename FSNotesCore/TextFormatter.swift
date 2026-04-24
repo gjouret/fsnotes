@@ -383,23 +383,22 @@ public class TextFormatter {
     }
     
     public func link() {
-        textView.undoManager?.beginUndoGrouping()
-
+        // Phase 5f: `replaceWith` routes through the block-model
+        // pipeline which journals exactly one `UndoEntry` per call.
+        // The legacy NSUndoManager begin/endUndoGrouping pair is
+        // redundant and removed (commit 6 grep-gate enforces).
         let text = "[" + attributedString.string + "]()"
         replaceWith(string: text, range: range)
-        
+
         if (attributedString.length == 4) {
             setSelectedRange(NSMakeRange(range.location + 1, 0))
         } else {
             setSelectedRange(NSMakeRange(range.upperBound + 3, 0))
         }
-
-        textView.undoManager?.endUndoGrouping()
     }
 
     public func wikiLink() {
-        textView.undoManager?.beginUndoGrouping()
-
+        // Phase 5f: grouping retired, see `link()`.
         let text = "[[" + attributedString.string + "]]"
         replaceWith(string: text, range: range)
 
@@ -412,23 +411,18 @@ public class TextFormatter {
         } else {
             setSelectedRange(NSMakeRange(range.location + 2, text.count - 4))
         }
-
-        textView.undoManager?.endUndoGrouping()
     }
 
     public func image() {
-        textView.undoManager?.beginUndoGrouping()
-
+        // Phase 5f: grouping retired, see `link()`.
         let text = "![" + attributedString.string + "]()"
         replaceWith(string: text)
-        
+
         if (attributedString.length == 5) {
             setSelectedRange(NSMakeRange(range.location + 2, 0))
         } else {
             setSelectedRange(NSMakeRange(range.upperBound + 4, 0))
         }
-
-        textView.undoManager?.endUndoGrouping()
     }
     
     public func isListParagraph() -> Bool {
@@ -1176,7 +1170,12 @@ public class TextFormatter {
             replaceString = plainString
         }
 
-        self.textView.undoManager?.beginUndoGrouping()
+        // Phase 5f: grouping retired — `textView.replace` routes
+        // through `applyEditResultWithUndo` (block-model mode) which
+        // journals one atomic entry. The subsequent `replaceCharacters`
+        // / attribute write is ancillary and doesn't need a
+        // user-visible undo step. Source-mode callers benefit from
+        // the journal's coalescing FSM instead.
         self.textView.replace(selectedRange, withText: replaceString)
 
         if let string = string as? NSAttributedString {
@@ -1190,8 +1189,6 @@ public class TextFormatter {
             parStyle.lineSpacing = CGFloat(Float(prefs.editorLineSpacing))
             self.textView.textStorage.addAttribute(.paragraphStyle, value: parStyle, range: parRange)
         }
-
-        self.textView.undoManager?.endUndoGrouping()
     #else
         textView.insertText(string, replacementRange: range)
     #endif

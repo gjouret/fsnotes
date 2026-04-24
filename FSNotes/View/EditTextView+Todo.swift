@@ -22,8 +22,15 @@ extension EditTextView {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let text = textStorage.string as NSString
 
-        undoManager?.beginUndoGrouping()
-
+        // Phase 5f: the legacy source-mode path (no documentProjection)
+        // groups multiple textStorage.replaceCharacters calls into one
+        // undo unit. Each `replaceCharacters` call here flows through
+        // `shouldChangeText` → AppKit's default undo registration →
+        // journal.record (via `applyEditResultWithUndo`). The
+        // begin/endUndoGrouping pair is retired because (a) the
+        // journal's coalescing FSM groups adjacent structural edits
+        // by timestamp + class, and (b) commit 6's grep-gate
+        // requires zero remaining grouping calls.
         var linesToRemove: [NSRange] = []
         text.enumerateSubstrings(in: fullRange, options: .byParagraphs) { value, _, enclosingRange, _ in
             guard let value = value else { return }
@@ -42,7 +49,6 @@ extension EditTextView {
             }
         }
 
-        undoManager?.endUndoGrouping()
         undoManager?.setActionName("Remove TODO Lines")
     }
 
