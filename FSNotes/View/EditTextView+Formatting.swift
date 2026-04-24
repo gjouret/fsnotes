@@ -48,7 +48,15 @@ extension EditTextView {
                 let displayText = selectedText.isEmpty ? normalized : selectedText
                 let markdown = "[\(displayText)](\(normalized))"
                 let range = selectedRange()
-                insertText(markdown, replacementRange: range)
+                // Phase 5a bypass: `insertText(_:replacementRange:)` from
+                // an IBAction goes through AppKit's `_insertText:` which
+                // skips `shouldChangeText`, so the block-model gatekeeper
+                // never runs. Wrap in `performingLegacyStorageWrite` to
+                // authorize the mutation. A follow-up slice should route
+                // this through a proper `EditingOps.wrapInLink` primitive.
+                StorageWriteGuard.performingLegacyStorageWrite {
+                    insertText(markdown, replacementRange: range)
+                }
                 return
             }
         }
@@ -81,7 +89,10 @@ extension EditTextView {
                 let displayText = selectedText.isEmpty ? urlString : selectedText
                 let markdown = "[\(displayText)](\(urlString))"
                 let range = self.selectedRange()
-                self.insertText(markdown, replacementRange: range)
+                // Phase 5a bypass — see linkMenu() above.
+                StorageWriteGuard.performingLegacyStorageWrite {
+                    self.insertText(markdown, replacementRange: range)
+                }
             } else if response == .alertThirdButtonReturn {
                 let range = self.selectedRange()
                 guard let storage = self.textStorage else { return }
@@ -97,7 +108,10 @@ extension EditTextView {
                         let textRange = match.range(at: 1)
                         let displayText = (paraString as NSString).substring(with: textRange)
                         let fullRange = NSRange(location: paraRange.location + match.range.location, length: match.range.length)
-                        self.insertText(displayText, replacementRange: fullRange)
+                        // Phase 5a bypass — see linkMenu() above.
+                        StorageWriteGuard.performingLegacyStorageWrite {
+                            self.insertText(displayText, replacementRange: fullRange)
+                        }
                     }
                 }
             }
@@ -357,7 +371,10 @@ extension EditTextView {
             // user sees it as plain text (still round-trips correctly).
             let insertRange = selectedRange()
             let prefix = insertRange.location > 0 ? "\n" : ""
-            insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
+            // Phase 5a bypass — IBAction insertText skips shouldChangeText.
+            StorageWriteGuard.performingLegacyStorageWrite {
+                insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
+            }
         }
     }
 
@@ -426,12 +443,17 @@ extension EditTextView {
 
             mutable.append(NSAttributedString(string: "```\n"))
 
-            insertText(mutable, replacementRange: currentRange)
+            // Phase 5a bypass — IBAction insertText skips shouldChangeText.
+            StorageWriteGuard.performingLegacyStorageWrite {
+                insertText(mutable, replacementRange: currentRange)
+            }
             setSelectedRange(NSRange(location: currentRange.location + 4, length: 0))
             return
         }
 
-        insertText("```\n\n```\n", replacementRange: currentRange)
+        StorageWriteGuard.performingLegacyStorageWrite {
+            insertText("```\n\n```\n", replacementRange: currentRange)
+        }
         setSelectedRange(NSRange(location: currentRange.location + 3, length: 0))
     }
 
@@ -447,11 +469,16 @@ extension EditTextView {
             }
 
             mutable.append(NSAttributedString(string: "`"))
-            insertText(mutable, replacementRange: currentRange)
+            // Phase 5a bypass — IBAction insertText skips shouldChangeText.
+            StorageWriteGuard.performingLegacyStorageWrite {
+                insertText(mutable, replacementRange: currentRange)
+            }
             return
         }
 
-        insertText("``", replacementRange: currentRange)
+        StorageWriteGuard.performingLegacyStorageWrite {
+            insertText("``", replacementRange: currentRange)
+        }
         setSelectedRange(NSRange(location: currentRange.location + 1, length: 0))
     }
 
