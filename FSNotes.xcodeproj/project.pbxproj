@@ -106,6 +106,9 @@
 		IMBL000000000000000000B1 /* InlineMathBaseline.swift in Sources */ = {isa = PBXBuildFile; fileRef = IMBL000000000000000000F1 /* InlineMathBaseline.swift */; };
 		IMBT000000000000000000B1 /* InlineMathBaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */; };
 		THOW000000000000000000B1 /* TableHandleOverlayWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */; };
+		EDSN000000000000000000B1 /* EditorSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSN000000000000000000F1 /* EditorSnapshot.swift */; };
+		EDST000000000000000000B1 /* EditorSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDST000000000000000000F1 /* EditorSnapshotTests.swift */; };
+		UIBR000000000000000000B1 /* UIBugRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UIBR000000000000000000F1 /* UIBugRegressionTests.swift */; };
 		TCCH000000000000000000B1 /* TableCellClickHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCH000000000000000000F1 /* TableCellClickHarnessTests.swift */; };
 		CBEW000000000000000000B1 /* CodeBlockEditToggleWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */; };
 		UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */; };
@@ -1232,6 +1235,9 @@
 		IMBL000000000000000000F1 /* InlineMathBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineMathBaseline.swift; sourceTree = "<group>"; };
 		IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineMathBaselineTests.swift; sourceTree = "<group>"; };
 		THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleOverlayWiringTests.swift; sourceTree = "<group>"; };
+		EDSN000000000000000000F1 /* EditorSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSnapshot.swift; sourceTree = "<group>"; };
+		EDST000000000000000000F1 /* EditorSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSnapshotTests.swift; sourceTree = "<group>"; };
+		UIBR000000000000000000F1 /* UIBugRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIBugRegressionTests.swift; sourceTree = "<group>"; };
 		TCCH000000000000000000F1 /* TableCellClickHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellClickHarnessTests.swift; sourceTree = "<group>"; };
 		CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleWiringTests.swift; sourceTree = "<group>"; };
 		UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTIConformanceMigrationTests.swift; sourceTree = "<group>"; };
@@ -2642,6 +2648,9 @@
 				FHID000000000000000000F1 /* FoldedHeaderIndicatorTests.swift */,
 				IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */,
 				THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */,
+				EDSN000000000000000000F1 /* EditorSnapshot.swift */,
+				EDST000000000000000000F1 /* EditorSnapshotTests.swift */,
+				UIBR000000000000000000F1 /* UIBugRegressionTests.swift */,
 				TCCH000000000000000000F1 /* TableCellClickHarnessTests.swift */,
 				CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */,
 				UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */,
@@ -4177,6 +4186,9 @@
 				FHID000000000000000000B1 /* FoldedHeaderIndicatorTests.swift in Sources */,
 				IMBT000000000000000000B1 /* InlineMathBaselineTests.swift in Sources */,
 				THOW000000000000000000B1 /* TableHandleOverlayWiringTests.swift in Sources */,
+				EDSN000000000000000000B1 /* EditorSnapshot.swift in Sources */,
+				EDST000000000000000000B1 /* EditorSnapshotTests.swift in Sources */,
+				UIBR000000000000000000B1 /* UIBugRegressionTests.swift in Sources */,
 				TCCH000000000000000000B1 /* TableCellClickHarnessTests.swift in Sources */,
 				CBEW000000000000000000B1 /* CodeBlockEditToggleWiringTests.swift in Sources */,
 				UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */,
