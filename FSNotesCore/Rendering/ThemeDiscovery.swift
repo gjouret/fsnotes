@@ -405,96 +405,63 @@ extension BlockStyleTheme {
 
     // MARK: - Phase 7.5.a: Debounced save helper
     //
-    // Continuous `NSSlider` IBActions (`lineSpacing`, `marginSize`,
-    // `lineWidth`) fire ~60×/sec during a drag. Each
-    // tick currently calls `persistActiveTheme()` → `saveActiveTheme()`
-    // which serializes the full Theme JSON and writes it atomically.
-    // That's a ~60×/sec disk write during a drag — wasteful and a
-    // hazard for SSD write-amplification on long drags.
-    //
-    // This helper coalesces writes: the actual `saveActiveTheme()`
-    // call is deferred by `debounceInterval` seconds, with each new
-    // call resetting the timer. Live-preview semantics are unchanged
-    // because `Theme.shared` mutation stays immediate and
-    // `didChangeNotification` still fires per-tick from the IBAction
-    // (the IBActions post the notification themselves via the save
-    // path, so we post it per-tick from here too to keep the observer
-    // cadence intact for the in-memory re-render).
-    //
-    // Design notes:
-    //   - `DispatchWorkItem` over `Timer`: no RunLoop dependency, easy
-    //     cancel-and-replace semantics, plays nicely with tests that
-    //     don't pump a RunLoop. `Timer` would require us to attach to
-    //     .common mode and tests would need RunLoop pumping.
-    //   - 150ms delay: one slider drag at 60Hz produces ~9 ticks; the
-    //     debounce lands a single write ~150ms after drag release,
-    //     which feels instant to a user but collapses the steady-state
-    //     tick storm into one write. Longer would risk a visible
-    //     "pending save" if the app is killed immediately after drag
-    //     release; shorter doesn't save enough writes.
-    //   - Main-queue dispatch: matches the IBAction call site and the
-    //     rest of FSNotes which is almost entirely main-thread.
-    //
-    // The live-preview observer does NOT require a disk write — it
-    // reads `Theme.shared` directly on `didChangeNotification`. So we
-    // post the notification per-tick (cheap, in-memory) and coalesce
-    // only the file write.
+    // Continuous `NSSlider` IBActions fire ~60×/sec during a drag. Each
+    // tick calls `persistActiveTheme()` → `saveActiveTheme()`, which
+    // otherwise serializes + writes the full theme JSON on every tick.
+    // `saveActiveThemeDebounced` coalesces these: the actual disk write
+    // is deferred by `interval` seconds, and any new call within the
+    // window supersedes the prior one. The live-preview notification
+    // fires eagerly so observers re-render on every tick; only the
+    // file write is debounced.
 
-    /// Lock guarding `pendingSaveWorkItem` / `pendingSaveArgs`. Main-
-    /// queue dispatch is the normal case, but we still serialize
-    /// mutation of these fields across any caller that might reach
-    /// this API off-main (defensive — no production caller does so
-    /// today).
+    /// Lock guarding `pendingSaveTask` / `pendingSaveArgs`.
     private static let debounceLock = NSLock()
 
-    /// The most-recent scheduled save. `cancel()` on rescheduling
-    /// turns the prior tick into a no-op.
-    private static var pendingSaveWorkItem: DispatchWorkItem?
+    /// The most-recent scheduled save task. Cancelling supersedes it.
+    private static var pendingSaveTask: Task<Void, Never>?
 
-    /// Arguments for the next scheduled save. Held here so rapid-fire
-    /// callers with different `preferredName`/`userThemesDirectory`
-    /// (theoretical — production has a single call site) collapse to
-    /// the final caller's arguments, matching "last write wins".
+    /// Arguments for the next scheduled save. Rapid-fire callers
+    /// collapse to the final caller's arguments (last-write-wins).
     private static var pendingSaveArgs: (
         preferredName: String?,
         userThemesDirectory: URL?
     )?
 
-    /// Default debounce interval for `saveActiveThemeDebounced`. A
-    /// slider drag at 60Hz produces ~9 ticks inside one of these
-    /// windows, collapsing to a single disk write.
+    /// Default debounce interval for `saveActiveThemeDebounced`.
     public static let saveActiveThemeDebounceInterval: TimeInterval = 0.15
 
-    /// Coalescing wrapper over `saveActiveTheme`. Safe to call at
-    /// slider-tick rates: only the final call within a 150ms window
-    /// reaches disk. The live-preview notification still fires
-    /// synchronously so observers re-render on every tick.
+    /// Coalescing wrapper over `saveActiveTheme`. Only the final call
+    /// within `interval` seconds reaches disk. `didChangeNotification`
+    /// is posted eagerly on every call so observers re-render at
+    /// slider-tick cadence.
     ///
-    /// Posts `didChangeNotification` eagerly (so observers see the
-    /// in-memory `Theme.shared` mutation immediately), defers the JSON
-    /// write to a debounced work item.
+    /// The `queue` parameter is accepted for call-site compatibility
+    /// but is no longer used — the disk write now runs in a detached
+    /// `Task` so no RunLoop pumping is required in tests.
     public static func saveActiveThemeDebounced(
         preferredName: String? = nil,
         userThemesDirectory: URL? = nil,
         interval: TimeInterval = saveActiveThemeDebounceInterval,
         queue: DispatchQueue = .main
     ) {
-        // Eager live-preview notify — keep the in-memory re-render
-        // cadence at slider-tick rate; only the disk write is
-        // deferred.
+        _ = queue  // retained for API compatibility; see doc comment above
+
         NotificationCenter.default.post(
             name: BlockStyleTheme.didChangeNotification, object: nil
         )
 
         debounceLock.lock()
-        pendingSaveWorkItem?.cancel()
+        pendingSaveTask?.cancel()
         pendingSaveArgs = (preferredName, userThemesDirectory)
+        let nanos = UInt64(max(0, interval) * 1_000_000_000)
+        let task = Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: nanos)
+            if Task.isCancelled { return }
 
-        let item = DispatchWorkItem {
             debounceLock.lock()
             let args = pendingSaveArgs
             pendingSaveArgs = nil
-            pendingSaveWorkItem = nil
+            pendingSaveTask = nil
             debounceLock.unlock()
 
             guard let args = args else { return }
@@ -503,19 +470,17 @@ extension BlockStyleTheme {
                 userThemesDirectory: args.userThemesDirectory
             )
         }
-        pendingSaveWorkItem = item
+        pendingSaveTask = task
         debounceLock.unlock()
-
-        queue.asyncAfter(deadline: .now() + interval, execute: item)
     }
 
-    /// Test/teardown hook: cancel any pending debounced save and
-    /// drop the captured args. Intended for unit-test teardown so
-    /// cross-test pending work items can't fire into the next test.
+    /// Test/teardown hook: cancel any pending debounced save and drop
+    /// the captured args so a prior test's pending write can't fire
+    /// into the next test.
     public static func cancelPendingDebouncedSave() {
         debounceLock.lock()
-        pendingSaveWorkItem?.cancel()
-        pendingSaveWorkItem = nil
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
         pendingSaveArgs = nil
         debounceLock.unlock()
     }
