@@ -363,6 +363,26 @@ public enum MarkdownParser {
                         j = m
                         continue
                     }
+                    // CommonMark §4.4 / §5.2: a thematic break takes
+                    // precedence over a list item when a line at the
+                    // outer list's indent could be read as either.
+                    // Spec #60:
+                    //     * Foo
+                    //     * * *
+                    //     * Bar
+                    // — the second line is `<hr />`, not a deeper
+                    // nested list. The HR terminates the current list
+                    // so the outer block loop picks it up on the next
+                    // iteration. We only apply this when the line sits
+                    // at the top-level list's indent: a line indented
+                    // beyond the parent item's content column is a
+                    // legitimate nested list item (`- Foo\n- * * *`
+                    // spec #61, where `* * *` indents to col 2 and
+                    // becomes the second item's HR content).
+                    if leadingSpaceCount(l) == topIndent,
+                       detectHorizontalRule(l) != nil {
+                        break
+                    }
                     guard var parsed = parseListLine(l) else {
                         // Non-list line without a preceding blank.
                         //
