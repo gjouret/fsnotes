@@ -744,7 +744,7 @@ Significantly shrunk vs. the original plan because Phase 2 (TextKit 2) and Phase
 Preserve marked-text (uncommitted CJK / dead-key / emoji-picker) input without violating the "`Document` is sole source of truth, `NSTextContentStorage` only mutated via `applyDocumentEdit`" contract from 5a. `Document` owns *committed* text only; `NSTextContentStorage` owns *committed + composition* text; `applyDocumentEdit` is suspended while a composition session is active and resumes on commit (the IME delivers the final string).
 
 ### Work
-- Add `CompositionSession` type in `FSNotesCore/BlockModel/Document.swift`: `{ anchorCursor: DocumentCursor, markedRange: NSRange, isActive: Bool }`. Lives on the editor, not inside `Document`.
+- Add `CompositionSession` type in `FSNotesCore/Rendering/Document.swift`: `{ anchorCursor: DocumentCursor, markedRange: NSRange, isActive: Bool }`. Lives on the editor, not inside `Document`.
 - In `EditTextView`, override `setMarkedText(_:selectedRange:replacementRange:)` and `unmarkText()` to drive the session. Entry: capture `anchorCursor` from current selection, set `isActive = true`, let TextKit's default marked-text machinery mutate `NSTextContentStorage` directly (bypasses `applyDocumentEdit` — this is the *only* exemption from the 5a single-write-path rule, gated on `session.isActive`).
 - Relax the 5a debug assertion: `NSTextContentStorage` mutations outside `applyDocumentEdit` are permitted *only* when `compositionSession.isActive == true` AND the mutating range lies inside `session.markedRange`. Any other mutation trips the assertion.
 - Queue any non-composition `EditingOps` call arriving while `session.isActive` (auto-save, external edit, programmatic insert) into a `pendingEdits: [EditContract]` list; drain after commit. Document explicitly that *user* keystrokes outside the marked range during composition don't happen in practice — AppKit routes all keystrokes through the IME while composition is active.
@@ -775,7 +775,7 @@ Atomic. The 5a assertion gate is the one externally visible change; reverting th
 
 ### Work
 - Extend `EditContract` (from Phase 1) with an `inverse: EditContract` field when it can be computed cheaply (single-block replace, insert, delete). For multi-block or structural edits (list FSM transitions, heading↔paragraph conversion, table cell edits), capture a `beforeSnapshot: DocumentSnapshot` — a shallow copy of the affected `[Block]` slice plus its index range in `Document.blocks`. Full-document snapshots are the fallback for operations we can't localize; expect these to be rare.
-- New `UndoJournal` type in `FSNotesCore/BlockModel/UndoJournal.swift`. Owns `past: [UndoEntry]` and `future: [UndoEntry]` stacks. `UndoEntry = { contract: EditContract, selectionBefore: DocumentRange, selectionAfter: DocumentRange, groupID: UUID, timestamp: Date }`.
+- New `UndoJournal` type in `FSNotesCore/Rendering/UndoJournal.swift`. Owns `past: [UndoEntry]` and `future: [UndoEntry]` stacks. `UndoEntry = { contract: EditContract, selectionBefore: DocumentRange, selectionAfter: DocumentRange, groupID: UUID, timestamp: Date }`.
 - Hook `applyDocumentEdit` to append to the journal (unless a replay flag is set — replay itself must not re-journal). Hook `NSUndoManager.registerUndo(withTarget:handler:)` per edit; the handler pops the journal and calls `applyDocumentEdit` with the inverse / snapshot restore.
 - Coalescing policy (single undo step covers a run of related edits):
   - **Typing** coalesces inside one block while `(now - lastEdit) < 1.0s` AND the new edit is a single-character insert adjacent to the last. Break the group on: non-typing edit, selection change, focus change, 1-second idle, explicit boundary (block boundary crossed, Return, structural edit).
@@ -1111,8 +1111,8 @@ Rejected alternatives: hidden fences via `foregroundColor = .clear` + negative k
 
 **Phase 1 (modify):**
 - `FSNotesCore/Rendering/EditingOperations.swift` — retrofit contracts on all primitives
-- `FSNotesCore/BlockModel/ListEditingFSM.swift` — retrofit contracts
-- `FSNotesCore/BlockModel/Document.swift` — add `DocumentCursor` type
+- `FSNotesCore/Rendering/ListEditingFSM.swift` — retrofit contracts
+- `FSNotesCore/Rendering/Document.swift` — add `DocumentCursor` type
 - `FSNotes/View/EditTextView+BlockModel.swift` — `applyBlockModelResult` consumes contracts
 - `ARCHITECTURE.md` — FSM specification update
 
@@ -1128,20 +1128,20 @@ Rejected alternatives: hidden fences via `foregroundColor = .clear` + negative k
 
 **Phase 3 (new + modify):**
 - `FSNotesCore/Rendering/ApplyDocumentEdit.swift` (new) — the single write path
-- `FSNotesCore/BlockModel/Document.swift` — block identity tracking (UUIDs or generation counters)
+- `FSNotesCore/Rendering/Document.swift` — block identity tracking (UUIDs or generation counters)
 
 **Phase 4 (delete / modify):**
 - `FSNotesCore/Rendering/NotesTextProcessor.swift` — delete `scanBasicSyntax` markdown path
 - `FSNotesCore/Business/Note.swift` — delete `blocks` array, `save(content:)`
 - `FSNotesCore/Business/NoteSerializer.swift` — delete `prepareForSave()`
-- `FSNotesCore/BlockModel/Document.swift` — remove `Block.table.raw`
+- `FSNotesCore/Rendering/Document.swift` — remove `Block.table.raw`
 - `FSNotesCore/Rendering/SourceRenderer.swift` (new)
 
 **Phase 5 (modify / new):**
 - `FSNotes/View/EditTextView+BlockModel.swift` — enforce `applyDocumentEdit` single entry point
-- `FSNotesCore/BlockModel/DocumentCursor.swift` (new)
+- `FSNotesCore/Rendering/DocumentCursor.swift` (new)
 - `FSNotes/View/EditTextView+Clipboard.swift` — document-based copy/paste
-- `FSNotesCore/BlockModel/DocumentFinder.swift` (new, only if 5c is kept)
+- `FSNotesCore/Rendering/DocumentFinder.swift` (new, only if 5c is kept)
 
 **Phase 6 (sweep):**
 - `FSNotes/` and `FSNotesCore/` — TextKit 1 / guard / dead-code removal
