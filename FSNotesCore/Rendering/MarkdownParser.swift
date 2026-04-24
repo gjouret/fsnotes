@@ -2402,14 +2402,69 @@ public enum MarkdownParser {
         // Allow up to 3 leading spaces before >
         while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
         guard i < chars.count, chars[i] == ">" else { return nil }
+        // CommonMark §5.1: for a blockquote prefix, a tab immediately
+        // after `>` is only partially consumed — exactly one virtual
+        // column of the tab serves as the optional post-marker space;
+        // the remaining columns of the tab must appear as leading
+        // whitespace in the content so that tab-based indented code
+        // blocks inside the blockquote see the right column count.
+        // Spec #6: `>\t\tfoo` → `<blockquote><pre><code>  foo</code></pre></blockquote>`.
+        // Because subsequent tabs in the content would re-expand
+        // relative to their new column position (not the original
+        // line's), we also expand ANY leading-whitespace tabs in the
+        // content into their original-column space count.
+        var col = 0
+        var prefixBuilder: [Character] = []
+        var leftoverCols = 0  // cols from prefix tab(s) that belong to content
         while i < chars.count, chars[i] == ">" {
+            prefixBuilder.append(">")
+            col += 1
             i += 1
-            // Optionally consume ONE space/tab after this `>`.
-            if i < chars.count, chars[i] == " " || chars[i] == "\t" {
+            if i < chars.count, chars[i] == " " {
+                prefixBuilder.append(" ")
+                col += 1
                 i += 1
+            } else if i < chars.count, chars[i] == "\t" {
+                let tabWidth = 4 - (col % 4)
+                prefixBuilder.append("\t")
+                col += tabWidth
+                i += 1
+                // 1 of the tab's cols was consumed as the optional
+                // post-marker space; the rest belongs to content.
+                leftoverCols += (tabWidth - 1)
             }
         }
-        let prefix = String(chars[0..<i])
+        let prefix = String(prefixBuilder)
+
+        // If the prefix consumed a tab (leftoverCols > 0), expand the
+        // tab-shifted column layout into explicit spaces so that a
+        // downstream inner-parse (which re-expands tabs from column
+        // 0) sees the correct indent width. Any tabs in the content's
+        // leading whitespace are also expanded relative to the
+        // original column position.
+        if leftoverCols > 0 {
+            var expanded: [Character] = []
+            var vcol = col
+            while i < chars.count {
+                let ch = chars[i]
+                if ch == " " {
+                    expanded.append(" ")
+                    vcol += 1
+                    i += 1
+                } else if ch == "\t" {
+                    let w = 4 - (vcol % 4)
+                    for _ in 0..<w { expanded.append(" ") }
+                    vcol += w
+                    i += 1
+                } else {
+                    break
+                }
+            }
+            let leftoverSpaces = String(repeating: " ", count: leftoverCols)
+            let restOfLine = String(chars[i..<chars.count])
+            let content = leftoverSpaces + String(expanded) + restOfLine
+            return (prefix, content)
+        }
         let content = String(chars[i..<chars.count])
         return (prefix, content)
     }
