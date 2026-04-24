@@ -631,7 +631,7 @@ extension BlockStyleTheme {
 
     /// Encode both flat and nested groups into one JSON payload. The
     /// flat keys are preserved for backward compatibility with the
-    /// existing `DefaultBlockStyleTheme.json`; nested keys sit
+    /// existing `default-theme.json`; nested keys sit
     /// alongside them and have been the primary source since Phase 7.2.
     public static func encodeWithNested(
         flat: BlockStyleTheme,
@@ -896,19 +896,16 @@ extension BlockStyleTheme {
 
     /// Load the bundled default theme. In order of preference:
     /// 1. `default-theme.json` in any loaded bundle
-    /// 2. `DefaultBlockStyleTheme.json` (legacy bundled default)
-    /// 3. Compiled-in `BlockStyleTheme.default` + synthesized nested
+    /// 2. Compiled-in `BlockStyleTheme.default` + synthesized nested
     public static func loadBundledDefault()
         -> (theme: BlockStyleTheme, nested: ThemeNestedGroups) {
-        for resource in ["default-theme", "DefaultBlockStyleTheme"] {
-            for bundle in Self.candidateBundles() {
-                guard let url = bundle.url(
-                    forResource: resource, withExtension: "json"
-                ) else { continue }
-                guard let data = try? Data(contentsOf: url) else { continue }
-                if let (theme, nested) = try? Self.decodeWithNested(from: data) {
-                    return (theme, nested)
-                }
+        for bundle in Self.candidateBundles() {
+            guard let url = bundle.url(
+                forResource: "default-theme", withExtension: "json"
+            ) else { continue }
+            guard let data = try? Data(contentsOf: url) else { continue }
+            if let (theme, nested) = try? Self.decodeWithNested(from: data) {
+                return (theme, nested)
             }
         }
         return (

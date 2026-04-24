@@ -516,71 +516,16 @@ extension BlockStyleTheme {
     )
 }
 
-// MARK: - Shared instance + persistence
+// MARK: - Shared instance
 
 extension BlockStyleTheme {
 
-    /// Cached production instance. Initialized on first access via `load()`.
-    /// Settings sliders mutate this and call `save()` to persist.
-    public static var shared: BlockStyleTheme = load()
-
-    /// User theme file location.
-    private static var userThemeURL: URL {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!.appendingPathComponent("FSNotes")
-        return appSupport.appendingPathComponent("BlockStyleTheme.json")
-    }
-
-    /// Load the theme: bundle defaults → user overrides on top.
-    /// Returns `.default` if both files are missing or malformed.
-    public static func load() -> BlockStyleTheme {
-        let decoder = JSONDecoder()
-
-        // Start from compiled-in defaults
-        var theme = BlockStyleTheme.default
-
-        // Layer 1: bundled defaults (may customize compiled-in values)
-        if let bundleURL = Bundle.main.url(
-            forResource: "DefaultBlockStyleTheme", withExtension: "json"
-        ), let data = try? Data(contentsOf: bundleURL),
-           let bundled = try? decoder.decode(BlockStyleTheme.self, from: data) {
-            theme = bundled
-        }
-
-        // Layer 2: user overrides
-        if let data = try? Data(contentsOf: userThemeURL),
-           let user = try? decoder.decode(BlockStyleTheme.self, from: data) {
-            theme = user
-        }
-
-        return theme
-    }
-
-    /// Persist the shared theme to the user theme file.
-    public static func save() {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(shared) else { return }
-
-        let dir = userThemeURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(
-            at: dir, withIntermediateDirectories: true
-        )
-        try? data.write(to: userThemeURL, options: .atomic)
-    }
-
-    /// Re-read from disk and update the shared instance.
-    public static func reload() {
-        shared = load()
-    }
-
-    // `migrateFromUserDefaults()` lived here until Phase 7.5.c. It was
-    // deleted because `UserDefaultsManagement.fontSize` etc. now proxy
-    // `BlockStyleTheme.shared.noteFontSize` etc. directly — so the old
-    // migration body (`shared.noteFontSize = UserDefaultsManagement.fontSize`)
-    // became self-referential. The real migration lives at
-    // `UserDefaultsManagement.migrateEditorKeysIntoTheme75c(...)`, which
-    // reads the raw UD keys once at first launch, seeds `shared`, then
-    // removes the backing UD entries so nothing can drift afterward.
+    /// Cached production instance. Initialized to the compiled-in
+    /// defaults; `AppDelegate` replaces it at launch with the
+    /// user-selected theme via `Theme.load(named:)`.
+    ///
+    /// Writes flow through `Theme.saveActiveTheme` / `saveActiveThemeDebounced`
+    /// in `ThemeDiscovery.swift`; there is no legacy per-theme save path
+    /// on this type.
+    public static var shared: BlockStyleTheme = .default
 }

@@ -329,10 +329,9 @@ class ThemeTests: XCTestCase {
     // MARK: - 7.1: nested group synthesis from flat-only JSON
 
     func test_phase7_1_theme_flatOnlyJSONSynthesizesNested() throws {
-        // The legacy `DefaultBlockStyleTheme.json` has ONLY flat keys
-        // (no `typography` / `spacing` / `colors` / `chrome` blocks).
-        // It should still decode cleanly, with nested groups
-        // synthesized from the flat values.
+        // A legacy flat-only payload (no `typography` / `spacing` /
+        // `colors` / `chrome` blocks) should still decode cleanly, with
+        // the nested groups synthesized from the flat values.
         let flatOnly = """
         {
             "noteFontName": null,
