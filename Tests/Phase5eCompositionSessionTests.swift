@@ -278,4 +278,67 @@ final class Phase5eCompositionFlowTests: XCTestCase {
         XCTAssertEqual(anchor.blockPath.first, 0)
         XCTAssertEqual(anchor.inlineOffset, 6)
     }
+
+    // MARK: - Commit 5 edge cases
+
+    /// Composition followed by another composition — the second
+    /// session must start cleanly with the first's state fully cleared.
+    func test_edge_twoSequentialCompositions() {
+        let harness = EditorHarness(markdown: "ABC")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 3)
+        harness.beginComposition(marked: "か")
+        harness.commitComposition(final: "漢")
+        XCTAssertFalse(harness.compositionSession.isActive)
+        harness.beginComposition(marked: "ん")
+        XCTAssertTrue(harness.compositionSession.isActive)
+        harness.commitComposition(final: "字")
+        XCTAssertFalse(harness.compositionSession.isActive)
+        XCTAssertEqual(harness.contentString, "ABC漢字")
+    }
+
+    /// Abort followed by a fresh composition — abort must leave no
+    /// residual state that contaminates the next session.
+    func test_edge_abortThenNewComposition() {
+        let harness = EditorHarness(markdown: "AB")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 2)
+        harness.beginComposition(marked: "か")
+        harness.abortComposition()
+        XCTAssertFalse(harness.compositionSession.isActive)
+        XCTAssertEqual(harness.contentString, "AB")
+        harness.beginComposition(marked: "ん")
+        XCTAssertTrue(harness.compositionSession.isActive)
+        harness.commitComposition(final: "字")
+        XCTAssertEqual(harness.contentString, "AB字")
+    }
+
+    /// Composition at the document end — the marked run extends into
+    /// the trailing paragraph-separator region; commit must still
+    /// land the final string cleanly before the separator.
+    func test_edge_compositionAtDocumentEnd() {
+        let harness = EditorHarness(markdown: "Hello")
+        defer { harness.teardown() }
+        let endLocation = (harness.contentString as NSString).length
+        harness.moveCursor(to: endLocation)
+        harness.beginComposition(marked: "か")
+        harness.commitComposition(final: "漢")
+        // Document should end in "漢" (plus whatever trailing
+        // paragraph separator the renderer emits).
+        XCTAssertTrue(harness.contentString.hasPrefix("Hello漢"),
+                      "expected prefix 'Hello漢' in '\(harness.contentString)'")
+    }
+
+    /// Anchor cursor is a stable block-model coordinate — doesn't
+    /// move when `markedRange` updates during composition.
+    func test_edge_anchorCursor_stableAcrossMarkedUpdates() {
+        let harness = EditorHarness(markdown: "Hello world")
+        defer { harness.teardown() }
+        harness.moveCursor(to: 6)
+        harness.beginComposition(marked: "か")
+        let anchorAtBegin = harness.compositionSession.anchorCursor
+        harness.updateComposition(marked: "かな")
+        let anchorAfterUpdate = harness.compositionSession.anchorCursor
+        XCTAssertEqual(anchorAtBegin, anchorAfterUpdate)
+    }
 }
