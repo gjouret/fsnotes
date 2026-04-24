@@ -48,13 +48,6 @@ class BlockStyleThemeTests: XCTestCase {
         XCTAssertEqual(BlockStyleTheme.default.paragraphSpacing, 12)
     }
 
-    func testDefaultCodeBlockSpacing() {
-        let t = BlockStyleTheme.default
-        XCTAssertEqual(t.codeBlockLineSpacing, 0)
-        XCTAssertEqual(t.codeBlockParagraphSpacing, 16)
-        XCTAssertEqual(t.codeBlockSpacingBefore, 0)
-    }
-
     func testDefaultListConstants() {
         let t = BlockStyleTheme.default
         XCTAssertEqual(t.listIndentScale, 1.8)
@@ -62,9 +55,6 @@ class BlockStyleThemeTests: XCTestCase {
         XCTAssertEqual(t.listBulletSizeScale, 0.7)
         XCTAssertEqual(t.listNumberDrawScale, 1.0)
         XCTAssertEqual(t.listCheckboxDrawScale, 1.2)
-        XCTAssertEqual(t.listBulletStrokeInset, 0.5)
-        XCTAssertEqual(t.listBulletStrokeWidth, 1.0)
-        XCTAssertEqual(t.listBlockSpacing, 16)
     }
 
     func testDefaultBlockquoteConstants() {
@@ -73,14 +63,6 @@ class BlockStyleThemeTests: XCTestCase {
         XCTAssertEqual(t.blockquoteBarSpacing, 10)
         XCTAssertEqual(t.blockquoteBarWidth, 4)
         XCTAssertEqual(t.blockquoteGapAfterBars, 4)
-        XCTAssertEqual(t.blockquoteBlockSpacing, 16)
-    }
-
-    func testDefaultTableConstants() {
-        let t = BlockStyleTheme.default
-        XCTAssertEqual(t.tablePlaceholderWidth, 400)
-        XCTAssertEqual(t.tablePlaceholderHeight, 100)
-        XCTAssertEqual(t.tableBlockSpacing, 16)
     }
 
     func testDefaultHighlightColor() {
@@ -89,12 +71,6 @@ class BlockStyleThemeTests: XCTestCase {
         XCTAssertEqual(t.highlightColor.green, 0.9)
         XCTAssertEqual(t.highlightColor.blue, 0.0)
         XCTAssertEqual(t.highlightColor.alpha, 0.5)
-    }
-
-    func testDefaultBlankLineHeights() {
-        let t = BlockStyleTheme.default
-        XCTAssertEqual(t.blankLineMinHeight, 0.01)
-        XCTAssertEqual(t.blankLineMaxHeight, 0.01)
     }
 
     func testDefaultEditorLayout() {

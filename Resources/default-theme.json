@@ -20,34 +20,16 @@
 
     "paragraphSpacing": 12,
 
-    "codeBlockLineSpacing": 0,
-    "codeBlockParagraphSpacing": 16,
-    "codeBlockSpacingBefore": 0,
-
     "listIndentScale": 1.8,
     "listCellScale": 2.0,
     "listBulletSizeScale": 0.7,
     "listNumberDrawScale": 1.0,
     "listCheckboxDrawScale": 1.2,
-    "listBulletStrokeInset": 0.5,
-    "listBulletStrokeWidth": 1.0,
-    "listBlockSpacing": 16,
 
     "blockquoteBarInitialOffset": 2,
     "blockquoteBarSpacing": 10,
     "blockquoteBarWidth": 4,
     "blockquoteGapAfterBars": 4,
-    "blockquoteBlockSpacing": 16,
-
-    "tablePlaceholderWidth": 400,
-    "tablePlaceholderHeight": 100,
-    "tableBlockSpacing": 16,
-
-    "hrBlockSpacing": 16,
-
-    "htmlBlockLineSpacing": 0,
-    "htmlBlockParagraphSpacing": 16,
-    "htmlBlockSpacingBefore": 0,
 
     "highlightColor": {
         "red": 1.0,
@@ -55,9 +37,6 @@
         "blue": 0.0,
         "alpha": 0.5
     },
-
-    "blankLineMinHeight": 0.01,
-    "blankLineMaxHeight": 0.01,
 
     "typography": {
         "bodyFontName": null,

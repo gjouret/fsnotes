@@ -112,12 +112,6 @@ public struct BlockStyleTheme: Codable, Equatable {
     /// Fixed paragraph spacing in points.
     public var paragraphSpacing: CGFloat
 
-    // ── Code block ───────────────────────────────────────────────────
-
-    public var codeBlockLineSpacing: CGFloat
-    public var codeBlockParagraphSpacing: CGFloat
-    public var codeBlockSpacingBefore: CGFloat
-
     // ── List ─────────────────────────────────────────────────────────
 
     /// Nesting indent as a multiple of bodyFont.pointSize.
@@ -135,15 +129,6 @@ public struct BlockStyleTheme: Codable, Equatable {
     /// SF Symbol checkbox size as a multiple of bodyFont.pointSize.
     public var listCheckboxDrawScale: CGFloat
 
-    /// Inset for open bullet shapes (stroke width buffer).
-    public var listBulletStrokeInset: CGFloat
-
-    /// Line width for open bullet shape strokes.
-    public var listBulletStrokeWidth: CGFloat
-
-    /// Paragraph spacing for list blocks.
-    public var listBlockSpacing: CGFloat
-
     // ── Blockquote ───────────────────────────────────────────────────
 
     /// Initial padding before the first blockquote bar.
@@ -158,41 +143,10 @@ public struct BlockStyleTheme: Codable, Equatable {
     /// Gap between the last bar and the text.
     public var blockquoteGapAfterBars: CGFloat
 
-    /// Paragraph spacing for blockquote blocks.
-    public var blockquoteBlockSpacing: CGFloat
-
-    // ── Table ────────────────────────────────────────────────────────
-
-    /// Placeholder width before table widget resizes.
-    public var tablePlaceholderWidth: CGFloat
-
-    /// Placeholder height before table widget resizes.
-    public var tablePlaceholderHeight: CGFloat
-
-    /// Paragraph spacing for table blocks.
-    public var tableBlockSpacing: CGFloat
-
-    // ── Horizontal rule ──────────────────────────────────────────────
-
-    /// Paragraph spacing for HR blocks.
-    public var hrBlockSpacing: CGFloat
-
-    // ── HTML block ───────────────────────────────────────────────────
-
-    public var htmlBlockLineSpacing: CGFloat
-    public var htmlBlockParagraphSpacing: CGFloat
-    public var htmlBlockSpacingBefore: CGFloat
-
     // ── Inline ───────────────────────────────────────────────────────
 
     /// Background color for `==highlight==` text.
     public var highlightColor: CodableColor
-
-    // ── Blank line ───────────────────────────────────────────────────
-
-    /// Near-zero heights for visually collapsing blank-line separators.
-    public var blankLineMinHeight: CGFloat
-    public var blankLineMaxHeight: CGFloat
 
     // MARK: - Computed font accessors
 
@@ -263,32 +217,16 @@ public struct BlockStyleTheme: Codable, Equatable {
         headingSpacingBefore: [CGFloat],
         headingSpacingAfter: [CGFloat],
         paragraphSpacing: CGFloat,
-        codeBlockLineSpacing: CGFloat,
-        codeBlockParagraphSpacing: CGFloat,
-        codeBlockSpacingBefore: CGFloat,
         listIndentScale: CGFloat,
         listCellScale: CGFloat,
         listBulletSizeScale: CGFloat,
         listNumberDrawScale: CGFloat,
         listCheckboxDrawScale: CGFloat,
-        listBulletStrokeInset: CGFloat,
-        listBulletStrokeWidth: CGFloat,
-        listBlockSpacing: CGFloat,
         blockquoteBarInitialOffset: CGFloat,
         blockquoteBarSpacing: CGFloat,
         blockquoteBarWidth: CGFloat,
         blockquoteGapAfterBars: CGFloat,
-        blockquoteBlockSpacing: CGFloat,
-        tablePlaceholderWidth: CGFloat,
-        tablePlaceholderHeight: CGFloat,
-        tableBlockSpacing: CGFloat,
-        hrBlockSpacing: CGFloat,
-        htmlBlockLineSpacing: CGFloat,
-        htmlBlockParagraphSpacing: CGFloat,
-        htmlBlockSpacingBefore: CGFloat,
         highlightColor: CodableColor,
-        blankLineMinHeight: CGFloat,
-        blankLineMaxHeight: CGFloat,
         lineHeightMultiple: CGFloat,
         italic: String,
         bold: String
@@ -307,32 +245,16 @@ public struct BlockStyleTheme: Codable, Equatable {
         self.headingSpacingBefore = headingSpacingBefore
         self.headingSpacingAfter = headingSpacingAfter
         self.paragraphSpacing = paragraphSpacing
-        self.codeBlockLineSpacing = codeBlockLineSpacing
-        self.codeBlockParagraphSpacing = codeBlockParagraphSpacing
-        self.codeBlockSpacingBefore = codeBlockSpacingBefore
         self.listIndentScale = listIndentScale
         self.listCellScale = listCellScale
         self.listBulletSizeScale = listBulletSizeScale
         self.listNumberDrawScale = listNumberDrawScale
         self.listCheckboxDrawScale = listCheckboxDrawScale
-        self.listBulletStrokeInset = listBulletStrokeInset
-        self.listBulletStrokeWidth = listBulletStrokeWidth
-        self.listBlockSpacing = listBlockSpacing
         self.blockquoteBarInitialOffset = blockquoteBarInitialOffset
         self.blockquoteBarSpacing = blockquoteBarSpacing
         self.blockquoteBarWidth = blockquoteBarWidth
         self.blockquoteGapAfterBars = blockquoteGapAfterBars
-        self.blockquoteBlockSpacing = blockquoteBlockSpacing
-        self.tablePlaceholderWidth = tablePlaceholderWidth
-        self.tablePlaceholderHeight = tablePlaceholderHeight
-        self.tableBlockSpacing = tableBlockSpacing
-        self.hrBlockSpacing = hrBlockSpacing
-        self.htmlBlockLineSpacing = htmlBlockLineSpacing
-        self.htmlBlockParagraphSpacing = htmlBlockParagraphSpacing
-        self.htmlBlockSpacingBefore = htmlBlockSpacingBefore
         self.highlightColor = highlightColor
-        self.blankLineMinHeight = blankLineMinHeight
-        self.blankLineMaxHeight = blankLineMaxHeight
     }
 
     // MARK: - Codable (tolerant decoder for Phase 7.5.c additions)
@@ -348,17 +270,11 @@ public struct BlockStyleTheme: Codable, Equatable {
         case lineHeightMultiple, italic, bold
         case headingFontScales, headingSpacingBefore, headingSpacingAfter
         case paragraphSpacing
-        case codeBlockLineSpacing, codeBlockParagraphSpacing, codeBlockSpacingBefore
         case listIndentScale, listCellScale, listBulletSizeScale
         case listNumberDrawScale, listCheckboxDrawScale
-        case listBulletStrokeInset, listBulletStrokeWidth, listBlockSpacing
         case blockquoteBarInitialOffset, blockquoteBarSpacing, blockquoteBarWidth
-        case blockquoteGapAfterBars, blockquoteBlockSpacing
-        case tablePlaceholderWidth, tablePlaceholderHeight, tableBlockSpacing
-        case hrBlockSpacing
-        case htmlBlockLineSpacing, htmlBlockParagraphSpacing, htmlBlockSpacingBefore
+        case blockquoteGapAfterBars
         case highlightColor
-        case blankLineMinHeight, blankLineMaxHeight
     }
 
     public init(from decoder: Decoder) throws {
@@ -371,7 +287,6 @@ public struct BlockStyleTheme: Codable, Equatable {
         self.editorLineSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .editorLineSpacing) ?? def.editorLineSpacing
         self.lineWidth = try c.decodeIfPresent(CGFloat.self, forKey: .lineWidth) ?? def.lineWidth
         self.marginSize = try c.decodeIfPresent(CGFloat.self, forKey: .marginSize) ?? def.marginSize
-        // Phase 7.5.c flat fields — tolerate missing for pre-7.5.c themes.
         self.lineHeightMultiple = try c.decodeIfPresent(CGFloat.self, forKey: .lineHeightMultiple) ?? def.lineHeightMultiple
         self.italic = try c.decodeIfPresent(String.self, forKey: .italic) ?? def.italic
         self.bold = try c.decodeIfPresent(String.self, forKey: .bold) ?? def.bold
@@ -379,32 +294,16 @@ public struct BlockStyleTheme: Codable, Equatable {
         self.headingSpacingBefore = try c.decodeIfPresent([CGFloat].self, forKey: .headingSpacingBefore) ?? def.headingSpacingBefore
         self.headingSpacingAfter = try c.decodeIfPresent([CGFloat].self, forKey: .headingSpacingAfter) ?? def.headingSpacingAfter
         self.paragraphSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .paragraphSpacing) ?? def.paragraphSpacing
-        self.codeBlockLineSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .codeBlockLineSpacing) ?? def.codeBlockLineSpacing
-        self.codeBlockParagraphSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .codeBlockParagraphSpacing) ?? def.codeBlockParagraphSpacing
-        self.codeBlockSpacingBefore = try c.decodeIfPresent(CGFloat.self, forKey: .codeBlockSpacingBefore) ?? def.codeBlockSpacingBefore
         self.listIndentScale = try c.decodeIfPresent(CGFloat.self, forKey: .listIndentScale) ?? def.listIndentScale
         self.listCellScale = try c.decodeIfPresent(CGFloat.self, forKey: .listCellScale) ?? def.listCellScale
         self.listBulletSizeScale = try c.decodeIfPresent(CGFloat.self, forKey: .listBulletSizeScale) ?? def.listBulletSizeScale
         self.listNumberDrawScale = try c.decodeIfPresent(CGFloat.self, forKey: .listNumberDrawScale) ?? def.listNumberDrawScale
         self.listCheckboxDrawScale = try c.decodeIfPresent(CGFloat.self, forKey: .listCheckboxDrawScale) ?? def.listCheckboxDrawScale
-        self.listBulletStrokeInset = try c.decodeIfPresent(CGFloat.self, forKey: .listBulletStrokeInset) ?? def.listBulletStrokeInset
-        self.listBulletStrokeWidth = try c.decodeIfPresent(CGFloat.self, forKey: .listBulletStrokeWidth) ?? def.listBulletStrokeWidth
-        self.listBlockSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .listBlockSpacing) ?? def.listBlockSpacing
         self.blockquoteBarInitialOffset = try c.decodeIfPresent(CGFloat.self, forKey: .blockquoteBarInitialOffset) ?? def.blockquoteBarInitialOffset
         self.blockquoteBarSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .blockquoteBarSpacing) ?? def.blockquoteBarSpacing
         self.blockquoteBarWidth = try c.decodeIfPresent(CGFloat.self, forKey: .blockquoteBarWidth) ?? def.blockquoteBarWidth
         self.blockquoteGapAfterBars = try c.decodeIfPresent(CGFloat.self, forKey: .blockquoteGapAfterBars) ?? def.blockquoteGapAfterBars
-        self.blockquoteBlockSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .blockquoteBlockSpacing) ?? def.blockquoteBlockSpacing
-        self.tablePlaceholderWidth = try c.decodeIfPresent(CGFloat.self, forKey: .tablePlaceholderWidth) ?? def.tablePlaceholderWidth
-        self.tablePlaceholderHeight = try c.decodeIfPresent(CGFloat.self, forKey: .tablePlaceholderHeight) ?? def.tablePlaceholderHeight
-        self.tableBlockSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .tableBlockSpacing) ?? def.tableBlockSpacing
-        self.hrBlockSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .hrBlockSpacing) ?? def.hrBlockSpacing
-        self.htmlBlockLineSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .htmlBlockLineSpacing) ?? def.htmlBlockLineSpacing
-        self.htmlBlockParagraphSpacing = try c.decodeIfPresent(CGFloat.self, forKey: .htmlBlockParagraphSpacing) ?? def.htmlBlockParagraphSpacing
-        self.htmlBlockSpacingBefore = try c.decodeIfPresent(CGFloat.self, forKey: .htmlBlockSpacingBefore) ?? def.htmlBlockSpacingBefore
         self.highlightColor = try c.decodeIfPresent(CodableColor.self, forKey: .highlightColor) ?? def.highlightColor
-        self.blankLineMinHeight = try c.decodeIfPresent(CGFloat.self, forKey: .blankLineMinHeight) ?? def.blankLineMinHeight
-        self.blankLineMaxHeight = try c.decodeIfPresent(CGFloat.self, forKey: .blankLineMaxHeight) ?? def.blankLineMaxHeight
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -423,32 +322,16 @@ public struct BlockStyleTheme: Codable, Equatable {
         try c.encode(headingSpacingBefore, forKey: .headingSpacingBefore)
         try c.encode(headingSpacingAfter, forKey: .headingSpacingAfter)
         try c.encode(paragraphSpacing, forKey: .paragraphSpacing)
-        try c.encode(codeBlockLineSpacing, forKey: .codeBlockLineSpacing)
-        try c.encode(codeBlockParagraphSpacing, forKey: .codeBlockParagraphSpacing)
-        try c.encode(codeBlockSpacingBefore, forKey: .codeBlockSpacingBefore)
         try c.encode(listIndentScale, forKey: .listIndentScale)
         try c.encode(listCellScale, forKey: .listCellScale)
         try c.encode(listBulletSizeScale, forKey: .listBulletSizeScale)
         try c.encode(listNumberDrawScale, forKey: .listNumberDrawScale)
         try c.encode(listCheckboxDrawScale, forKey: .listCheckboxDrawScale)
-        try c.encode(listBulletStrokeInset, forKey: .listBulletStrokeInset)
-        try c.encode(listBulletStrokeWidth, forKey: .listBulletStrokeWidth)
-        try c.encode(listBlockSpacing, forKey: .listBlockSpacing)
         try c.encode(blockquoteBarInitialOffset, forKey: .blockquoteBarInitialOffset)
         try c.encode(blockquoteBarSpacing, forKey: .blockquoteBarSpacing)
         try c.encode(blockquoteBarWidth, forKey: .blockquoteBarWidth)
         try c.encode(blockquoteGapAfterBars, forKey: .blockquoteGapAfterBars)
-        try c.encode(blockquoteBlockSpacing, forKey: .blockquoteBlockSpacing)
-        try c.encode(tablePlaceholderWidth, forKey: .tablePlaceholderWidth)
-        try c.encode(tablePlaceholderHeight, forKey: .tablePlaceholderHeight)
-        try c.encode(tableBlockSpacing, forKey: .tableBlockSpacing)
-        try c.encode(hrBlockSpacing, forKey: .hrBlockSpacing)
-        try c.encode(htmlBlockLineSpacing, forKey: .htmlBlockLineSpacing)
-        try c.encode(htmlBlockParagraphSpacing, forKey: .htmlBlockParagraphSpacing)
-        try c.encode(htmlBlockSpacingBefore, forKey: .htmlBlockSpacingBefore)
         try c.encode(highlightColor, forKey: .highlightColor)
-        try c.encode(blankLineMinHeight, forKey: .blankLineMinHeight)
-        try c.encode(blankLineMaxHeight, forKey: .blankLineMaxHeight)
     }
 }
 
@@ -475,40 +358,19 @@ extension BlockStyleTheme {
         headingSpacingAfter: [0.67, 0.5, 0.4, 0.35, 0.3, 0.25],
         // Paragraph
         paragraphSpacing: 12,
-        // Code block
-        codeBlockLineSpacing: 0,
-        codeBlockParagraphSpacing: 16,
-        codeBlockSpacingBefore: 0,
         // List
         listIndentScale: 1.8,
         listCellScale: 2.0,
         listBulletSizeScale: 0.7,
         listNumberDrawScale: 1.0,
         listCheckboxDrawScale: 1.2,
-        listBulletStrokeInset: 0.5,
-        listBulletStrokeWidth: 1.0,
-        listBlockSpacing: 16,
         // Blockquote
         blockquoteBarInitialOffset: 2,
         blockquoteBarSpacing: 10,
         blockquoteBarWidth: 4,
         blockquoteGapAfterBars: 4,
-        blockquoteBlockSpacing: 16,
-        // Table
-        tablePlaceholderWidth: 400,
-        tablePlaceholderHeight: 100,
-        tableBlockSpacing: 16,
-        // HR
-        hrBlockSpacing: 16,
-        // HTML block
-        htmlBlockLineSpacing: 0,
-        htmlBlockParagraphSpacing: 16,
-        htmlBlockSpacingBefore: 0,
         // Inline
         highlightColor: CodableColor(red: 1.0, green: 0.9, blue: 0.0, alpha: 0.5),
-        // Blank line
-        blankLineMinHeight: 0.01,
-        blankLineMaxHeight: 0.01,
         // Phase 7.5.c flat fields (see struct definition for rationale)
         lineHeightMultiple: 1.4,
         italic: "*",
