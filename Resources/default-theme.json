@@ -99,6 +99,13 @@
         },
         "tableHandle": "#BBBBBBCC",
         "tableResizePreview": "#007AFFFF",
-        "sourceMarker": "#999999FF"
+        "sourceMarker": "#999999FF",
+        "foldedHeaderIndicatorForeground": "#888888FF",
+        "foldedHeaderIndicatorBackground": "#E5E5E580",
+        "foldedHeaderIndicatorCornerRadius": 3.0,
+        "foldedHeaderIndicatorHorizontalPadding": 4.0,
+        "foldedHeaderIndicatorVerticalPadding": 1.0,
+        "foldedHeaderIndicatorFontSizeMultiplier": 0.6,
+        "foldedHeaderIndicatorTrailingGap": 6.0
     }
 }

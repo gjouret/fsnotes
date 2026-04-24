@@ -450,6 +450,41 @@ public struct ThemeChrome: Codable, Equatable {
     /// unconditionally).
     public var sourceMarker: ThemeColor
 
+    // MARK: - Folded-header indicator
+
+    /// Foreground (text) color of the `[...]` indicator drawn at the
+    /// trailing edge of a folded heading. Default `#888888FF` — a mid
+    /// gray that reads as "collapsed state" without fighting heading
+    /// glyphs. Defaulted so existing themes that don't set it still
+    /// load cleanly.
+    public var foldedHeaderIndicatorForeground: ThemeColor
+
+    /// Background fill of the small rounded-rect chip behind the folded
+    /// heading indicator text. Default `#E5E5E580` — light gray at 50%
+    /// alpha so the chip sits quietly next to the heading.
+    public var foldedHeaderIndicatorBackground: ThemeColor
+
+    /// Corner radius of the folded-header indicator chip, in points.
+    /// Default 3.0.
+    public var foldedHeaderIndicatorCornerRadius: CGFloat
+
+    /// Horizontal padding inside the folded-header indicator chip, in
+    /// points (left + right combined contribute 2×). Default 4.0.
+    public var foldedHeaderIndicatorHorizontalPadding: CGFloat
+
+    /// Vertical padding inside the folded-header indicator chip, in
+    /// points (top + bottom combined contribute 2×). Default 1.0.
+    public var foldedHeaderIndicatorVerticalPadding: CGFloat
+
+    /// Indicator font size as a multiplier of the heading's body font
+    /// size. Default 0.6 — keeps the chip subordinate to the heading
+    /// text it annotates.
+    public var foldedHeaderIndicatorFontSizeMultiplier: CGFloat
+
+    /// Gap between the end of heading text and the left edge of the
+    /// indicator chip, in points. Default 6.0.
+    public var foldedHeaderIndicatorTrailingGap: CGFloat
+
     public init(
         kbdCornerRadius: CGFloat = 3.0,
         kbdBorderWidth: CGFloat = 1.0,
@@ -468,7 +503,14 @@ public struct ThemeChrome: Codable, Equatable {
         codeBlockEditToggle: ThemeCodeBlockEditToggle = .default,
         tableHandle: ThemeColor = ThemeColor(hex: "#BBBBBBCC"),
         tableResizePreview: ThemeColor = ThemeColor(hex: "#007AFFFF"),
-        sourceMarker: ThemeColor = ThemeColor(hex: "#999999FF")
+        sourceMarker: ThemeColor = ThemeColor(hex: "#999999FF"),
+        foldedHeaderIndicatorForeground: ThemeColor = ThemeColor(hex: "#888888FF"),
+        foldedHeaderIndicatorBackground: ThemeColor = ThemeColor(hex: "#E5E5E580"),
+        foldedHeaderIndicatorCornerRadius: CGFloat = 3.0,
+        foldedHeaderIndicatorHorizontalPadding: CGFloat = 4.0,
+        foldedHeaderIndicatorVerticalPadding: CGFloat = 1.0,
+        foldedHeaderIndicatorFontSizeMultiplier: CGFloat = 0.6,
+        foldedHeaderIndicatorTrailingGap: CGFloat = 6.0
     ) {
         self.kbdCornerRadius = kbdCornerRadius
         self.kbdBorderWidth = kbdBorderWidth
@@ -488,11 +530,18 @@ public struct ThemeChrome: Codable, Equatable {
         self.tableHandle = tableHandle
         self.tableResizePreview = tableResizePreview
         self.sourceMarker = sourceMarker
+        self.foldedHeaderIndicatorForeground = foldedHeaderIndicatorForeground
+        self.foldedHeaderIndicatorBackground = foldedHeaderIndicatorBackground
+        self.foldedHeaderIndicatorCornerRadius = foldedHeaderIndicatorCornerRadius
+        self.foldedHeaderIndicatorHorizontalPadding = foldedHeaderIndicatorHorizontalPadding
+        self.foldedHeaderIndicatorVerticalPadding = foldedHeaderIndicatorVerticalPadding
+        self.foldedHeaderIndicatorFontSizeMultiplier = foldedHeaderIndicatorFontSizeMultiplier
+        self.foldedHeaderIndicatorTrailingGap = foldedHeaderIndicatorTrailingGap
     }
 
     // MARK: Codable — tolerate missing `codeBlockEditToggle` /
-    // `tableHandle` / `sourceMarker` for themes predating the
-    // respective slices.
+    // `tableHandle` / `sourceMarker` / `foldedHeaderIndicator*` for
+    // themes predating the respective slices.
 
     private enum CodingKeys: String, CodingKey {
         case kbdCornerRadius, kbdBorderWidth,
@@ -501,7 +550,14 @@ public struct ThemeChrome: Codable, Equatable {
              blockquoteBarWidth, blockquoteBarSpacing, blockquoteBarInitialOffset,
              hrThickness, headingBorderThickness, headingBorderOffsetBelowText,
              codeBlockEditToggle, tableHandle, tableResizePreview,
-             sourceMarker
+             sourceMarker,
+             foldedHeaderIndicatorForeground,
+             foldedHeaderIndicatorBackground,
+             foldedHeaderIndicatorCornerRadius,
+             foldedHeaderIndicatorHorizontalPadding,
+             foldedHeaderIndicatorVerticalPadding,
+             foldedHeaderIndicatorFontSizeMultiplier,
+             foldedHeaderIndicatorTrailingGap
     }
 
     public init(from decoder: Decoder) throws {
@@ -543,6 +599,27 @@ public struct ThemeChrome: Codable, Equatable {
             ThemeColor.self, forKey: .tableResizePreview) ?? def.tableResizePreview
         self.sourceMarker = try c.decodeIfPresent(
             ThemeColor.self, forKey: .sourceMarker) ?? def.sourceMarker
+        self.foldedHeaderIndicatorForeground = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .foldedHeaderIndicatorForeground
+        ) ?? def.foldedHeaderIndicatorForeground
+        self.foldedHeaderIndicatorBackground = try c.decodeIfPresent(
+            ThemeColor.self, forKey: .foldedHeaderIndicatorBackground
+        ) ?? def.foldedHeaderIndicatorBackground
+        self.foldedHeaderIndicatorCornerRadius = try c.decodeIfPresent(
+            CGFloat.self, forKey: .foldedHeaderIndicatorCornerRadius
+        ) ?? def.foldedHeaderIndicatorCornerRadius
+        self.foldedHeaderIndicatorHorizontalPadding = try c.decodeIfPresent(
+            CGFloat.self, forKey: .foldedHeaderIndicatorHorizontalPadding
+        ) ?? def.foldedHeaderIndicatorHorizontalPadding
+        self.foldedHeaderIndicatorVerticalPadding = try c.decodeIfPresent(
+            CGFloat.self, forKey: .foldedHeaderIndicatorVerticalPadding
+        ) ?? def.foldedHeaderIndicatorVerticalPadding
+        self.foldedHeaderIndicatorFontSizeMultiplier = try c.decodeIfPresent(
+            CGFloat.self, forKey: .foldedHeaderIndicatorFontSizeMultiplier
+        ) ?? def.foldedHeaderIndicatorFontSizeMultiplier
+        self.foldedHeaderIndicatorTrailingGap = try c.decodeIfPresent(
+            CGFloat.self, forKey: .foldedHeaderIndicatorTrailingGap
+        ) ?? def.foldedHeaderIndicatorTrailingGap
     }
 
     public static let `default` = ThemeChrome()

@@ -121,6 +121,13 @@
         },
         "tableHandle": { "light": "#000000FF", "dark": "#FFFFFFFF" },
         "tableResizePreview": { "light": "#0000FFFF", "dark": "#00FFFFFF" },
-        "sourceMarker": { "light": "#444444FF", "dark": "#BBBBBBFF" }
+        "sourceMarker": { "light": "#444444FF", "dark": "#BBBBBBFF" },
+        "foldedHeaderIndicatorForeground": { "light": "#FFFFFFFF", "dark": "#000000FF" },
+        "foldedHeaderIndicatorBackground": { "light": "#000000FF", "dark": "#FFFFFFFF" },
+        "foldedHeaderIndicatorCornerRadius": 2.0,
+        "foldedHeaderIndicatorHorizontalPadding": 4.0,
+        "foldedHeaderIndicatorVerticalPadding": 1.0,
+        "foldedHeaderIndicatorFontSizeMultiplier": 0.6,
+        "foldedHeaderIndicatorTrailingGap": 6.0
     }
 }

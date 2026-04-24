@@ -121,6 +121,13 @@
         },
         "tableHandle": "#7A7A7ACC",
         "tableResizePreview": "#0A84FFFF",
-        "sourceMarker": "#7A7A7AFF"
+        "sourceMarker": "#7A7A7AFF",
+        "foldedHeaderIndicatorForeground": "#C8C8C8FF",
+        "foldedHeaderIndicatorBackground": "#3A3A3A80",
+        "foldedHeaderIndicatorCornerRadius": 3.0,
+        "foldedHeaderIndicatorHorizontalPadding": 4.0,
+        "foldedHeaderIndicatorVerticalPadding": 1.0,
+        "foldedHeaderIndicatorFontSizeMultiplier": 0.6,
+        "foldedHeaderIndicatorTrailingGap": 6.0
     }
 }
