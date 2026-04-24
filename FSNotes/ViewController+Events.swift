@@ -404,4 +404,43 @@ extension ViewController {
         )
         return overlay
     }
+
+    // MARK: - Code-block edit toggle overlay (Phase 8 Slice 3)
+    //
+    // The `</>` hover button that flips a fenced code block between its
+    // rendered view and its raw source form. Same shape as
+    // `tableHandleOverlay` above: an associated-object lazy getter whose
+    // first read constructs the overlay and installs its
+    // `NSText.didChangeNotification` +
+    // `NSView.boundsDidChangeNotification` +
+    // `EditTextView.editingCodeBlocksDidChangeNotification` observers.
+    // Those observers drive the auto-reposition pass that keeps buttons
+    // aligned with visible code-block fragments on every scroll / edit.
+    //
+    // Production wiring: call `codeBlockEditToggleOverlay.reposition()`
+    // after a note is filled into the editor, alongside the equivalent
+    // `tableHandleOverlay` call. Without that call the overlay is never
+    // constructed, no observers wire up, and the `</>` buttons never
+    // appear. Tests bypass this getter and construct
+    // `CodeBlockEditToggleOverlay(editor:)` directly.
+
+    private struct CodeBlockEditToggleOverlayKeys {
+        static var overlay = "CodeBlockEditToggleOverlay.overlayKey"
+    }
+
+    public var codeBlockEditToggleOverlay: CodeBlockEditToggleOverlay {
+        if let existing = objc_getAssociatedObject(
+            self, &CodeBlockEditToggleOverlayKeys.overlay
+        ) as? CodeBlockEditToggleOverlay {
+            return existing
+        }
+        let overlay = CodeBlockEditToggleOverlay(editor: editor)
+        objc_setAssociatedObject(
+            self,
+            &CodeBlockEditToggleOverlayKeys.overlay,
+            overlay,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        return overlay
+    }
 }

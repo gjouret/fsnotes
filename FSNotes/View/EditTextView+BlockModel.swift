@@ -470,6 +470,15 @@ extension EditTextView {
         // is idempotent + cheap when there are no visible tables.
         if let vc = owningViewControllerForTableHandleOverlay() {
             vc.tableHandleOverlay.reposition()
+            // Same-shape wire-up for the Phase 8 `</>` code-block edit
+            // toggle overlay: the getter is a lazy associated-object on
+            // `ViewController`; its first read constructs the overlay
+            // and installs scroll/text-change observers. Without this
+            // call the `</>` buttons never appear on fenced code blocks.
+            // `reposition()` is idempotent and cheap when no code
+            // blocks are visible. See commit `08506d3` for the parallel
+            // table-handle fix.
+            vc.codeBlockEditToggleOverlay.reposition()
         }
 
         return true
