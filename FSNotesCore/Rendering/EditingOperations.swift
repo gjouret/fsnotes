@@ -504,6 +504,30 @@ public struct EditResult {
     /// callers must tolerate `nil` during the rollout. The harness
     /// only runs contract invariants when `contract != nil`.
     public var contract: EditContract? = nil
+
+    /// Phase 5f: populate `contract.inverse` from the diff between
+    /// `priorDoc` and the result's `newProjection.document`. Picks
+    /// Tier A/B/C via `EditContract.InverseStrategy.buildInverse`.
+    ///
+    /// Primitives call this at the end of construction so the
+    /// `UndoJournal` has a ready-to-replay strategy without inventing
+    /// per-primitive inverse logic. The tier-picker is good enough for
+    /// every primitive listed in the 5f brief — single-block inline
+    /// edits land on Tier A-equivalent (zero-width `blockSnapshot`
+    /// replacement plus `modifyInline` declaredAction), structural
+    /// edits land on Tier B, rare wide-spread toggleList operations
+    /// land on Tier C.
+    ///
+    /// Leaves `contract == nil` unchanged (primitives without a
+    /// contract remain un-journaled until they're retrofitted).
+    public mutating func annotateInverse(priorDoc: Document) {
+        guard contract != nil else { return }
+        let strategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: priorDoc,
+            newDoc: newProjection.document
+        )
+        contract?.inverse = strategy
+    }
 }
 
 // NOTE: EditingError is now defined at the top of the file with the

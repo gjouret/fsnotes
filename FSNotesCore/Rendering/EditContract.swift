@@ -178,14 +178,207 @@ public struct EditContract: Equatable {
     public var postCursor: DocumentCursor
     public var postSelectionLength: Int
 
+    /// Phase 5f: how to undo this edit. Populated at primitive
+    /// result-construction time; consumed by `UndoJournal` when the
+    /// user fires Cmd-Z. `nil` on primitives not yet retrofitted —
+    /// the journal falls back to Tier C (full-document snapshot) in
+    /// that case so undo never silently drops an edit.
+    public var inverse: InverseStrategy?
+
     public init(
         declaredActions: [EditAction] = [],
         postCursor: DocumentCursor,
-        postSelectionLength: Int = 0
+        postSelectionLength: Int = 0,
+        inverse: InverseStrategy? = nil
     ) {
         self.declaredActions = declaredActions
         self.postCursor = postCursor
         self.postSelectionLength = postSelectionLength
+        self.inverse = inverse
+    }
+}
+
+// MARK: - InverseStrategy (Phase 5f)
+
+public extension EditContract {
+
+    /// Three tiers of "how to undo a primitive's effect":
+    ///
+    /// - **Tier A (`inverseContract`)**: the primitive exposes a
+    ///   symmetric sibling contract that, when applied to the
+    ///   post-edit document, reproduces the pre-edit document. Cheapest
+    ///   — no block payload to carry. Used by single-run, single-block
+    ///   edits: insert-without-newline, delete-without-merge, inline-trait
+    ///   toggles, atomic table mutations that round-trip to themselves.
+    ///
+    /// - **Tier B (`blockSnapshot`)**: snapshot a contiguous slice of
+    ///   `Document.blocks` before the edit. Undo replaces the same
+    ///   slot-range in the post-edit document with the saved blocks +
+    ///   ids. Used by structural edits bounded to a few blocks: Return
+    ///   splits, cross-block merges, list FSM transitions, toggleList /
+    ///   toggleBlockquote / HR insert, move-up/down, table-row insert,
+    ///   multi-char insertWithTraits, paragraph ↔ heading kind changes.
+    ///
+    /// - **Tier C (`fullDocument`)**: snapshot the entire pre-edit
+    ///   `Document`. Safety fallback when the primitive cannot
+    ///   localize its effect (pathological toggleList that touches
+    ///   non-adjacent blocks, huge multi-block paste, coalesce
+    ///   helpers). Expensive — the journal caps Tier C entries at 5.
+    ///
+    /// Equatable so test harnesses can assert `inverse` round-trips
+    /// exactly across corpus edits.
+    ///
+    /// `indirect` because `inverseContract` carries an `EditContract`
+    /// which itself holds an optional `InverseStrategy` — symmetrical
+    /// contracts form a recursive value graph.
+    indirect enum InverseStrategy: Equatable {
+        case inverseContract(contract: EditContract)
+        case blockSnapshot(range: Range<Int>, blocks: [Block], ids: [UUID])
+        case fullDocument(Document)
+    }
+}
+
+// MARK: - Building the inverse
+
+public extension EditContract.InverseStrategy {
+
+    /// Generic tier-picker: construct the minimal `InverseStrategy`
+    /// that, when applied to `newDoc`, recovers `priorDoc`. Picks
+    /// Tier A/B/C based on the block-slot diff between the two.
+    ///
+    /// A primitive that has already computed its effect as a block
+    /// slot diff can call this at result-construction to annotate its
+    /// contract — no per-primitive inverse code to maintain. The
+    /// per-primitive-picks-tier obligation becomes "call
+    /// `buildInverse(priorDoc:newDoc:hintedTier:)`" with an optional
+    /// hint for primitives that know they produced an inverse-contract
+    /// sibling (Tier A round-trip toggles).
+    ///
+    /// Tier selection:
+    ///
+    /// - Zero block slots changed (a pure-inline edit that didn't
+    ///   alter the block count) → Tier B snapshot of the affected
+    ///   block (the primitive's `declaredActions` contains a
+    ///   `.modifyInline` or `.changeBlockKind`). Falls back to Tier C
+    ///   if the affected block can't be localized.
+    /// - 1-3 block slots changed → Tier B snapshot of that slice.
+    /// - >3 block slots changed OR non-contiguous slots → Tier C
+    ///   full-document snapshot.
+    static func buildInverse(
+        priorDoc: Document,
+        newDoc: Document
+    ) -> EditContract.InverseStrategy {
+        // Find the minimal contiguous block range that differs
+        // between priorDoc and newDoc. LCS would be more accurate but
+        // is overkill here — the primitive's `declaredActions` have
+        // already told us roughly what changed.
+        let priorBlocks = priorDoc.blocks
+        let newBlocks = newDoc.blocks
+
+        // Common prefix length.
+        var prefix = 0
+        let maxPrefix = min(priorBlocks.count, newBlocks.count)
+        while prefix < maxPrefix && priorBlocks[prefix] == newBlocks[prefix] {
+            prefix += 1
+        }
+
+        // Common suffix length (not overlapping the prefix).
+        var suffix = 0
+        while
+            suffix < min(priorBlocks.count - prefix, newBlocks.count - prefix) &&
+            priorBlocks[priorBlocks.count - 1 - suffix] ==
+            newBlocks[newBlocks.count - 1 - suffix]
+        {
+            suffix += 1
+        }
+
+        let priorChangedCount = priorBlocks.count - prefix - suffix
+        let newChangedCount = newBlocks.count - prefix - suffix
+
+        // If both sides have the same (possibly zero) change width,
+        // AND it's small, use Tier B.
+        let changeWidth = max(priorChangedCount, newChangedCount)
+
+        // Heuristic threshold for Tier C fallback.
+        let tierCThreshold = 4
+
+        if changeWidth > tierCThreshold {
+            return .fullDocument(priorDoc)
+        }
+
+        // Tier B: snapshot the prior-side changed slice. The range
+        // encodes the POST-edit slot range to overwrite — i.e.
+        // `prefix..<(prefix + newChangedCount)`, which is where the
+        // primitive's output lives in `newDoc`.
+        let priorSliceRange = prefix..<(prefix + priorChangedCount)
+        let postEditRange = prefix..<(prefix + newChangedCount)
+
+        let snapshotBlocks = Array(priorBlocks[priorSliceRange])
+        let snapshotIds = Array(priorDoc.blockIds[priorSliceRange])
+
+        // Edge: documents identical — return a zero-width Tier B
+        // snapshot rather than fullDocument, so the journal's record
+        // path doesn't pay the cost. An undo that replaces 0 slots
+        // with 0 snapshots is a no-op, correctly.
+        return .blockSnapshot(
+            range: postEditRange,
+            blocks: snapshotBlocks,
+            ids: snapshotIds
+        )
+    }
+}
+
+// MARK: - Applying the inverse
+
+public extension EditContract.InverseStrategy {
+
+    /// Apply this inverse strategy to `afterDoc` and return a
+    /// reconstructed pre-edit `Document`. Pure function — no side
+    /// effects; the caller owns delivery through `applyDocumentEdit`.
+    ///
+    /// - `inverseContract` — returns `afterDoc` unchanged and
+    ///   requires the caller to run the sibling primitive on
+    ///   `afterDoc` to reproduce `beforeDoc`. Tier A's round-trip
+    ///   obligation lives at the primitive that emits the sibling
+    ///   contract (e.g. `EditingOps.insert` annotates itself with a
+    ///   `delete` sibling). This function returns `afterDoc` so the
+    ///   journal's codepath is uniform; callers that need the
+    ///   before-doc must replay the sibling contract themselves.
+    ///
+    /// - `blockSnapshot` — splices the saved blocks + ids back into
+    ///   `afterDoc.blocks` at the recorded range. This is the common
+    ///   Tier B path.
+    ///
+    /// - `fullDocument` — returns the saved document verbatim.
+    func applyInverse(to afterDoc: Document) -> Document {
+        switch self {
+        case .inverseContract:
+            // Tier A: the journal uses this for the sibling-contract
+            // dispatch; this helper exists for Tier B/C symmetry.
+            return afterDoc
+        case let .blockSnapshot(range, blocks, ids):
+            precondition(blocks.count == ids.count,
+                         "InverseStrategy.blockSnapshot: blocks.count (\(blocks.count)) must match ids.count (\(ids.count))")
+            var result = afterDoc
+            // Splice: replace afterDoc.blocks[range] with the saved
+            // blocks + ids. `range` is in the pre-edit index space; it
+            // maps to the post-edit space as "the run that the
+            // primitive emitted as replacement."
+            //
+            // For a well-formed Tier B snapshot, the caller recorded
+            // `range` against the post-edit document's block slots —
+            // i.e. the slots whose content was produced by this edit
+            // and must be overwritten by the snapshot to restore the
+            // pre-edit state.
+            let clampedLower = max(0, min(range.lowerBound, result.blocks.count))
+            let clampedUpper = max(clampedLower, min(range.upperBound, result.blocks.count))
+            let clamped = clampedLower..<clampedUpper
+            result.blocks.replaceSubrange(clamped, with: blocks)
+            result.blockIds.replaceSubrange(clamped, with: ids)
+            return result
+        case let .fullDocument(doc):
+            return doc
+        }
     }
 }
 
