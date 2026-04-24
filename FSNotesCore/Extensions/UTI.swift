@@ -1,29 +1,20 @@
 import Foundation
-#if os(OSX)
-import CoreServices
-#elseif os(iOS)
-import MobileCoreServices
-#endif
+import UniformTypeIdentifiers
 
 public extension String {
 
-    func tag(withClass: CFString) -> String? {
-        return UTTypeCopyPreferredTagWithClass(self as CFString, withClass)?.takeRetainedValue() as String?
-    }
-
-    func uti(withClass: CFString) -> String? {
-        return UTTypeCreatePreferredIdentifierForTag(withClass, self as CFString, nil)?.takeRetainedValue() as String?
-    }
-
+    /// Returns the preferred MIME type tag for the receiver when treated as a UTI identifier.
     var utiMimeType: String? {
-        return tag(withClass: kUTTagClassMIMEType)
+        return UTType(self)?.preferredMIMEType
     }
 
+    /// Returns the canonical UTI identifier for the receiver when treated as a MIME type string.
     var mimeTypeUTI: String? {
-        return uti(withClass: kUTTagClassMIMEType)
+        return UTType(mimeType: self)?.identifier
     }
 
+    /// Returns the canonical UTI identifier for the receiver when treated as a filename extension.
     var fileExtensionUTI: String? {
-        return uti(withClass: kUTTagClassFilenameExtension)
+        return UTType(filenameExtension: self)?.identifier
     }
 }

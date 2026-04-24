@@ -7,12 +7,7 @@
 //
 
 import Foundation
-
-#if os(iOS)
-    import MobileCoreServices
-#else
-    import CoreServices
-#endif
+import UniformTypeIdentifiers
 
 public extension URL {
     /// Get extended attribute.
@@ -145,29 +140,37 @@ public extension URL {
         return (try? resourceValues(forKeys: [.typeIdentifierKey]))?.typeIdentifier
     }
 
-    var fileUTType: CFString? {
-        let unmanagedFileUTI = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, pathExtension as CFString, nil)
-        return unmanagedFileUTI?.takeRetainedValue()
+    var fileUTType: UTType? {
+        return UTType(filenameExtension: pathExtension)
     }
 
     var isVideo: Bool {
         guard let fileUTI = fileUTType else { return false }
 
-        return UTTypeConformsTo(fileUTI, kUTTypeMovie)
-            || UTTypeConformsTo(fileUTI, kUTTypeVideo)
-            || UTTypeConformsTo(fileUTI, kUTTypeQuickTimeMovie)
-            || UTTypeConformsTo(fileUTI, kUTTypeMPEG)
-            || UTTypeConformsTo(fileUTI, kUTTypeMPEG2Video)
-            || UTTypeConformsTo(fileUTI, kUTTypeMPEG2TransportStream)
-            || UTTypeConformsTo(fileUTI, kUTTypeMPEG4)
-            || UTTypeConformsTo(fileUTI, kUTTypeAppleProtectedMPEG4Video)
-            || UTTypeConformsTo(fileUTI, kUTTypeAVIMovie)
+        // `.aviMovie` has no `UTType` static analogue in the system catalog;
+        // construct by identifier. `.movie` + `.video` already cover the
+        // broad supertypes so even if `public.avi` fails to resolve, `.mov`,
+        // `.mp4`, and friends continue to hit.
+        if fileUTI.conforms(to: .movie)
+            || fileUTI.conforms(to: .video)
+            || fileUTI.conforms(to: .quickTimeMovie)
+            || fileUTI.conforms(to: .mpeg)
+            || fileUTI.conforms(to: .mpeg2Video)
+            || fileUTI.conforms(to: .mpeg2TransportStream)
+            || fileUTI.conforms(to: .mpeg4Movie)
+            || fileUTI.conforms(to: .appleProtectedMPEG4Video) {
+            return true
+        }
+        if let avi = UTType("public.avi"), fileUTI.conforms(to: avi) {
+            return true
+        }
+        return false
     }
 
     var isImage: Bool {
         guard let fileUTI = fileUTType else { return false }
 
-        return UTTypeConformsTo(fileUTI, kUTTypeImage)
+        return fileUTI.conforms(to: .image)
     }
 
     var isMedia: Bool {
@@ -176,8 +179,8 @@ public extension URL {
 
     var mimeType: String {
         guard
-            let identifier = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, pathExtension as CFString, nil)?.takeRetainedValue(),
-            let mimeType = UTTypeCopyPreferredTagWithClass(identifier, kUTTagClassMIMEType)?.takeRetainedValue() as String?
+            let uti = UTType(filenameExtension: pathExtension),
+            let mimeType = uti.preferredMIMEType
         else {
             return "application/octet-stream"
         }

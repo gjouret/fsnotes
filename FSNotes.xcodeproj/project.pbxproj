@@ -99,6 +99,7 @@
 		P5FD000000000000000000B1 /* Phase5fDragOperationBypassRetirementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */; };
 		P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */; };
 		P5BW000000000000000000B1 /* Phase5bWidgetInterceptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */; };
+		UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */; };
 		P5DS000000000000000000B1 /* Phase5dCopyPasteSlicingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */; };
 		BREF000000000000000000B1 /* BlockRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = BREF000000000000000000F1 /* BlockRef.swift */; };
 		CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */; };
@@ -1215,6 +1216,7 @@
 		P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5fDragOperationBypassRetirementTests.swift; sourceTree = "<group>"; };
 		P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5bCursorCanonicalizationTests.swift; sourceTree = "<group>"; };
 		P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5bWidgetInterceptionTests.swift; sourceTree = "<group>"; };
+		UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTIConformanceMigrationTests.swift; sourceTree = "<group>"; };
 		P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5dCopyPasteSlicingTests.swift; sourceTree = "<group>"; };
 		BREF000000000000000000F1 /* BlockRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRef.swift; sourceTree = "<group>"; };
 		CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleTests.swift; sourceTree = "<group>"; };
@@ -2615,6 +2617,7 @@
 				P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */,
 				P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */,
 				P5BW000000000000000000F1 /* Phase5bWidgetInterceptionTests.swift */,
+				UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */,
 				P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */,
 				P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */,
 				TGET000000000000000000F1 /* TableGeometryTests.swift */,
@@ -4140,6 +4143,7 @@
 				P5FD000000000000000000B1 /* Phase5fDragOperationBypassRetirementTests.swift in Sources */,
 				P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */,
 				P5BW000000000000000000B1 /* Phase5bWidgetInterceptionTests.swift in Sources */,
+				UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */,
 				P5DS000000000000000000B1 /* Phase5dCopyPasteSlicingTests.swift in Sources */,
 				P5ET000000000000000000B1 /* Phase5eCompositionSessionTests.swift in Sources */,
 				TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */,
