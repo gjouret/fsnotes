@@ -178,7 +178,8 @@ public enum DocumentEditApplier {
         codeFont: PlatformFont,
         note: Note? = nil,
         priorEditingBlocks: Set<BlockRef> = [],
-        newEditingBlocks: Set<BlockRef> = []
+        newEditingBlocks: Set<BlockRef> = [],
+        priorRenderedOverride: RenderedDocument? = nil
     ) -> ApplyReport {
         var plan = diffDocuments(priorDoc: priorDoc, newDoc: newDoc)
 
@@ -222,13 +223,31 @@ public enum DocumentEditApplier {
         // render matches whatever is currently in storage (so long as
         // the caller held the render invariant when they last called
         // `applyDocumentEdit` or the initial `fillViaBlockModel`).
-        let priorRendered = DocumentRenderer.render(
-            priorDoc,
-            bodyFont: bodyFont,
-            codeFont: codeFont,
-            note: note,
-            editingCodeBlocks: priorEditingBlocks
-        )
+        //
+        // Callers that own a `DocumentProjection` whose rendered form
+        // has been patched out-of-band (e.g. the async inline-math
+        // renderer swaps source chars for an attachment and mutates
+        // `proj.rendered.{attributed,blockSpans}` accordingly without
+        // updating `proj.document`) can pass `priorRenderedOverride`
+        // to tell the applier "this is the current storage layout,
+        // don't re-render". In that case `priorDoc` is still used
+        // for the LCS diff, but span-offset math uses the override.
+        // This is the only sanctioned way to address the drift that
+        // arises between `proj.document` and `proj.rendered` — see
+        // ARCHITECTURE.md → "Async inline-math hydration" for the
+        // full story.
+        let priorRendered: RenderedDocument
+        if let override = priorRenderedOverride {
+            priorRendered = override
+        } else {
+            priorRendered = DocumentRenderer.render(
+                priorDoc,
+                bodyFont: bodyFont,
+                codeFont: codeFont,
+                note: note,
+                editingCodeBlocks: priorEditingBlocks
+            )
+        }
         let newRendered = DocumentRenderer.render(
             newDoc,
             bodyFont: bodyFont,

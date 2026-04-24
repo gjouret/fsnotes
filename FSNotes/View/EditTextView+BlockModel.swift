@@ -3047,6 +3047,52 @@ extension EditTextView {
                 newWidth: Int(newWidth.rounded()),
                 in: projection
             )
+
+            // Diagnostic trace: capture the inputs + EditResult splice
+            // range + actual image-attachment offsets in storage so any
+            // future drift between the projection's view of the image
+            // position and the storage's view shows up as a one-line
+            // comparison in `logs/block-model.log`. The bug shape this
+            // catches is: the splice-range arithmetic in
+            // `DocumentEditApplier.applyDocumentEdit` is derived from
+            // a fresh re-render of `priorDoc`, but `priorDoc` can
+            // disagree with storage after the async inline-math
+            // renderer rewrites characters in place. With the
+            // Phase 6 fix (`priorRenderedOverride` wiring in
+            // `applyEditResultWithUndo`), the splice must overlap the
+            // attachment's actual storage position.
+            var actualImageAttachmentRanges: [NSRange] = []
+            storage.enumerateAttribute(
+                .attachment,
+                in: NSRange(location: 0, length: storage.length),
+                options: []
+            ) { value, range, _ in
+                if value is ImageNSTextAttachment {
+                    actualImageAttachmentRanges.append(range)
+                }
+            }
+            bmLog("🪲 commitImageResize: blockIndex=\(blockIndex) offsetInBlock=\(offsetInBlock) inlinePath=\(inlinePath) storageIndex=\(storageIndex) spliceRange=\(result.spliceRange) spliceReplacement.length=\(result.spliceReplacement.length) actualImageAttachments=\(actualImageAttachmentRanges)")
+
+            #if DEBUG
+            // If `result.spliceRange` does NOT overlap any actual
+            // image-attachment range in storage, the splice is going
+            // to land on surrounding text — this is the bug shape.
+            // A plain `result.spliceRange` check covers the splice
+            // computed by the EditingOps fast path. The TK2 applier
+            // (with the fix) now uses the projection's rendered form
+            // rather than re-rendering priorDoc, so the splice offset
+            // is consistent with storage.
+            let splice = result.spliceRange
+            let overlaps = actualImageAttachmentRanges.contains { r in
+                NSIntersectionRange(r, splice).length > 0
+                    || (splice.length == 0 && splice.location >= r.location && splice.location <= NSMaxRange(r))
+            }
+            assert(
+                overlaps || actualImageAttachmentRanges.isEmpty,
+                "commitImageResize: splice \(splice) does not overlap any image attachment in storage \(actualImageAttachmentRanges) — drift between projection and storage"
+            )
+            #endif
+
             applyEditResultWithUndo(result, actionName: "Resize Image")
 
             // After the splice, the freshly-rendered attachment is a
