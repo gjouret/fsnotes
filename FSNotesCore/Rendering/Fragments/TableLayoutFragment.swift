@@ -403,116 +403,113 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         containerOriginX: CGFloat,
         topStripY: CGFloat
     ) {
-        let fill = Theme.shared.chrome.tableHandle
-            .resolvedForCurrentAppearance(fallback: NSColor(white: 0.5, alpha: 0.8))
-
         switch hoverState {
         case .none:
             return
-
         case .column(let col):
-            guard col >= 0, col < columnWidths.count else { return }
-            var x = gridLeft
-            for i in 0..<col {
-                x += columnWidths[i]
-            }
-            let width = columnWidths[col]
-            // Center a 2/3-width pill inside the column's top strip.
-            let pillInset: CGFloat = max(2, width * 0.16)
-            let pillRect = CGRect(
-                x: x + pillInset,
-                y: topStripY + 2,
-                width: max(0, width - 2 * pillInset),
-                height: TableGeometry.handleBarHeight - 4
+            drawColumnHandle(
+                context: context, columnWidths: columnWidths,
+                col: col, gridLeft: gridLeft, topStripY: topStripY
             )
-            context.saveGState()
-            context.setFillColor(fill.cgColor)
-            let radius = min(pillRect.height / 2, 4)
-            let path = CGPath(
-                roundedRect: pillRect,
-                cornerWidth: radius, cornerHeight: radius,
-                transform: nil
-            )
-            context.addPath(path)
-            context.fillPath()
-            context.restoreGState()
-
         case .row(let row):
-            guard row >= 0, row < rowHeights.count else { return }
-            var y = gridTop
-            for i in 0..<row {
-                y += rowHeights[i]
-            }
-            let height = rowHeights[row]
-            let pillInset: CGFloat = max(2, height * 0.16)
-            let pillRect = CGRect(
-                x: containerOriginX + 2,
-                y: y + pillInset,
-                width: TableGeometry.handleBarWidth - 4,
-                height: max(0, height - 2 * pillInset)
+            drawRowHandle(
+                context: context, rowHeights: rowHeights,
+                row: row, gridTop: gridTop,
+                containerOriginX: containerOriginX
             )
-            context.saveGState()
-            context.setFillColor(fill.cgColor)
-            let radius = min(pillRect.width / 2, 4)
-            let path = CGPath(
-                roundedRect: pillRect,
-                cornerWidth: radius, cornerHeight: radius,
-                transform: nil
-            )
-            context.addPath(path)
-            context.fillPath()
-            context.restoreGState()
-
         case .cell(let col, let row):
-            // Paint both the column pill (top strip) and the row pill
-            // (left strip). Same geometry as the individual cases.
-            if col >= 0, col < columnWidths.count {
-                var x = gridLeft
-                for i in 0..<col { x += columnWidths[i] }
-                let width = columnWidths[col]
-                let pillInset: CGFloat = max(2, width * 0.16)
-                let pillRect = CGRect(
-                    x: x + pillInset,
-                    y: topStripY + 2,
-                    width: max(0, width - 2 * pillInset),
-                    height: TableGeometry.handleBarHeight - 4
-                )
-                context.saveGState()
-                context.setFillColor(fill.cgColor)
-                let radius = min(pillRect.height / 2, 4)
-                let path = CGPath(
-                    roundedRect: pillRect,
-                    cornerWidth: radius, cornerHeight: radius,
-                    transform: nil
-                )
-                context.addPath(path)
-                context.fillPath()
-                context.restoreGState()
-            }
-            if row >= 0, row < rowHeights.count {
-                var y = gridTop
-                for i in 0..<row { y += rowHeights[i] }
-                let height = rowHeights[row]
-                let pillInset: CGFloat = max(2, height * 0.16)
-                let pillRect = CGRect(
-                    x: containerOriginX + 2,
-                    y: y + pillInset,
-                    width: TableGeometry.handleBarWidth - 4,
-                    height: max(0, height - 2 * pillInset)
-                )
-                context.saveGState()
-                context.setFillColor(fill.cgColor)
-                let radius = min(pillRect.width / 2, 4)
-                let path = CGPath(
-                    roundedRect: pillRect,
-                    cornerWidth: radius, cornerHeight: radius,
-                    transform: nil
-                )
-                context.addPath(path)
-                context.fillPath()
-                context.restoreGState()
-            }
+            drawColumnHandle(
+                context: context, columnWidths: columnWidths,
+                col: col, gridLeft: gridLeft, topStripY: topStripY
+            )
+            drawRowHandle(
+                context: context, rowHeights: rowHeights,
+                row: row, gridTop: gridTop,
+                containerOriginX: containerOriginX
+            )
         }
+    }
+
+    /// Paint a column handle at the top of column `col`. Matches
+    /// TK1 `GlassHandleView`: full column width × handleBarHeight,
+    /// rectangular (no rounded corners), translucent separator fill,
+    /// with `⠿` (six-dot braille grip) centered so the user recognises
+    /// it as grabbable.
+    private func drawColumnHandle(
+        context: CGContext,
+        columnWidths: [CGFloat],
+        col: Int,
+        gridLeft: CGFloat,
+        topStripY: CGFloat
+    ) {
+        guard col >= 0, col < columnWidths.count else { return }
+        var x = gridLeft
+        for i in 0..<col { x += columnWidths[i] }
+        let width = columnWidths[col]
+        let rect = CGRect(
+            x: x + 1, y: topStripY + 1,
+            width: max(0, width - 2),
+            height: TableGeometry.handleBarHeight - 2
+        )
+        Self.paintHandleChrome(context: context, rect: rect)
+    }
+
+    /// Paint a row handle on the left of row `row`. Matches
+    /// TK1 `GlassHandleView`: handleBarWidth × full row height,
+    /// rectangular, translucent separator fill, `⠿` centered.
+    private func drawRowHandle(
+        context: CGContext,
+        rowHeights: [CGFloat],
+        row: Int,
+        gridTop: CGFloat,
+        containerOriginX: CGFloat
+    ) {
+        guard row >= 0, row < rowHeights.count else { return }
+        var y = gridTop
+        for i in 0..<row { y += rowHeights[i] }
+        let height = rowHeights[row]
+        let rect = CGRect(
+            x: containerOriginX + 1, y: y + 1,
+            width: TableGeometry.handleBarWidth - 2,
+            height: max(0, height - 2)
+        )
+        Self.paintHandleChrome(context: context, rect: rect)
+    }
+
+    /// Shared chrome paint for both column and row handles: fill +
+    /// centered `⠿` grabber glyph. Uses `NSColor.separatorColor` (at
+    /// 0.3 alpha) and `NSColor.secondaryLabelColor` to match the TK1
+    /// look; these are appearance-aware so dark mode gets correct
+    /// contrast automatically.
+    private static func paintHandleChrome(
+        context: CGContext, rect: CGRect
+    ) {
+        let bg = NSColor.separatorColor.withAlphaComponent(0.35)
+        context.saveGState()
+        context.setFillColor(bg.cgColor)
+        context.fill(rect)
+        context.restoreGState()
+
+        // Grip glyph ⠿ (BRAILLE PATTERN DOTS-123456 — U+283F). Drawn
+        // via NSAttributedString so it picks up current-appearance
+        // label colour automatically.
+        let pt = max(8, NSFont.systemFontSize * 0.75)
+        let font = NSFont.systemFont(ofSize: pt, weight: .bold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let grip = NSAttributedString(string: "\u{283F}", attributes: attrs)
+        let size = grip.size()
+        let origin = CGPoint(
+            x: rect.midX - size.width / 2,
+            y: rect.midY - size.height / 2
+        )
+        let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        grip.draw(at: origin)
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     // MARK: - Geometry helpers for the overlay (T2-g)

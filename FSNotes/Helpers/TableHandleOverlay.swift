@@ -262,17 +262,24 @@ final class TableHandleOverlay {
     /// the chrome doesn't appear visually.").
     func updateHover(on fragment: TableLayoutFragment,
                      to state: TableLayoutFragment.HoverState) {
-        bmLog("🪵 TableHandleOverlay.updateHover: new state=\(state) current=\(fragment.currentHoverState)")
-        guard fragment.setHoverState(state) else {
-            bmLog("🪵   setHoverState returned false (no change)")
-            return
+        guard fragment.setHoverState(state) else { return }
+        guard let editor = editor else { return }
+        // Brute-force re-render path: TK2 caches per-fragment
+        // rendering surfaces keyed on layout state. `hoverState`
+        // changes don't invalidate layout so the cache is reused and
+        // `fragment.draw(at:in:)` never re-fires — handles appear on
+        // first hover but don't track the mouse afterward. Forcing
+        // the viewport controller to relayout the fragment's element
+        // range triggers a fresh pass that re-runs draw.
+        if let tlm = editor.textLayoutManager,
+           let elementRange = fragment.textElement?.elementRange {
+            tlm.invalidateLayout(for: elementRange)
+            tlm.textViewportLayoutController.layoutViewport()
         }
-        guard let editor = editor else {
-            bmLog("🪵   editor is nil — cannot invalidate")
-            return
-        }
+        // Also schedule a view-level redraw for the fragment's rect
+        // (covers the column/row strip chrome even if the layout
+        // invalidation path above no-ops for any reason).
         let fragFrame = fragment.layoutFragmentFrame
-        // Translate to text-view coords.
         let origin = editor.textContainerOrigin
         let rectInEditor = CGRect(
             x: fragFrame.origin.x + origin.x,
@@ -281,14 +288,6 @@ final class TableHandleOverlay {
             height: fragFrame.height
         )
         editor.setNeedsDisplay(rectInEditor)
-        // Force the viewport to re-render the fragment. Without
-        // invalidating rendering attributes, TK2 may reuse the
-        // cached fragment surface and skip the `draw(at:in:)` call
-        // that paints hoverState chrome.
-        if let tlm = editor.textLayoutManager,
-           let elementRange = fragment.textElement?.elementRange {
-            tlm.invalidateRenderingAttributes(for: elementRange)
-        }
     }
 
     // MARK: - Context menu (T2-g.2)
