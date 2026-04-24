@@ -213,6 +213,82 @@ extension EditTextView {
         return super.shouldChangeText(in: range, replacementString: replacementString)
     }
 
+    // MARK: - Delete commands — Phase 5a bypass fix
+    //
+    // AppKit's default `deleteBackward:` / `deleteForward:` call through
+    // the private `-[NSTextView _userReplaceRange:withString:]` path,
+    // which mutates `NSTextContentStorage` directly *without* calling
+    // `shouldChangeText(in:replacementString:)`. That means the block-
+    // model gatekeeper at line 187 never runs, `handleEditViaBlockModel`
+    // never fires, and no `StorageWriteGuard` scope is active when the
+    // storage character delta hits `TextStorageProcessor.didProcessEditing`
+    // — tripping the Phase 5a DEBUG assertion (commit `c11e06c`).
+    //
+    // Fix: override both delete commands and route them through
+    // `handleEditViaBlockModel` with an empty replacement string. For
+    // multi-byte graphemes (emoji, combining accents, regional indicator
+    // sequences) we use `rangeOfComposedCharacterSequence` so the delete
+    // target is the full grapheme cluster, matching AppKit's default
+    // behaviour byte-for-byte.
+    //
+    // If `documentProjection` is nil (source mode or pre-load state) or
+    // `handleEditViaBlockModel` refuses the edit, we fall through to
+    // `super` — which still executes the bypass in edge cases, but at
+    // least the common WYSIWYG path is covered. Post-5e, the IME
+    // composition exemption wraps this too (composition deletes run
+    // inside `compositionSession.isActive`, which the assertion allows).
+
+    override func deleteBackward(_ sender: Any?) {
+        let sel = selectedRange()
+        let deleteRange: NSRange
+        if sel.length > 0 {
+            deleteRange = sel
+        } else if sel.location > 0,
+                  let storage = textStorage {
+            // Grapheme-cluster boundary: NSString's
+            // rangeOfComposedCharacterSequence(at:) returns the full
+            // composed range containing the character at the given
+            // index. Passing `sel.location - 1` picks up the character
+            // immediately before the caret, widened to its grapheme.
+            let ns = storage.string as NSString
+            deleteRange = ns.rangeOfComposedCharacterSequence(at: sel.location - 1)
+        } else {
+            // Caret at document start — nothing to delete.
+            return
+        }
+
+        if documentProjection != nil,
+           handleEditViaBlockModel(in: deleteRange, replacementString: "") {
+            return
+        }
+
+        // Source mode or refused — fall through to default.
+        super.deleteBackward(sender)
+    }
+
+    override func deleteForward(_ sender: Any?) {
+        let sel = selectedRange()
+        let deleteRange: NSRange
+        let storageLen = textStorage?.length ?? 0
+        if sel.length > 0 {
+            deleteRange = sel
+        } else if sel.location < storageLen,
+                  let storage = textStorage {
+            let ns = storage.string as NSString
+            deleteRange = ns.rangeOfComposedCharacterSequence(at: sel.location)
+        } else {
+            // Caret at document end — nothing to delete.
+            return
+        }
+
+        if documentProjection != nil,
+           handleEditViaBlockModel(in: deleteRange, replacementString: "") {
+            return
+        }
+
+        super.deleteForward(sender)
+    }
+
     private func handleAutocloseBrackets(for event: NSEvent) -> Bool {
         let brackets: [String: String] = [
             "(": ")",
