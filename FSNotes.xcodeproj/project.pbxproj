@@ -723,6 +723,7 @@
 		CBETO00000000000000000B1 /* CodeBlockEditToggleOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */; };
 		T2GHOV000000000000000B1 /* TableHandleOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHOV000000000000000F1 /* TableHandleOverlay.swift */; };
 		T2GHVW000000000000000B1 /* TableHandleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHVW000000000000000F1 /* TableHandleView.swift */; };
+		T2GHCP000000000000000B1 /* TableHandleChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHCP000000000000000F1 /* TableHandleChip.swift */; };
 		T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */; };
 		T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2G40000000000000000000F1 /* TableColumnResizeTests.swift */; };
 		CBEOT00000000000000000B1 /* CodeBlockEditToggleOverlayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */; };
@@ -1542,6 +1543,7 @@
 		CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleOverlay.swift; sourceTree = "<group>"; };
 		T2GHOV000000000000000F1 /* TableHandleOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleOverlay.swift; sourceTree = "<group>"; };
 		T2GHVW000000000000000F1 /* TableHandleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleView.swift; sourceTree = "<group>"; };
+		T2GHCP000000000000000F1 /* TableHandleChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleChip.swift; sourceTree = "<group>"; };
 		T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableStructuralEditingTests.swift; sourceTree = "<group>"; };
 		T2G40000000000000000000F1 /* TableColumnResizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableColumnResizeTests.swift; sourceTree = "<group>"; };
 		CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleOverlayTests.swift; sourceTree = "<group>"; };
@@ -2457,6 +2459,7 @@
 				CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */,
 				T2GHOV000000000000000F1 /* TableHandleOverlay.swift */,
 				T2GHVW000000000000000F1 /* TableHandleView.swift */,
+				T2GHCP000000000000000F1 /* TableHandleChip.swift */,
 				9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */,
 				9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */,
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
@@ -3786,6 +3789,7 @@
 				CBETO00000000000000000B1 /* CodeBlockEditToggleOverlay.swift in Sources */,
 				T2GHOV000000000000000B1 /* TableHandleOverlay.swift in Sources */,
 				T2GHVW000000000000000B1 /* TableHandleView.swift in Sources */,
+				T2GHCP000000000000000B1 /* TableHandleChip.swift in Sources */,
 				23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */,
 				23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */,
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,

@@ -68,6 +68,14 @@ final class TableHandleOverlay {
     private var notificationObservers: [NSObjectProtocol] = []
     private var isApplyingEdit = false
 
+    /// Active column+row handle chip subviews — one pair per
+    /// visible table, keyed by fragment object identity. Persist
+    /// across hover updates so the only work on mouse-move is a
+    /// `.frame` reassignment (AppKit handles the redraw for free,
+    /// matching how the TK1 `GlassHandleView` worked).
+    private var chipsByFragment:
+        [ObjectIdentifier: (col: TableHandleChip, row: TableHandleChip)] = [:]
+
     // MARK: - Init / deinit
 
     init(editor: EditTextView) {
@@ -134,7 +142,6 @@ final class TableHandleOverlay {
         }
 
         let visible = visibleTables()
-        bmLog("🪵 TableHandleOverlay.reposition: visibleTables.count=\(visible.count) pool.count=\(pool.count) editorFrame=\(editor.frame)")
 
         for (i, record) in visible.enumerated() {
             let view = viewAt(index: i, parent: editor)
@@ -144,7 +151,15 @@ final class TableHandleOverlay {
             view.elementStorageStart = record.elementStorageStart
             view.blockIndex = record.blockIndex
             view.isHidden = false
-            bmLog("🪵   table[\(i)] frame=\(record.frame) blockIndex=\(record.blockIndex)")
+        }
+        // Keep chip subviews in sync with visible-tables changes: any
+        // chips keyed on a fragment that's no longer visible get
+        // hidden. New table fragments will create their chips lazily
+        // in updateHover.
+        let visibleKeys = Set(visible.map { ObjectIdentifier($0.fragment) })
+        for (key, chips) in chipsByFragment where !visibleKeys.contains(key) {
+            chips.col.isHidden = true
+            chips.row.isHidden = true
         }
 
         if pool.count > visible.count {
@@ -262,32 +277,129 @@ final class TableHandleOverlay {
     /// the chrome doesn't appear visually.").
     func updateHover(on fragment: TableLayoutFragment,
                      to state: TableLayoutFragment.HoverState) {
-        guard fragment.setHoverState(state) else { return }
         guard let editor = editor else { return }
-        // Must NOT call `tlm.invalidateLayout(for:)` here: that forces
-        // TK2 to recreate the TableLayoutFragment instance, which
-        // discards the `hoverState` we just stored (it's a per-
-        // instance property). The freshly-created replacement
-        // fragment then draws with `hoverState = .none` and the
-        // handles vanish — which matches the user-reported "handles
-        // don't track the pointer" symptom.
-        //
-        // Force a synchronous redraw of the fragment's rect on the
-        // existing fragment instance instead. `displayRect(_:)` walks
-        // the view's dirty region and invokes `draw(_:)` immediately,
-        // which in turn calls into TK2's fragment-draw machinery and
-        // re-runs `fragment.draw(at:in:)` with the current
-        // `hoverState`.
+        // Store the state on the fragment (still used by tests +
+        // menu builder); no fragment redraw needed — chip subviews
+        // below do the visual work.
+        _ = fragment.setHoverState(state)
+
+        // Lazily create per-fragment chip pair. They stay attached
+        // as subviews of the editor; on each hover update we just
+        // move/hide them. This mirrors the TK1 `InlineTableView`
+        // approach where a `GlassHandleView` subview was
+        // repositioned on mouseMoved — `.frame` reassignment marks
+        // the dirty rects automatically via NSView's invalidation
+        // machinery, so the chip always redraws at the new location.
+        let key = ObjectIdentifier(fragment)
+        let chips: (col: TableHandleChip, row: TableHandleChip)
+        if let existing = chipsByFragment[key] {
+            chips = existing
+        } else {
+            let col = TableHandleChip(orientation: .horizontal)
+            let row = TableHandleChip(orientation: .vertical)
+            editor.addSubview(col)
+            editor.addSubview(row)
+            chips = (col, row)
+            chipsByFragment[key] = chips
+        }
+
         let fragFrame = fragment.layoutFragmentFrame
         let origin = editor.textContainerOrigin
-        let rectInEditor = CGRect(
-            x: fragFrame.origin.x + origin.x,
-            y: fragFrame.origin.y + origin.y,
-            width: fragFrame.width,
-            height: fragFrame.height
+
+        func columnRect(col: Int) -> CGRect? {
+            guard col >= 0 else { return nil }
+            guard let geom = fragment.geometryForHandleOverlay() else {
+                return nil
+            }
+            guard col < geom.columnWidths.count else { return nil }
+            var x = TableGeometry.handleBarWidth
+            for i in 0..<col { x += geom.columnWidths[i] }
+            return CGRect(
+                x: fragFrame.origin.x + origin.x + x,
+                y: fragFrame.origin.y + origin.y,
+                width: geom.columnWidths[col],
+                height: TableGeometry.handleBarHeight
+            )
+        }
+        func rowRect(row: Int) -> CGRect? {
+            guard row >= 0 else { return nil }
+            guard let geom = fragment.geometryForHandleOverlay() else {
+                return nil
+            }
+            guard row < geom.rowHeights.count else { return nil }
+            var y = TableGeometry.handleBarHeight
+            for i in 0..<row { y += geom.rowHeights[i] }
+            return CGRect(
+                x: fragFrame.origin.x + origin.x,
+                y: fragFrame.origin.y + origin.y + y,
+                width: TableGeometry.handleBarWidth,
+                height: geom.rowHeights[row]
+            )
+        }
+
+        switch state {
+        case .none:
+            chips.col.isHidden = true
+            chips.row.isHidden = true
+        case .column(let c):
+            if let r = columnRect(col: c) {
+                chips.col.frame = r
+                chips.col.index = c
+                chips.col.overlay = self
+                chips.col.blockIndexRef = blockIndex(for: fragment)
+                chips.col.isHidden = false
+            }
+            chips.row.isHidden = true
+        case .row(let r):
+            if let rr = rowRect(row: r) {
+                chips.row.frame = rr
+                chips.row.index = r
+                chips.row.overlay = self
+                chips.row.blockIndexRef = blockIndex(for: fragment)
+                chips.row.isHidden = false
+            }
+            chips.col.isHidden = true
+        case .cell(let c, let r):
+            if let cr = columnRect(col: c) {
+                chips.col.frame = cr
+                chips.col.index = c
+                chips.col.overlay = self
+                chips.col.blockIndexRef = blockIndex(for: fragment)
+                chips.col.isHidden = false
+            }
+            if let rr = rowRect(row: r) {
+                chips.row.frame = rr
+                chips.row.index = r
+                chips.row.overlay = self
+                chips.row.blockIndexRef = blockIndex(for: fragment)
+                chips.row.isHidden = false
+            }
+        }
+    }
+
+    /// Resolve the block index for a fragment by matching its
+    /// element-range storage offset against the projection's block
+    /// spans. Returns -1 if not resolvable; chip right-click
+    /// menus use this to target the right table.
+    private func blockIndex(for fragment: TableLayoutFragment) -> Int {
+        guard let editor = editor,
+              let projection = editor.documentProjection,
+              let tlm = editor.textLayoutManager,
+              let contentStorage = tlm.textContentManager
+                as? NSTextContentStorage,
+              let elementRange = fragment.textElement?.elementRange
+        else { return -1 }
+        let docStart = contentStorage.documentRange.location
+        let charIndex = contentStorage.offset(
+            from: docStart, to: elementRange.location
         )
-        editor.setNeedsDisplay(rectInEditor)
-        editor.displayIfNeeded()
+        for (i, span) in projection.blockSpans.enumerated() {
+            if NSLocationInRange(charIndex, span) ||
+                span.location == charIndex {
+                return i
+            }
+        }
+        return -1
     }
 
     // MARK: - Context menu (T2-g.2)
