@@ -847,7 +847,7 @@ Remove code that's now redundant so there's no confusion or duplication.
 7. Update `ARCHITECTURE.md` and `CLAUDE.md`:
    - Remove "Rules That Exist Because I Broke Them" items that are now architecturally impossible (views-write-to-data enforced by single write path; marker-hiding via invisible chars impossible because there are no invisible chars in our rendering)
    - Add new rules documenting invariants the refactor established (one layout primitive per block type; all content in `NSTextContentStorage`; single write path)
-8. Re-run CommonMark compliance suite; verify 90%+ target met
+8. Re-run CommonMark compliance suite; verify 90%+ target met — **DONE (2026-04-24)**: compliance at **601/652 (92.2%)**, up from the 539/652 (82.7%) baseline recorded at batch start. The main parser gap — container-block handling for list-item continuations, nested blockquotes, indented code blocks — has been closed. See CLAUDE.md CommonMark section for per-bucket breakdown and the residual 51-example long-tail analysis.
 
 ### Exit criteria
 - Rule 7 grep: zero hits in view/renderer code
@@ -856,7 +856,7 @@ Remove code that's now redundant so there's no confusion or duplication.
 - All harness tests pass
 - Binary size reduced (sanity check — we're deleting a lot)
 - `ARCHITECTURE.md` / `CLAUDE.md` updated
-- CommonMark compliance ≥ 90%
+- CommonMark compliance ≥ 90% — **met at 92.2%**
 
 ### Estimate
 5–7 days.

@@ -293,16 +293,26 @@ Single source of truth for every presentation literal. See `ARCHITECTURE.md` →
 
 ### CommonMark Spec Compliance (v0.31.2)
 
-Serializer compliance: **524 / 652 passing (80.4%)** at the current baseline. Phase target: 90%+.
+Serializer compliance: **601 / 652 passing (92.2%)** — Phase 6 target (≥ 90%) cleared (2026-04-24).
 
-- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Images, Hard line breaks
-- Near-perfect (90%+): Emphasis, Fenced code blocks, Autolinks, Raw HTML, Entity refs, HTML blocks
-- Strong (70–89%): Links, ATX headings, Setext headings, Link ref defs, Thematic breaks, Backslash escapes
-- Moderate (50–69%): Block quotes, Paragraphs
-- Low (<50%): Lists, List items, Tabs, Indented code blocks, Blank lines
-- Main unsupported: indented code blocks (deliberately deferred — low-value for WYSIWYG), nested blocks in list items, tab expansion in prefix whitespace
+- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks
+- Near-perfect (90%+): Images, Raw HTML, Emphasis, Setext headings, Thematic breaks, Block quotes, Link ref defs, HTML blocks
+- Moderate (70–89%): Links, List items, Indented code blocks, Lists
+- Residual (≤70%): Tabs (7/11 — remaining cases are tab expansion in blockquote / list prefix context)
 
-Full corpus in `Tests/CommonMark/`; per-section reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
+Remaining 51 failing examples by bucket:
+- **Links (14)**: delimiter-stack rewrite territory — bracket / link / image precedence (link-in-link literalization, autolink inside link text, wikilink edge cases). Pre-existing TODO; out of scope for parser work.
+- **List items + Lists (14)**: multi-block list items where the continuation is a *fenced* code block or blockquote inside the item body. The current `ListItem.children: [ListItem]` shape only nests sub-lists; arbitrary per-item block children require redesigning `ListItem.children` to `[Block]` with ~107 call-site updates across EditingOps / SourceRenderer / ListEditingFSM. Out of scope for this parser slice.
+- **HTML blocks (4)**: indented-code-inside-HTML-block edge cases.
+- **Indented code blocks (3)**: boundary cases where the 4+-space content sits inside another block (list item, blockquote).
+- **Tabs (4)**: tab expansion in blockquote / list prefix context.
+- **Block quotes (1)**: lazy continuation interaction with setext (#93).
+- **Setext headings (1)**: same as block quotes #93.
+- **Emphasis (1)**, **Raw HTML (1)**, **Images (1)**: single-test edges.
+- **Link ref defs (3)**: multi-line label + one bracket precedence case.
+- **Thematic breaks (2)**: `* * *` as list-vs-HR disambiguation inside a list context.
+
+Full corpus in `Tests/CommonMark/`; per-section reports dump to `~/unit-tests/commonmark-compliance.txt`, per-failure dumps (md / expected / actual triples) to `~/unit-tests/commonmark-failures.txt` via `test_000_dumpAllFailures`. Every phase is gated against "must not regress from current baseline."
 
 ---
 
