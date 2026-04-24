@@ -336,4 +336,183 @@ extension EditTextView {
 
         return true
     }
+
+    // MARK: - Phase 5e: IME / composition overrides
+    //
+    // AppKit's default `NSTextView` implements `NSTextInputClient` and
+    // handles marked-text composition by writing directly to
+    // `NSTextContentStorage` — a path that bypasses `shouldChangeText`
+    // and `applyDocumentEdit`. In WYSIWYG block-model mode this trips
+    // the Phase 5a DEBUG assertion on every marked-text update because
+    // no `StorageWriteGuard` scope is active.
+    //
+    // The clean fix is a single, sanctioned architectural exemption:
+    // while a `CompositionSession` is active AND the mutation lands
+    // inside `markedRange`, the 5a assertion's `compositionAllows`
+    // clause lets the write through. Commit / abort of the session
+    // produces exactly one `EditContract` that flows through the
+    // canonical `applyEditResultWithUndo` path — so the `Document`
+    // sees one atomic edit per composition, not one per keystroke.
+    //
+    // Three override sites:
+    //   1. `setMarkedText(_:selectedRange:replacementRange:)` — AppKit
+    //      invokes this for every marked-text update. We drive session
+    //      entry/update from here.
+    //   2. `unmarkText()` — standard commit path. IME has selected a
+    //      final candidate; we build ONE `EditingOps.replace` contract
+    //      and route through `applyEditResultWithUndo`.
+    //   3. `insertText(_:replacementRange:)` — if `replacementRange`
+    //      targets the marked range (or is `{NSNotFound, 0}`) during an
+    //      active session, same commit path as #2. Otherwise standard
+    //      typing path.
+    //
+    // Commits 2, 4, 5 land the overrides, commit flow, and edge-case
+    // hardening respectively. Commit 2 (this commit) wires entry /
+    // update / placeholder commit stubs that delegate to super for the
+    // actual storage mutation — commit 4 replaces the stubs with the
+    // full `applyEditResultWithUndo`-backed flow. The 5a DEBUG
+    // assertion still trips during Kotoeri on this commit; commit 3
+    // relaxes the assertion.
+
+    /// Called by AppKit every time the input method updates the marked
+    /// (uncommitted) run. A marked string is visually rendered at the
+    /// insertion point / over the selection; the user has not yet
+    /// committed a final character sequence.
+    ///
+    /// Behaviour:
+    ///   - First call with non-empty `string` and no active session →
+    ///     enter composition: capture `anchorCursor`, snapshot fold
+    ///     state, call `super` to let AppKit do the marked-text storage
+    ///     write, then record the post-call marked range (which is what
+    ///     `super` produced via `markedRange()`).
+    ///   - Subsequent calls while active → update: call `super`, then
+    ///     refresh `markedRange`. Anchor cursor does not move.
+    ///   - Empty `string` while active → abort (delegated to
+    ///     `unmarkText()` via `super`).
+    ///
+    /// Precondition: main thread only (NSTextInputClient is documented
+    /// main-thread-only).
+    override func setMarkedText(
+        _ string: Any,
+        selectedRange: NSRange,
+        replacementRange: NSRange
+    ) {
+        let markedString = (string as? NSAttributedString)?.string
+            ?? (string as? String) ?? ""
+
+        // Entry path: no active session, non-empty marked string.
+        if !compositionSession.isActive && !markedString.isEmpty {
+            beginCompositionSession(replacementRange: replacementRange)
+        }
+
+        super.setMarkedText(
+            string, selectedRange: selectedRange,
+            replacementRange: replacementRange
+        )
+
+        // Refresh the recorded marked range to match what AppKit actually
+        // wrote. `super` may have normalized `replacementRange` (e.g.
+        // `{NSNotFound, 0}` → current selection) before committing it to
+        // storage; `markedRange()` reports the authoritative post-call
+        // range.
+        if compositionSession.isActive {
+            var session = compositionSession
+            session.markedRange = markedRange()
+            compositionSession = session
+        }
+    }
+
+    /// Called by AppKit when the user commits the marked run (return /
+    /// space / candidate click / non-accent key after dead-key, etc.).
+    ///
+    /// Commit 2 stub: delegates to `super` and clears the session. The
+    /// session-clear path will be replaced in commit 4 with the
+    /// `applyEditResultWithUndo`-backed commit that produces one
+    /// `EditContract` for the final text.
+    override func unmarkText() {
+        if compositionSession.isActive {
+            super.unmarkText()
+            endCompositionSessionStubbed()
+        } else {
+            super.unmarkText()
+        }
+    }
+
+    /// Called by AppKit for the standard typing path AND as one of the
+    /// commit entry points for composition (when the IME delivers a
+    /// finalized string that should replace the marked run).
+    ///
+    /// While composition is active with a `replacementRange` targeting
+    /// the marked range (or `{NSNotFound, 0}`, per NSTextInputClient
+    /// convention for "use the current marked range"), treat this as a
+    /// commit and delegate to `unmarkText`-equivalent flow. Otherwise
+    /// fall through to `super` — the normal typing path.
+    ///
+    /// Commit 2 stub: delegates to `super`. Commit 4 routes the commit
+    /// path through `applyEditResultWithUndo`.
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        if compositionSession.isActive {
+            let targetsMarkedRange =
+                replacementRange.location == NSNotFound ||
+                NSEqualRanges(replacementRange, compositionSession.markedRange)
+            if targetsMarkedRange {
+                super.insertText(string, replacementRange: replacementRange)
+                endCompositionSessionStubbed()
+                return
+            }
+        }
+        super.insertText(string, replacementRange: replacementRange)
+    }
+
+    /// Session-entry helper. Capture pre-composition state (anchor
+    /// cursor, fold snapshot) and mark the session active with a
+    /// provisional `markedRange` derived from `replacementRange`
+    /// (refreshed from `markedRange()` post-super-call by the caller).
+    private func beginCompositionSession(replacementRange: NSRange) {
+        let currentSel = selectedRange()
+        let provisionalMarked: NSRange
+        if replacementRange.location == NSNotFound {
+            // NSTextInputClient convention: {NSNotFound, 0} means "use
+            // the current selection as the replacement range."
+            provisionalMarked = currentSel
+        } else {
+            provisionalMarked = replacementRange
+        }
+
+        let anchorCursor: DocumentCursor
+        if let projection = documentProjection {
+            anchorCursor = projection.cursor(
+                atStorageIndex: provisionalMarked.location
+            )
+        } else {
+            // No projection — fall back to a zero-origin anchor. Source
+            // mode doesn't use the composition machinery for its
+            // storage-is-truth contract, so the anchor here is
+            // diagnostic only.
+            anchorCursor = DocumentCursor(blockIndex: 0, inlineOffset: 0)
+        }
+
+        // Snapshot fold state so commit 5's edge-case handler can
+        // restore folds that IME placement ignored.
+        if let cachedFolds = note?.cachedFoldState {
+            preSessionFoldState = cachedFolds
+        }
+
+        compositionSession = CompositionSession(
+            anchorCursor: anchorCursor,
+            markedRange: provisionalMarked,
+            isActive: true,
+            pendingEdits: [],
+            sessionStart: Date()
+        )
+    }
+
+    /// Commit-2 stub end-of-session. Clears `isActive` and resets the
+    /// session to `.inactive`. Commit 4 replaces this with the full
+    /// `applyEditResultWithUndo`-backed commit path that builds one
+    /// `EditContract` from the final string and drains `pendingEdits`.
+    private func endCompositionSessionStubbed() {
+        compositionSession = .inactive
+        preSessionFoldState = nil
+    }
 }
