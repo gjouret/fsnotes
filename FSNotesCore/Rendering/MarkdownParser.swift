@@ -3443,13 +3443,29 @@ public enum MarkdownParser {
             return nil
         }
 
-        // Skip whitespace after URL.
+        // Skip whitespace after URL. CommonMark §4.7 requires at least
+        // one space/tab (or a line ending) between the destination and
+        // the title. If there's no whitespace separating a same-line
+        // title, the title is NOT accepted — and since trailing
+        // non-whitespace after the URL invalidates a ref def, the
+        // entire definition must fail (spec #201:
+        //   `[foo]: <bar>(baz)`
+        // is not a ref def — `<bar>(baz)` has no separator, so the
+        // `(baz)` is neither title nor valid bare content).
+        let urlEnd = i
+        let hadTrailingWhitespace = i < chars.count
+            && (chars[i] == " " || chars[i] == "\t")
         while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
 
         // --- Try to parse title ---
 
         // Case 1: Title starts on same line as URL.
         if i < chars.count && (chars[i] == "\"" || chars[i] == "'" || chars[i] == "(") {
+            // Reject when the title glyph immediately follows the URL
+            // with no whitespace (spec #201).
+            if !hadTrailingWhitespace && urlEnd != charOffset {
+                return nil
+            }
             let open = chars[i]
             let close: Character = open == "(" ? ")" : open
             i += 1
