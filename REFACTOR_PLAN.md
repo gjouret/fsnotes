@@ -917,6 +917,30 @@ Remove code that's now redundant so there's no confusion or duplication.
 ### Estimate
 5–7 days.
 
+**⚠️ Tier B — retire `TextStorageProcessor.blocks: [MarkdownBlock]` — DEFERRED 2026-04-24 (agent investigation).** The description of this as a "mechanical, ~73 call sites" retirement was wrong. `TextStorageProcessor.blocks` is not a dormant pre-refactor peer array; it carries state that `Document.Block` does not expose and that multiple live code paths read.
+
+Specifically, `MarkdownBlock` carries fields `Document.Block` doesn't have:
+
+- `collapsed: Bool` — fold state set by `toggleFold`, keyed by block index
+- `renderMode: .source | .rendered` — mermaid / math rendering lifecycle flag toggled by background render completion
+- `id: UUID` — stable identifier used to re-locate a block after `self.blocks` has shifted
+- `range: NSRange` / `contentRange: NSRange` / `syntaxRanges: [NSRange]` — storage offsets (Document.Block is offset-free by design)
+
+Live production readers across `TextStorageProcessor.swift` (11 sites), `GutterController.swift` (fold carets + code-block dedupe), `FormattingToolbar.swift` (source-mode heading level fallback), `EditTextView.swift` (paragraph-rendering guard), `EditTextView+Interaction.swift` (click-to-edit rendered image — toggles `renderMode`), `NSTextStorage++.swift` (tab-stop layout skip), `EditTextView+NoteState.swift` + `EditTextView+BlockModel.swift` (writers). Plus `HeaderFoldingTests`, `FoldRangeTests`, `GutterOverlayTests`, `FoldSnapshotTests`, `NewLineTransitionTests` asserting on `.collapsed` / `.type` / `.range`.
+
+Persistence coupling makes it worse: `Note.cachedFoldState: Set<Int>` stores **indices into `processor.blocks`**, persisted to `UserDefaults` keyed by URL path — fold state survives app restart by index.
+
+The proper retirement path requires a new sub-phase (call it Phase 6 Tier B′ or promote to a parallel sub-phase under 5f):
+
+1. `FoldState` value type keyed by `Block.id` or storage offset (not index)
+2. Migration for existing `UserDefaults` fold-state entries
+3. Move `renderMode` lifecycle to a side-table on `TextStorageProcessor` or to storage-tagged attributes on `MermaidElement` / `MathElement`
+4. Rewrite `GutterController.drawIconsTK2` + `visibleCodeBlocksTK2` to look up via the new mechanism
+5. Rewrite `EditTextView+Interaction.swift`'s click-to-edit rendered-image path
+6. Update ~5 test files
+
+Until that sub-phase lands, `TextStorageProcessor.blocks` stays. Agent correctly stopped at the Category C boundary rather than ship a broken retirement.
+
 ### Rollback
 Each deletion atomic; easy one-off reverts.
 
