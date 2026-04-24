@@ -285,17 +285,19 @@ final class Phase5bCursorCanonicalizationTests: XCTestCase {
     func test_fromNSRange_notFoundSentinel_returnsNil() {
         let (p, _) = fixture("hello\n")
         let notFound = NSRange(location: NSNotFound, length: 0)
-        // NSNotFound is a very large positive integer, but
-        // `location + length` overflows on arithmetic in some cases.
-        // Our contract says: `range.location >= 0 && end >= 0`. Since
-        // NSNotFound is positive, the early return does not fire —
-        // but the projection's cursor resolution handles the
-        // out-of-bounds index by returning a safe fallback cursor.
-        // Assert that we do not crash, regardless of what cursor we
-        // return for an unmappable position.
-        _ = DocumentRange.fromNSRange(notFound, in: p)
-        // No assertion on the returned value — the contract is just
-        // "never crash". Test passing means no trap fired.
+        // NSNotFound == Int.max — not negative, so the `>= 0` guard
+        // alone would let it through, and the projection's cursor
+        // resolution would fall back to the first-block / zero-offset
+        // cursor, silently converting "no selection" into "cursor at
+        // offset 0". That is semantically wrong: AppKit uses
+        // NSNotFound as the "no selection" sentinel. The explicit
+        // `range.location != NSNotFound` guard in `fromNSRange`
+        // rejects the sentinel so callers can pass it through
+        // unchanged.
+        XCTAssertNil(
+            DocumentRange.fromNSRange(notFound, in: p),
+            "NSNotFound sentinel must map to nil so callers can pass it through"
+        )
     }
 
     func test_fromNSRange_outOfBoundsHigh_fallsBackToFirstBlock() {

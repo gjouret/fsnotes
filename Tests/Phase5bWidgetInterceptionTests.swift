@@ -180,19 +180,62 @@ final class Phase5bWidgetInterceptionTests: XCTestCase {
 
     // MARK: - Test 5: NSNotFound sentinel preserved
 
-    /// An `NSRange` with `location == NSNotFound` is a documented
-    /// sentinel (used by AppKit for "no selection"). `clampRange`
-    /// recognises it and returns the range unchanged; canonicalization
-    /// skips the DocumentRange round-trip for unmappable locations
-    /// and passes the original `NSValue` through.
-    func test_widget_nsNotFound_preservedThroughRoundTrip() throws {
-        // Salvaged from Phase 5b widget-test agent (API 529 cascade
-        // 2026-04-24). Current production behavior clamps NSNotFound
-        // rather than preserving it; whether the clamp OR the preserve
-        // is the correct contract needs a design decision. Follow-up
-        // slice should either (a) update `clampRange` to preserve
-        // NSNotFound explicitly, or (b) update this test to match the
-        // clamp behavior.
-        throw XCTSkip("NSNotFound contract pending clarification")
+    /// An `NSRange` with `location == NSNotFound` is AppKit's "no
+    /// selection" sentinel. Production preserves it byte-equal through
+    /// canonicalization via two complementary guards:
+    ///
+    ///   1. `clampRange` (in `EditTextView+Selection.swift`) hits the
+    ///      `location == NSNotFound` short-circuit and returns the
+    ///      input unchanged.
+    ///   2. `DocumentRange.fromNSRange` rejects NSNotFound explicitly
+    ///      (added 2026-04-24 to close a latent bug — NSNotFound is
+    ///      `Int.max`, not negative, so the prior `>= 0` guard alone
+    ///      did not catch it, and the downstream
+    ///      `projection.cursor(atStorageIndex:)` fallback silently
+    ///      converted "no selection" into "cursor at offset 0" — a
+    ///      different state).
+    ///
+    /// The `canonicalizeSelectionRanges` unmappable-input branch then
+    /// passes the original `NSValue` through, giving byte-equal
+    /// preservation.
+    func test_widget_nsNotFound_preservedThroughRoundTrip() {
+        let harness = EditorHarness(markdown: "hello\n")
+        defer { harness.teardown() }
+
+        let sentinel = NSRange(location: NSNotFound, length: 0)
+        let canonicalized = harness.editor.canonicalizeSelectionRanges(
+            [NSValue(range: sentinel)]
+        )
+        XCTAssertEqual(canonicalized.count, 1)
+        let out = (canonicalized[0] as! NSValue).rangeValue
+        XCTAssertEqual(
+            out.location, NSNotFound,
+            "NSNotFound sentinel must survive canonicalization untouched"
+        )
+        XCTAssertEqual(
+            out.length, 0,
+            "sentinel length must survive unchanged (was \(out.length))"
+        )
+    }
+
+    /// Same preservation contract for negative `location` values —
+    /// shielded by the `< 0` branch of `clampRange` and the
+    /// matching `>= 0` guard in `DocumentRange.fromNSRange`. Pinning
+    /// both sentinels together so a regression in either branch
+    /// surfaces here.
+    func test_widget_negativeLocation_preservedThroughRoundTrip() {
+        let harness = EditorHarness(markdown: "hello\n")
+        defer { harness.teardown() }
+
+        let negative = NSRange(location: -1, length: 0)
+        let canonicalized = harness.editor.canonicalizeSelectionRanges(
+            [NSValue(range: negative)]
+        )
+        XCTAssertEqual(canonicalized.count, 1)
+        let out = (canonicalized[0] as! NSValue).rangeValue
+        XCTAssertEqual(
+            out.location, -1,
+            "negative location must survive canonicalization untouched"
+        )
     }
 }

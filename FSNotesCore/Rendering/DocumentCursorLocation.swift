@@ -177,16 +177,29 @@ public struct DocumentRange: Equatable {
     /// coordinates. Both endpoints are resolved via
     /// `projection.cursor(atStorageIndex:)`.
     ///
-    /// - Returns: `nil` if `range.location` or `NSMaxRange(range)` is
-    ///   negative (i.e. `NSNotFound`-sentinel input). An out-of-bounds
-    ///   range above `projection.attributed.length` does not return
-    ///   nil — the projection's `cursor(atStorageIndex:)` falls back to
-    ///   the first-block / zero-offset cursor, matching the existing
-    ///   `storageIndex(for:)` clamping semantics.
+    /// - Returns: `nil` for any input that cannot be mapped to a real
+    ///   document position:
+    ///   - Negative `range.location` (caller error / uninitialised).
+    ///   - `NSNotFound` sentinel (`Int.max`). AppKit uses this to mean
+    ///     "no selection" — it is NOT negative, so the `>= 0` guard
+    ///     alone does not catch it. Without the explicit check the
+    ///     projection's cursor resolution would fall back to the
+    ///     first-block / zero-offset cursor and silently convert
+    ///     "no selection" into "cursor at 0" — a different state. Treat
+    ///     `NSNotFound` as unmappable so callers can pass the sentinel
+    ///     through unchanged.
+    ///   An out-of-bounds range above `projection.attributed.length`
+    ///   does NOT return nil — the projection's
+    ///   `cursor(atStorageIndex:)` falls back to the first-block /
+    ///   zero-offset cursor, matching the existing `storageIndex(for:)`
+    ///   clamping semantics. That fallback is intentional for valid
+    ///   stale offsets; the NSNotFound sentinel is the one case where
+    ///   it would be semantically wrong.
     public static func fromNSRange(
         _ range: NSRange,
         in projection: DocumentProjection
     ) -> DocumentRange? {
+        guard range.location != NSNotFound else { return nil }
         guard range.location >= 0 else { return nil }
         let endLoc = range.location + range.length
         guard endLoc >= 0 else { return nil }
