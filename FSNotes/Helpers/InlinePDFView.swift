@@ -455,9 +455,6 @@ enum PDFAttachmentProcessor {
         note: Note,
         containerWidth: CGFloat
     ) {
-        let string = textStorage.string as NSString
-        let fullRange = NSRange(location: 0, length: string.length)
-
         // Match ![optional title](path/to/file.pdf)
         // Also match bare attachment characters that already have a .pdf attachmentUrl
         // First: handle existing attachment characters with PDF URLs
@@ -496,8 +493,6 @@ enum PDFAttachmentProcessor {
                 bmLog("📄   skip @\(range.location): url=\(maybeURL?.lastPathComponent ?? "nil"), ext=\(maybeURL?.pathExtension ?? "nil")")
                 return
             }
-
-            let path = textStorage.attribute(.attachmentPath, at: range.location, effectiveRange: nil) as? String ?? url.lastPathComponent
 
             let pdfViewWidget = InlinePDFView(url: url, containerWidth: containerWidth)
             let size = pdfViewWidget.computeSize(forWidth: containerWidth)

@@ -483,7 +483,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
                 guard name.count > 0 else { return }
                 
                 OperationQueue.main.addOperation {
-                    vc.sidebarOutlineView.createProject(in: project, with: name)
+                    _ = vc.sidebarOutlineView.createProject(in: project, with: name)
                 }
             }
 
@@ -805,7 +805,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSMenuItemVali
             let fenceStr = String(repeating: fence.character == .backtick ? "`" : "~", count: fence.length)
             let langPart = lang ?? ""
             return fenceStr.count + langPart.count + 1  // +1 for newline after opening fence
-        case .horizontalRule(let char, let length):
+        case .horizontalRule(_, let length):
             return length  // "---", "***", etc.
         case .blankLine:
             return 0

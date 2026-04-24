@@ -1811,8 +1811,7 @@ extension EditTextView {
             replacementAttrs = currentAttr.attributes(at: probeLoc, effectiveRange: nil)
         } else {
             replacementAttrs = [
-                .font: UserDefaultsManagement.noteFont
-                    ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .font: UserDefaultsManagement.noteFont,
                 .foregroundColor: NSColor.labelColor
             ]
         }
@@ -1835,8 +1834,7 @@ extension EditTextView {
             bmLog("⛔ handleTableCellEdit: projection has no block at offset \(ctx.elementStorageStart)")
             return false
         }
-        guard case .table(let header, _, _, _) =
-                projection.document.blocks[blockIdx] else {
+        guard case .table = projection.document.blocks[blockIdx] else {
             bmLog("⛔ handleTableCellEdit: block \(blockIdx) is not a table")
             return false
         }

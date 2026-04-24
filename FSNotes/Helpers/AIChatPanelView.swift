@@ -308,7 +308,7 @@ class AIChatPanelView: NSView {
 
         let content = messages[msgIndex].content
         guard let editor = editorViewController?.vcEditor,
-              let note = editor.note else { return }
+              editor.note != nil else { return }
 
         // Extract code block content if present, otherwise use full response
         var textToInsert = content

@@ -454,13 +454,17 @@ final class TableHandleOverlay {
     /// Routed through `EditingOps.setTableColumnWidths` so undo / splice
     /// math stay consistent with the other structural primitives.
     func applySetColumnWidths(blockIndex: Int, widths: [CGFloat]) {
-        applyEdit(blockIndex: blockIndex, actionName: "Resize Table Column") { projection in
-            try EditingOps.setTableColumnWidths(
-                blockIndex: blockIndex,
-                widths: widths,
-                in: projection
-            )
-        }
+        applyEdit(
+            blockIndex: blockIndex,
+            { projection in
+                try EditingOps.setTableColumnWidths(
+                    blockIndex: blockIndex,
+                    widths: widths,
+                    in: projection
+                )
+            },
+            actionName: "Resize Table Column"
+        )
     }
 
     // MARK: - Edit application

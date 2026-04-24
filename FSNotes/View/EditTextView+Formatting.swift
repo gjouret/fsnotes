@@ -38,7 +38,7 @@ extension EditTextView {
     }
 
     @IBAction func linkMenu(_ sender: Any) {
-        guard let note = self.note, isEditable else { return }
+        guard self.note != nil, isEditable else { return }
 
         if let clipboardString = NSPasteboard.general.string(forType: .string) {
             let normalized = clipboardString.normalizedAsURL()
