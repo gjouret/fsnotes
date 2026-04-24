@@ -106,6 +106,7 @@
 		IMBL000000000000000000B1 /* InlineMathBaseline.swift in Sources */ = {isa = PBXBuildFile; fileRef = IMBL000000000000000000F1 /* InlineMathBaseline.swift */; };
 		IMBT000000000000000000B1 /* InlineMathBaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */; };
 		THOW000000000000000000B1 /* TableHandleOverlayWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */; };
+		CBEW000000000000000000B1 /* CodeBlockEditToggleWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */; };
 		UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */; };
 		P5DS000000000000000000B1 /* Phase5dCopyPasteSlicingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */; };
 		BREF000000000000000000B1 /* BlockRef.swift in Sources */ = {isa = PBXBuildFile; fileRef = BREF000000000000000000F1 /* BlockRef.swift */; };
@@ -1230,6 +1231,7 @@
 		IMBL000000000000000000F1 /* InlineMathBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineMathBaseline.swift; sourceTree = "<group>"; };
 		IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineMathBaselineTests.swift; sourceTree = "<group>"; };
 		THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleOverlayWiringTests.swift; sourceTree = "<group>"; };
+		CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleWiringTests.swift; sourceTree = "<group>"; };
 		UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTIConformanceMigrationTests.swift; sourceTree = "<group>"; };
 		P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5dCopyPasteSlicingTests.swift; sourceTree = "<group>"; };
 		BREF000000000000000000F1 /* BlockRef.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRef.swift; sourceTree = "<group>"; };
@@ -2638,6 +2640,7 @@
 				FHID000000000000000000F1 /* FoldedHeaderIndicatorTests.swift */,
 				IMBT000000000000000000F1 /* InlineMathBaselineTests.swift */,
 				THOW000000000000000000F1 /* TableHandleOverlayWiringTests.swift */,
+				CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */,
 				UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */,
 				P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */,
 				P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */,
@@ -4171,6 +4174,7 @@
 				FHID000000000000000000B1 /* FoldedHeaderIndicatorTests.swift in Sources */,
 				IMBT000000000000000000B1 /* InlineMathBaselineTests.swift in Sources */,
 				THOW000000000000000000B1 /* TableHandleOverlayWiringTests.swift in Sources */,
+				CBEW000000000000000000B1 /* CodeBlockEditToggleWiringTests.swift in Sources */,
 				UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */,
 				P5DS000000000000000000B1 /* Phase5dCopyPasteSlicingTests.swift in Sources */,
 				P5ET000000000000000000B1 /* Phase5eCompositionSessionTests.swift in Sources */,
