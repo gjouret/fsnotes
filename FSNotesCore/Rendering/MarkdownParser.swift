@@ -3343,7 +3343,7 @@ public enum MarkdownParser {
         _ lines: [String], startIndex: Int, effectiveCount: Int
     ) -> (label: String, url: String, title: String?, linesConsumed: Int)? {
         let line = lines[startIndex]
-        let chars = Array(line)
+        var chars = Array(line)
         var i = 0
 
         // Up to 3 leading spaces.
@@ -3351,16 +3351,51 @@ public enum MarkdownParser {
         guard i < chars.count && chars[i] == "[" else { return nil }
         i += 1
 
-        // Find closing ] for label.
-        let labelStart = i
-        while i < chars.count && chars[i] != "]" && chars[i] != "[" {
-            if chars[i] == "\\" && i + 1 < chars.count { i += 1 }
-            i += 1
+        // Find closing `]` for label. CommonMark allows the label to
+        // span multiple lines — scan forward, joining continuation
+        // lines with `\n`, stopping at the first unescaped `]` or `[`
+        // or at a blank line (which terminates the ref def).
+        var labelChars: [Character] = []
+        var labelLineOffset = 0  // lines past startIndex consumed by the label
+        var found = false
+        var foundStray = false
+        while true {
+            while i < chars.count && chars[i] != "]" && chars[i] != "[" {
+                if chars[i] == "\\" && i + 1 < chars.count {
+                    labelChars.append(chars[i])
+                    labelChars.append(chars[i + 1])
+                    i += 2
+                } else {
+                    labelChars.append(chars[i])
+                    i += 1
+                }
+            }
+            if i < chars.count {
+                if chars[i] == "]" {
+                    found = true
+                } else {
+                    // Stray `[` inside the label — invalid.
+                    foundStray = true
+                }
+                break
+            }
+            // Ran off the line end — try the next line.
+            let nextIdx = startIndex + labelLineOffset + 1
+            if nextIdx >= effectiveCount { break }
+            if isBlankLine(lines[nextIdx]) { break }
+            labelLineOffset += 1
+            chars = Array(lines[nextIdx])
+            i = 0
+            // Preserve the newline inside the label (used by
+            // normalizeLabel which collapses whitespace runs).
+            labelChars.append("\n")
         }
-        guard i < chars.count && chars[i] == "]" else { return nil }
-        let label = String(chars[labelStart..<i])
-        guard !label.isEmpty else { return nil }
-        i += 1
+        guard found, !foundStray else { return nil }
+        let label = String(labelChars)
+        // Label must not be blank (spaces/tabs/newlines only).
+        let labelTrimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !labelTrimmed.isEmpty else { return nil }
+        i += 1 // skip `]`
 
         // Must be followed by `:`.
         guard i < chars.count && chars[i] == ":" else { return nil }
@@ -3369,16 +3404,16 @@ public enum MarkdownParser {
         // Skip whitespace.
         while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
 
-        var currentLine = startIndex
-        var linesConsumed = 1
+        var currentLine = startIndex + labelLineOffset
+        var linesConsumed = 1 + labelLineOffset
 
         // If nothing remains on this line after `[label]:`, URL must be on next line.
         if i >= chars.count {
             // Need a next line for the URL.
-            let nextLine = startIndex + 1
+            let nextLine = currentLine + 1
             guard nextLine < effectiveCount && !isBlankLine(lines[nextLine]) else { return nil }
             currentLine = nextLine
-            linesConsumed = 2
+            linesConsumed += 1
             // Parse destination from next line.
             let result = parseDestinationAndTitle(lines, lineIndex: currentLine, charOffset: 0,
                                                   startIndex: startIndex, linesConsumed: linesConsumed,
