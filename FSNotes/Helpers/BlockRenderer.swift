@@ -427,13 +427,27 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             return
         }
 
+        // HiDPI v2 fix: the snapshot's pixel density is determined entirely
+        // by the hosting window's `backingScaleFactor` at capture time —
+        // WKSnapshotConfiguration.snapshotWidth controls OUTPUT POINTS, not
+        // pixel density. The earlier v1 disk-cache fix only addressed the
+        // post-relaunch PNG round-trip. The real root cause is that the
+        // offscreen window may report `backingScaleFactor == 1.0` if macOS
+        // didn't associate it with a screen. `NSWindow.makeOffscreen` is
+        // now hardened to anchor the window inside the main screen's
+        // `visibleFrame` and force screen association via setFrame — this
+        // instrumentation logs the window's scale at capture so we can
+        // confirm at runtime that the window is 2× on Retina.
         let snapshotConfig = WKSnapshotConfiguration()
         snapshotConfig.rect = NSRect(x: 0, y: 0, width: width, height: height)
         snapshotConfig.afterScreenUpdates = true
 
-        bmLog("🎭 BlockRenderer taking snapshot...")
+        let winScale = webView.window?.backingScaleFactor ?? -1
+        let onScreen = webView.window?.screen != nil
+        bmLog("🎭 BlockRenderer taking snapshot: points=\(width)×\(height) winScale=\(winScale) onScreen=\(onScreen)")
         webView.takeSnapshot(with: snapshotConfig) { [weak self] image, error in
-            bmLog("🎭 BlockRenderer snapshot result: image=\(image != nil ? "\(image!.size)" : "nil"), error=\(error?.localizedDescription ?? "none")")
+            let rep = image?.representations.first as? NSBitmapImageRep
+            bmLog("🎭 BlockRenderer snapshot result: image=\(image != nil ? "\(image!.size)" : "nil") pixelsWide=\(rep?.pixelsWide ?? -1) error=\(error?.localizedDescription ?? "none")")
             DispatchQueue.main.async {
                 self?.completion?(image)
                 self?.cleanup()

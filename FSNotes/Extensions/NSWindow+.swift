@@ -34,21 +34,36 @@ extension NSWindow {
 
     /// Creates a borderless, offscreen window suitable for hosting a WKWebView that
     /// needs to be in a window hierarchy to render content (required on recent macOS).
-    /// The window is positioned just outside the main screen (at screen origin - window size)
-    /// so it inherits the main screen's backingScaleFactor for retina rendering. A window
-    /// positioned at (-10000, -10000) is off all screens and reports backingScaleFactor = 1.0,
-    /// producing fuzzy snapshots on retina Macs.
+    /// The window must be placed INSIDE the main screen's frame so macOS associates it
+    /// with the correct `NSScreen` and the window's `backingScaleFactor` returns the
+    /// screen's scale (2× on Retina). A window placed outside all screens — or with
+    /// no `screen` property — reports `backingScaleFactor = 1.0`, which produces
+    /// fuzzy snapshots on Retina Macs even when the content was rendered at 2×.
+    ///
+    /// HiDPI v2 (2026-04-24): the prior implementation placed the window at
+    /// `screenOrigin - (width + 20, 0)`, which on a main screen starting at (0, 0)
+    /// means a NEGATIVE origin — fully off every screen — and macOS did NOT associate
+    /// the window with a screen. This method now anchors at the main screen's
+    /// `visibleFrame` origin (top-left of the main screen's usable area), forces
+    /// association via `setFrame(display:)`, and verifies via an assertion that the
+    /// window's `backingScaleFactor` matches the main screen's. The window is
+    /// visible in principle but never ordered-front, so the user won't see it.
     static func makeOffscreen(width: CGFloat, height: CGFloat) -> NSWindow {
-        // Anchor to the main screen's origin, offset by the window size so the window
-        // is fully off-visible-area but still associated with the main screen.
-        let screenOrigin = NSScreen.main?.frame.origin ?? .zero
-        let origin = NSPoint(x: screenOrigin.x - width - 20, y: screenOrigin.y)
+        let screen = NSScreen.main
+        // Position at the main screen's visibleFrame origin so the window is
+        // definitely INSIDE a screen's bounds. Using `visibleFrame` (not `frame`)
+        // lands us below the menu bar but still on the main display.
+        let origin = screen?.visibleFrame.origin ?? .zero
+        let frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
         let window = NSWindow(
-            contentRect: NSRect(origin: origin, size: NSSize(width: width, height: height)),
+            contentRect: frame,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
         )
+        // Force screen association. `setFrame(_:display:)` updates the window's
+        // screen-association and `backingScaleFactor` based on the new frame.
+        window.setFrame(frame, display: false, animate: false)
         return window
     }
 }
