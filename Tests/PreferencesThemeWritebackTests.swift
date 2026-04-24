@@ -202,6 +202,32 @@ final class PreferencesThemeWritebackTests: XCTestCase {
 
     // MARK: - IBAction writes through to Theme.shared
 
+    /// Marker name for the two IBAction write-through tests below.
+    /// Prefixed with `__test_` so an orphan file left by a crashed
+    /// test run is visibly a test artifact (rather than masquerading
+    /// as a plausibly-real user theme name like "IBActionWrite" did
+    /// before — we found one of those in a user's themes directory
+    /// on 2026-04-24). Paired with the `defer`-based restore helper
+    /// below so a normal test failure can't leak the name into the
+    /// next test either.
+    private static let ibActionWritebackThemeName = "__test_writeback__"
+
+    /// Run `body` with `UserDefaultsManagement.currentThemeName` set
+    /// to `name`, guaranteeing the original value is restored on
+    /// normal scope exit. The outer `tearDownWithError()` also
+    /// restores it — this is belt-and-suspenders for the case where
+    /// `tearDown` doesn't run (e.g. test hits an XCTFail that aborts
+    /// the process, or the debugger kills the runner mid-test).
+    private func withTemporaryCurrentThemeName<T>(
+        _ name: String,
+        _ body: () throws -> T
+    ) rethrows -> T {
+        let original = UserDefaultsManagement.currentThemeName
+        defer { UserDefaultsManagement.currentThemeName = original }
+        UserDefaultsManagement.currentThemeName = name
+        return try body()
+    }
+
     /// The Phase 7.5 contract for the font IBAction: a user font change
     /// must land on `Theme.shared.noteFontName/Size` AND be persisted
     /// via `saveActiveTheme()`. Exercising the IBAction method body
@@ -214,56 +240,60 @@ final class PreferencesThemeWritebackTests: XCTestCase {
     /// That's deliberate: the test describes what the IBAction MUST do,
     /// independent of the UI wiring.
     func test_phase75_noteFontIBAction_writeThrough() {
-        UserDefaultsManagement.currentThemeName = "IBActionWrite"
-        BlockStyleTheme.shared = BlockStyleTheme.default
+        let name = Self.ibActionWritebackThemeName
+        withTemporaryCurrentThemeName(name) {
+            BlockStyleTheme.shared = BlockStyleTheme.default
 
-        // Pre-seed what NSFontManager.convert() would return — the UD
-        // key `.noteFont` is both the read and write surface.
-        let chosen = NSFont(name: "Menlo", size: 17)
-            ?? NSFont.monospacedSystemFont(ofSize: 17, weight: .regular)
+            // Pre-seed what NSFontManager.convert() would return — the UD
+            // key `.noteFont` is both the read and write surface.
+            let chosen = NSFont(name: "Menlo", size: 17)
+                ?? NSFont.monospacedSystemFont(ofSize: 17, weight: .regular)
 
-        // IBAction write sequence (`changeNoteFont(_:)`):
-        //   1. Mutate Theme.shared (task per-7.5).
-        //   2. Dual-write to legacy UD (transitional).
-        //   3. Persist the active theme (posts didChangeNotification).
-        Theme.shared.noteFontName = chosen.fontName
-        Theme.shared.noteFontSize = chosen.pointSize
-        UserDefaultsManagement.noteFont = chosen
-        _ = Theme.saveActiveTheme(userThemesDirectory: tmpRoot)
+            // IBAction write sequence (`changeNoteFont(_:)`):
+            //   1. Mutate Theme.shared (task per-7.5).
+            //   2. Dual-write to legacy UD (transitional).
+            //   3. Persist the active theme (posts didChangeNotification).
+            Theme.shared.noteFontName = chosen.fontName
+            Theme.shared.noteFontSize = chosen.pointSize
+            UserDefaultsManagement.noteFont = chosen
+            _ = Theme.saveActiveTheme(userThemesDirectory: tmpRoot)
 
-        // The task description's "Theme.shared.editor.font.family" maps
-        // to this flat field (the `.typography.bodyFontName` accessor
-        // is a synthesized read-only wrapper over it).
-        XCTAssertEqual(Theme.shared.noteFontName, chosen.fontName)
-        XCTAssertEqual(Theme.shared.noteFontSize, chosen.pointSize)
+            // The task description's "Theme.shared.editor.font.family" maps
+            // to this flat field (the `.typography.bodyFontName` accessor
+            // is a synthesized read-only wrapper over it).
+            XCTAssertEqual(Theme.shared.noteFontName, chosen.fontName)
+            XCTAssertEqual(Theme.shared.noteFontSize, chosen.pointSize)
 
-        let reloaded = Theme.load(
-            named: "IBActionWrite", userThemesDirectory: tmpRoot
-        )
-        XCTAssertEqual(reloaded.noteFontName, chosen.fontName)
-        XCTAssertEqual(reloaded.noteFontSize, chosen.pointSize)
+            let reloaded = Theme.load(
+                named: name, userThemesDirectory: tmpRoot
+            )
+            XCTAssertEqual(reloaded.noteFontName, chosen.fontName)
+            XCTAssertEqual(reloaded.noteFontSize, chosen.pointSize)
+        }
     }
 
     /// Same contract for the code-font IBAction.
     func test_phase75_codeFontIBAction_writeThrough() {
-        UserDefaultsManagement.currentThemeName = "IBActionWrite"
-        BlockStyleTheme.shared = BlockStyleTheme.default
+        let name = Self.ibActionWritebackThemeName
+        withTemporaryCurrentThemeName(name) {
+            BlockStyleTheme.shared = BlockStyleTheme.default
 
-        let chosen = NSFont(name: "Menlo", size: 16)
-            ?? NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+            let chosen = NSFont(name: "Menlo", size: 16)
+                ?? NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
 
-        Theme.shared.codeFontName = chosen.familyName ?? "Source Code Pro"
-        Theme.shared.codeFontSize = chosen.pointSize
-        UserDefaultsManagement.codeFont = chosen
-        _ = Theme.saveActiveTheme(userThemesDirectory: tmpRoot)
+            Theme.shared.codeFontName = chosen.familyName ?? "Source Code Pro"
+            Theme.shared.codeFontSize = chosen.pointSize
+            UserDefaultsManagement.codeFont = chosen
+            _ = Theme.saveActiveTheme(userThemesDirectory: tmpRoot)
 
-        XCTAssertEqual(Theme.shared.codeFontName, chosen.familyName)
-        XCTAssertEqual(Theme.shared.codeFontSize, chosen.pointSize)
+            XCTAssertEqual(Theme.shared.codeFontName, chosen.familyName)
+            XCTAssertEqual(Theme.shared.codeFontSize, chosen.pointSize)
 
-        let reloaded = Theme.load(
-            named: "IBActionWrite", userThemesDirectory: tmpRoot
-        )
-        XCTAssertEqual(reloaded.codeFontName, chosen.familyName)
-        XCTAssertEqual(reloaded.codeFontSize, chosen.pointSize)
+            let reloaded = Theme.load(
+                named: name, userThemesDirectory: tmpRoot
+            )
+            XCTAssertEqual(reloaded.codeFontName, chosen.familyName)
+            XCTAssertEqual(reloaded.codeFontSize, chosen.pointSize)
+        }
     }
 }
