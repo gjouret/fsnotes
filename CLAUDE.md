@@ -146,6 +146,25 @@ ln -s "$MAIN_REPO/Podfile.lock" "$WORKTREE/Podfile.lock"
 
 Without these, `xcodebuild` fails with "unable to resolve module dependency". This is the correct way to handle gitignored dependencies in worktrees.
 
+### Worktrees: prune after the batch lands
+
+The Claude Code harness creates an `isolation: "worktree"` worktree per agent and locks it (`locked claude agent agent-* (pid <harness>)`). It does NOT auto-clean. They accumulate at ~37 MB each; 24 worktrees = ~870 MB of waste. Prune proactively as part of cleanup after each batch:
+
+```bash
+# for each non-live worktree whose branch is merged OR is a pre-refactor stale-base branch:
+git worktree unlock <wt-path>
+git worktree remove --force <wt-path>
+git branch -d worktree-<name>      # or -D if confirmed safe-to-discard
+git worktree prune
+```
+
+Classify before removing:
+- **MERGED** (branch is ancestor of master): zero-risk, remove + `-d`
+- **UNMERGED at fork base** (e.g., 18 commits ahead of master but at `593ad79` or other pre-refactor): these are upstream-fork commits, not agent work — safe to remove + `-D`, verify once with `git log master..<branch>` to confirm
+- **LIVE** (agent still running): leave alone
+
+Also: **verify the worktree base before relying on it**. The harness sometimes spawns a worktree at a stale commit rather than current master. Agent first-step should do `git log --oneline -1` + `ls REFACTOR_PLAN.md` (or equivalent critical file); STOP if not on expected base. If the harness's `isolation: "worktree"` is unreliable, fall back to solo main-repo work with commit-as-you-go (Phase 5a / Batch N+8 pattern).
+
 ### Adding new Swift files to the Xcode project
 
 When creating ANY new `.swift` file, you MUST add it to `FSNotes.xcodeproj/project.pbxproj` in FOUR places:
