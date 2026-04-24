@@ -492,8 +492,11 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
 
         // Grip glyph ⠿ (BRAILLE PATTERN DOTS-123456 — U+283F). Drawn
         // via NSAttributedString so it picks up current-appearance
-        // label colour automatically.
-        let pt = max(8, NSFont.systemFontSize * 0.75)
+        // label colour automatically. Glyph size scales with the
+        // handle strip so a wider / taller handle gets a
+        // proportionally larger grabber.
+        let minDim = min(rect.width, rect.height)
+        let pt = max(10, minDim * 0.8)
         let font = NSFont.systemFont(ofSize: pt, weight: .bold)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,

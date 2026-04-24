@@ -264,21 +264,20 @@ final class TableHandleOverlay {
                      to state: TableLayoutFragment.HoverState) {
         guard fragment.setHoverState(state) else { return }
         guard let editor = editor else { return }
-        // Brute-force re-render path: TK2 caches per-fragment
-        // rendering surfaces keyed on layout state. `hoverState`
-        // changes don't invalidate layout so the cache is reused and
-        // `fragment.draw(at:in:)` never re-fires — handles appear on
-        // first hover but don't track the mouse afterward. Forcing
-        // the viewport controller to relayout the fragment's element
-        // range triggers a fresh pass that re-runs draw.
-        if let tlm = editor.textLayoutManager,
-           let elementRange = fragment.textElement?.elementRange {
-            tlm.invalidateLayout(for: elementRange)
-            tlm.textViewportLayoutController.layoutViewport()
-        }
-        // Also schedule a view-level redraw for the fragment's rect
-        // (covers the column/row strip chrome even if the layout
-        // invalidation path above no-ops for any reason).
+        // Must NOT call `tlm.invalidateLayout(for:)` here: that forces
+        // TK2 to recreate the TableLayoutFragment instance, which
+        // discards the `hoverState` we just stored (it's a per-
+        // instance property). The freshly-created replacement
+        // fragment then draws with `hoverState = .none` and the
+        // handles vanish — which matches the user-reported "handles
+        // don't track the pointer" symptom.
+        //
+        // Force a synchronous redraw of the fragment's rect on the
+        // existing fragment instance instead. `displayRect(_:)` walks
+        // the view's dirty region and invokes `draw(_:)` immediately,
+        // which in turn calls into TK2's fragment-draw machinery and
+        // re-runs `fragment.draw(at:in:)` with the current
+        // `hoverState`.
         let fragFrame = fragment.layoutFragmentFrame
         let origin = editor.textContainerOrigin
         let rectInEditor = CGRect(
@@ -288,6 +287,7 @@ final class TableHandleOverlay {
             height: fragFrame.height
         )
         editor.setNeedsDisplay(rectInEditor)
+        editor.displayIfNeeded()
     }
 
     // MARK: - Context menu (T2-g.2)
