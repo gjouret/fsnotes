@@ -944,6 +944,46 @@ final class UIBugRegressionTests: XCTestCase {
     // the harness. Cell-click cursor placement is tracked separately
     // in `TableCellClickHarnessTests` (commit 427321b).
 
+    // Probe 36f: USER REPORTED — `<kbd>Cmd</kbd>` doesn't draw a
+    // rounded rectangle; user sees only a font change. We can't
+    // inspect the CGContext draw output from the snapshot, but we
+    // CAN check the necessary preconditions for drawing:
+    //   1. Fragment class = KbdBoxParagraphLayoutFragment (done by
+    //      another probe; passes — fragment dispatches correctly).
+    //   2. `.kbdTag` attribute IS set on the storage run covering
+    //      the kbd text — if not, `drawKbdBoxes` iterates nothing
+    //      and silently paints no box.
+    //
+    // This probe tests (2) directly: enumerate `.kbdTag` over the
+    // storage range and assert at least one non-nil value.
+    func test_probe_kbdTag_attributeSetOnRun() {
+        let h = EditorHarness(
+            markdown: "Press <kbd>Cmd</kbd> to copy.\n",
+            windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        guard let storage = h.editor.textStorage else {
+            XCTFail("no storage"); return
+        }
+        var found = false
+        storage.enumerateAttribute(
+            .kbdTag,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, _, _ in
+            if value != nil { found = true }
+        }
+        XCTAssertTrue(
+            found,
+            "`.kbdTag` attribute must be set on at least one run " +
+            "of the rendered kbd text. Without it, " +
+            "KbdBoxParagraphLayoutFragment.drawKbdBoxes iterates " +
+            "nothing and no rounded rectangle is ever drawn — " +
+            "matches the user's reported 'just changes the font' " +
+            "symptom."
+        )
+    }
+
     // Probe 36d: USER REPORTED — deleting a list item wipes ALL
     // glyphs from the todo list. After removing one item (structural
     // delete via select-item-content + pressDelete), the remaining
