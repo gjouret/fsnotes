@@ -456,7 +456,38 @@ extension EditTextView {
 
         bmLog("✅ fillViaBlockModel complete: \(document.blocks.count) blocks, rendered \(projection.attributed.length) chars — \(note.title)")
 
+        // Trigger `TableHandleOverlay` lazy construction on the owning
+        // `ViewController`. The overlay's `installObservers()` wires
+        // `NSText.didChangeNotification` and `NSView.boundsDidChangeNotification`
+        // observers that auto-call `reposition()` on subsequent text +
+        // scroll events — but installObservers only fires once, on
+        // first read of the `tableHandleOverlay` lazy getter. Phase 2e
+        // T2-g.1 (commit `2590522`) documented this wiring in a comment
+        // at `ViewController+Events.swift:383` ("Production wiring: call
+        // `tableHandleOverlay.reposition()` after a note is filled") but
+        // the call site was never written. Without it the overlay is
+        // never constructed and hover handles never appear. `reposition()`
+        // is idempotent + cheap when there are no visible tables.
+        if let vc = owningViewControllerForTableHandleOverlay() {
+            vc.tableHandleOverlay.reposition()
+        }
+
         return true
+    }
+
+    // Walk the responder chain to find the `ViewController` that owns
+    // this editor. Returns nil if the editor isn't currently embedded
+    // in one — e.g. during offscreen harness tests or between window
+    // transitions. Callers should tolerate nil.
+    private func owningViewControllerForTableHandleOverlay() -> ViewController? {
+        var responder: NSResponder? = self
+        while let current = responder {
+            if let vc = current as? ViewController {
+                return vc
+            }
+            responder = current.nextResponder
+        }
+        return nil
     }
 
     // MARK: - Source-mode rendering (Phase 4.4)
@@ -658,13 +689,24 @@ extension EditTextView {
         // `EditingOps.narrowSplice` already minimized.
         if let tlm = self.textLayoutManager,
            let contentStorage = tlm.textContentManager as? NSTextContentStorage {
+            // Pass `oldProjection.rendered` as the prior-render
+            // override. The async inline-math renderer mutates storage
+            // (N source chars → 1 attachment char) and patches
+            // `projection.rendered.{attributed,blockSpans}` to match,
+            // but leaves `projection.document` stale. Re-rendering
+            // priorDoc here would produce the N-char form and compute
+            // a splice offset that's wrong by (N-1) — landing the
+            // splice on a neighbouring block. See
+            // `Phase6ImageResizeSpliceTests.test_resize_withStaleProjection_afterInlineMathSwap_doesNotCorruptNeighbours`
+            // for the regression shape.
             _ = DocumentEditApplier.applyDocumentEdit(
                 priorDoc: oldProjection.document,
                 newDoc: result.newProjection.document,
                 contentStorage: contentStorage,
                 bodyFont: result.newProjection.bodyFont,
                 codeFont: result.newProjection.codeFont,
-                note: self.note
+                note: self.note,
+                priorRenderedOverride: oldProjection.rendered
             )
         } else {
             // Phase 5a: TK1 splice fallback. Same logical scope as
