@@ -21,6 +21,7 @@
 		P47S0000000000000000000B1 /* Phase47SaveConsolidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P47S0000000000000000000F1 /* Phase47SaveConsolidationTests.swift */; };
 		P46B0000000000000000000B1 /* Phase46BlocksPeerDeletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P46B0000000000000000000F1 /* Phase46BlocksPeerDeletionTests.swift */; };
 		P45L0000000000000000000B1 /* Phase45LayoutManagerDeletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P45L0000000000000000000F1 /* Phase45LayoutManagerDeletionTests.swift */; };
+		P2F50000000000000000000B1 /* Phase2f5ImageResizeInvalidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P2F50000000000000000000F1 /* Phase2f5ImageResizeInvalidationTests.swift */; };
 		4426A1643FE1DD7686DD1634 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1684F0D3961A0245AF0ABE /* AppEnvironment.swift */; };
 		1F35D964875E81E6F313B93A /* EditorPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8852B50A2749E42226C8379 /* EditorPreferences.swift */; };
 		C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */; };
@@ -1125,6 +1126,7 @@
 		P47S0000000000000000000F1 /* Phase47SaveConsolidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase47SaveConsolidationTests.swift; sourceTree = "<group>"; };
 		P46B0000000000000000000F1 /* Phase46BlocksPeerDeletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase46BlocksPeerDeletionTests.swift; sourceTree = "<group>"; };
 		P45L0000000000000000000F1 /* Phase45LayoutManagerDeletionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase45LayoutManagerDeletionTests.swift; sourceTree = "<group>"; };
+		P2F50000000000000000000F1 /* Phase2f5ImageResizeInvalidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2f5ImageResizeInvalidationTests.swift; sourceTree = "<group>"; };
 		DOC0000000000000000000F1 /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		6D33A8DF2D1096555629D241 /* ListEditingFSM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListEditingFSM.swift; sourceTree = "<group>"; };
 		A7F23911779AD1E5392251BC /* EditingOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingOperations.swift; sourceTree = "<group>"; };
@@ -2527,6 +2529,7 @@
 				P47S0000000000000000000F1 /* Phase47SaveConsolidationTests.swift */,
 				P46B0000000000000000000F1 /* Phase46BlocksPeerDeletionTests.swift */,
 				P45L0000000000000000000F1 /* Phase45LayoutManagerDeletionTests.swift */,
+				P2F50000000000000000000F1 /* Phase2f5ImageResizeInvalidationTests.swift */,
 				65ABACC3555B97D4FC743685 /* BlockParserTests.swift */,
 				CBT0000000000000000000F1 /* CodeBlockRoundTripTests.swift */,
 				AET0000000000000000000F1 /* ArchitectureEnforcementTests.swift */,
@@ -4024,6 +4027,7 @@
 				P47S0000000000000000000B1 /* Phase47SaveConsolidationTests.swift in Sources */,
 				P46B0000000000000000000B1 /* Phase46BlocksPeerDeletionTests.swift in Sources */,
 				P45L0000000000000000000B1 /* Phase45LayoutManagerDeletionTests.swift in Sources */,
+				P2F50000000000000000000B1 /* Phase2f5ImageResizeInvalidationTests.swift in Sources */,
 				C1A9F0D32EFA8A1100A1B2C3 /* HeaderFoldingTests.swift in Sources */,
 				GOVL0000000000000000000B1 /* GutterOverlayTests.swift in Sources */,
 				1D92074A4955BEF0FB6C0978 /* BlockParserTests.swift in Sources */,
