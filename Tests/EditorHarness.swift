@@ -395,6 +395,51 @@ final class EditorHarness {
         )
     }
 
+    // MARK: - Mouse input
+
+    /// Simulate a left mouse click at `point` (in the editor's local
+    /// coordinate space, not window/screen). Drives
+    /// `NSTextView.mouseDown(with:)` via a synthesised `NSEvent` so
+    /// hit-testing, cursor placement, fragment click routing, and
+    /// selection-change delegate callbacks all fire through the live
+    /// widget path — the same code paths a real user click takes.
+    ///
+    /// - Parameters:
+    ///   - point: Click location in the editor's view-local coordinate
+    ///     space. Convert from text-container coords with
+    ///     `textContainerInset` if you derived the point from layout
+    ///     geometry.
+    ///   - modifiers: Optional modifier flags on the synthesised event.
+    /// - Returns: `editor.selectedRange` after `mouseDown` returns.
+    @discardableResult
+    public func clickAt(
+        point: NSPoint,
+        modifiers: NSEvent.ModifierFlags = []
+    ) -> NSRange {
+        guard let window = editor.window else {
+            return editor.selectedRange()
+        }
+        // NSEvent's `location` is in window coordinates; convert from
+        // the editor-local point. `convert(_:to: nil)` on a view yields
+        // window coords.
+        let windowPoint = editor.convert(point, to: nil)
+        guard let event = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: windowPoint,
+            modifierFlags: modifiers,
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        ) else {
+            return editor.selectedRange()
+        }
+        editor.mouseDown(with: event)
+        return editor.selectedRange()
+    }
+
     /// Move the cursor (zero-length selection) to the given offset.
     func moveCursor(to location: Int) {
         let safe = min(max(location, 0), editor.textStorage?.length ?? 0)
