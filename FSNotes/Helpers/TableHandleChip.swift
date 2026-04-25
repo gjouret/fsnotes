@@ -88,6 +88,21 @@ final class TableHandleChip: NSView {
         return bounds.contains(local) ? self : nil
     }
 
+    override func mouseDown(with event: NSEvent) {
+        // Bug #36: drag-reorder chip ports TK1 GlassHandleView's
+        // onDragStart wiring. Forward to overlay's drag tracker.
+        guard let overlay = overlay, blockIndexRef >= 0 else {
+            super.mouseDown(with: event)
+            return
+        }
+        overlay.beginHandleDrag(
+            orientation: orientation,
+            index: index,
+            blockIndex: blockIndexRef,
+            event: event
+        )
+    }
+
     override func rightMouseDown(with event: NSEvent) {
         guard let overlay = overlay, blockIndexRef >= 0 else {
             super.rightMouseDown(with: event)

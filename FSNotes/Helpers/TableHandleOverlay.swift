@@ -610,6 +610,177 @@ final class TableHandleOverlay {
         }
     }
 
+    // MARK: - Bug #36: Drag-reorder (row / column)
+
+    func beginHandleDrag(
+        orientation: TableHandleChip.Orientation,
+        index: Int,
+        blockIndex: Int,
+        event: NSEvent
+    ) {
+        guard let editor = editor,
+              let window = event.window ?? editor.window else { return }
+        let candidates = visibleTables()
+        guard let record = candidates.first(where: { $0.blockIndex == blockIndex })
+        else { return }
+        let fragment = record.fragment
+        guard let geom = fragment.geometryForHandleOverlay() else { return }
+        let columnWidths = geom.columnWidths
+        let rowHeights = geom.rowHeights
+        let frame = record.frame
+
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        editor.addSubview(line)
+        defer { line.removeFromSuperview() }
+
+        let sourceHighlight = NSView()
+        sourceHighlight.wantsLayer = true
+        sourceHighlight.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        sourceHighlight.layer?.borderWidth = 2
+        sourceHighlight.layer?.backgroundColor =
+            NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
+        editor.addSubview(sourceHighlight)
+        defer { sourceHighlight.removeFromSuperview() }
+        sourceHighlight.frame = sourceRect(
+            orientation: orientation, index: index,
+            columnWidths: columnWidths, rowHeights: rowHeights,
+            frame: frame
+        )
+
+        var targetGap: Int = index
+        line.frame = lineRect(
+            orientation: orientation, gap: targetGap,
+            columnWidths: columnWidths, rowHeights: rowHeights,
+            frame: frame
+        )
+
+        var keepTracking = true
+        while keepTracking {
+            guard let evt = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp]
+            ) else { continue }
+            if evt.type == .leftMouseUp {
+                keepTracking = false
+                continue
+            }
+            let pt = editor.convert(evt.locationInWindow, from: nil)
+            switch orientation {
+            case .horizontal:
+                let gridX = frame.origin.x + TableGeometry.handleBarWidth
+                let cursor = pt.x - gridX
+                targetGap = EditingOps.dropGapIndex(
+                    segments: columnWidths, cursor: cursor
+                )
+            case .vertical:
+                let gridY = frame.origin.y + TableGeometry.handleBarHeight
+                let cursor = pt.y - gridY
+                targetGap = EditingOps.dropGapIndex(
+                    segments: rowHeights, cursor: cursor
+                )
+            }
+            line.frame = lineRect(
+                orientation: orientation, gap: targetGap,
+                columnWidths: columnWidths, rowHeights: rowHeights,
+                frame: frame
+            )
+        }
+
+        let dst = EditingOps.moveDestinationIndex(from: index, gap: targetGap)
+        if dst == index { return }
+        switch orientation {
+        case .horizontal:
+            applyEdit(
+                blockIndex: blockIndex,
+                { projection in
+                    try EditingOps.moveTableColumn(
+                        blockIndex: blockIndex,
+                        from: index, to: dst,
+                        in: projection
+                    )
+                },
+                actionName: "Move Table Column"
+            )
+        case .vertical:
+            applyEdit(
+                blockIndex: blockIndex,
+                { projection in
+                    try EditingOps.moveTableRow(
+                        blockIndex: blockIndex,
+                        from: index, to: dst,
+                        in: projection
+                    )
+                },
+                actionName: "Move Table Row"
+            )
+        }
+    }
+
+    private func sourceRect(
+        orientation: TableHandleChip.Orientation,
+        index: Int,
+        columnWidths: [CGFloat],
+        rowHeights: [CGFloat],
+        frame: CGRect
+    ) -> CGRect {
+        let gridLeft = frame.origin.x + TableGeometry.handleBarWidth
+        let gridTop = frame.origin.y + TableGeometry.handleBarHeight
+        let gridHeight = rowHeights.reduce(0, +)
+        let gridWidth = columnWidths.reduce(0, +)
+        switch orientation {
+        case .horizontal:
+            guard index >= 0, index < columnWidths.count else { return .zero }
+            var x = gridLeft
+            for i in 0..<index { x += columnWidths[i] }
+            return CGRect(x: x, y: gridTop,
+                          width: columnWidths[index], height: gridHeight)
+        case .vertical:
+            guard index >= 0, index < rowHeights.count else { return .zero }
+            var y = gridTop
+            for i in 0..<index { y += rowHeights[i] }
+            return CGRect(x: gridLeft, y: y,
+                          width: gridWidth, height: rowHeights[index])
+        }
+    }
+
+    private func lineRect(
+        orientation: TableHandleChip.Orientation,
+        gap: Int,
+        columnWidths: [CGFloat],
+        rowHeights: [CGFloat],
+        frame: CGRect
+    ) -> CGRect {
+        let gridLeft = frame.origin.x + TableGeometry.handleBarWidth
+        let gridTop = frame.origin.y + TableGeometry.handleBarHeight
+        let gridHeight = rowHeights.reduce(0, +)
+        let gridWidth = columnWidths.reduce(0, +)
+        let lineThickness: CGFloat = 2
+        switch orientation {
+        case .horizontal:
+            var x = gridLeft
+            let safeGap = max(0, min(gap, columnWidths.count))
+            for i in 0..<safeGap { x += columnWidths[i] }
+            return CGRect(
+                x: x - lineThickness / 2,
+                y: gridTop,
+                width: lineThickness,
+                height: gridHeight
+            )
+        case .vertical:
+            var y = gridTop
+            let safeGap = max(0, min(gap, rowHeights.count))
+            for i in 0..<safeGap { y += rowHeights[i] }
+            return CGRect(
+                x: gridLeft,
+                y: y - lineThickness / 2,
+                width: gridWidth,
+                height: lineThickness
+            )
+        }
+    }
+
+
     /// T2-g.4: persist the column widths produced by a live drag-resize.
     /// Routed through `EditingOps.setTableColumnWidths` so undo / splice
     /// math stay consistent with the other structural primitives.

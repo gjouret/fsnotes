@@ -741,6 +741,7 @@
 		T2GHCP000000000000000B1 /* TableHandleChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHCP000000000000000F1 /* TableHandleChip.swift */; };
 		T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */; };
 		T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2G40000000000000000000F1 /* TableColumnResizeTests.swift */; };
+		BUG36000000000000000000B1 /* TableDragReorderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BUG36000000000000000000F1 /* TableDragReorderTests.swift */; };
 		CBEOT00000000000000000B1 /* CodeBlockEditToggleOverlayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */; };
 		23EAB390742AF720CE975FB2 /* BlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */; };
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
@@ -1576,6 +1577,7 @@
 		T2GHCP000000000000000F1 /* TableHandleChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableHandleChip.swift; sourceTree = "<group>"; };
 		T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableStructuralEditingTests.swift; sourceTree = "<group>"; };
 		T2G40000000000000000000F1 /* TableColumnResizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableColumnResizeTests.swift; sourceTree = "<group>"; };
+		BUG36000000000000000000F1 /* TableDragReorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableDragReorderTests.swift; sourceTree = "<group>"; };
 		CBEOT00000000000000000F1 /* CodeBlockEditToggleOverlayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleOverlayTests.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRenderer.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
@@ -2703,6 +2705,7 @@
 				TCRT000000000000000000F1 /* TableCaretRectTests.swift */,
 				T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */,
 				T2G40000000000000000000F1 /* TableColumnResizeTests.swift */,
+				BUG36000000000000000000F1 /* TableDragReorderTests.swift */,
 				T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */,
 				TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */,
 				ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */,
@@ -4282,6 +4285,7 @@
 				BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,
 				T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */,
+				BUG36000000000000000000B1 /* TableDragReorderTests.swift in Sources */,
 				T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */,
 				TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */,
 				ETVF000000000000000000B1 /* EditTextViewFillRenderSyncTests.swift in Sources */,

@@ -8612,6 +8612,175 @@ public enum EditingOps {
         return result
     }
 
+    // MARK: - Drag-reorder (row / column)
+
+    /// Move a row in **total-row space**: index 0 is the header, indices
+    /// `1..rows.count` are body rows. Mirrors the TK1 `moveRowTotal`
+    /// semantics — if the header (index 0) is moved down, the row that
+    /// ends up at index 0 of the unified `[header] + rows` array
+    /// becomes the new header. Persisted column widths and per-column
+    /// alignments are preserved (column count is unchanged).
+    public static func moveTableRow(
+        blockIndex: Int,
+        from: Int,
+        to: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, let widths) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "moveTableRow: block \(blockIndex) is not a table"
+            )
+        }
+        let totalRows = 1 + rows.count
+        guard from >= 0, from < totalRows,
+              to >= 0, to < totalRows else {
+            throw EditingError.outOfBounds
+        }
+        if from == to {
+            var result = EditResult(
+                newProjection: projection,
+                spliceRange: NSRange(location: 0, length: 0),
+                spliceReplacement: NSAttributedString(string: "")
+            )
+            result.contract = EditContract(
+                declaredActions: [],
+                postCursor: projection.cursor(atStorageIndex: 0)
+            )
+            return result
+        }
+        var unified: [[TableCell]] = [header] + rows
+        let moved = unified.remove(at: from)
+        unified.insert(moved, at: to)
+        let newHeader = unified[0]
+        let newRows = Array(unified.dropFirst())
+        let newBlock: Block = .table(
+            header: newHeader, alignments: alignments,
+            rows: newRows, columnWidths: widths
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Move a column from index `from` to index `to`. Header cells,
+    /// body cells, alignments, and persisted widths (if any) all shift
+    /// in lockstep so the column carries its content + alignment +
+    /// width to the new position.
+    public static func moveTableColumn(
+        blockIndex: Int,
+        from: Int,
+        to: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, let widths) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "moveTableColumn: block \(blockIndex) is not a table"
+            )
+        }
+        let cols = header.count
+        guard from >= 0, from < cols,
+              to >= 0, to < cols else {
+            throw EditingError.outOfBounds
+        }
+        if from == to {
+            var result = EditResult(
+                newProjection: projection,
+                spliceRange: NSRange(location: 0, length: 0),
+                spliceReplacement: NSAttributedString(string: "")
+            )
+            result.contract = EditContract(
+                declaredActions: [],
+                postCursor: projection.cursor(atStorageIndex: 0)
+            )
+            return result
+        }
+        var newHeader = header
+        let movedHeader = newHeader.remove(at: from)
+        newHeader.insert(movedHeader, at: to)
+
+        var newAlignments = alignments
+        while newAlignments.count < cols { newAlignments.append(.none) }
+        let movedAlign = newAlignments.remove(at: from)
+        newAlignments.insert(movedAlign, at: to)
+
+        var newRows = rows
+        for i in 0..<newRows.count {
+            guard from < newRows[i].count else { continue }
+            let movedCell = newRows[i].remove(at: from)
+            let insertAt = min(to, newRows[i].count)
+            newRows[i].insert(movedCell, at: insertAt)
+        }
+
+        var newWidths: [CGFloat]? = nil
+        if let widths = widths, widths.count == cols {
+            var nw = widths
+            let movedWidth = nw.remove(at: from)
+            nw.insert(movedWidth, at: to)
+            newWidths = nw
+        }
+
+        let newBlock: Block = .table(
+            header: newHeader, alignments: newAlignments,
+            rows: newRows, columnWidths: newWidths
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Pure helper: given a list of segment lengths along an axis and
+    /// a cursor coordinate within the grid, return the gap index the
+    /// cursor is closest to. Tie-breaker: smaller gap wins.
+    public static func dropGapIndex(
+        segments: [CGFloat], cursor: CGFloat
+    ) -> Int {
+        guard !segments.isEmpty else { return 0 }
+        var x: CGFloat = 0
+        var bestGap = 0
+        var bestDist: CGFloat = .greatestFiniteMagnitude
+        for i in 0...segments.count {
+            let dist = abs(cursor - x)
+            if dist < bestDist {
+                bestDist = dist
+                bestGap = i
+            }
+            if i < segments.count { x += segments[i] }
+        }
+        return bestGap
+    }
+
+    /// Translate gap + source index → destination index for remove-then-insert.
+    public static func moveDestinationIndex(
+        from src: Int, gap: Int
+    ) -> Int {
+        return gap > src ? gap - 1 : gap
+    }
+
+
     /// Clear the persisted widths override — restores content-based
     /// auto-measurement. Structural shape preserved. Same throw
     /// contract as `setTableColumnWidths`.
