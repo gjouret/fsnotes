@@ -1600,7 +1600,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 5. `returnAfterHeading_producesParagraph`
 6. `returnAtStartOfHeading_createsEmptyParagraphBefore` ✅ (`3fc565f`: `EditingOps.newLine` heading-atStart branch now inserts an empty paragraph BEFORE the heading and preserves the heading at index N+1; cursor lands at start of the preserved heading. FSMTransitions.swift drops `bugId: 6` from both H1 and H3 rows.)
 7. `returnInListItem_producesAnotherListItem` (assertion shape)
-8. `backspaceMergesParagraphs`
+8. `backspaceMergesParagraphs` ✅ (`1fc8e23`: the "bug" was the FSM row's expectation, not the code. Backspace at start of a paragraph merges with the preceding context; when a blankLine separator sits between the merged paragraphs the merge consumes the separator too (delta -2) so serialize→parse round-trip stays correct. Loosened the runner's `.mergeWithPrevious` check to accept delta -1 OR -2; dropped `bugId: 8`.)
 9. `firstFill_yieldsEmptySelection` (arguable)
 10. `tableHandleOverlay_mountsOnFill` (XCTExpectFailure)
 11. `codeBlockEditToggle_buttonVisibleOnFill` (`</>` button)
@@ -1610,14 +1610,14 @@ Convert every user-reported bug from this 2-week window into a named regression 
 15. Todo glyph wipe on list-item delete
 16. Bullet-list format only first line of multi-selection ✅ (`e033928`: `wrapSelectionInSingleList` already iterated every overlapping block; old probe was buggy because `EditorSnapshot` doesn't dump list-item text. Rewrote `test_probe_multiLineSelection_toBulletList_formatsAllLines` to assert on `Document` projection blocks; added `test_bulletList_onPartialMultiLineSelection_formatsAllOverlapped`)
 17. Pane doesn't re-expand on window resize ✅ (snapshot pre-resize widths in `windowWillStartLiveResize`; suppress UserDefaults writes during `window.inLiveResize`; restore from snapshot in `windowDidResize` / `windowDidEndLiveResize`)
-18. Triple-click paragraph + delete demotes list below
+18. Triple-click paragraph + delete demotes list below ✅ (`9a6a199`: override `NSTextView.selectionRange(forProposedRange:granularity:)` so `.selectByParagraph` granularity (triple-click) clamps off the trailing inter-block separator (`\n`). NSTextView's default selection includes the trailing newline — fine for plain text, wrong for the block model where that newline is the separator that anchors the next block. Override only fires when the proposed range exactly equals one block span plus a single trailing `\n`; multi-block selections, partial selections, and word/character granularity are untouched. New `Then.block.kind(at:)` readback in `EditorAssertions.swift` to enable cross-block shape assertions.)
 19. Numbers QuickLook thumbnail doesn't re-render on scroll ✅ (force-reload `previewItem` in `viewDidMoveToWindow` + `QuickLookThumbnailCache` fallback layer)
 20. `<kbd>` tag missing rounded rectangle ✅ (kbd-tag attribute probe migrated; bitmap probe migrated)
 21. Clicking checkbox directly doesn't toggle ✅ (just shipped: `12dc300`)
 22. QuickLook scroll propagation not implemented ✅ (consume-then-propagate at boundary; pure predicate + 14 unit tests)
 23. Double-click PDF should Open in native app ✅ (just shipped: `NSClickGestureRecognizer` on `InlinePDFView` + `InlineQuickLookView`; pure predicate `InlineAttachmentOpenPolicy.shouldOpenOnDoubleClick` + 5 unit tests)
 24. Insert Table → type doesn't land in cell ✅ (just shipped: `c08d3ee`)
-25. Tab on numbered list L1→L2 doesn't demote
+25. Tab on numbered list L1→L2 doesn't demote ✅ (`47d6510`: FSM `(.listItem(_, _), .tab) → .indent` regardless of previous-sibling presence; `EditingOps.indentItemAtPath` wraps the item under a synthetic empty parent (inheriting marker family) when no previous sibling exists. Single-fix-multiple-rows: bullet, numbered, todo all benefit. FSM table's bullet `atStart × pressTab` row updated from `.noOp` to `.indent`; bug marker dropped from numbered row.)
 26. H1 button on multi-paragraph selection makes ALL paragraphs H1, not just the first ✅ (`f6734b0`: `changeHeadingLevelViaBlockModel` now applies only to the first non-blank overlapped block. Deliberate departure from `toggleList` / `toggleQuote` / `toggleTodo` which still apply to every block. Pre-existing `test_rc3_multiParagraphSelection_setHeading_convertsAll` renamed to `..._promotesFirstOnly` with updated expected markdown; new `test_h1_onMultiLineSelection_promotesOnlyFirstLine` regression test)
 27. Image resize (shrink) draws image left-aligned instead of centered
 28. Folded header keeps the table-copy gutter icon visible even after the table is hidden by the fold ✅ (shipped: filter `.foldedContent` runs out of `visibleTablesTK2` / `visibleCodeBlocksTK2` so folded blocks neither draw nor click-handle a gutter icon; covered by `GutterOverlayTests.test_bug28_foldedHeader_hidesTableCopyIcon` + `…_hidesCodeBlockCopyIcon`)
