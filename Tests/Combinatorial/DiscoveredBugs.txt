@@ -13,9 +13,6 @@
 # Lines starting with "#" and empty lines are ignored.
 #
 
-# ----- Bug #37 — table backspace at cell start crosses block boundary
-table | atStart | pressBackspace | empty → block-count delta -1 disagrees with FSM row 'table | atStart | pressBackspace → stayInBlock'; backspace at the start-of-cell offset crosses the block boundary instead of staying inside the cell.
-
 # ----- Bug #38 — list exit-to-body mints fresh Block UUID (3 variants, single root cause)
 bulletList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; exit-to-body transition regenerates the projection slot UUID instead of mutating in place.
 numberedList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; same exit-to-body slot-id regeneration as the bullet variant.
@@ -64,14 +61,11 @@ seq | blockquote | bks.ret.bks → same root cause.
 seq | blockquote | tab.ret.bks → same root cause.
 seq | blockquote | stab.ret.bks → same root cause.
 
-# ----- Bug #45 — table double-backspace cascades (10 sequence variants, downstream of #37 + their own corruption modes)
-seq | table | bks.bks → live Document does NOT round-trip. First backspace triggers #37 (crosses cell boundary); second backspace operates on the corrupted state and worsens it.
-seq | table | bks.bks.bks → same root cause + a third backspace.
-seq | table | bks.bks.ret → same root cause + Return on the corrupted state.
-seq | table | bks.bks.tab → same root cause + Tab.
-seq | table | bks.bks.stab → same root cause + Shift-Tab.
-seq | table | bks.bks.type → same root cause + typing.
-seq | table | bks.tab.bks → backspace, then Tab, then backspace — interleaving corrupts.
-seq | table | bks.stab.bks → backspace, then Shift-Tab, then backspace.
-seq | table | tab.bks.bks → Tab, then double backspace.
-seq | table | stab.bks.bks → Shift-Tab, then double backspace.
+# ----- Bug #45 — table double-backspace cascades — REMOVED with bug #37 fix
+# Bug #45's 10 sequence variants (seq | table | bks.bks etc.) were
+# downstream of #37: the first backspace at a cell boundary corrupted
+# the table, and the cascade ran on the corrupted state. With #37
+# fixed (backspace at cell start is a no-op), each cascade reduces
+# to "no-op + tail action" which round-trips cleanly. All 10
+# entries are now passing the combinatorial sequence runner; they
+# were removed from this file in the same commit that fixed #37.

@@ -556,6 +556,66 @@ final class TableNavigationTests: XCTestCase {
         )
     }
 
+    // MARK: - Bug #37: Backspace at start of table cell stays in cell
+
+    /// Backspace from cell offset 0 must not cross the cell boundary.
+    /// Pre-fix, the deletion swallowed either the U+001F separator
+    /// (corrupting the table) or the inter-block boundary preceding
+    /// the table (merging the table away). Post-fix, the operation is
+    /// a no-op: storage unchanged, block count unchanged, cursor
+    /// stays put.
+    func test_T2_backspaceAtCellStart_staysInCell() throws {
+        guard let ctx = makeHarnessWith2x2Table() else {
+            XCTFail("Harness setup failed")
+            return
+        }
+        let harness = ctx.harness
+        defer { harness.teardown() }
+
+        // Park the cursor at offset 0 of cell (0, 0) — the top-left
+        // cell, where the bug originally manifested as "the entire
+        // table block disappears."
+        let start00 = ctx.offset(0, 0)
+        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+
+        let storageBefore = harness.editor.textStorage?.string ?? ""
+        let blocksBefore = harness.document?.blocks.count ?? 0
+
+        _ = harness.editor.handleEditViaBlockModel(
+            in: NSRange(location: start00 - 1, length: 1),
+            replacementString: ""
+        )
+
+        let storageAfter = harness.editor.textStorage?.string ?? ""
+        let blocksAfter = harness.document?.blocks.count ?? 0
+        XCTAssertEqual(
+            storageBefore, storageAfter,
+            "Backspace at cell (0,0) start must not modify storage"
+        )
+        XCTAssertEqual(
+            blocksBefore, blocksAfter,
+            "Backspace at cell (0,0) start must not change block count " +
+            "(table must not merge with predecessor)"
+        )
+
+        // And the same at an internal-cell boundary (cell (1, 0)).
+        // Pre-fix this would corrupt the U+001F encoding.
+        let start10 = ctx.offset(1, 0)
+        harness.editor.setSelectedRange(NSRange(location: start10, length: 0))
+
+        let storage2Before = harness.editor.textStorage?.string ?? ""
+        _ = harness.editor.handleEditViaBlockModel(
+            in: NSRange(location: start10 - 1, length: 1),
+            replacementString: ""
+        )
+        let storage2After = harness.editor.textStorage?.string ?? ""
+        XCTAssertEqual(
+            storage2Before, storage2After,
+            "Backspace at cell (1,0) start must not modify storage " +
+            "(no separator deletion, no cell-merge)"
+        )
+    }
+
     // MARK: - 9. Return inside a cell inserts a `<br>`  (T2-e)
     //
     // This test originally asserted Return was a no-op (T2-d slice) and

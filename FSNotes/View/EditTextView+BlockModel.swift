@@ -1059,6 +1059,25 @@ extension EditTextView {
         // Cursor position after the edit is computed here because
         // `replaceBlockFast` (the fast path under the primitive) does
         // not know where the caret should land — the caller owns that.
+        // Bug #37: Backspace at the start of a table cell must not
+        // cross the cell boundary. The harness / responder chain
+        // represents this case as `range = [cellStart - 1, 1]` with
+        // an empty replacement — the deletion straddles either the
+        // pre-table boundary (top-left cell) or an inter-cell /
+        // inter-row separator (any other cell). Before bug #37, the
+        // separator-deletion case fell through to the generic
+        // `EditingOps.delete` which corrupted the U+001F / U+001E
+        // encoding (often removing the entire table block); the
+        // pre-table boundary case merged the table away. Both modes
+        // are wrong — backspace at cell offset 0 should be a no-op,
+        // matching the corresponding cell-internal guard inside
+        // `handleTableCellEdit`.
+        if range.length == 1, replacement.isEmpty,
+           offsetIsTableCellStart(range.location + range.length) {
+            bmLog("🛑 handleEditViaBlockModel: Backspace at table cell start — no-op (bug #37)")
+            return true
+        }
+
         if storageOffsetIsInTableElement(range.location) {
             if handleTableCellEdit(range: range, replacement: replacement) {
                 return true

@@ -150,6 +150,51 @@ extension EditTextView {
         return fragment.textElement is TableElement
     }
 
+    /// `true` if `offset` is exactly the start of some `(row, col)` cell
+    /// in a TableElement. Used by the backspace-at-cell-start gate in
+    /// `handleEditViaBlockModel` (bug #37): the deletion range
+    /// `[offset - 1, 1]` is a no-op when its END falls on a cell start,
+    /// because that means the user pressed Backspace from cell offset 0
+    /// and the deletion would otherwise eat either an inter-cell
+    /// separator (corrupting the encoding) or the inter-block boundary
+    /// before the table (merging the table away).
+    func offsetIsTableCellStart(_ offset: Int) -> Bool {
+        guard let tlm = self.textLayoutManager,
+              let contentStorage = tlm.textContentManager as? NSTextContentStorage
+        else { return false }
+        guard offset >= 0, offset <= (textStorage?.length ?? 0) else {
+            return false
+        }
+        let docStart = contentStorage.documentRange.location
+        guard let loc = contentStorage.location(
+            docStart, offsetBy: offset
+        ) else { return false }
+        guard let fragment = tlm.textLayoutFragment(for: loc),
+              let element = fragment.textElement as? TableElement,
+              let elementRange = element.elementRange
+        else { return false }
+        let elementStart = contentStorage.offset(
+            from: docStart, to: elementRange.location
+        )
+        let localOffset = offset - elementStart
+        // Walk every (row, col) and check if any cell starts here.
+        // Tables are small (header + body rows × cols), so an O(rows×cols)
+        // walk per backspace is negligible.
+        guard case .table(let header, _, let rows, _) = element.block else {
+            return false
+        }
+        let cols = header.count
+        let totalRows = 1 + rows.count
+        for r in 0..<totalRows {
+            for c in 0..<cols {
+                if element.offset(forCellAt: (row: r, col: c)) == localOffset {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     // MARK: - doCommand(by:) chain
 
     /// NSResponder entry point for keyboard commands. Asks the
