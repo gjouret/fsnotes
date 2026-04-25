@@ -22,25 +22,95 @@ struct ChatMessage {
 protocol AIProvider {
     func sendMessage(
         messages: [ChatMessage],
-        noteContent: String,
+        context: AIPromptContext,
         onToken: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, Error>) -> Void
     )
 }
 
+// MARK: - Prompt Context
+
+/// Value type passed to every provider so the shared system prompt can
+/// describe the user's current FSNotes++ state. The fields mirror the
+/// spec template in `docs/AI.md` (lines 528-566). All optional fields
+/// fall back to sensible defaults when no note is open.
+public struct AIPromptContext {
+    public let noteTitle: String?
+    public let noteContent: String
+    public let noteFolder: String?
+    public let projectName: String?
+    public let allTags: [String]
+    public let editorMode: EditorMode
+    public let isTextBundle: Bool
+
+    public enum EditorMode: String {
+        case wysiwyg = "WYSIWYG (Document model)"
+        case source = "Source mode"
+        case none = "No note open"
+    }
+
+    public init(noteTitle: String? = nil,
+                noteContent: String = "",
+                noteFolder: String? = nil,
+                projectName: String? = nil,
+                allTags: [String] = [],
+                editorMode: EditorMode = .none,
+                isTextBundle: Bool = false) {
+        self.noteTitle = noteTitle
+        self.noteContent = noteContent
+        self.noteFolder = noteFolder
+        self.projectName = projectName
+        self.allTags = allTags
+        self.editorMode = editorMode
+        self.isTextBundle = isTextBundle
+    }
+}
+
 // MARK: - Shared System Prompt
 
-private func aiSystemPrompt(noteContent: String) -> String {
-    return """
-    You are a helpful writing assistant integrated into a note-taking app (FSNotes). \
-    The user is editing a markdown note. You can help them review, edit, summarize, \
-    translate, or transform the note content. When suggesting edits, provide the updated \
-    text clearly. Be concise and helpful.
+/// Renders the full system prompt mandated by `docs/AI.md` (lines
+/// 528-566). The per-tool list is read from `MCPServer.shared` so when
+/// Phase 5 adds or removes tools the prompt updates automatically.
+internal func aiSystemPrompt(_ ctx: AIPromptContext,
+                             mcpServer: MCPServer = .shared) -> String {
+    let title = ctx.noteTitle?.isEmpty == false ? ctx.noteTitle! : "(no note open)"
+    let folder = ctx.noteFolder?.isEmpty == false ? ctx.noteFolder! : "(none)"
+    let project = ctx.projectName?.isEmpty == false ? ctx.projectName! : "(none)"
+    let tags = ctx.allTags.isEmpty ? "(none)" : ctx.allTags.joined(separator: ", ")
+    let storage = ctx.isTextBundle ? "TextBundle" : "Plain markdown"
 
-    Current note content:
-    ---
-    \(noteContent)
-    ---
+    let tools = mcpServer.registeredTools.sorted { $0.name < $1.name }
+    let toolLines: String
+    if tools.isEmpty {
+        toolLines = "- (no tools currently registered)"
+    } else {
+        toolLines = tools
+            .map { "- \($0.name): \($0.description)" }
+            .joined(separator: "\n")
+    }
+
+    return """
+    You are an AI assistant integrated into FSNotes++, a markdown note-taking app for macOS.
+
+    Current context:
+    - Active note: \(title)
+    - Folder: \(folder)
+    - Note content: \(ctx.noteContent)
+    - Project: \(project)
+    - Available tags: \(tags)
+    - Editor mode: \(ctx.editorMode.rawValue)
+    - Storage format: \(storage)
+
+    You have access to tools for interacting with notes. Use them when appropriate:
+    \(toolLines)
+
+    Guidelines:
+    - Be concise and helpful
+    - When suggesting edits, explain what you'll change before doing so
+    - Use write_note for large rewrites, edit_note for small changes
+    - Always confirm destructive actions (delete_note) with the user
+    - Respect the user's existing writing style and formatting
+    - In WYSIWYG mode, never suggest raw text or attributed string manipulation — always use the provided tools
     """
 }
 
@@ -57,13 +127,13 @@ class AnthropicProvider: AIProvider {
         self.endpoint = endpoint
     }
 
-    func sendMessage(messages: [ChatMessage], noteContent: String, onToken: @escaping (String) -> Void, onComplete: @escaping (Result<String, Error>) -> Void) {
+    func sendMessage(messages: [ChatMessage], context: AIPromptContext, onToken: @escaping (String) -> Void, onComplete: @escaping (Result<String, Error>) -> Void) {
         guard let url = URL(string: "\(endpoint)/v1/messages") else {
             onComplete(.failure(AIError.invalidURL))
             return
         }
 
-        let systemPrompt = aiSystemPrompt(noteContent: noteContent)
+        let systemPrompt = aiSystemPrompt(context)
 
         // Build messages array for Anthropic API
         var apiMessages: [[String: String]] = []
@@ -110,7 +180,7 @@ class OpenAIProvider: AIProvider {
         self.endpoint = endpoint
     }
 
-    func sendMessage(messages: [ChatMessage], noteContent: String, onToken: @escaping (String) -> Void, onComplete: @escaping (Result<String, Error>) -> Void) {
+    func sendMessage(messages: [ChatMessage], context: AIPromptContext, onToken: @escaping (String) -> Void, onComplete: @escaping (Result<String, Error>) -> Void) {
         guard let url = URL(string: "\(endpoint)/v1/chat/completions") else {
             onComplete(.failure(AIError.invalidURL))
             return
@@ -118,7 +188,7 @@ class OpenAIProvider: AIProvider {
 
         let systemMessage: [String: String] = [
             "role": "system",
-            "content": aiSystemPrompt(noteContent: noteContent)
+            "content": aiSystemPrompt(context)
         ]
 
         var apiMessages: [[String: String]] = [systemMessage]

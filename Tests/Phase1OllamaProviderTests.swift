@@ -27,7 +27,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
         let messages: [ChatMessage] = [
             ChatMessage(role: .user, content: "Hello")
         ]
-        let request = try provider.makeChatRequest(messages: messages, noteContent: "My note")
+        let request = try provider.makeChatRequest(messages: messages, context: AIPromptContext(noteContent: "My note"))
 
         XCTAssertEqual(request.url?.absoluteString, "http://localhost:11434/api/chat")
         XCTAssertEqual(request.httpMethod, "POST")
@@ -75,7 +75,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
             ChatMessage(role: .system, content: "ignored"),
             ChatMessage(role: .user, content: "Hi")
         ]
-        let request = try provider.makeChatRequest(messages: messages, noteContent: "")
+        let request = try provider.makeChatRequest(messages: messages, context: AIPromptContext())
         let body = try XCTUnwrap(request.httpBody)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         let msgs = try XCTUnwrap(json["messages"] as? [[String: Any]])
@@ -90,7 +90,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
         let provider = OllamaProvider(host: "", model: "llama3.2")
         XCTAssertThrowsError(try provider.makeChatRequest(
             messages: [ChatMessage(role: .user, content: "x")],
-            noteContent: ""
+            context: AIPromptContext()
         ))
     }
 
@@ -98,7 +98,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
         let provider = OllamaProvider(host: "https://ollama.example.com:8443", model: "mistral:7b")
         let request = try provider.makeChatRequest(
             messages: [ChatMessage(role: .user, content: "x")],
-            noteContent: ""
+            context: AIPromptContext()
         )
         XCTAssertEqual(request.url?.absoluteString, "https://ollama.example.com:8443/api/chat")
     }

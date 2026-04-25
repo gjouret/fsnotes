@@ -211,8 +211,8 @@ class AIChatPanelView: NSView {
         addMessageBubble(text: text, isUser: true)
         messages.append(ChatMessage(role: .user, content: text))
 
-        // Get note content
-        let noteContent = editorViewController?.vcEditor?.note?.content.string ?? ""
+        // Build the rich prompt context from the open note (if any).
+        let context = makePromptContext()
 
         // Get AI provider
         guard let provider = AIServiceFactory.createProvider() else {
@@ -227,7 +227,7 @@ class AIChatPanelView: NSView {
         let streamingLabel = addMessageBubble(text: "", isUser: false)
         currentStreamingLabel = streamingLabel
 
-        provider.sendMessage(messages: messages, noteContent: noteContent, onToken: { [weak self] token in
+        provider.sendMessage(messages: messages, context: context, onToken: { [weak self] token in
             guard let label = self?.currentStreamingLabel else { return }
             label.stringValue += token
             self?.scrollToBottom()
@@ -248,6 +248,56 @@ class AIChatPanelView: NSView {
                 self.addMessageBubble(text: "Error: \(error.localizedDescription)", isUser: false, isError: true)
             }
         })
+    }
+
+    /// Resolve the rich prompt context from the open note. When no note
+    /// is open, returns a default-initialised `AIPromptContext` whose
+    /// `editorMode` is `.none` so the system prompt still renders cleanly.
+    private func makePromptContext() -> AIPromptContext {
+        guard let note = editorViewController?.vcEditor?.note else {
+            return AIPromptContext(
+                allTags: Storage.shared().tags
+            )
+        }
+
+        // Editor mode: the global `hideSyntax` flag is the same gate
+        // AppBridgeImpl.editorMode(for:) consults; mirror that here so
+        // the prompt is consistent across providers and tool-side reads.
+        let editorMode: AIPromptContext.EditorMode =
+            NotesTextProcessor.hideSyntax ? .wysiwyg : .source
+
+        // Folder: project's filesystem path relative to the storage
+        // root. Falls back to the project label when no root is
+        // configured (rare; only happens before bootstrap).
+        let folder: String?
+        if let root = UserDefaultsManagement.storageUrl?.standardizedFileURL.path {
+            let projectPath = note.project.url.standardizedFileURL.path
+            if projectPath.hasPrefix(root) {
+                let trimmed = String(projectPath.dropFirst(root.count))
+                folder = trimmed.hasPrefix("/") ? String(trimmed.dropFirst()) : trimmed
+            } else {
+                folder = note.project.label
+            }
+        } else {
+            folder = note.project.label
+        }
+
+        // Project name: walk up to the top-level project (parent == nil)
+        // so the LLM sees the storage container, not a nested folder.
+        var topProject = note.project
+        while let parent = topProject.parent {
+            topProject = parent
+        }
+
+        return AIPromptContext(
+            noteTitle: note.getTitle(),
+            noteContent: note.content.string,
+            noteFolder: folder,
+            projectName: topProject.label,
+            allTags: Storage.shared().tags,
+            editorMode: editorMode,
+            isTextBundle: note.isTextBundle()
+        )
     }
 
     // MARK: - Message Bubbles

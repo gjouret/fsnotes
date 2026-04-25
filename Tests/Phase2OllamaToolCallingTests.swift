@@ -184,7 +184,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
                                       mcpServer: server)
         let request = try provider.makeChatRequest(
             messages: [ChatMessage(role: .user, content: "hi")],
-            noteContent: ""
+            context: AIPromptContext()
         )
         let body = try XCTUnwrap(request.httpBody)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -315,7 +315,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
 
         provider.sendMessage(
             messages: [ChatMessage(role: .user, content: "hi")],
-            noteContent: "",
+            context: AIPromptContext(),
             onToken: { tokens.append($0) },
             onComplete: { result in
                 completionCount += 1
@@ -350,7 +350,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         var captured: String?
         provider.sendMessage(
             messages: [ChatMessage(role: .user, content: "do the thing")],
-            noteContent: "",
+            context: AIPromptContext(),
             onToken: { _ in },
             onComplete: { result in
                 if case .success(let s) = result { captured = s }
@@ -403,7 +403,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         let exp = expectation(description: "complete")
         provider.sendMessage(
             messages: [ChatMessage(role: .user, content: "go")],
-            noteContent: "",
+            context: AIPromptContext(),
             onToken: { _ in },
             onComplete: { _ in exp.fulfill() }
         )
@@ -436,7 +436,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         var captured: Error?
         provider.sendMessage(
             messages: [ChatMessage(role: .user, content: "loop")],
-            noteContent: "",
+            context: AIPromptContext(),
             onToken: { _ in },
             onComplete: { result in
                 if case .failure(let err) = result { captured = err }
@@ -475,7 +475,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         var captured: String?
         provider.sendMessage(
             messages: [ChatMessage(role: .user, content: "go")],
-            noteContent: "",
+            context: AIPromptContext(),
             onToken: { _ in },
             onComplete: { result in
                 if case .success(let s) = result { captured = s }
@@ -521,7 +521,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         var captured: String?
         provider.sendMessage(
             messages: [ChatMessage(role: .user, content: "go")],
-            noteContent: "",
+            context: AIPromptContext(),
             onToken: { _ in },
             onComplete: { result in
                 if case .success(let s) = result { captured = s }

@@ -69,7 +69,7 @@ class OllamaProvider: AIProvider {
     /// represent. When `apiMessages` is nil, the standard system+user history
     /// is built from `messages`.
     func makeChatRequest(messages: [ChatMessage],
-                         noteContent: String,
+                         context: AIPromptContext,
                          apiMessages: [[String: Any]]? = nil) throws -> URLRequest {
         guard let url = OllamaClient.chatURL(host: host) else {
             throw OllamaClientError.invalidHost(host)
@@ -79,8 +79,9 @@ class OllamaProvider: AIProvider {
         if let override = apiMessages {
             outgoingMessages = override
         } else {
-            // System prompt mirrors the other providers — embed the active note content.
-            let systemContent = ollamaSystemPrompt(noteContent: noteContent)
+            // System prompt is the same shared text every provider sends.
+            // See AIService.swift -> aiSystemPrompt.
+            let systemContent = aiSystemPrompt(context, mcpServer: mcpServer)
             var msgs: [[String: Any]] = [
                 ["role": "system", "content": systemContent]
             ]
@@ -115,12 +116,12 @@ class OllamaProvider: AIProvider {
     }
 
     func sendMessage(messages: [ChatMessage],
-                     noteContent: String,
+                     context: AIPromptContext,
                      onToken: @escaping (String) -> Void,
                      onComplete: @escaping (Result<String, Error>) -> Void) {
         // Build the seed conversation. The continuation loop mutates this
         // dictionary array as tool_calls and tool results come back.
-        let systemContent = ollamaSystemPrompt(noteContent: noteContent)
+        let systemContent = aiSystemPrompt(context, mcpServer: mcpServer)
         var conversation: [[String: Any]] = [
             ["role": "system", "content": systemContent]
         ]
@@ -145,8 +146,11 @@ class OllamaProvider: AIProvider {
                               onComplete: @escaping (Result<String, Error>) -> Void) {
         let request: URLRequest
         do {
+            // The conversation override carries the full system+user+tool
+            // history; the empty messages/context here is intentional —
+            // makeChatRequest only consults them when `apiMessages` is nil.
             request = try makeChatRequest(messages: [],
-                                          noteContent: "",
+                                          context: AIPromptContext(),
                                           apiMessages: conversation)
         } catch {
             DispatchQueue.main.async { onComplete(.failure(error)) }
@@ -254,24 +258,6 @@ class OllamaProvider: AIProvider {
                               onComplete: onComplete)
         }
     }
-}
-
-// MARK: - System prompt
-
-/// System prompt for Ollama. Same shape as the other providers: brief instructions +
-/// the live note content. Phase 2 will extend this with MCP tool descriptions.
-private func ollamaSystemPrompt(noteContent: String) -> String {
-    return """
-    You are a helpful writing assistant integrated into a note-taking app (FSNotes). \
-    The user is editing a markdown note. You can help them review, edit, summarize, \
-    translate, or transform the note content. When suggesting edits, provide the updated \
-    text clearly. Be concise and helpful.
-
-    Current note content:
-    ---
-    \(noteContent)
-    ---
-    """
 }
 
 // MARK: - Stream outcome types
