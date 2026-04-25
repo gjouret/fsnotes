@@ -941,6 +941,29 @@ The proper retirement path requires a new sub-phase (call it Phase 6 Tier B′ o
 
 Until that sub-phase lands, `TextStorageProcessor.blocks` stays. Agent correctly stopped at the Category C boundary rather than ship a broken retirement.
 
+**Tier C — delete the legacy `NotesTextProcessor.highlight*` markdown styler — PLANNED.** Phase 4.4 (`6b875ab`) flipped production source-mode rendering to `SourceRenderer` and retired the 6 production call sites of `NotesTextProcessor.highlight*`. The function bodies were retained as the A/B-comparison witness for `Tests/RendererComparisonTests.swift` and one test in `Tests/SystemIntegrityTests.swift`. The rule-7 `legacyMarkdownHighlight` grep gate prevents new production callers but does not delete the functions themselves. As of 2026-04-25 the A/B comparator's value has decayed: `SourceRenderer` has been the canonical source-mode path for ~2 weeks across all production code paths with zero regressions traced to it.
+
+Retirement scope:
+
+1. Delete `public static func highlight(attributedString:)` and `public static func highlightMarkdown(attributedString:paragraphRange:codeBlockRanges:)` from `FSNotesCore/NotesTextProcessor.swift` — ~350 LoC of bodies plus their dependent helpers (regex compilation, syntax-range walkers, font-application loops). Reading the file (1,618 LoC total) tells you which other private statics are exclusively in service of these two — those go too.
+2. Delete `Tests/RendererComparisonTests.swift` entirely (the entire purpose was the A/B comparator; with one side gone the harness is meaningless).
+3. Delete or rewrite the one `SystemIntegrityTests.swift:845` test that calls `highlightMarkdown` directly. If the test asserts something specific about source-mode rendering that's covered elsewhere (likely in `Phase44SourceModeTests`), drop it; otherwise port the assertion to use `SourceRenderer`.
+4. Drop the rule-7 `legacyMarkdownHighlight` pattern from `scripts/rule7-gate.sh` — it's protecting an empty house.
+5. Remove dead comment references from `FSNotes/ViewController+Git.swift:108`, `FSNotesCore/TextStorageProcessor.swift:668`, `FSNotes/View/EditTextView+Appearance.swift:206`, `FSNotesCore/Rendering/InlineTagRegistry.swift:68`, `Tests/Phase44SourceModeTests.swift:6,58` (these mention the legacy function names in explanatory comments — replace with neutral phrasing).
+
+Risk: `SourceRenderer` regressions no longer have the legacy renderer as a ground-truth comparator. Mitigation: the round-trip parity invariant in Slice E's combinatorial probe (`HTML(parse(serialize(after))) == HTML(after)`) catches any source-mode → block-model → source-mode drift; `Phase44SourceModeTests` covers source-mode behavior directly.
+
+Estimate: ~1 day. Pure deletion + 1-2 test rewrites. No new APIs, no new feature work.
+
+Done when:
+- `NotesTextProcessor.swift` is reduced by ~350 LoC; `wc -l` reports ~1,250 LoC.
+- `Tests/RendererComparisonTests.swift` no longer exists.
+- `SystemIntegrityTests.swift` no longer references `highlightMarkdown`.
+- `rule7-gate.sh` no longer carries the `legacyMarkdownHighlight` pattern.
+- `rg 'NotesTextProcessor\.highlight' FSNotes/ FSNotesCore/ Tests/ -g '*.swift'` returns zero hits.
+- Full test suite passes (rule-7 + targeted suites + non-hanging full-suite slice).
+- Build warning delta: zero new warnings.
+
 ### Rollback
 Each deletion atomic; easy one-off reverts.
 
