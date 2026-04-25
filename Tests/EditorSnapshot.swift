@@ -254,6 +254,7 @@ private struct EditorSnapshotBuilder {
     /// test target).
     private static let overlayClassNames: Set<String> = [
         "TableHandleView",
+        "TableHandleChip",
         "CodeBlockEditToggleView",
     ]
 

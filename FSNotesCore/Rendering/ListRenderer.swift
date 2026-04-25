@@ -719,6 +719,16 @@ private final class BulletGlyphView: NSView {
         fatalError("init(coder:) not supported")
     }
 
+    /// Same hit-through pattern as `CheckboxGlyphView`: clicks on
+    /// the bullet glyph belong to the editor (cursor placement /
+    /// item-level interaction), not to the glyph view. Without
+    /// this, NSView's default `hitTest` claims the click for the
+    /// glyph view (which has no handlers) and the editor never
+    /// sees it.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return nil
+    }
+
     private enum BulletShape {
         case filledCircle, openCircle, filledSquare, openSquare
     }
@@ -843,6 +853,21 @@ private final class CheckboxGlyphView: NSView {
     }
 
     override var isFlipped: Bool { return false }
+
+    /// Pass clicks through to the parent text view. Without this,
+    /// `NSView`'s default `hitTest(_:)` returns `self` for any
+    /// point inside the glyph's bounds — which means clicking
+    /// directly on the visible checkbox is intercepted by this
+    /// view (which has no `mouseDown` handler), and the click
+    /// never reaches `EditTextView.mouseDown` → `handleTodo` →
+    /// `toggleTodoCheckboxViaBlockModel`. Users had to click
+    /// JUST OUTSIDE the checkbox glyph to toggle it.
+    /// Returning `nil` from `hitTest` makes the glyph click-
+    /// through; the editor's `mouseDown` then sees the click at
+    /// the attachment-character index and the toggle path fires.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return nil
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let tinted = cachedImage else { return }
