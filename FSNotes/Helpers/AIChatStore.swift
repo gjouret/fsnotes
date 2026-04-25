@@ -171,15 +171,6 @@ final class AIChatStore {
     }
     private var subscribers: [Subscriber] = []
 
-    // TODO Phase 4 follow-up: EditorStore wiring. The spec
-    // (docs/AI.md, lines 130-131) reserves an `editorStore`
-    // injection point so that tool-call effects requiring editor
-    // mutation can dispatch through the unidirectional editor flow
-    // rather than calling `EditingOps` directly. Wiring is gated on
-    // the editor side first being addressable from a non-view
-    // context (today the only call sites hold an `EditTextView`).
-    var editorStore: EditorStore?
-
     init(initialState: AIChatState = AIChatState()) {
         self.state = initialState
     }

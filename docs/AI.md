@@ -18,7 +18,7 @@ This document describes the architecture and implementation plan for integrating
 
 Following FSNotes++ architecture patterns:
 
-1. **Unidirectional Data Flow**: AI chat state managed via `AIChatStore` with actions/effects. Editor-mutating effects dispatch through the existing `EditorStore`/`EffectHandler` infrastructure — do not call `EditingOps` directly from UI code.
+1. **Unidirectional Data Flow**: AI chat state managed via `AIChatStore` with actions/effects. Editor-mutating effects route through the canonical write path: pure primitives in `EditingOps` → `applyEditResultWithUndo` → `DocumentEditApplier.applyDocumentEdit` (single write path, `StorageWriteGuard`-gated) → Phase 5f's `UndoJournal` (per-editor coalescing FSM, single `registerUndo` site). UI code never calls `EditingOps` directly; it goes through `AppBridge.applyStructuredEdit` / `applyFormatting` / `appendMarkdown` (which the MCP tools use) so the storage invariants are preserved. An earlier sketch of this principle defined an `EditorStore` + `EffectHandler` Redux-style scaffold, but the Phase 5a/5f architecture subsumed it; the scaffold was deleted as dead code.
 2. **Protocol-Oriented Design**: `AIProvider` protocol allows pluggable LLM backends; `MCPTool` protocol allows pluggable tools.
 3. **MCP as First-Class Interface**: All AI interactions go through MCP tools.
 4. **No Direct Storage Access in WYSIWYG**: AI manipulates notes through the Document model (`EditingOps`) or `EditorStore.dispatch`, never by writing `note.content` or `textStorage` directly when `blockModelActive == true`. For closed notes, direct filesystem access is preferred.
@@ -126,9 +126,14 @@ public final class AIChatStore {
     public private(set) var state: AIChatState
     public func dispatch(_ action: AIChatAction)
     public func subscribe(_ callback: @escaping (AIChatState) -> Void)
-    
-    // When editor mutation is needed, dispatch to EditorStore instead of calling EditingOps directly
-    public var editorStore: EditorStore?
+
+    // Editor mutation is NOT dispatched through this store. Tool
+    // execution (`MCPServer.handleToolCalls`) invokes `AppBridge`,
+    // which routes WYSIWYG writes through the canonical
+    // `EditingOps` → `applyEditResultWithUndo` → `applyDocumentEdit`
+    // path (single write path, `StorageWriteGuard`-gated) and Phase
+    // 5f's `UndoJournal`. The chat store only reflects the chat
+    // conversation state.
 }
 ```
 

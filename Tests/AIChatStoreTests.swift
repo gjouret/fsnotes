@@ -129,11 +129,12 @@ final class AIChatStoreTests: XCTestCase {
         }
     }
 
-    func test_clearChat_resetsConversationButPreservesEditorStoreOnTheStore() {
-        // EditorStore is on the store, not in state; clearChat
-        // shouldn't touch it. Verify by constructing a store, wiring
-        // an EditorStore, then asserting that's still attached
-        // after .clearChat fires.
+    func test_clearChat_resetsConversationFully() {
+        // `clearChat` resets every conversation field but does not
+        // touch any editor-side state. The actual editor flow lives
+        // in `EditingOps` → `applyEditResultWithUndo` →
+        // `applyDocumentEdit` (single write path) and Phase 5f's
+        // `UndoJournal`; the chat store doesn't hold a reference.
         let store = AIChatStore(initialState: AIChatState(
             messages: [ChatMessage(role: .user, content: "Hi"),
                        ChatMessage(role: .assistant, content: "Hello")],
@@ -142,9 +143,6 @@ final class AIChatStoreTests: XCTestCase {
             pendingToolCalls: [ToolCall(id: "c1", name: "a", arguments: [:])],
             streamingResponse: "wip"))
 
-        let initialDoc = Document(blocks: [])
-        store.editorStore = EditorStore(initialState: EditorState(document: initialDoc))
-
         store.dispatch(.clearChat)
 
         XCTAssertEqual(store.state.messages.count, 0)
@@ -152,7 +150,6 @@ final class AIChatStoreTests: XCTestCase {
         XCTAssertNil(store.state.error)
         XCTAssertEqual(store.state.pendingToolCalls.count, 0)
         XCTAssertEqual(store.state.streamingResponse, "")
-        XCTAssertNotNil(store.editorStore, "clearChat must not nil out the EditorStore slot")
     }
 
     // MARK: - Subscribe / dispatch / unsubscribe
