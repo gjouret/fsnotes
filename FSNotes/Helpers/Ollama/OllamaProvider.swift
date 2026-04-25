@@ -16,35 +16,56 @@ import Foundation
 class OllamaProvider: AIProvider {
     private let host: String
     private let model: String
+    /// MCP server queried for the `tools` schema list at request time
+    /// and (Phase 2 follow-up slice 3) for tool dispatch when the
+    /// model produces `tool_calls`. Defaults to `MCPServer.shared`;
+    /// tests inject an isolated server with stub tools.
+    let mcpServer: MCPServer
 
-    init(host: String, model: String) {
+    init(host: String, model: String, mcpServer: MCPServer = .shared) {
         self.host = host
         self.model = model
+        self.mcpServer = mcpServer
     }
 
     /// Build the URLRequest that `sendMessage` will fire. Exposed for unit tests
     /// so they can capture and assert the JSON body without a live server.
-    func makeChatRequest(messages: [ChatMessage], noteContent: String) throws -> URLRequest {
+    ///
+    /// `apiMessages` lets the continuation loop (slice 3) re-issue chat with
+    /// the conversation extended by assistant `tool_calls` and `role: "tool"`
+    /// results — those carry shapes the simple `[ChatMessage]` model can't
+    /// represent. When `apiMessages` is nil, the standard system+user history
+    /// is built from `messages`.
+    func makeChatRequest(messages: [ChatMessage],
+                         noteContent: String,
+                         apiMessages: [[String: Any]]? = nil) throws -> URLRequest {
         guard let url = OllamaClient.chatURL(host: host) else {
             throw OllamaClientError.invalidHost(host)
         }
 
-        // System prompt mirrors the other providers — embed the active note content.
-        let systemContent = ollamaSystemPrompt(noteContent: noteContent)
-        var apiMessages: [[String: String]] = [
-            ["role": "system", "content": systemContent]
-        ]
-        for msg in messages where msg.role != .system {
-            apiMessages.append(["role": msg.role.rawValue, "content": msg.content])
+        let outgoingMessages: [[String: Any]]
+        if let override = apiMessages {
+            outgoingMessages = override
+        } else {
+            // System prompt mirrors the other providers — embed the active note content.
+            let systemContent = ollamaSystemPrompt(noteContent: noteContent)
+            var msgs: [[String: Any]] = [
+                ["role": "system", "content": systemContent]
+            ]
+            for msg in messages where msg.role != .system {
+                msgs.append(["role": msg.role.rawValue, "content": msg.content])
+            }
+            outgoingMessages = msgs
         }
 
-        // Phase 1 ships streaming-only chat. The `tools` slot is present-but-empty
-        // so Phase 2 (MCP integration) only needs to populate it.
+        // Phase 2 follow-up slice 1: the `tools` slot is now populated from
+        // MCPServer.shared.toolSchemasForLLM(). When no tools are registered
+        // the slot is an empty array, preserving the Phase 1 contract.
         let body: [String: Any] = [
             "model": model,
             "stream": true,
-            "messages": apiMessages,
-            "tools": [Any]()
+            "messages": outgoingMessages,
+            "tools": mcpServer.toolSchemasForLLM()
         ]
 
         let jsonData: Data
