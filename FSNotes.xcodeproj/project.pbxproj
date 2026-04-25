@@ -776,6 +776,7 @@
 		MCPT13000000000000000000B1 /* AppendToNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT13000000000000000000F1 /* AppendToNoteTool.swift */; };
 		MCPT14000000000000000000B1 /* EditNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT14000000000000000000F1 /* EditNoteTool.swift */; };
 		MCPT15000000000000000000B1 /* ApplyFormattingTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT15000000000000000000F1 /* ApplyFormattingTool.swift */; };
+		MCPT16000000000000000000B1 /* ExportPDFTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT16000000000000000000F1 /* ExportPDFTool.swift */; };
 		OLLAMA00000000000000000B1 /* OllamaModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F1 /* OllamaModel.swift */; };
 		OLLAMA00000000000000000B2 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F2 /* OllamaClient.swift */; };
 		OLLAMA00000000000000000B3 /* Phase1OllamaClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */; };
@@ -1654,6 +1655,7 @@
 		MCPT13000000000000000000F1 /* AppendToNoteTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppendToNoteTool.swift; sourceTree = "<group>"; };
 		MCPT14000000000000000000F1 /* EditNoteTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditNoteTool.swift; sourceTree = "<group>"; };
 		MCPT15000000000000000000F1 /* ApplyFormattingTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplyFormattingTool.swift; sourceTree = "<group>"; };
+		MCPT16000000000000000000F1 /* ExportPDFTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPDFTool.swift; sourceTree = "<group>"; };
 		D77CC040216A608500582B97 /* EditorScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScrollView.swift; sourceTree = "<group>"; };
 		D77E05282463124300AD7772 /* StorageType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageType.swift; sourceTree = "<group>"; };
 		D77F41B22A0D48F500E2B7A2 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
@@ -2608,6 +2610,7 @@
 				MCPT13000000000000000000F1 /* AppendToNoteTool.swift */,
 				MCPT14000000000000000000F1 /* EditNoteTool.swift */,
 				MCPT15000000000000000000F1 /* ApplyFormattingTool.swift */,
+				MCPT16000000000000000000F1 /* ExportPDFTool.swift */,
 			);
 			path = Tools;
 			sourceTree = "<group>";
@@ -4025,6 +4028,7 @@
 				MCPT13000000000000000000B1 /* AppendToNoteTool.swift in Sources */,
 				MCPT14000000000000000000B1 /* EditNoteTool.swift in Sources */,
 				MCPT15000000000000000000B1 /* ApplyFormattingTool.swift in Sources */,
+				MCPT16000000000000000000B1 /* ExportPDFTool.swift in Sources */,
 				OLLAMA00000000000000000B1 /* OllamaModel.swift in Sources */,
 				OLLAMA00000000000000000B2 /* OllamaClient.swift in Sources */,
 				OLLAMA00000000000000000B4 /* OllamaProvider.swift in Sources */,
