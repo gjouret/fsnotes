@@ -98,6 +98,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         AppDelegate.mainWindowController = mainWC
         mainWC.window?.makeKeyAndOrderFront(nil)
+
+        // Wire the MCP layer to the live editor. The bridge holds a
+        // closure that re-resolves `ViewController.shared()` on every
+        // call, so it survives main-window swaps without pinning a
+        // stale instance. Phase 3 follow-up: replaces the
+        // `NoOpAppBridge` default with the real implementation so
+        // EditNoteTool / AppendToNoteTool / ApplyFormattingTool /
+        // ExportPDFTool can route through the block-model pipeline.
+        MCPServer.shared.appBridge = AppBridgeImpl()
     }
         
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
