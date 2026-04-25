@@ -1526,6 +1526,69 @@ Steps map to existing `EditorHarness` operations (`type`, `pressReturn`, `pressD
   }
   ```
 
+### Slice A.5 — FSM transition table (the spec markdownlint doesn't have)
+
+**Why this slice exists.** A subagent assessed whether markdownlint, remark-lint, mdast, prosemirror-markdown, or tree-sitter-markdown ships a machine-readable spec we could pull in. **None do.** All five tools target the wrong problem domain (static-text style validation, not interactive editing semantics). Bug-coverage map: 0 of 25 Slice B bugs caught directly by markdownlint rules; ~3 caught indirectly via post-save linting.
+
+What FSNotes++ actually needs is a tabulated specification of *editor-side* state transitions: "when the cursor is at position X inside block kind Y and the user presses key Z, the document should transition to state W." That spec exists nowhere in the markdown ecosystem; the closest published artifact is `ListEditingFSM.transition`, which is just code. Slice A.5 lifts the implicit FSM into explicit table data so:
+
+1. The spec is human-readable and reviewable (one row per transition; new contributors can audit the editor's behaviour without tracing Swift control flow).
+2. Every row is automatically a parameterised test fixture (the harness reads the table, builds the Given scenario, sends the action, asserts the expected outcome).
+3. Slice E's combinatorial generator has something to compare against — without this table, "the editor produced X" can't be checked against "the editor SHOULD have produced Y." This is the dependency the subagent flagged.
+
+### Scope
+
+A single source-of-truth table at `Tests/Fixtures/FSMTransitions.swift` (or JSON if we want it diff-friendly across non-Swift readers; Swift literal is the lower-friction path). One row per `(blockKind, cursorPosition, action) → expectedTransition` tuple. Initial axes:
+
+- **Block kinds**: `paragraph`, `heading(1...6)`, `list(bullet)`, `list(numbered)`, `list(todo)`, `blockquote`, `codeBlock`, `table`, `horizontalRule`, `mermaid`, `mathDisplay` (≈12)
+- **Cursor positions**: `atStart`, `midContent`, `atEnd`, `onEmptyBlock` (4)
+- **Actions**: `pressReturn`, `pressBackspace`, `pressForwardDelete`, `pressTab`, `pressShiftTab` (5)
+- **Selection states**: `empty`, `intraBlock`, `crossBlock`, `fullDocument` — encoded as a separate axis when the action's behaviour differs by selection (most don't)
+
+Total = ~240 transitions before pruning duplicates and impossible combinations. Realistic post-prune count: 80-150 unique rows.
+
+Each row carries:
+
+```swift
+FSMTransition(
+    blockKind: .heading(level: 1),
+    cursorPosition: .atEnd,
+    action: .pressReturn,
+    expected: .splitBlock(into: .paragraph),
+    cursorAfter: .atStartOfNewBlock,
+    note: "Return at end of heading creates a paragraph below; cursor lands at start of new paragraph."
+)
+```
+
+The `expected` enum cases are coarse-grained (`stayInBlock`, `splitBlock(into:)`, `mergeWithPrevious`, `exitToBlock(_:)`, `noOp`, `indent`, `outdent`, `insertAtomic(_:)`, `unsupported`). Anything finer-grained is asserted via the existing `Then.*` readbacks in the parameterised test body.
+
+### Implementation steps
+
+1. **Tabulate existing FSMs into the table.** Read `ListEditingFSM.transition`, `EditingOps.newLine`, `EditingOps.delete`, `EditingOps.tab` (if present) and transcribe each branch into a row. Do not invent new behaviour — the table records what the code does today, then the test runner asserts every row matches.
+2. **Identify rows that disagree with the bug inventory.** Many Slice B bugs are FSM bugs in disguise (e.g., #5 "Return after heading produces blankLine, not paragraph" — that's a wrong row in the FSM table). Mark those rows `expected: <the right answer>` with a comment pointing to the bug ID. The parameterised test on those rows will fail until the underlying FSM is fixed; that's the point.
+3. **Parameterised test runner**: one test method per row. Use `XCTestCase.continueAfterFailure = true` so a single bad transition doesn't abort the suite. Each row's failure message includes the row's `note` field and `(blockKind, cursorPosition, action)` tuple so failures are self-documenting.
+4. **Slice E coupling**: the combinatorial generator in Slice E reads the same table. Its job is to enumerate all `(blockKind, cursorPosition, action)` tuples not yet in the table and ASSERT they at least produce a non-crashing transition (minimal-invariant gate). New combinations the user has never reported become explicit rows when their behaviour is intentional, or bug rows when it isn't.
+
+### Done when
+
+- `Tests/Fixtures/FSMTransitions.swift` (or .json) lands with 80-150 rows covering current FSM behaviour.
+- A parameterised test (`Tests/FSMTransitionTableTests.swift`) runs every row and passes for rows that encode existing-correct behaviour.
+- Rows that encode bugs from Slice B's inventory are explicitly marked failing-by-design (XCTExpectFailure with the bug ID) — when those bugs are fixed, the row flips to passing automatically.
+- The table is referenced from CLAUDE.md as the canonical FSM spec; Rule 3 paragraph updated to point here.
+
+### Cost estimate
+
+- 1 day to tabulate existing FSMs (mechanical transcription).
+- 0.5 day for the parameterised test runner.
+- 0.5 day to map Slice B bugs onto specific rows + add XCTExpectFailure wrappers.
+
+**Total ~2 days.** Hard prerequisite for Slice E.
+
+### Out of scope
+
+- mdast-vocabulary alignment (renaming `Document.Block.heading.depth` etc. to match mdast). The subagent flagged this as nice-to-have but unrelated to bug coverage. Skip unless we have a reason.
+- Pulling in markdownlint or remark-lint as runtime dependencies. The subagent's bug-coverage analysis showed they catch 0 of 25 Slice B bugs directly. Not worth the integration cost.
+
 ### Slice B — Migrate the bug inventory (24+ tests)
 
 Convert every user-reported bug from this 2-week window into a named regression test in the new format. Inventory (current count: 25; will grow as new bugs report in):
@@ -1560,6 +1623,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 28. Folded header keeps the table-copy gutter icon visible even after the table is hidden by the fold
 29. Click in top-left cell paints caret ABOVE the cell (in the column-handle strip area) — text DOES land in the cell, but the visual caret is mis-positioned (currently being fixed by a subagent)
 30. Tab inside a table cell inserts a literal `\t` instead of moving focus to the next cell (currently being fixed by a subagent)
+31. Code block with a blank line in the middle — the background shading is interrupted (white) at the blank line and resumes on the next code line. Shading should span the full code block including blank lines.
 
 **Done when:** every bug has a named regression test; the test passes (bug fixed) OR is wrapped in `XCTExpectFailure` with an issue link.
 
@@ -1690,14 +1754,15 @@ After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.
 
 ### Cost estimate
 
-- Slice A: 1-2 days (builder ergonomics + 8 readbacks + 1 demo test).
+- Slice A: 1-2 days (builder ergonomics + 8 readbacks + 1 demo test). ✅ shipped `70933a6`.
+- Slice A.5: 2 days (tabulate FSM transitions + parameterised test runner; hard prerequisite for E).
 - Slice B: 2-3 days (25 known bugs × ~5-15 min each, plus debugging the ones whose XCTExpectFailure should have flipped).
 - Slice C: 1 day (4 bitmap readbacks; the infrastructure exists).
 - Slice D: 1-2 days (`eventually` polling, async-hydration test scaffolding).
 - Slice E: 2-3 days for the generator + first run + triage of discovered failures (the discoveries themselves are ongoing work — initial run will likely surface 30-100 bugs, fixing those is downstream Phase 12 fodder).
 - Slice F: 2-4 days (audit pass, mechanical migration of the 5 enumerated deletion targets, deletion of duplicated factories; verified by `wc -l Tests/`).
 
-**Total ~9-15 days to land all six slices.** Slice A is still the gate. Slices B and F are mechanical once A's API is right. Slices E (combinatorial generation) and Slice F (consolidation deletion) are what convert this from "another test layer on top" into "the test library shrinks AND covers more."
+**Total ~11-17 days to land all seven slices.** Slice A is still the gate. Slices B and F are mechanical once A's API is right. Slice A.5 is the spec layer that gives Slice E something to compare against. Slices E (combinatorial generation) and F (consolidation deletion) are what convert this from "another test layer on top" into "the test library shrinks AND covers more."
 
 ---
 
