@@ -121,6 +121,9 @@
 		TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TNAV000000000000000000F1 /* TableNavigationTests.swift */; };
 		TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCET000000000000000000F1 /* TableCellEditingTests.swift */; };
 		TCHT000000000000000000B1 /* TableCellHitTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCHT000000000000000000F1 /* TableCellHitTestTests.swift */; };
+		EDSC000000000000000000B1 /* EditorScenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSC000000000000000000F1 /* EditorScenario.swift */; };
+		EDAS000000000000000000B1 /* EditorAssertions.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDAS000000000000000000F1 /* EditorAssertions.swift */; };
+		IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
 		TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */; };
 		ETVF000000000000000000B1 /* EditTextViewFillRenderSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */; };
@@ -1252,6 +1255,9 @@
 		TNAV000000000000000000F1 /* TableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableNavigationTests.swift; sourceTree = "<group>"; };
 		TCET000000000000000000F1 /* TableCellEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellEditingTests.swift; sourceTree = "<group>"; };
 		TCHT000000000000000000F1 /* TableCellHitTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellHitTestTests.swift; sourceTree = "<group>"; };
+		EDSC000000000000000000F1 /* EditorScenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScenario.swift; sourceTree = "<group>"; };
+		EDAS000000000000000000F1 /* EditorAssertions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAssertions.swift; sourceTree = "<group>"; };
+		IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsertTableThenTypeTests.swift; sourceTree = "<group>"; };
 		T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2eT2fFindAcrossTableCellsTests.swift; sourceTree = "<group>"; };
 		TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCursorMathTests.swift; sourceTree = "<group>"; };
 		ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditTextViewFillRenderSyncTests.swift; sourceTree = "<group>"; };
@@ -2691,8 +2697,19 @@
 				TWRT000000000000000000F1 /* ThemeWiredRenderingTests.swift */,
 				CORPUS00000000000000000F1 /* Corpus */,
 				CMARK000000000000000005 /* CommonMark */,
+				EDSC000000000000000000F1 /* EditorScenario.swift */,
+				EDAS000000000000000000F1 /* EditorAssertions.swift */,
+				USRFLW000000000000000005 /* UserFlows */,
 			);
 			path = Tests;
+			sourceTree = "<group>";
+		};
+		USRFLW000000000000000005 /* UserFlows */ = {
+			isa = PBXGroup;
+			children = (
+				IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */,
+			);
+			path = UserFlows;
 			sourceTree = "<group>";
 		};
 		CMARK000000000000000005 /* CommonMark */ = {
@@ -4208,6 +4225,9 @@
 				TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */,
 				TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */,
 				TCHT000000000000000000B1 /* TableCellHitTestTests.swift in Sources */,
+				EDSC000000000000000000B1 /* EditorScenario.swift in Sources */,
+				EDAS000000000000000000B1 /* EditorAssertions.swift in Sources */,
+				IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,
 				T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */,
 				T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */,
