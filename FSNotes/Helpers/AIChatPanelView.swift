@@ -82,6 +82,13 @@ class AIChatPanelView: NSView {
     /// resume a continuation twice (which would trap).
     private var pendingConfirmationBubbles: [String: ToolCallConfirmationBubble] = [:]
 
+    /// Stable per-note id (SHA-256 of note URL path). nil before
+    /// first load.
+    private var currentNoteId: String?
+
+    /// Debounced persister — saves 500ms after each successful round.
+    private lazy var persistenceDebouncer = AIChatPersistenceDebouncer()
+
     weak var editorViewController: EditorViewController?
 
     static let panelWidth: CGFloat = 320
@@ -290,6 +297,10 @@ class AIChatPanelView: NSView {
         // Single source of truth: the store, not the local flag that
         // used to live here.
         guard !store.state.isStreaming else { return }
+
+        // Phase 4 polish: lazy-load any persisted conversation for
+        // the current note before proceeding.
+        ensureConversationLoaded(for: editorViewController?.vcEditor?.note)
 
         // Build the rich prompt context from the open note (if any).
         let context = makePromptContext()
@@ -562,9 +573,57 @@ class AIChatPanelView: NSView {
                 bubble.resolve(approved: false)
             }
             pendingConfirmationBubbles.removeAll()
+            // Phase 4 polish: persist intent. Cleared chat must not
+            // reappear on next note open.
+            persistenceDebouncer.cancel()
+            if let id = currentNoteId {
+                AIChatPersistence.delete(noteId: id)
+            }
+        case .completeResponse(.success):
+            // Phase 4 polish: schedule a debounced save after every
+            // successful round.
+            if let id = currentNoteId {
+                persistenceDebouncer.schedule(noteId: id, messages: store.state.messages)
+            }
         default:
             break
         }
+    }
+
+    // MARK: - Per-note conversation loading
+
+    /// Activate a note's conversation. Idempotent — only touches
+    /// disk on note-change.
+    private func ensureConversationLoaded(for note: Note?) {
+        guard let note = note else { return }
+        let id = AIChatPersistence.noteId(forURL: note.url)
+        if id == currentNoteId { return }
+        currentNoteId = id
+        persistenceDebouncer.cancel()
+        let loaded = AIChatPersistence.load(noteId: id) ?? []
+        store.dispatch(.loadConversation(loaded))
+        rebuildMessageStackForLoadedConversation()
+    }
+
+    /// Hard-reset the visible bubble stack to match a freshly
+    /// loaded `state.messages`. Removes every arranged subview
+    /// except the empty-state hint placeholder, then re-renders.
+    private func rebuildMessageStackForLoadedConversation() {
+        let arranged = messagesStack.arrangedSubviews
+        for view in arranged where view.tag != 999 {
+            messagesStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        renderedMessageCount = 0
+        currentStreamingLabel = nil
+        currentErrorBubble = nil
+        toolCallBubbles.removeAll()
+        for (_, bubble) in pendingConfirmationBubbles {
+            bubble.resolve(approved: false)
+        }
+        pendingConfirmationBubbles.removeAll()
+        emptyStateRemoved = false
+        render(state: store.state)
     }
 
     // MARK: - Confirmation bubbles

@@ -118,6 +118,11 @@ enum AIChatAction {
     /// `ToolOutput.error("user rejected destructive operation")`
     /// in place of the real result and continues the chat loop.
     case toolCallRejected(ToolCall)
+
+    /// Replace `messages` with a previously-persisted conversation.
+    /// Phase 4 polish: per-note conversation history is loaded from
+    /// disk when the panel's active note changes.
+    case loadConversation([ChatMessage])
 }
 
 // MARK: - Reducer
@@ -176,6 +181,11 @@ func reduce(state: AIChatState, action: AIChatAction) -> AIChatState {
 
     case .toolCallRejected(let call):
         s.pendingConfirmations.removeAll { $0.id == call.id }
+
+    case .loadConversation(let loaded):
+        s.messages = loaded
+        s.isStreaming = false
+        s.streamingResponse = ""
     }
     return s
 }
