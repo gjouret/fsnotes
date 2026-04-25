@@ -119,9 +119,34 @@ final class AppBridgeImpl: AppBridge {
         return !editor.hasUserEdits
     }
 
+    // MARK: - IME composition guard
+
+    /// Returns a `.failed(...)` outcome if the editor is currently
+    /// mid-IME-composition (CJK candidate selection, dead-key accent,
+    /// emoji picker). During composition `setMarkedText` writes
+    /// directly to `NSTextContentStorage` — this is the single
+    /// sanctioned exemption to Invariant A (see ARCHITECTURE.md
+    /// "IME Composition" / `CompositionSession`). If we let an MCP
+    /// tool dispatch into `applyEditResultWithUndo` while a session
+    /// is active, the structural splice races with the IME's marked-
+    /// range writes and corrupts the composition.
+    ///
+    /// Returns nil when no composition is in flight (or no editor),
+    /// so the caller can proceed normally.
+    private func refuseDuringIMEComposition(_ method: String) -> BridgeEditOutcome? {
+        guard let editor = resolveViewController()?.editor else { return nil }
+        if editor.compositionSession.isActive {
+            return .failed(reason: "\(method) refused while IME composition is active")
+        }
+        return nil
+    }
+
     // MARK: - Phase 3 edit hooks
 
     func appendMarkdown(toPath path: String, markdown: String) -> BridgeEditOutcome {
+        if let refusal = refuseDuringIMEComposition("appendMarkdown") {
+            return refusal
+        }
         guard isOpen(path),
               let editor = editor,
               let note = openNote else {
@@ -167,6 +192,9 @@ final class AppBridgeImpl: AppBridge {
     }
 
     func applyStructuredEdit(toPath path: String, request: BridgeEditRequest) -> BridgeEditOutcome {
+        if let refusal = refuseDuringIMEComposition("applyStructuredEdit") {
+            return refusal
+        }
         guard isOpen(path),
               let editor = editor,
               let note = openNote else {
@@ -217,6 +245,9 @@ final class AppBridgeImpl: AppBridge {
     }
 
     func applyFormatting(toPath path: String, command: BridgeFormattingCommand) -> BridgeEditOutcome {
+        if let refusal = refuseDuringIMEComposition("applyFormatting") {
+            return refusal
+        }
         guard isOpen(path),
               let editor = editor,
               let projection = editor.documentProjection,
@@ -261,6 +292,9 @@ final class AppBridgeImpl: AppBridge {
     }
 
     func exportPDF(forPath path: String, to outputURL: URL) -> BridgeEditOutcome {
+        if let refusal = refuseDuringIMEComposition("exportPDF") {
+            return refusal
+        }
         guard isOpen(path), let editor = editor else {
             return .failed(reason: "exportPDF: target note is not open")
         }

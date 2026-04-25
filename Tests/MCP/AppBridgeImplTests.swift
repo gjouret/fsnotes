@@ -420,4 +420,171 @@ final class AppBridgeImplTests: XCTestCase {
             return XCTFail("expected .failed, got \(outcome)")
         }
     }
+
+    // MARK: - IME composition guard
+    //
+    // Per ARCHITECTURE.md "IME Composition", `compositionSession.isActive`
+    // is the single sanctioned exemption to Invariant A — `setMarkedText`
+    // writes directly to `NSTextContentStorage` while a CJK / dead-key /
+    // emoji-picker session is in flight. If an MCP tool dispatches into
+    // the editor during that window, the structural splice races with the
+    // IME's marked-range writes and corrupts the composition. Each of the
+    // four mutation methods must refuse with `.failed(...)` and leave
+    // storage untouched while the session is active.
+
+    /// Activate composition on the harness editor. Mirrors the
+    /// `Phase5eCompositionSessionTests` pattern of installing an
+    /// `isActive: true` session via the associated-object accessor —
+    /// no real `setMarkedText` call needed for guard-level coverage.
+    private func activateComposition(on editor: EditTextView, markedRange: NSRange) {
+        editor.compositionSession = CompositionSession(
+            anchorCursor: DocumentCursor(blockIndex: 0, inlineOffset: 0),
+            markedRange: markedRange,
+            isActive: true
+        )
+    }
+
+    func testAppendMarkdownRefusedDuringComposition() {
+        let harness = EditorHarness(markdown: "Existing.\n")
+        defer { harness.teardown() }
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+        let snapshotBefore = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+
+        activateComposition(on: harness.editor, markedRange: NSRange(location: 0, length: 2))
+
+        let outcome = bridge.appendMarkdown(toPath: path, markdown: "Appended.")
+        guard case .failed(let reason) = outcome else {
+            return XCTFail("expected .failed during IME composition, got \(outcome)")
+        }
+        XCTAssertTrue(reason.contains("IME composition"),
+                      "refusal reason should mention IME composition; got: \(reason)")
+        // Storage is untouched — projection still serialises to the same string.
+        let snapshotAfter = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        XCTAssertEqual(snapshotBefore, snapshotAfter,
+                       "appendMarkdown must not mutate storage during composition")
+    }
+
+    func testApplyStructuredEditRefusedDuringComposition() {
+        let harness = EditorHarness(markdown: "First.\n\nSecond.\n")
+        defer { harness.teardown() }
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+        let snapshotBefore = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+
+        activateComposition(on: harness.editor, markedRange: NSRange(location: 0, length: 1))
+
+        let request = BridgeEditRequest(kind: .replaceBlock(index: 0, markdown: "Replaced."))
+        let outcome = bridge.applyStructuredEdit(toPath: path, request: request)
+        guard case .failed(let reason) = outcome else {
+            return XCTFail("expected .failed during IME composition, got \(outcome)")
+        }
+        XCTAssertTrue(reason.contains("IME composition"),
+                      "refusal reason should mention IME composition; got: \(reason)")
+        let snapshotAfter = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        XCTAssertEqual(snapshotBefore, snapshotAfter,
+                       "applyStructuredEdit must not mutate storage during composition")
+    }
+
+    func testApplyFormattingRefusedDuringComposition() {
+        let harness = EditorHarness(markdown: "Hello\n")
+        defer { harness.teardown() }
+        harness.editor.setSelectedRange(NSRange(location: 0, length: 5))
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+        let snapshotBefore = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+
+        activateComposition(on: harness.editor, markedRange: NSRange(location: 0, length: 1))
+
+        let outcome = bridge.applyFormatting(toPath: path, command: .toggleBold)
+        guard case .failed(let reason) = outcome else {
+            return XCTFail("expected .failed during IME composition, got \(outcome)")
+        }
+        XCTAssertTrue(reason.contains("IME composition"),
+                      "refusal reason should mention IME composition; got: \(reason)")
+        let snapshotAfter = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        XCTAssertEqual(snapshotBefore, snapshotAfter,
+                       "applyFormatting must not mutate storage during composition")
+    }
+
+    func testExportPDFRefusedDuringComposition() {
+        let harness = EditorHarness(markdown: "# Title\n\nBody.\n")
+        defer { harness.teardown() }
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("appbridge-comp-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+
+        activateComposition(on: harness.editor, markedRange: NSRange(location: 0, length: 1))
+
+        let outcome = bridge.exportPDF(forPath: path, to: outURL)
+        guard case .failed(let reason) = outcome else {
+            return XCTFail("expected .failed during IME composition, got \(outcome)")
+        }
+        XCTAssertTrue(reason.contains("IME composition"),
+                      "refusal reason should mention IME composition; got: \(reason)")
+        // PDF export should not have written the file.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outURL.path),
+                       "exportPDF must not write a file during composition")
+    }
+
+    // Control: with composition NOT active, the same dispatch hits the
+    // normal success path. This guards against the refusal helper being
+    // accidentally over-eager (e.g. firing when isActive is false).
+
+    func testAppendMarkdownAllowedWhenCompositionInactive() {
+        let harness = EditorHarness(markdown: "x\n")
+        defer { harness.teardown() }
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+
+        XCTAssertFalse(harness.editor.compositionSession.isActive)
+
+        let outcome = bridge.appendMarkdown(toPath: path, markdown: "added")
+        guard case .applied = outcome else {
+            return XCTFail("expected .applied with no composition, got \(outcome)")
+        }
+    }
+
+    func testApplyStructuredEditAllowedWhenCompositionInactive() {
+        let harness = EditorHarness(markdown: "old\n")
+        defer { harness.teardown() }
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+
+        let request = BridgeEditRequest(kind: .replaceBlock(index: 0, markdown: "new."))
+        let outcome = bridge.applyStructuredEdit(toPath: path, request: request)
+        guard case .applied = outcome else {
+            return XCTFail("expected .applied with no composition, got \(outcome)")
+        }
+    }
+
+    func testApplyFormattingAllowedWhenCompositionInactive() {
+        let harness = EditorHarness(markdown: "Hello\n")
+        defer { harness.teardown() }
+        harness.editor.setSelectedRange(NSRange(location: 0, length: 5))
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+
+        let outcome = bridge.applyFormatting(toPath: path, command: .toggleBold)
+        guard case .applied = outcome else {
+            return XCTFail("expected .applied with no composition, got \(outcome)")
+        }
+    }
+
+    func testExportPDFAllowedWhenCompositionInactive() {
+        let harness = EditorHarness(markdown: "Body.\n")
+        defer { harness.teardown() }
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("appbridge-noncomp-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+
+        let outcome = bridge.exportPDF(forPath: path, to: outURL)
+        guard case .applied = outcome else {
+            return XCTFail("expected .applied with no composition, got \(outcome)")
+        }
+    }
 }
