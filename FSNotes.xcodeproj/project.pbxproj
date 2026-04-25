@@ -767,6 +767,9 @@
 		MCPT04000000000000000000B1 /* ListFoldersTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT04000000000000000000F1 /* ListFoldersTool.swift */; };
 		MCPT05000000000000000000B1 /* GetFolderNotesTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT05000000000000000000F1 /* GetFolderNotesTool.swift */; };
 		MCPT06000000000000000000B1 /* MoveNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT06000000000000000000F1 /* MoveNoteTool.swift */; };
+		OLLAMA00000000000000000B1 /* OllamaModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F1 /* OllamaModel.swift */; };
+		OLLAMA00000000000000000B2 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F2 /* OllamaClient.swift */; };
+		OLLAMA00000000000000000B3 /* Phase1OllamaClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */; };
 		D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77CC042216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77E0536246312B200AD7772 /* StorageType.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77E05282463124300AD7772 /* StorageType.swift */; };
@@ -1613,6 +1616,9 @@
 		9A36172A2C1AAB13AFAE9D88 /* BlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockRenderer.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8C /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
+		OLLAMA00000000000000000F1 /* OllamaModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaModel.swift; sourceTree = "<group>"; };
+		OLLAMA00000000000000000F2 /* OllamaClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaClient.swift; sourceTree = "<group>"; };
+		OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase1OllamaClientTests.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanelView.swift; sourceTree = "<group>"; };
 		MCP01000000000000000000F1 /* MCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
 		MCP02000000000000000000F1 /* MCPTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTool.swift; sourceTree = "<group>"; };
@@ -2539,6 +2545,7 @@
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
 				9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */,
 				MCPGRP000000000000000G01 /* MCP */,
+				OLLAMA00000000000000000G1 /* Ollama */,
 				6F13BB3820FEDE230005E120 /* UserDataService.swift */,
 				D75EE7F92078B3C00055F159 /* Sidebar.swift */,
 				D74D479E256DF2EB00D97647 /* FSNTextAttachmentCell.swift */,
@@ -2569,6 +2576,13 @@
 				MCPT06000000000000000000F1 /* MoveNoteTool.swift */,
 			);
 			path = Tools;
+		OLLAMA00000000000000000G1 /* Ollama */ = {
+			isa = PBXGroup;
+			children = (
+				OLLAMA00000000000000000F1 /* OllamaModel.swift */,
+				OLLAMA00000000000000000F2 /* OllamaClient.swift */,
+			);
+			path = Ollama;
 			sourceTree = "<group>";
 		};
 		D7ED3FFB20CD0AA3001438EE /* View */ = {
@@ -2681,6 +2695,7 @@
 		TEST00000000000000000003 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */,
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
 				GOVL0000000000000000000F1 /* GutterOverlayTests.swift */,
 				RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */,
@@ -3963,6 +3978,8 @@
 				MCPT04000000000000000000B1 /* ListFoldersTool.swift in Sources */,
 				MCPT05000000000000000000B1 /* GetFolderNotesTool.swift in Sources */,
 				MCPT06000000000000000000B1 /* MoveNoteTool.swift in Sources */,
+				OLLAMA00000000000000000B1 /* OllamaModel.swift in Sources */,
+				OLLAMA00000000000000000B2 /* OllamaClient.swift in Sources */,
 				D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */,
 				110BE0232EE8C53C00C5E456 /* TypeScript.swift in Sources */,
 				110BE0122EE86B4A00C5E456 /* Clojure.swift in Sources */,
@@ -4287,6 +4304,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				OLLAMA00000000000000000B3 /* Phase1OllamaClientTests.swift in Sources */,
 				F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */,
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
 				P47S0000000000000000000B1 /* Phase47SaveConsolidationTests.swift in Sources */,
