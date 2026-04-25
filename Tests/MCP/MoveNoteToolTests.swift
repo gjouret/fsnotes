@@ -6,29 +6,8 @@
 import XCTest
 @testable import FSNotes
 
-/// Bridge stub that records every notification and lets a test
-/// flip dirty/lock behaviour.
-final class TestAppBridge: AppBridge {
-    var openPath: String?
-    var dirty: Bool = false
-    var grantWriteLock: Bool = true
-    var lockRequests: [String] = []
-    var notifications: [String] = []
-
-    func currentNotePath() -> String? { openPath }
-    func hasUnsavedChanges(path: String) -> Bool {
-        return openPath == path && dirty
-    }
-    func editorMode(for path: String) -> String? {
-        return openPath == path ? "wysiwyg" : nil
-    }
-    func cursorState(for path: String) -> CursorState? { nil }
-    func notifyFileChanged(path: String) { notifications.append(path) }
-    func requestWriteLock(path: String) -> Bool {
-        lockRequests.append(path)
-        return grantWriteLock
-    }
-}
+// TestAppBridge is defined in MCPTestFixture.swift and shared
+// across the MCP test suite.
 
 final class MoveNoteToolTests: XCTestCase {
 

@@ -107,3 +107,72 @@ extension MCPTool {
         return captured
     }
 }
+
+/// Bridge stub used across the MCP test suite. Each test mutates
+/// the public fields (openPath, dirty, mode, …) before calling the
+/// tool to simulate the editor state.
+///
+/// The Phase 3 hooks (appendMarkdown / applyStructuredEdit /
+/// applyFormatting / exportPDF) default to .notImplemented; tests
+/// that exercise the bridge-routed branches override the
+/// corresponding `<hook>Outcome` field to control the response and
+/// inspect `<hook>Calls` to verify the dispatch.
+final class TestAppBridge: AppBridge {
+    var openPath: String?
+    var dirty: Bool = false
+    var grantWriteLock: Bool = true
+    var mode: String = "wysiwyg"
+    var cursor: CursorState? = nil
+
+    var lockRequests: [String] = []
+    var notifications: [String] = []
+
+    // Phase 3 dispatch capture.
+    struct AppendCall { let path: String; let markdown: String }
+    struct EditCall { let path: String; let request: BridgeEditRequest }
+    struct FormattingCall { let path: String; let command: BridgeFormattingCommand }
+    struct ExportCall { let path: String; let outputURL: URL }
+
+    var appendCalls: [AppendCall] = []
+    var editCalls: [EditCall] = []
+    var formattingCalls: [FormattingCall] = []
+    var exportCalls: [ExportCall] = []
+
+    var appendOutcome: BridgeEditOutcome = .notImplemented
+    var editOutcome: BridgeEditOutcome = .notImplemented
+    var formattingOutcome: BridgeEditOutcome = .notImplemented
+    var exportOutcome: BridgeEditOutcome = .notImplemented
+
+    func currentNotePath() -> String? { openPath }
+    func hasUnsavedChanges(path: String) -> Bool {
+        return openPath == path && dirty
+    }
+    func editorMode(for path: String) -> String? {
+        return openPath == path ? mode : nil
+    }
+    func cursorState(for path: String) -> CursorState? {
+        return openPath == path ? cursor : nil
+    }
+    func notifyFileChanged(path: String) { notifications.append(path) }
+    func requestWriteLock(path: String) -> Bool {
+        lockRequests.append(path)
+        return grantWriteLock
+    }
+
+    func appendMarkdown(toPath path: String, markdown: String) -> BridgeEditOutcome {
+        appendCalls.append(AppendCall(path: path, markdown: markdown))
+        return appendOutcome
+    }
+    func applyStructuredEdit(toPath path: String, request: BridgeEditRequest) -> BridgeEditOutcome {
+        editCalls.append(EditCall(path: path, request: request))
+        return editOutcome
+    }
+    func applyFormatting(toPath path: String, command: BridgeFormattingCommand) -> BridgeEditOutcome {
+        formattingCalls.append(FormattingCall(path: path, command: command))
+        return formattingOutcome
+    }
+    func exportPDF(forPath path: String, to outputURL: URL) -> BridgeEditOutcome {
+        exportCalls.append(ExportCall(path: path, outputURL: outputURL))
+        return exportOutcome
+    }
+}
