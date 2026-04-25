@@ -435,4 +435,113 @@ final class GutterOverlayTests: XCTestCase {
             "Heading enumeration must be independent of hover state"
         )
     }
+
+    // MARK: - Bug #28 — Folded heading hides table/code-block copy icons
+
+    /// Folding a heading whose section contains a table must remove
+    /// that table from `visibleTablesTK2()` so the gutter copy icon
+    /// disappears alongside the hidden table content. Pre-fix the
+    /// table fragment is enumerated regardless of its `.foldedContent`
+    /// attribute and the icon stays drawn over the now-blank fold area.
+    func test_bug28_foldedHeader_hidesTableCopyIcon() {
+        let markdown = """
+        # Heading
+
+        | col1 | col2 |
+        |------|------|
+        | a    | b    |
+        """
+        let harness = EditorHarness(markdown: markdown)
+        defer { harness.teardown() }
+
+        let editor = harness.editor
+        guard let tlm = editor.textLayoutManager,
+              let storage = editor.textStorage,
+              let processor = editor.textStorageProcessor else {
+            XCTFail("Expected TK2 editor with storage + processor")
+            return
+        }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Pre-fold sanity: exactly one table is visible to the gutter.
+        let beforeFold = editor.gutterController.visibleTablesTK2()
+        XCTAssertEqual(
+            beforeFold.count, 1,
+            "Pre-fold: expected exactly 1 visible table; got " +
+            "\(beforeFold.count)"
+        )
+
+        // Fold the H1 heading (block index 0).
+        guard let headerIdx = processor.headerBlockIndex(at: 0) else {
+            XCTFail("Expected heading at storage offset 0")
+            return
+        }
+        processor.toggleFold(headerBlockIndex: headerIdx, textStorage: storage)
+        XCTAssertTrue(
+            processor.blocks[headerIdx].collapsed,
+            "Heading must be marked collapsed after toggleFold"
+        )
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Post-fold: the table fragment is hidden by `FoldedLayoutFragment`
+        // dispatch, so its copy icon must also disappear. Bug #28 — pre-
+        // fix this returned 1 (icon still drawn over the blank fold).
+        let afterFold = editor.gutterController.visibleTablesTK2()
+        XCTAssertEqual(
+            afterFold.count, 0,
+            "Bug #28: a table inside a folded heading must NOT appear in " +
+            "visibleTablesTK2(); got \(afterFold.count) entries — the " +
+            "gutter copy icon would draw over the hidden fold area."
+        )
+    }
+
+    /// Sibling test for code blocks: a fenced code block inside a folded
+    /// heading section must not appear in `visibleCodeBlocksTK2()` so
+    /// its gutter copy icon disappears with the rest of the section.
+    func test_bug28_foldedHeader_hidesCodeBlockCopyIcon() {
+        let markdown = """
+        # Heading
+
+        ```swift
+        let x = 1
+        ```
+        """
+        let harness = EditorHarness(markdown: markdown)
+        defer { harness.teardown() }
+
+        let editor = harness.editor
+        guard let tlm = editor.textLayoutManager,
+              let storage = editor.textStorage,
+              let processor = editor.textStorageProcessor else {
+            XCTFail("Expected TK2 editor with storage + processor")
+            return
+        }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Pre-fold sanity: exactly one code block is visible.
+        let beforeFold = editor.gutterController.visibleCodeBlocksTK2()
+        XCTAssertEqual(
+            beforeFold.count, 1,
+            "Pre-fold: expected exactly 1 visible code block; got " +
+            "\(beforeFold.count)"
+        )
+
+        // Fold the H1 heading.
+        guard let headerIdx = processor.headerBlockIndex(at: 0) else {
+            XCTFail("Expected heading at storage offset 0")
+            return
+        }
+        processor.toggleFold(headerBlockIndex: headerIdx, textStorage: storage)
+        XCTAssertTrue(processor.blocks[headerIdx].collapsed)
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Post-fold: code block must be filtered out — its copy icon
+        // would otherwise float over the hidden fold area.
+        let afterFold = editor.gutterController.visibleCodeBlocksTK2()
+        XCTAssertEqual(
+            afterFold.count, 0,
+            "Bug #28: a code block inside a folded heading must NOT " +
+            "appear in visibleCodeBlocksTK2(); got \(afterFold.count)."
+        )
+    }
 }

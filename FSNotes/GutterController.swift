@@ -379,6 +379,7 @@ class GutterController {
         guard let textView = textView,
               let tlm = textView.textLayoutManager,
               let tcs = tlm.textContentManager as? NSTextContentStorage,
+              let storage = textView.textStorage,
               let processor = textView.textStorageProcessor else {
             return []
         }
@@ -396,7 +397,19 @@ class GutterController {
                   let elementRange = element.elementRange else { return true }
 
             let charIndex = tcs.offset(from: docStart, to: elementRange.location)
-            guard charIndex >= 0 else { return true }
+            guard charIndex >= 0, charIndex < storage.length else { return true }
+
+            // Bug #28: skip code blocks inside a folded heading range.
+            // The block's content is hidden (`FoldedLayoutFragment`
+            // dispatch + clear-foreground), so the gutter copy icon must
+            // also disappear. The `.foldedContent` attribute is added
+            // by `TextStorageProcessor.toggleFold` over the entire fold
+            // range — checking the fragment's first character is enough.
+            if storage.attribute(.foldedContent,
+                                 at: charIndex,
+                                 effectiveRange: nil) != nil {
+                return true
+            }
 
             // Look up the processor block whose range contains this
             // fragment's first character. Multi-paragraph code blocks
@@ -479,6 +492,17 @@ class GutterController {
             guard let type = storage.attribute(
                 .renderedBlockType, at: charIndex, effectiveRange: nil
             ) as? String, type == tableTypeValue else {
+                return true
+            }
+
+            // Bug #28: skip tables inside a folded heading range. The
+            // table content is hidden (`FoldedLayoutFragment` dispatch),
+            // so the gutter copy icon must also disappear. Check the
+            // attachment's first character — `.foldedContent` is added
+            // over the entire fold range by `toggleFold`.
+            if storage.attribute(.foldedContent,
+                                 at: charIndex,
+                                 effectiveRange: nil) != nil {
                 return true
             }
 

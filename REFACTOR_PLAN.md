@@ -1615,12 +1615,12 @@ Convert every user-reported bug from this 2-week window into a named regression 
 20. `<kbd>` tag missing rounded rectangle ✅ (kbd-tag attribute probe migrated; bitmap probe migrated)
 21. Clicking checkbox directly doesn't toggle ✅ (just shipped: `12dc300`)
 22. QuickLook scroll propagation not implemented ✅ (consume-then-propagate at boundary; pure predicate + 14 unit tests)
-23. Double-click PDF should Open in native app
+23. Double-click PDF should Open in native app ✅ (just shipped: `NSClickGestureRecognizer` on `InlinePDFView` + `InlineQuickLookView`; pure predicate `InlineAttachmentOpenPolicy.shouldOpenOnDoubleClick` + 5 unit tests)
 24. Insert Table → type doesn't land in cell ✅ (just shipped: `c08d3ee`)
 25. Tab on numbered list L1→L2 doesn't demote
 26. H1 button on multi-paragraph selection makes ALL paragraphs H1, not just the first
 27. Image resize (shrink) draws image left-aligned instead of centered
-28. Folded header keeps the table-copy gutter icon visible even after the table is hidden by the fold
+28. Folded header keeps the table-copy gutter icon visible even after the table is hidden by the fold ✅ (shipped: filter `.foldedContent` runs out of `visibleTablesTK2` / `visibleCodeBlocksTK2` so folded blocks neither draw nor click-handle a gutter icon; covered by `GutterOverlayTests.test_bug28_foldedHeader_hidesTableCopyIcon` + `…_hidesCodeBlockCopyIcon`)
 29. Click in top-left cell paints caret ABOVE the cell ✅ (just shipped: `de68ca6`)
 30. Tab inside a table cell inserts a literal `\t` ✅ (just shipped: `f55f65a`)
 31. Code block with a blank line in the middle — the background shading is interrupted (white) at the blank line and resumes on the next code line. Shading should span the full code block including blank lines.
