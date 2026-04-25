@@ -1173,11 +1173,17 @@ final class UIBugRegressionTests: XCTestCase {
         )
     }
 
-    // Probe 36c: USER REPORTED — selecting multiple paragraph lines
-    // and invoking Bullet List formats ONLY the first line. Expected:
-    // all selected paragraph lines become list items under one
-    // list block. Drives `toggleListViaBlockModel(marker: "-")`
+    // Probe 36c: USER REPORTED (Bug #16) — selecting multiple
+    // paragraph lines and invoking Bullet List formats ONLY the first
+    // line. Expected: all selected paragraph lines become list items
+    // under one list block. Drives `toggleListViaBlockModel(marker: "-")`
     // (the same path the Format menu's Bullet List calls).
+    //
+    // Asserts on the live `Document` projection, NOT on the snapshot
+    // text — `EditorSnapshot.inlines(for:)` only emits an inline tree
+    // for `.paragraph` and `.heading`, so list-item text doesn't
+    // appear in the snapshot body. Reading from the projection's
+    // `Document` value directly is the canonical structural check.
     func test_probe_multiLineSelection_toBulletList_formatsAllLines() {
         let md = "line one\n\nline two\n\nline three\n"
         let h = EditorHarness(
@@ -1185,41 +1191,100 @@ final class UIBugRegressionTests: XCTestCase {
         )
         defer { h.teardown() }
         let len = h.editor.textStorage?.length ?? 0
-        // Select everything.
         h.selectRange(NSRange(location: 0, length: len))
         _ = h.editor.toggleListViaBlockModel(marker: "-")
-        let snap = h.snapshot()
-        let body = snap.raw
-        // A single combined `.list` block is the expected shape —
-        // wrapSelectionInSingleList path. The list should span all
-        // three lines (so "one", "two", "three" all appear inside
-        // the list, not in separate paragraphs).
-        XCTAssertTrue(
-            body.contains("kind=list"),
-            "multi-line selection → bullet list should produce a " +
-            "list block. Snapshot:\n\(body.prefix(500))"
-        )
-        // All three line texts should appear in the snapshot.
-        XCTAssertTrue(
-            body.contains("one"),
-            "bullet-list convert dropped 'one' from snapshot.\n" +
-            "Full snapshot:\n\(body)"
-        )
-        XCTAssertTrue(body.contains("two"))
-        XCTAssertTrue(body.contains("three"))
-        // Should NOT have any remaining paragraph blocks for the
-        // original lines — assert no `kind=paragraph` appears with
-        // "two" or "three" text in it. (If the bug is real — first
-        // line only — we'd see lines two/three still as paragraphs.)
-        let paragraphBlocks = body.components(
-            separatedBy: "kind=paragraph"
-        ).count - 1
+        guard let doc = h.document else {
+            XCTFail("no documentProjection after toggleList"); return
+        }
+        // Expect exactly one .list block holding three list items
+        // covering each of the three input lines.
         XCTAssertEqual(
-            paragraphBlocks, 0,
-            "After bullet-list on 3-line selection, no paragraph " +
-            "blocks should remain; got \(paragraphBlocks). Snapshot:\n" +
-            "\(body.prefix(600))"
+            doc.blocks.count, 1,
+            "multi-line selection → bullet list should produce ONE " +
+            "list block. Got \(doc.blocks.count): \(doc.blocks)"
         )
+        guard case let .list(items, _) = doc.blocks[0] else {
+            XCTFail("first block must be .list; got \(doc.blocks[0])")
+            return
+        }
+        XCTAssertEqual(
+            items.count, 3,
+            "expected 3 list items (one per source paragraph); got " +
+            "\(items.count): \(items)"
+        )
+        let texts = items.map { item in
+            item.inline.map { (i: Inline) -> String in
+                if case let .text(s) = i { return s }
+                return ""
+            }.joined()
+        }
+        XCTAssertTrue(
+            texts.contains(where: { $0.contains("one") }),
+            "bullet-list convert dropped 'line one'. items=\(texts)"
+        )
+        XCTAssertTrue(
+            texts.contains(where: { $0.contains("two") }),
+            "bullet-list convert dropped 'line two'. items=\(texts)"
+        )
+        XCTAssertTrue(
+            texts.contains(where: { $0.contains("three") }),
+            "bullet-list convert dropped 'line three'. items=\(texts)"
+        )
+    }
+
+    // Bug #16 — additional scenario: partial selection across two
+    // paragraphs (start mid-line-1, end at end-of-line-2). The two
+    // overlapped paragraphs wrap into one list; the third paragraph
+    // (untouched by the selection) stays a paragraph.
+    func test_bulletList_onPartialMultiLineSelection_formatsAllOverlapped() {
+        let md = "line one\n\nline two\n\nline three\n"
+        let h = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        guard let storage = h.editor.textStorage else {
+            XCTFail("no storage"); return
+        }
+        let s = storage.string as NSString
+        let oneRange = s.range(of: "line one")
+        let twoRange = s.range(of: "line two")
+        guard oneRange.location != NSNotFound,
+              twoRange.location != NSNotFound else {
+            XCTFail("paragraph text not found"); return
+        }
+        let selStart = oneRange.location + 5      // after "line "
+        let selEnd = twoRange.location + twoRange.length
+        h.selectRange(NSRange(location: selStart, length: selEnd - selStart))
+        _ = h.editor.toggleListViaBlockModel(marker: "-")
+        guard let doc = h.document else {
+            XCTFail("no projection"); return
+        }
+        // Expected shape: [.list(2 items) ... .paragraph("line three")].
+        var listItemCount = 0
+        if let firstList = doc.blocks.first(where: {
+            if case .list = $0 { return true }
+            return false
+        }), case let .list(items, _) = firstList {
+            listItemCount = items.count
+        }
+        XCTAssertEqual(
+            listItemCount, 2,
+            "Partial 2-block selection should produce 2 list items; " +
+            "got \(listItemCount). doc=\(doc.blocks)"
+        )
+        let lastBlock = doc.blocks.last
+        if case let .paragraph(inline) = lastBlock {
+            let txt = inline.map { (i: Inline) -> String in
+                if case let .text(s) = i { return s }
+                return ""
+            }.joined()
+            XCTAssertTrue(
+                txt.contains("three"),
+                "Paragraph 'line three' should survive untouched; got '\(txt)'"
+            )
+        } else {
+            XCTFail("last block should remain a paragraph; got \(String(describing: lastBlock))")
+        }
     }
 
     // Probe 36b: USER REPORTED — toggling one todo checkbox wipes
