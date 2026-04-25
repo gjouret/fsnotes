@@ -284,21 +284,37 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         // the column-handle UI, not cell-cursor placement.
         if localPoint.y < TableGeometry.handleBarHeight { return nil }
         // X axis: skip left handle strip; iterate column widths.
+        // The trailing edge of the LAST column is treated inclusively —
+        // a click exactly on the right border of the rightmost cell
+        // still resolves to that cell, matching how
+        // `cellLocation(forOffset: length)` resolves end-of-table to
+        // the last cell. Without this, corner clicks (especially on
+        // the bottom-right cell) returned nil and the user could not
+        // place the cursor in the last column.
         var x = TableGeometry.handleBarWidth
         var col = -1
         for (i, w) in g.columnWidths.enumerated() {
-            if localPoint.x >= x, localPoint.x < x + w {
+            let isLast = (i == g.columnWidths.count - 1)
+            let inside = isLast
+                ? (localPoint.x >= x && localPoint.x <= x + w)
+                : (localPoint.x >= x && localPoint.x < x + w)
+            if inside {
                 col = i; break
             }
             x += w
         }
         if col < 0 { return nil }
         // Y axis: iterate row heights, starting at the top of the
-        // grid (after the handle strip).
+        // grid (after the handle strip). Same trailing-edge inclusion
+        // for the bottom row.
         var y = TableGeometry.handleBarHeight
         var row = -1
         for (i, h) in g.rowHeights.enumerated() {
-            if localPoint.y >= y, localPoint.y < y + h {
+            let isLast = (i == g.rowHeights.count - 1)
+            let inside = isLast
+                ? (localPoint.y >= y && localPoint.y <= y + h)
+                : (localPoint.y >= y && localPoint.y < y + h)
+            if inside {
                 row = i; break
             }
             y += h

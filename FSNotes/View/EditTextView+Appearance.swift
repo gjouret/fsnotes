@@ -58,12 +58,19 @@ extension EditTextView {
             cellLocalOffset: offsetInCell,
             caretWidth: caretWidth
         ) else { return nil }
-        // Convert fragment-local coords → text-view coords by adding
-        // the fragment's origin.
+        // Convert fragment-local coords → text-view (NSView) coords.
+        // Pipeline: fragment-local + fragment.origin = container coords;
+        // container coords + textContainerOrigin = view coords. The
+        // earlier code stopped at container coords, so the caret was
+        // painted offset by the textContainerOrigin (which carries the
+        // EditTextView -7pt y override + the system-default x/y inset)
+        // — visible to the user as the caret appearing above-left of
+        // the cell rather than inside it.
         let frameOrigin = fragment.layoutFragmentFrame.origin
+        let containerOrigin = textContainerOrigin
         return NSRect(
-            x: localRect.origin.x + frameOrigin.x,
-            y: localRect.origin.y + frameOrigin.y,
+            x: localRect.origin.x + frameOrigin.x + containerOrigin.x,
+            y: localRect.origin.y + frameOrigin.y + containerOrigin.y,
             width: localRect.width,
             height: localRect.height
         )
