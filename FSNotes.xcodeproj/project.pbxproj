@@ -796,6 +796,7 @@
 		OLLAMA00000000000000000B4 /* OllamaProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F4 /* OllamaProvider.swift */; };
 		OLLAMA00000000000000000B5 /* Phase1OllamaProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */; };
 		AICHATSTORETESTSB1 /* AIChatStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATSTORETESTSF1 /* AIChatStoreTests.swift */; };
+		AIPROMPTCTXTESTSB1 /* AIPromptContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */; };
 		OLLAMA00000000000000000B6 /* PreferencesAIViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */; };
 		OLLAMA00000000000000000B7 /* Phase2OllamaToolCallingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */; };
 		D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
@@ -1661,6 +1662,7 @@
 		OLLAMA00000000000000000F4 /* OllamaProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaProvider.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase1OllamaProviderTests.swift; sourceTree = "<group>"; };
 		AICHATSTORETESTSF1 /* AIChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStoreTests.swift; sourceTree = "<group>"; };
+		AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPromptContextTests.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesAIViewController.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2OllamaToolCallingTests.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanelView.swift; sourceTree = "<group>"; };
@@ -2771,6 +2773,7 @@
 				OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */,
 				OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */,
 				AICHATSTORETESTSF1 /* AIChatStoreTests.swift */,
+				AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */,
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
 				GOVL0000000000000000000F1 /* GutterOverlayTests.swift */,
 				RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */,
@@ -4408,6 +4411,7 @@
 				OLLAMA00000000000000000B5 /* Phase1OllamaProviderTests.swift in Sources */,
 				OLLAMA00000000000000000B7 /* Phase2OllamaToolCallingTests.swift in Sources */,
 				AICHATSTORETESTSB1 /* AIChatStoreTests.swift in Sources */,
+				AIPROMPTCTXTESTSB1 /* AIPromptContextTests.swift in Sources */,
 				F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */,
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
 				P47S0000000000000000000B1 /* Phase47SaveConsolidationTests.swift in Sources */,
