@@ -1466,6 +1466,236 @@ User reviews after each slice lands. Each is small enough (≤ half-day) that re
 
 ---
 
+## Phase 11 — Composable user-flow harness with UI-outcome assertions
+
+### Why this phase exists
+
+**Honest framing.** The plan to date has been *layer-first*: each phase produces pure functions on `Document` and pure-function tests covering that layer. Result is a 1700-test suite that proves every primitive correct in isolation, while user-visible bugs ship anyway because no existing test composes the full flow (IBAction → projection mutation → fill → click → cursor mapping → typing → splice → visual outcome).
+
+CLAUDE.md Rule 3 names the failure mode (*"a passing test suite with shipping bugs means the tests cover the wrong layer"*) but acknowledging it doesn't fix it. The fix is structural: a Layer 5 harness whose tests are short compositions of named user steps, asserting against named user-perceptible outcomes.
+
+Every user-reported bug from 2026-04-23 to 2026-04-25 (~25 distinct bugs) reduces to "user did flow X, expected outcome Y, got Z." Most should have been one-shot regression tests on the day they were reported — but writing such a test today requires re-creating ~50 LoC of harness setup per bucket. That cost is why bug regression coverage doesn't accumulate.
+
+### Goal
+
+A small, opinionated test API where:
+
+- A multi-step flow is a chain of `Given.X().Y().Z()` calls.
+- Outcome assertions read named UI artifacts (cursor visual rect, glyph counts, handle alignment, toolbar button state, drawn-chrome pixel presence) — not opaque internal state.
+- Every bug from the inventory is expressible as 3-5 lines.
+- Every NEW bug is required to ship with a regression test in this format before merge.
+
+### Slice A — Given/When builder + 8 essential `Then.*` readbacks
+
+**Builder (Given/When):**
+
+```swift
+Given.note(markdown: "")
+    .insertTable(rows: 2, cols: 2)
+    .clickInCell(row: 0, col: 0)
+    .type("X")
+```
+
+Steps map to existing `EditorHarness` operations (`type`, `pressReturn`, `pressDelete`, `paste`, `clickAt`, IBAction sender, etc.) — the work is naming them as composable verbs, not implementing new primitives.
+
+**Then namespace (8 essential readbacks):**
+
+| Readback | Reads | Catches |
+|---|---|---|
+| `Then.cursor.isAt(storageOffset:)` | `editor.selectedRange().location` | Storage-level selection state |
+| `Then.cursor.isInCell(row:col:)` | resolves selection → table element + cellLocation | Table cell-cursor mismatch (the Insert-Table → type bug) |
+| `Then.cursor.visualRect(.contains(_:))` | storage offset → fragment geometry → visual rect | Caret painted at wrong visual position (TableLayoutFragment custom-grid case) |
+| `Then.toolbar.button(_:).isHighlighted` | reads `pendingInlineTraits` + `storage.attributes(at: selection)` | CMD+B-stuck-on (Bug #26 reference); toggle state stale after edit |
+| `Then.glyphs.bulletCount.equals(_:)` | counts `BulletGlyphView` subviews via `EditorSnapshot` walker | View-provider mount failures |
+| `Then.glyphs.checkboxCount.equals(_:)` | counts `CheckboxGlyphView` subviews | Same class as bullets |
+| `Then.tableHandle.column(_:).alignsWithBoundary` | reads chip `.frame`, compares to expected geometry | Handle-position drift (the `fragFrame.origin.x` bug) |
+| `Then.fragment.atBlock(_:).is(_:)` | enumerates layout fragments, returns class | Fragment dispatch regressions |
+
+**Done when:**
+
+- `EditorHarness` extended with `Given` static factory + `When` chain (or builder methods on harness).
+- 8 readbacks land as single-purpose `~10-line` functions on the harness or a separate `Assert` namespace.
+- One end-to-end test (`Tests/UserFlows/InsertTableThenTypeTests.swift`) demonstrates the new API:
+  ```swift
+  func test_insertTable_thenType_landsInTopLeftCell() {
+      Given.note().with(paragraph: "p")
+          .insertTable()
+          .type("X")
+          .Then.cursor.isInCell(row: 0, col: 0)
+          .Then.tableContent.cell(0, 0).equals("X")
+  }
+  ```
+
+### Slice B — Migrate the bug inventory (24+ tests)
+
+Convert every user-reported bug from this 2-week window into a named regression test in the new format. Inventory (current count: 25; will grow as new bugs report in):
+
+1. Bullet/checkbox mount on first fill ✅ (already a test, migrate to new shape)
+2. Empty-doc typing
+3. Phase 5a crash on hardware-keyboard typing
+4. Group A: emoji/paste into empty doc
+5. `returnAfterHeading_producesParagraph`
+6. `returnAtStartOfHeading_createsEmptyParagraphBefore`
+7. `returnInListItem_producesAnotherListItem` (assertion shape)
+8. `backspaceMergesParagraphs`
+9. `firstFill_yieldsEmptySelection` (arguable)
+10. `tableHandleOverlay_mountsOnFill` (XCTExpectFailure)
+11. `codeBlockEditToggle_buttonVisibleOnFill` (`</>` button)
+12. `tableWithTrailingBrInLastCell_stillSingleFragment`
+13. Todo glyph wipe on click
+14. Todo glyph wipe after Print return
+15. Todo glyph wipe on list-item delete
+16. Bullet-list format only first line of multi-selection
+17. Pane doesn't re-expand on window resize
+18. Triple-click paragraph + delete demotes list below
+19. Numbers QuickLook thumbnail doesn't re-render on scroll
+20. `<kbd>` tag missing rounded rectangle ✅ (kbd-tag attribute probe migrated; bitmap probe migrated)
+21. Clicking checkbox directly doesn't toggle
+22. QuickLook scroll propagation not implemented
+23. Double-click PDF should Open in native app
+24. Insert Table → type doesn't land in cell ✅ (just shipped: `c08d3ee`)
+25. Tab on numbered list L1→L2 doesn't demote
+
+**Done when:** every bug has a named regression test; the test passes (bug fixed) OR is wrapped in `XCTExpectFailure` with an issue link.
+
+### Slice C — Bitmap-based `Then` readbacks for drawn chrome
+
+Add three pixel-level readbacks for visual artifacts that live in `NSTextLayoutFragment.draw(at:in:)`:
+
+| Readback | Catches |
+|---|---|
+| `Then.foldedHeader.indicatorRect.containsStrokePixels` | "no `[...]` rectangle after folded headers" |
+| `Then.kbdSpan.boxRect.containsStrokePixels` | "kbd doesn't draw rounded rectangle" |
+| `Then.hr.lineHeight.isGreaterThan(0)` + `.contentDrawn` | Invisible HR line |
+| `Then.darkMode.contrast(of: .tableHeader).meetsWCAG_AA` | Table shading too light in dark mode (the bug we just hit) |
+
+Built on top of `EditorHarness.renderFragmentToBitmap(...)` shipped in `f842473`. Tolerance-based (counts non-background pixels in a target rect, doesn't require exact reference image match).
+
+### Slice D — Async-hydration `Then`
+
+WKWebView and image attachments hydrate asynchronously. The harness needs an `eventually(within:)` wrapper that polls a state predicate before timing out. Catches:
+
+- Mermaid block doesn't render after fill
+- MathJax inline baseline correct after hydration
+- Image attachment bounds non-zero after `ImageAttachmentHydrator` runs
+- QuickLook thumbnail re-renders on scroll
+
+```swift
+Then.mermaidBlock(at: 2).hasRendered.eventually(within: 2.0)
+```
+
+### Slice E — Combinatorial coverage (find bugs Claude didn't know to ask about)
+
+The previous slices migrate KNOWN bugs. Slice E generates user-flow tests from a state-space matrix to surface bugs the user hasn't yet reported. The point is to stop relying on the user as a manual fuzzer.
+
+**State-space dimensions:**
+
+- **Block kind** at cursor: paragraph, heading (1-6), list, todo-list, blockquote, code-block, table, HR, mermaid, math, kbd-paragraph (12)
+- **Cursor position within block**: at-start, mid-content, at-end, on-empty (4)
+- **Edit primitive**: type-char, type-newline, paste-plain, paste-markdown, backspace, forward-delete, select-all-then-type, toggle-bold, toggle-italic, toggle-list, toggle-todo, toggle-blockquote, insert-link, insert-table, insert-HR, insert-image (16)
+- **Selection state**: empty cursor, intra-block selection, cross-block selection, full-document selection (4)
+
+Full Cartesian product = 12 × 4 × 16 × 4 = **3,072 scenarios**. Most won't be valid (you can't toggle-list inside an HR block) and many produce equivalent outcomes (typing a char into a paragraph at mid-content vs at-end is the same primitive). After pruning, expect ~400-600 distinct scenarios.
+
+**How tests are generated:**
+
+```swift
+// generated by Tests/Combinatorial/Generator.swift at compile time
+forEach(blockKind: .all, cursor: .all, edit: .all, selection: .empty) {
+    Given.note().with($0.blockKind).cursorAt($0.cursor)
+        .when($0.edit)
+        .Then.fragmentDispatch.matches(expectedFor: $0.blockKind)
+        .Then.cursor.isInside(ownerBlockOf: $0.cursor)
+        .Then.glyphCounts.preserved
+}
+```
+
+The assertions are deliberately MINIMAL invariants ("fragment dispatch correct," "cursor inside owner block," "glyph counts preserved"). Anything that violates a minimal invariant is a real bug. We're not asserting "the right thing happened" — we're asserting "no obvious thing went wrong."
+
+**Output gate:** every combinatorial run that fails OR crashes is a discovered bug. Slice E is done when:
+
+- Generator + minimal-invariant predicates land.
+- One full run of the matrix completes (CI run, not local).
+- All discovered failures are triaged: assigned a bug ID, added to the inventory in Slice B's format, fixed-or-XCTExpectFailure.
+
+**Realistic expectation:** the first run will probably surface 30-100 bugs. The fix-or-document loop on those is its own slice (Slice E.2) but the discovery is the value Slice E delivers — moving the bug detection from "user notices and reports" to "harness detects on every commit."
+
+### Slice F — Consolidation: shrink the existing test library
+
+Slices A–E ADD a new test layer. Slice F SUBTRACTS duplication from the existing 1,700 tests.
+
+**Audit pass:** count `EditorHarness` setup boilerplate across `Tests/`. Estimated 30-40% of test LoC is repeated per-suite harness construction (`makeHarness`, `seedNote`, `findCellOffset`, etc.) — see `TableCellEditingTests.swift`, `TableNavigationTests.swift`, `TableCellClickHarnessTests.swift`, `Phase5dCrossAppPasteTests.swift` for examples that each rebuild equivalent setup.
+
+**Migration policy:**
+
+- Every existing test that hits a Given/When step already named in Slice A migrates to the new shape and DELETES its private helpers.
+- `makeHarness()` per-suite functions are deleted as their last caller migrates.
+- Tests that asserted on opaque internal state (`storage.string` substring matching) replace those with named `Then.*` readbacks.
+- The convert-or-delete decision: if migration would keep behavior but lose specificity, KEEP the old test and skip migration. If migration is byte-equivalent, DELETE the old test and replace.
+
+**Concrete deletion targets identified upfront:**
+
+- `Tests/EditorHTMLParityTests.swift` `EditStep` DSL — duplicates Given/When verbs; migrate then delete the local DSL (the test scenarios stay).
+- 5 separate `makeHarness` / `makeFullPipelineEditor` / `makeEditor` factory functions across the suite — collapse to one Given factory.
+- `Tests/UIBugRegressionTests.swift` (1,400+ lines I added recently in scattered probe form) — collapse to ~300 lines using Given/When/Then. Net delete: ~1,100 lines.
+- Per-bug XCTExpectFailure scaffolding — replaced by inventory-driven fixture (one expectation source-of-truth, not 25 inline wrappers).
+
+**Reduction target (honest estimate):**
+
+| Surface | Lines today | Lines after Phase 11 | Δ |
+|---|---:|---:|---:|
+| Per-suite harness setup boilerplate | ~6,000 | ~500 | −5,500 |
+| `UIBugRegressionTests.swift` (probe-style) | ~1,400 | ~300 | −1,100 |
+| Duplicated EditorHarness factories | ~600 | ~80 | −520 |
+| `EditorHTMLParityTests.swift` `EditStep` DSL | ~300 | ~40 | −260 |
+| **Total reduction** | | | **~−7,400 lines** |
+
+Plus Slice A–D ADD ~1,500 lines of harness API + named readbacks. **Net delta: roughly −6,000 lines** out of an estimated ~50,000 LoC test surface — 12% reduction. Not 30% (the user wanted dramatic) — the irreducible test bodies are what they are. But the duplication-shaped LoC drops by 80%+, which is the actual win.
+
+**Done when:**
+
+- The 5 enumerated deletion targets have actually been deleted (verified by `git log --diff-filter=D`).
+- No file in `Tests/` defines a private `makeHarness`, `makeFullPipelineEditor`, or equivalent — they all use `Given.*`.
+- `wc -l Tests/*.swift` total drops by ≥5,000 lines from pre-Phase-11 baseline.
+- All migrated tests still pass (no test should be lost in migration; only its scaffolding).
+
+### Out of scope
+
+- Print dialog state, modal dialogs, system-window-manager interactions — those need XCUITest, a separate tool.
+- Pixel-perfect reference-image diffing — fragile across macOS versions and font kerning. Tolerance-based "any non-background pixel exists in this rect" is the contract; that's what the user-perceived bugs need.
+- Performance benchmarking — separate concern, separate harness.
+
+### Migration policy (post-Slice B)
+
+After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.…` regression test. PRs without one bounce in review. The migration of *existing* tests to the new format is opportunistic — old per-suite harnesses survive until their tests are touched for unrelated reasons. The goal is not to rewrite 1700 tests; the goal is to make the next 100 tests cheap and outcome-named.
+
+### Dependencies
+
+- **No blocking phase dependencies.** Phase 11 builds on the existing `EditorHarness` (Phase 0) and `EditorSnapshot` (shipped 2026-04-24, commit `f392c15`). Both already exist; this phase is API surface + naming + new readback functions.
+- Slice C depends on `renderFragmentToBitmap` (already shipped, commit `f842473`).
+
+### Done when
+
+- Slice A: builder + 8 readbacks + one demonstration end-to-end test landed.
+- Slice B: ≥80% of the 25-bug inventory converted to composed regression tests; remaining 20% documented as XCUITest-bound.
+- Slice C: 4 bitmap readbacks land with at least one regression test each.
+- Slice D: `eventually(within:)` API + ≥3 hydration tests using it.
+- A new bug filed against `Given.note()…Then.…` shape in <5 LoC.
+- CLAUDE.md Rule 3 paragraph updated to point at Phase 11 as the fix; no longer just acknowledging the failure mode.
+
+### Cost estimate
+
+- Slice A: 1-2 days (builder ergonomics + 8 readbacks + 1 demo test).
+- Slice B: 2-3 days (25 known bugs × ~5-15 min each, plus debugging the ones whose XCTExpectFailure should have flipped).
+- Slice C: 1 day (4 bitmap readbacks; the infrastructure exists).
+- Slice D: 1-2 days (`eventually` polling, async-hydration test scaffolding).
+- Slice E: 2-3 days for the generator + first run + triage of discovered failures (the discoveries themselves are ongoing work — initial run will likely surface 30-100 bugs, fixing those is downstream Phase 12 fodder).
+- Slice F: 2-4 days (audit pass, mechanical migration of the 5 enumerated deletion targets, deletion of duplicated factories; verified by `wc -l Tests/`).
+
+**Total ~9-15 days to land all six slices.** Slice A is still the gate. Slices B and F are mechanical once A's API is right. Slices E (combinatorial generation) and Slice F (consolidation deletion) are what convert this from "another test layer on top" into "the test library shrinks AND covers more."
+
+---
+
 ## Reuse of existing functions / utilities
 
 - `makeFullPipelineEditor()` — currently in Tests/; absorbed into `EditorHarness.init`
