@@ -1609,7 +1609,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 14. Todo glyph wipe after Print return
 15. Todo glyph wipe on list-item delete
 16. Bullet-list format only first line of multi-selection
-17. Pane doesn't re-expand on window resize
+17. Pane doesn't re-expand on window resize ✅ (snapshot pre-resize widths in `windowWillStartLiveResize`; suppress UserDefaults writes during `window.inLiveResize`; restore from snapshot in `windowDidResize` / `windowDidEndLiveResize`)
 18. Triple-click paragraph + delete demotes list below
 19. Numbers QuickLook thumbnail doesn't re-render on scroll ✅ (force-reload `previewItem` in `viewDidMoveToWindow` + `QuickLookThumbnailCache` fallback layer)
 20. `<kbd>` tag missing rounded rectangle ✅ (kbd-tag attribute probe migrated; bitmap probe migrated)

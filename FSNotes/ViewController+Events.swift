@@ -252,12 +252,21 @@ extension ViewController {
         // size. This is the outer splitView's left subview. We need this to
         // survive window auto-resize that would otherwise collapse the pane
         // with no way to recover (NSSplitView autosave persists the 0 state).
+        //
+        // Skip during a window live-resize — those widths are intermediate
+        // cascade values from the window edge drag and don't represent the
+        // user's intent. MainWindowController snapshots the pre-resize
+        // widths and uses them to restore the panes when the window grows
+        // back wide enough.
         guard let split = notification.object as? NSSplitView,
               split === sidebarSplitView,
               let first = split.subviews.first else { return }
-        let w = first.frame.width
-        if w > 50 {
-            UserDefaultsManagement.sidebarTableWidth = w
+        let inWindowLiveResize = view.window?.inLiveResize ?? false
+        if !inWindowLiveResize {
+            let w = first.frame.width
+            if w > 50 {
+                UserDefaultsManagement.sidebarTableWidth = w
+            }
         }
         editor?.reflowAttachmentsForWidthChange()
     }

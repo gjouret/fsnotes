@@ -47,7 +47,13 @@ class EditorSplitView: NSSplitView, NSSplitViewDelegate {
         // collapses it to 0. We only save "good" widths — 0 or near-zero
         // means the pane is collapsed (by toggle or auto-collapse) and we
         // want to preserve the last-known-good value instead.
-        if let first = subviews.first {
+        //
+        // Skip during a window live-resize: those intermediate widths are
+        // a proportional cascade from the window edge, not the user's
+        // intent. MainWindowController snapshots pre-resize widths and
+        // restores from the snapshot when the window grows back.
+        let inWindowLiveResize = window?.inLiveResize ?? false
+        if !inWindowLiveResize, let first = subviews.first {
             let w = first.frame.width
             if w > 50 {
                 UserDefaultsManagement.notesListWidth = w
