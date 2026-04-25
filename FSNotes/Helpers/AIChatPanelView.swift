@@ -4,6 +4,19 @@
 //
 //  AI assistant chat panel for reviewing, editing, and transforming notes.
 //
+//  This view is a thin reactor over `AIChatStore`. Users type into
+//  the input field; the view dispatches actions to the store; the
+//  store's reducer is the only thing that mutates conversation state;
+//  the view's subscribe callback (`render(state:)`) reconciles the
+//  message-stack against the current `AIChatState`. The view never
+//  reaches into provider code or its own conversation state directly.
+//
+//  Provider invocation lives in `sendUserMessage` and feeds tokens
+//  back to the store via `.receiveToken` / `.completeResponse`. This
+//  keeps the store pure and testable on value types — the
+//  `AIChatStoreTests` suite covers every reducer transition without
+//  any AppKit setup.
+//
 
 import Cocoa
 
@@ -18,9 +31,37 @@ class AIChatPanelView: NSView {
     private var closeButton: NSButton!
     private var quickActionsPopup: NSPopUpButton!
 
-    private var messages: [ChatMessage] = []
-    private var isStreaming = false
+    /// Single source of truth for chat state. View dispatches actions
+    /// to mutate; reducer in `AIChatStore.swift` handles transitions;
+    /// subscribe callback re-renders. Constructed eagerly per panel
+    /// instance — multi-window chat (Phase 4 follow-up) will switch
+    /// this to an injected store, but one-per-panel is the right
+    /// default for testability today.
+    let store = AIChatStore()
+    private var subscription: AIChatSubscription?
+
+    /// Number of messages already materialised as bubbles in the
+    /// stack. The render reconciler appends bubbles for indices
+    /// `renderedMessageCount ..< state.messages.count` so a
+    /// subscribe callback that fires every dispatch doesn't rebuild
+    /// the entire history each time.
+    private var renderedMessageCount: Int = 0
+
+    /// The single in-flight streaming bubble, or nil when not
+    /// streaming. Kept as a UI handle (not state) so the render
+    /// reconciler can update its text in place from
+    /// `state.streamingResponse` without rebuilding sibling bubbles.
     private var currentStreamingLabel: NSTextField?
+
+    /// True once the user's first message has been dispatched and
+    /// the empty-state hint has been removed. Tracked separately so
+    /// the reconciler doesn't re-add the hint after `.clearChat`
+    /// rebuilds (Phase 4 follow-up handles that case).
+    private var emptyStateRemoved: Bool = false
+
+    /// The error bubble currently displayed (if any). Cleared and
+    /// removed when state.error transitions back to nil.
+    private weak var currentErrorBubble: NSView?
 
     weak var editorViewController: EditorViewController?
 
@@ -29,11 +70,26 @@ class AIChatPanelView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupUI()
+        wireStore()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupUI()
+        wireStore()
+    }
+
+    deinit {
+        subscription?.cancel()
+    }
+
+    private func wireStore() {
+        // Initial subscribe also fires synchronously with the empty
+        // state, which is a no-op here (no messages, not streaming,
+        // no error) — safe.
+        subscription = store.subscribe { [weak self] state in
+            self?.render(state: state)
+        }
     }
 
     private func setupUI() {
@@ -202,52 +258,137 @@ class AIChatPanelView: NSView {
     }
 
     private func sendUserMessage(_ text: String) {
-        guard !isStreaming else { return }
-
-        // Remove empty state
-        messagesStack.arrangedSubviews.filter { $0.tag == 999 }.forEach { $0.removeFromSuperview() }
-
-        // Add user message bubble
-        addMessageBubble(text: text, isUser: true)
-        messages.append(ChatMessage(role: .user, content: text))
+        // Guard against double-dispatch while a stream is in flight.
+        // Single source of truth: the store, not the local flag that
+        // used to live here.
+        guard !store.state.isStreaming else { return }
 
         // Build the rich prompt context from the open note (if any).
         let context = makePromptContext()
 
-        // Get AI provider
+        // Get AI provider before mutating store, so a missing-key
+        // failure surfaces as an error bubble without first staging
+        // a user-turn that has nothing to respond to. (Behaviour
+        // preserved from pre-refactor: empty-state stays, no user
+        // bubble appears, only the error message.)
         guard let provider = AIServiceFactory.createProvider() else {
-            addMessageBubble(text: "No API key configured. Go to Preferences to set one.", isUser: false, isError: true)
+            store.dispatch(.completeResponse(.failure(AIError.noAPIKey)))
             return
         }
 
-        // Start streaming response
-        isStreaming = true
-        sendButton.isEnabled = false
+        // Snapshot messages we'll send to the provider INCLUDING
+        // the user turn we're about to commit. The reducer will
+        // append the user turn to `state.messages`, and the captured
+        // copy here matches what the provider needs to see (system
+        // turns are filtered inside provider.sendMessage).
+        var conversationToSend = store.state.messages
+        conversationToSend.append(ChatMessage(role: .user, content: text))
 
-        let streamingLabel = addMessageBubble(text: "", isUser: false)
-        currentStreamingLabel = streamingLabel
+        // Dispatch the user turn + start streaming. The render
+        // callback will materialise the user bubble and the empty
+        // streaming bubble in one pass.
+        store.dispatch(.sendMessage(text))
 
-        provider.sendMessage(messages: messages, context: context, onToken: { [weak self] token in
-            guard let label = self?.currentStreamingLabel else { return }
-            label.stringValue += token
-            self?.scrollToBottom()
+        provider.sendMessage(messages: conversationToSend, context: context, onToken: { [weak self] token in
+            self?.store.dispatch(.receiveToken(token))
         }, onComplete: { [weak self] result in
             guard let self = self else { return }
-            self.isStreaming = false
-            self.sendButton.isEnabled = true
-            self.currentStreamingLabel = nil
-
-            switch result {
-            case .success(let fullText):
-                self.messages.append(ChatMessage(role: .assistant, content: fullText))
-                // Add Apply button if it looks like an edit suggestion
-                if fullText.contains("```") || fullText.count > 100 {
-                    self.addApplyButton(for: fullText)
-                }
-            case .failure(let error):
-                self.addMessageBubble(text: "Error: \(error.localizedDescription)", isUser: false, isError: true)
+            self.store.dispatch(.completeResponse(result))
+            // Apply-button rendering is a render-time concern that
+            // depends on the assistant turn we just committed; it
+            // lives outside the reducer because it manipulates
+            // AppKit views, not state.
+            if case .success(let fullText) = result,
+               (fullText.contains("```") || fullText.count > 100) {
+                self.addApplyButton(for: fullText)
             }
         })
+    }
+
+    // MARK: - Render reconciler
+
+    /// Reconcile the visible UI against `state`. Called once on
+    /// subscribe and again after every dispatch.
+    private func render(state: AIChatState) {
+        // 1. Remove the empty-state hint as soon as we have anything
+        //    to show (a message, an in-flight stream, or an error).
+        let hasContent = !state.messages.isEmpty
+            || state.isStreaming
+            || state.error != nil
+        if hasContent && !emptyStateRemoved {
+            messagesStack.arrangedSubviews
+                .filter { $0.tag == 999 }
+                .forEach { $0.removeFromSuperview() }
+            emptyStateRemoved = true
+        }
+
+        // 2. Streaming-end fast path. Handle BEFORE adding new
+        //    message bubbles so a successful commit reuses the
+        //    streaming bubble as the final assistant bubble (no
+        //    visual jump). The reducer guarantees that on
+        //    .completeResponse(.success) it both appends the
+        //    assistant turn and flips isStreaming to false in one
+        //    transition, so this branch sees both at once.
+        if !state.isStreaming, let label = currentStreamingLabel {
+            if state.messages.count > renderedMessageCount,
+               state.messages[renderedMessageCount].role == .assistant {
+                // Reuse: the streaming label IS the bubble for
+                // this committed assistant turn. Sync its text.
+                label.stringValue = state.messages[renderedMessageCount].content
+                renderedMessageCount += 1
+            } else {
+                // Stream ended without committing a turn (failure
+                // case, or a stream that produced no text). Remove
+                // the empty placeholder bubble so we don't leave
+                // dead UI in the stack.
+                if let bubble = label.superview {
+                    messagesStack.removeArrangedSubview(bubble)
+                    bubble.removeFromSuperview()
+                }
+            }
+            currentStreamingLabel = nil
+        }
+
+        // 3. Append bubbles for any messages we haven't rendered.
+        //    This runs after step 2 so a streaming-end commit is
+        //    accounted for before we look at unrendered indices.
+        if state.messages.count > renderedMessageCount {
+            for index in renderedMessageCount..<state.messages.count {
+                let msg = state.messages[index]
+                addMessageBubble(text: msg.content, isUser: msg.role == .user)
+            }
+            renderedMessageCount = state.messages.count
+        }
+
+        // 4. Streaming-start / streaming-token path. Materialise
+        //    an empty assistant bubble on the first token-or-flag
+        //    transition; thereafter mirror state.streamingResponse
+        //    into its label.
+        if state.isStreaming {
+            if currentStreamingLabel == nil {
+                currentStreamingLabel = addMessageBubble(text: state.streamingResponse, isUser: false)
+            } else {
+                currentStreamingLabel?.stringValue = state.streamingResponse
+                scrollToBottom()
+            }
+        }
+
+        // 5. Error pane. One bubble at a time; replaces any prior
+        //    error bubble. Cleared when state.error returns to nil
+        //    (the next .sendMessage clears it via the reducer).
+        if let err = state.error {
+            currentErrorBubble?.removeFromSuperview()
+            let label = addMessageBubble(text: "Error: \(err.localizedDescription)",
+                                         isUser: false,
+                                         isError: true)
+            currentErrorBubble = label.superview
+        } else if let bubble = currentErrorBubble {
+            bubble.removeFromSuperview()
+            currentErrorBubble = nil
+        }
+
+        // 6. Send button enabled iff not streaming.
+        sendButton.isEnabled = !state.isStreaming
     }
 
     /// Resolve the rich prompt context from the open note. When no note
@@ -346,7 +487,12 @@ class AIChatPanelView: NSView {
     private func addApplyButton(for text: String) {
         let button = NSButton(title: "Apply to Note", target: self, action: #selector(applyToNote(_:)))
         button.bezelStyle = .accessoryBarAction
-        button.tag = messages.count - 1 // store message index
+        // Tag stores the index of the assistant message in
+        // `store.state.messages`. The button's lifetime is bounded
+        // by the panel — even after future `.clearChat` rebuilds
+        // (Phase 4 follow-up), the index lookup is bounds-checked
+        // so a stale button stays inert rather than crashing.
+        button.tag = store.state.messages.count - 1
         button.translatesAutoresizingMaskIntoConstraints = false
         messagesStack.addArrangedSubview(button)
         scrollToBottom()
@@ -354,6 +500,7 @@ class AIChatPanelView: NSView {
 
     @objc private func applyToNote(_ sender: NSButton) {
         let msgIndex = sender.tag
+        let messages = store.state.messages
         guard msgIndex >= 0, msgIndex < messages.count else { return }
 
         let content = messages[msgIndex].content
