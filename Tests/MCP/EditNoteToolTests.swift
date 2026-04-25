@@ -211,4 +211,36 @@ final class EditNoteToolTests: XCTestCase {
         XCTAssertFalse(result.isSuccess)
         XCTAssertTrue(result.errorMessage?.contains("Unsupported operation") ?? false)
     }
+
+    // MARK: - Happy-path tests with a wired AppBridgeImpl
+
+    /// End-to-end smoke test: the tool routes a `replace_block`
+    /// through a real `AppBridgeImpl` whose editor is a live
+    /// `EditorHarness`. Verifies the WYSIWYG path actually mutates
+    /// the projection.
+    func testHappyPathRoutesReplaceBlockThroughWiredBridge() {
+        let fixture = MCPTestFixture()
+        let url = fixture.makeNote(at: "live.md", content: threeBlockMarkdown + "\n")
+        let harness = AppBridgeImplTestHelper.makeHarness(
+            at: url, markdown: threeBlockMarkdown + "\n"
+        )
+        defer { harness.teardown() }
+        let vc = ViewController()
+        vc.editor = harness.editor
+        let bridge = AppBridgeImpl(resolveViewController: { vc })
+        let tool = EditNoteTool(server: fixture.makeServer(bridge: bridge))
+
+        let result = tool.executeSync(input: [
+            "title": "live",
+            "operation": "replace_block",
+            "blockIndex": 1,
+            "markdown": "Replaced first paragraph."
+        ])
+
+        XCTAssertTrue(result.isSuccess, "got \(String(describing: result.errorMessage))")
+        XCTAssertEqual(result.payload?["viaBridge"] as? Bool, true)
+        let serialised = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        XCTAssertTrue(serialised.contains("Replaced first paragraph."))
+        XCTAssertFalse(serialised.contains("First paragraph."))
+    }
 }

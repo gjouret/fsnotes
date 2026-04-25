@@ -129,4 +129,34 @@ final class AppendToNoteToolTests: XCTestCase {
         XCTAssertFalse(result.isSuccess)
         XCTAssertTrue(result.errorMessage?.contains("write lock") ?? false)
     }
+
+    // MARK: - Happy-path tests with a wired AppBridgeImpl
+
+    /// End-to-end smoke test: the tool routes through a real
+    /// `AppBridgeImpl` whose editor is a live `EditorHarness`. The
+    /// harness's note is repointed at the fixture file so
+    /// `NotePathResolver` finds it. This proves the wiring works
+    /// from tool invocation → bridge → block-model pipeline.
+    func testHappyPathRoutesThroughWiredBridge() {
+        let fixture = MCPTestFixture()
+        let url = fixture.makeNote(at: "live.md", content: "Hello.\n")
+        let harness = AppBridgeImplTestHelper.makeHarness(at: url, markdown: "Hello.\n")
+        defer { harness.teardown() }
+        let vc = ViewController()
+        vc.editor = harness.editor
+        let bridge = AppBridgeImpl(resolveViewController: { vc })
+        let tool = AppendToNoteTool(server: fixture.makeServer(bridge: bridge))
+
+        let result = tool.executeSync(input: [
+            "title": "live",
+            "content": "Appended."
+        ])
+
+        XCTAssertTrue(result.isSuccess, "got \(String(describing: result.errorMessage))")
+        XCTAssertEqual(result.payload?["viaBridge"] as? Bool, true)
+        // Confirm the live editor projection actually contains the
+        // appended text (not just that the tool returned success).
+        let serialised = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        XCTAssertTrue(serialised.contains("Appended."))
+    }
 }

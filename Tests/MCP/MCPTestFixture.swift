@@ -176,3 +176,22 @@ final class TestAppBridge: AppBridge {
         return exportOutcome
     }
 }
+
+/// Shared helpers for tests that wire a real `AppBridgeImpl` over an
+/// `EditorHarness`. Used by `AppBridgeImplTests` and the
+/// happy-path arms of the Phase 3 tool test suites.
+enum AppBridgeImplTestHelper {
+    /// Build an `EditorHarness` whose note is rooted at the supplied
+    /// filesystem URL (typically a file the test fixture wrote
+    /// earlier so `NotePathResolver` can find it). The harness seeds
+    /// the editor projection with `markdown` and the note URL points
+    /// at the fixture file so the tool's path resolution and the
+    /// bridge's open-note check both agree.
+    static func makeHarness(at url: URL, markdown: String) -> EditorHarness {
+        let harness = EditorHarness(markdown: markdown)
+        // Repoint the note at the fixture URL so the tool path
+        // resolution + bridge agree on the open note's identity.
+        harness.note.url = url.standardized
+        return harness
+    }
+}

@@ -103,4 +103,29 @@ final class ApplyFormattingToolTests: XCTestCase {
         XCTAssertFalse(result.isSuccess)
         XCTAssertTrue(result.errorMessage?.contains("Unsupported") ?? false)
     }
+
+    // MARK: - Happy-path test with a wired AppBridgeImpl
+
+    /// End-to-end smoke test: the tool routes a `bold` toggle
+    /// through a real `AppBridgeImpl` whose editor is a live
+    /// `EditorHarness`. Verifies the WYSIWYG path actually mutates
+    /// the projection.
+    func testHappyPathTogglesBoldThroughWiredBridge() {
+        let fixture = MCPTestFixture()
+        let url = fixture.makeNote(at: "live.md", content: "Hello\n")
+        let harness = AppBridgeImplTestHelper.makeHarness(at: url, markdown: "Hello\n")
+        defer { harness.teardown() }
+        // Select "Hello" so toggleBold has something to wrap.
+        harness.editor.setSelectedRange(NSRange(location: 0, length: 5))
+        let vc = ViewController()
+        vc.editor = harness.editor
+        let bridge = AppBridgeImpl(resolveViewController: { vc })
+        let tool = ApplyFormattingTool(server: fixture.makeServer(bridge: bridge))
+
+        let result = tool.executeSync(input: ["command": "bold"])
+
+        XCTAssertTrue(result.isSuccess, "got \(String(describing: result.errorMessage))")
+        let serialised = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        XCTAssertTrue(serialised.contains("**Hello**"), "got: \(serialised)")
+    }
 }

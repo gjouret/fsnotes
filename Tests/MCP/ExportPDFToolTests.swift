@@ -101,4 +101,35 @@ final class ExportPDFToolTests: XCTestCase {
         XCTAssertFalse(result.isSuccess)
         XCTAssertTrue(result.errorMessage?.contains("WYSIWYG") ?? false)
     }
+
+    // MARK: - Happy-path test with a wired AppBridgeImpl
+
+    /// End-to-end: routes export through a real `AppBridgeImpl` over
+    /// a live `EditorHarness` and asserts the PDF file exists and
+    /// is non-empty.
+    func testHappyPathExportsRealPDFThroughWiredBridge() {
+        let fixture = MCPTestFixture()
+        let url = fixture.makeNote(at: "live.md", content: "# Heading\n\nBody.\n")
+        let harness = AppBridgeImplTestHelper.makeHarness(
+            at: url, markdown: "# Heading\n\nBody.\n"
+        )
+        defer { harness.teardown() }
+        let vc = ViewController()
+        vc.editor = harness.editor
+        let bridge = AppBridgeImpl(resolveViewController: { vc })
+        let tool = ExportPDFTool(server: fixture.makeServer(bridge: bridge))
+        let outURL = fixture.root.appendingPathComponent("real.pdf")
+
+        let result = tool.executeSync(input: [
+            "title": "live",
+            "outputPath": outURL.path
+        ])
+
+        XCTAssertTrue(result.isSuccess, "got \(String(describing: result.errorMessage))")
+        XCTAssertEqual(result.payload?["viaBridge"] as? Bool, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outURL.path))
+        let attr = try? FileManager.default.attributesOfItem(atPath: outURL.path)
+        let size = (attr?[.size] as? NSNumber)?.intValue ?? 0
+        XCTAssertGreaterThan(size, 0, "exported PDF should be non-empty")
+    }
 }
