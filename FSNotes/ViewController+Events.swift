@@ -351,6 +351,10 @@ extension ViewController {
     }
 
     @objc public func toggleAIChat(_ sender: Any) {
+        // Bug #53 diagnostic: confirm the IBAction is reached at all.
+        // If the toolbar button click never logs this line, the
+        // responder chain isn't routing the action to ViewController.
+        bmLog("🤖 toggleAIChat invoked (sender: \(type(of: sender)))")
         if let panel = aiChatPanel, !panel.isHidden {
             aiChatEditorTrailingConstraint?.isActive = false
             aiChatEditorTrailingConstraint = nil
