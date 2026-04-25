@@ -99,7 +99,15 @@ extension EditTextView {
             from: docStart, to: elementRange.location
         )
         let localOffset = cursorOffset - elementStart
-        guard let (row, col) = element.cellLocation(forOffset: localOffset)
+        // Cursor-aware lookup: when the caret is parked at end-of-
+        // cell content (a click-to-cell with no further typing leaves
+        // the caret on the U+001F / U+001E separator that follows
+        // the cell), the strict locator returns nil. The cursor-
+        // aware variant resolves to the preceding cell so Tab and
+        // other table nav commands route through us instead of
+        // falling through to default handling (which inserts a
+        // literal `\t` character).
+        guard let (row, col) = element.cellAtCursor(forOffset: localOffset)
         else { return nil }
 
         return TableCursorContext(

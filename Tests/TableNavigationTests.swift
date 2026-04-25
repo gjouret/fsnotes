@@ -383,6 +383,125 @@ final class TableNavigationTests: XCTestCase {
         )
     }
 
+    // MARK: - Tab/Shift-Tab from cursor at end-of-cell (Phase 11 Slice B)
+    //
+    // Bug #30 from the inventory: clicking inside a cell parks the
+    // cursor at the END of the cell's content. For non-last cells,
+    // that offset sits on a U+001F separator. The strict
+    // `cellLocation(forOffset:)` returns nil for separator offsets,
+    // which made `tableCursorContext()` return nil, which made
+    // `handleTableNavCommand` return false, which let `super.doCommand
+    // (insertTab:)` insert a literal `\t` into the cell.
+    //
+    // Fix: `TableElement.cellAtCursor(forOffset:)` resolves separator
+    // offsets to the preceding cell so Tab routes through us. The
+    // tests below pin the behavior — they fail on master and pass
+    // after the fix.
+
+    /// Tab from end of cell (0, 0) — where a click-to-cell parks the
+    /// caret — must advance to start of (0, 1), NOT insert a tab
+    /// character.
+    func test_phase11sliceB_tabAtEndOfCell_movesToNextCell() throws {
+        guard let ctx = makeHarnessWith2x2Table() else {
+            XCTFail("Harness setup failed"); return
+        }
+        let harness = ctx.harness
+        defer { harness.teardown() }
+
+        // End of cell (0, 0) = its start + cell text length. For
+        // header "H0" that's start00 + 2 — which is the offset of
+        // the U+001F separator.
+        guard case .table(let header, _, _, _) = ctx.element.block else {
+            XCTFail("not a table"); return
+        }
+        let cell00Len = header[0].rawText.utf16.count
+        let endOfCell00 = ctx.offset(0, 0) + cell00Len
+        harness.editor.setSelectedRange(NSRange(location: endOfCell00, length: 0))
+
+        let storageBefore = harness.editor.textStorage?.string ?? ""
+        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+
+        let expected = ctx.offset(0, 1)
+        XCTAssertEqual(
+            harness.editor.selectedRange().location, expected,
+            "Tab from end of (0,0) (= on the U+001F separator) " +
+            "must advance to start of (0,1), not insert a tab"
+        )
+        // Storage must not have been mutated — no literal \t.
+        let storageAfter = harness.editor.textStorage?.string ?? ""
+        XCTAssertEqual(
+            storageBefore, storageAfter,
+            "Tab inside table must not modify storage (no literal \\t)"
+        )
+    }
+
+    /// Shift-Tab from start of cell (0, 0) stays at (0, 0) — there
+    /// is no previous cell to wrap into beyond the wrap-around at
+    /// the end of the body, but the test from line 308 already
+    /// verifies the wrap-back-to-(0,0) path. Here we lock in the
+    /// edge: Shift-Tab from (0, 0) start must NOT insert a literal
+    /// `\t`. The current FSM does wrap to the last cell — that's
+    /// fine; we just assert no tab character was inserted.
+    func test_phase11sliceB_shiftTabAtStartOfFirstCell_doesNotInsertTab() throws {
+        guard let ctx = makeHarnessWith2x2Table() else {
+            XCTFail("Harness setup failed"); return
+        }
+        let harness = ctx.harness
+        defer { harness.teardown() }
+
+        let start00 = ctx.offset(0, 0)
+        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+        let storageBefore = harness.editor.textStorage?.string ?? ""
+
+        harness.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+
+        let storageAfter = harness.editor.textStorage?.string ?? ""
+        XCTAssertEqual(
+            storageBefore, storageAfter,
+            "Shift-Tab inside table must not modify storage (no literal \\t)"
+        )
+        // Cursor lands somewhere inside the table — the wrap-around
+        // moves it to the last cell. The exact target is asserted in
+        // the dedicated wrap-around test; here we only need to know
+        // the cursor stayed inside the table element.
+        let cursor = harness.editor.selectedRange().location
+        XCTAssertTrue(
+            harness.editor.storageOffsetIsInTableElement(cursor),
+            "Shift-Tab cursor must remain in table"
+        )
+    }
+
+    /// End-to-end with a click-then-Tab simulation. Place cursor at
+    /// end of cell (1, 0) — same offset `handleTableCellClick` parks
+    /// at — then Tab. Expect cell (1, 1).
+    func test_phase11sliceB_tabAfterClickToCell10_movesToCell11() throws {
+        guard let ctx = makeHarnessWith2x2Table() else {
+            XCTFail("Harness setup failed"); return
+        }
+        let harness = ctx.harness
+        defer { harness.teardown() }
+
+        guard case .table(_, _, let rows, _) = ctx.element.block else {
+            XCTFail("not a table"); return
+        }
+        let cell10Len = rows[0][0].rawText.utf16.count
+        let endOfCell10 = ctx.offset(1, 0) + cell10Len
+        harness.editor.setSelectedRange(NSRange(location: endOfCell10, length: 0))
+        let storageBefore = harness.editor.textStorage?.string ?? ""
+
+        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+
+        let expected = ctx.offset(1, 1)
+        XCTAssertEqual(
+            harness.editor.selectedRange().location, expected,
+            "Tab from end of body (1,0) must move to start of (1,1)"
+        )
+        XCTAssertEqual(
+            harness.editor.textStorage?.string ?? "", storageBefore,
+            "Storage must not be mutated"
+        )
+    }
+
     // MARK: - 9. Return inside a cell inserts a `<br>`  (T2-e)
     //
     // This test originally asserted Return was a no-op (T2-d slice) and
