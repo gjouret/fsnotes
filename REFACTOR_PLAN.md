@@ -1594,9 +1594,9 @@ The `expected` enum cases are coarse-grained (`stayInBlock`, `splitBlock(into:)`
 Convert every user-reported bug from this 2-week window into a named regression test in the new format. Inventory (current count: 25; will grow as new bugs report in):
 
 1. Bullet/checkbox mount on first fill ✅ (already a test, migrate to new shape)
-2. Empty-doc typing
-3. Phase 5a crash on hardware-keyboard typing
-4. Group A: emoji/paste into empty doc
+2. Empty-doc typing ✅ (verified 2026-04-25: `test_bug2_emptyDoc_typing_producesParagraph` passes today; fix shipped earlier in the refactor when block-model became live).
+3. Phase 5a crash on hardware-keyboard typing ✅ (verified 2026-04-25: `test_bug3_hardwareKeyboardTyping_doesNotTripGuard` passes today; closed when Phase 5a's `StorageWriteGuard` retired the bypass that produced the crash).
+4. Group A: emoji/paste into empty doc ✅ (verified 2026-04-25: `test_bug4_emojiAndPaste_intoEmptyDoc` passes today; UTF-16 surrogate-pair handling correct end-to-end).
 5. `returnAfterHeading_producesParagraph`
 6. `returnAtStartOfHeading_createsEmptyParagraphBefore` ✅ (`3fc565f`: `EditingOps.newLine` heading-atStart branch now inserts an empty paragraph BEFORE the heading and preserves the heading at index N+1; cursor lands at start of the preserved heading. FSMTransitions.swift drops `bugId: 6` from both H1 and H3 rows.)
 7. `returnInListItem_producesAnotherListItem` (assertion shape)
@@ -1631,6 +1631,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 36. Drag-and-drop on a row/column handle does not draw the blue insertion line during drag and doesn't move the row/column on drop. Regression introduced when handle chrome migrated from fragment-paint to `TableHandleChip` `NSView` subviews (`d391f0b`): `mouseDown` for drag-move was not ported. TK1's `GlassHandleView` had `onDragStart` callback wired through `mouseDown`. Drag-resize for column WIDTH (T2-g.4) is separate code and may still work — bug specifically affects row/column REORDER drag. ✅ (shipped: `mouseDown` restored on `TableHandleChip`; drag tracking + insertion line in `TableHandleOverlay.beginHandleDrag` calling new `EditingOps.moveTableRow` / `moveTableColumn` primitives. Pure helpers `dropGapIndex` / `moveDestinationIndex` cover the cursor → boundary math; `TableDragReorderTests` (17 tests) covers the primitives + composition.)
 37. (Slice E discovery) Backspace at start of a table cell crosses the cell boundary and deletes a block, instead of staying inside the cell (FSM table says `stayInBlock`, actual delta -1). Combinatorial probe `table | atStart | pressBackspace | empty`. Tracked in `Tests/Combinatorial/DiscoveredBugs.txt`.
 38. (Slice E discovery) List exit-to-body transition (Return on an empty trailing list item) mints a fresh `Block` UUID rather than mutating the slot in place. Affects `bulletList`, `numberedList`, `todoList` identically — single root cause, three failing combinatorial entries. Slot identity matters for undo journaling and UI state preservation. Tracked in `Tests/Combinatorial/DiscoveredBugs.txt`.
+47. Row / column handle drag-selection border (blue rounded-rect outline shown while the user holds the mouse on a row or column handle) is offset rightwards from the actual row / column boundary — visually the highlight overlaps into the next column instead of framing the column the handle belongs to. User-reported via screenshot 2026-04-25. Coordinate-space-mismatch class (per `feedback_coord_space_offset_bugs.md`): producer returns coords in space A; consumer drew in space B; missing transform = `originOf(B in A)`. Likely sites: `TableHandleOverlay` (chip positioning) or `TableHandleView`'s drag-tracking selection-border draw. Candidate fix lives wherever the column-x / row-y boundary is computed: it's probably reading fragment-local coords and drawing in container/view coords without the `+ fragment.origin` offset. Apply the coord-space checklist (fragment-local → container → view → window → screen) FIRST.
 
 **Done when:** every bug has a named regression test; the test passes (bug fixed) OR is wrapped in `XCTExpectFailure` with an issue link.
 
