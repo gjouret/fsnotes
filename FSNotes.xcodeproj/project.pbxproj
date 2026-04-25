@@ -754,6 +754,8 @@
 		MCP02000000000000000000B1 /* MCPTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP02000000000000000000F1 /* MCPTool.swift */; };
 		MCP03000000000000000000B1 /* ToolOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP03000000000000000000F1 /* ToolOutput.swift */; };
 		MCP04000000000000000000B1 /* AppBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP04000000000000000000F1 /* AppBridge.swift */; };
+		MCPT01000000000000000000B1 /* NotePathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT01000000000000000000F1 /* NotePathResolver.swift */; };
+		MCPT02000000000000000000B1 /* ReadNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT02000000000000000000F1 /* ReadNoteTool.swift */; };
 		D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77CC042216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77E0536246312B200AD7772 /* StorageType.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77E05282463124300AD7772 /* StorageType.swift */; };
@@ -1598,6 +1600,8 @@
 		MCP02000000000000000000F1 /* MCPTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTool.swift; sourceTree = "<group>"; };
 		MCP03000000000000000000F1 /* ToolOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOutput.swift; sourceTree = "<group>"; };
 		MCP04000000000000000000F1 /* AppBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBridge.swift; sourceTree = "<group>"; };
+		MCPT01000000000000000000F1 /* NotePathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotePathResolver.swift; sourceTree = "<group>"; };
+		MCPT02000000000000000000F1 /* ReadNoteTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadNoteTool.swift; sourceTree = "<group>"; };
 		D77CC040216A608500582B97 /* EditorScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScrollView.swift; sourceTree = "<group>"; };
 		D77E05282463124300AD7772 /* StorageType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageType.swift; sourceTree = "<group>"; };
 		D77F41B22A0D48F500E2B7A2 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
@@ -2535,6 +2539,8 @@
 		MCPGRP000000000000000G02 /* Tools */ = {
 			isa = PBXGroup;
 			children = (
+				MCPT01000000000000000000F1 /* NotePathResolver.swift */,
+				MCPT02000000000000000000F1 /* ReadNoteTool.swift */,
 			);
 			path = Tools;
 			sourceTree = "<group>";
@@ -3910,6 +3916,8 @@
 				MCP02000000000000000000B1 /* MCPTool.swift in Sources */,
 				MCP03000000000000000000B1 /* ToolOutput.swift in Sources */,
 				MCP04000000000000000000B1 /* AppBridge.swift in Sources */,
+				MCPT01000000000000000000B1 /* NotePathResolver.swift in Sources */,
+				MCPT02000000000000000000B1 /* ReadNoteTool.swift in Sources */,
 				D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */,
 				110BE0232EE8C53C00C5E456 /* TypeScript.swift in Sources */,
 				110BE0122EE86B4A00C5E456 /* Clojure.swift in Sources */,
