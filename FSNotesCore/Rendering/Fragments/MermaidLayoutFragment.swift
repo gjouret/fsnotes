@@ -86,6 +86,13 @@ public final class MermaidLayoutFragment: NSTextLayoutFragment {
     /// snapshot) on the main queue.
     private var renderedImage: NSImage?
 
+    /// Read-only test instrumentation hook — Phase 11 Slice D.
+    /// Exposes the rendered-image presence so async-hydration tests
+    /// can poll for completion without touching draw state. Read-only;
+    /// no behavioural change. Used by `Then.mermaidBlock(at:).hasRendered`
+    /// in `Tests/EditorAssertions+Async.swift`.
+    public var hasRenderedImage: Bool { renderedImage != nil }
+
     /// Guards against kicking off the same render more than once while a
     /// cache-miss is in flight. Reset on completion regardless of
     /// success, so a failed render retries on the next draw.
