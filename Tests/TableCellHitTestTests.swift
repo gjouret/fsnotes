@@ -233,4 +233,37 @@ final class TableCellHitTestTests: XCTestCase {
             "click in (\(row), \(col)) cell should map to text 'x', got '\(cellText)'"
         )
     }
+
+    /// User-flow regression: create a note, insert a table via the
+    /// `Insert Table` IBAction, type a character. The character
+    /// MUST land inside the new table's top-left cell, not at
+    /// some position outside it.
+    func test_insertTableThenType_landsInTopLeftCell() {
+        let h = EditorHarness(markdown: "", windowActivation: .keyWindow)
+        defer { h.teardown() }
+        // Type a placeholder char so the document has at least one
+        // block; otherwise `insertTableMenu` returns early when
+        // `blockContaining(storageIndex: 0)` is nil.
+        h.type("p")
+        h.editor.insertTableMenu(NSObject())
+        h.type("X")
+        guard let projection = h.editor.documentProjection else {
+            XCTFail("no projection"); return
+        }
+        let tableBlocks = projection.document.blocks.compactMap {
+            block -> Block? in
+            if case .table = block { return block } else { return nil }
+        }
+        XCTAssertEqual(
+            tableBlocks.count, 1,
+            "expected exactly one table block; got \(tableBlocks.count)"
+        )
+        guard case .table(let header, _, _, _) = tableBlocks[0]
+        else { XCTFail("first table block isn't .table"); return }
+        let headerTexts = header.map { $0.rawText }.joined(separator: ",")
+        XCTAssertEqual(
+            header.first?.rawText, "X",
+            "expected 'X' in (0,0); got header=[\(headerTexts)]"
+        )
+    }
 }

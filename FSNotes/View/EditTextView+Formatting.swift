@@ -361,10 +361,17 @@ extension EditTextView {
             note.cachedDocument = newDoc
             hasUserEdits = false
             fill(note: note)
-            // Native path: TK2's default hit-testing places the caret in
-            // the first table cell on the next user click. No widget
-            // focus handoff is needed; the legacy
-            // `focusFirstInlineTableCell` routine was deleted in T2-h.
+            // Place the caret inside the new table's top-left cell.
+            // Without this, the cursor stays at its pre-insert
+            // position and the user's first keystroke after
+            // "Insert Table" lands OUTSIDE the table — exactly the
+            // symptom the previous TODO comment misdescribed as a
+            // non-issue ("TK2's default hit-testing places the
+            // caret in the first table cell on the next user
+            // click"). It doesn't, because `TableLayoutFragment`
+            // paints cells at custom grid positions that TK2's
+            // natural-flow hit test doesn't agree with.
+            placeCursorInFirstCellOfTable(at: blockIndex + 1)
         } else {
             // Source-mode path. Tables only render live in block-model
             // mode; in source mode the raw markdown is inserted and the

@@ -181,14 +181,18 @@ public final class TableElement: NSTextParagraph {
             let isRowSep = (ch == rowSep)
             if isCellSep || isRowSep {
                 // Non-empty cell: offset in [cellStart, i).
-                // Empty cell (cellStart == i): no content range to fall
-                // inside — offset == i is the separator, returns nil.
                 if cellStart < i, offset >= cellStart, offset < i {
                     return (row: row, col: col)
                 }
-                if offset == i {
-                    // Cursor on the separator itself — not inside a cell.
-                    return nil
+                // Empty cell (cellStart == i): the cell has no
+                // content range, but the position AT the separator
+                // IS the cell's insertion point. Resolve to (row,
+                // col) so cursor placement and edit routing can
+                // target empty cells. Without this, typing into a
+                // freshly-inserted empty table fails because every
+                // cell's offset is also a separator position.
+                if cellStart == i, offset == i {
+                    return (row: row, col: col)
                 }
                 if isCellSep {
                     col += 1

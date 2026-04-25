@@ -242,6 +242,28 @@ extension EditTextView {
     /// Post-4.5 this is the only hit-test path — the TK1
     /// NSLayoutManager.characterIndex path was removed with the custom
     /// layout-manager subclass.
+    /// Place the caret inside the top-left cell of the table at
+    /// `blockIndex` in the current projection. Called after
+    /// `Insert Table` so the user can immediately start typing into
+    /// the new table without a separate click.
+    func placeCursorInFirstCellOfTable(at blockIndex: Int) {
+        guard let projection = documentProjection,
+              blockIndex >= 0,
+              blockIndex < projection.document.blocks.count,
+              case .table = projection.document.blocks[blockIndex],
+              blockIndex < projection.blockSpans.count
+        else { return }
+        let span = projection.blockSpans[blockIndex]
+        // The TableElement begins at `span.location`; the first
+        // header cell content starts at offset 0 inside the element.
+        // (The native-cell encoding has cell text first, then a
+        // U+001F separator — see `TableElement.offset(forCellAt:)`.)
+        // For an empty cell, the first cell's content range is
+        // `(span.location, length=0)`, so parking at `span.location`
+        // is the right insertion point.
+        setSelectedRange(NSRange(location: span.location, length: 0))
+    }
+
     /// Map a mouse-down event to a table cell + cursor offset, and
     /// place the selection there. Returns true if the click landed
     /// on a `TableLayoutFragment` cell (caller should NOT fall
