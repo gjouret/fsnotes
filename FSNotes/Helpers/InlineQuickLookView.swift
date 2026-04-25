@@ -19,9 +19,85 @@
 //  - QuickLookAttachmentProcessor scans textStorage for non-image,
 //    non-PDF attachments and replaces them with attachment characters.
 //
+//  Bug #19 — async re-render on scroll-recycle:
+//    Even with a fresh InlineQuickLookView per loadView(), QLPreviewView's
+//    async render does not always re-fire after scroll-recycle (most
+//    visibly with `.numbers`). Two-layer fix:
+//      1. Re-set `previewItem` in `viewDidMoveToWindow` to force reload.
+//      2. NSImageView fallback rendered behind the preview from a
+//         process-wide `QuickLookThumbnailCache` so the user always sees
+//         the document while QLPreviewView re-hydrates.
+//
 
 import Cocoa
 import Quartz
+import QuickLookThumbnailing
+
+// MARK: - QuickLookThumbnailCache
+
+/// Process-wide cache of rendered QuickLook thumbnails keyed by URL.
+/// Used as a synchronously-displayable fallback while `QLPreviewView`
+/// re-hydrates after a scroll-recycle. Without this cache the user sees
+/// an empty preview frame for a few hundred milliseconds (or, for some
+/// file types like `.numbers`, indefinitely if QLPreviewView fails to
+/// kick its render after the view re-enters the window hierarchy).
+///
+/// The cache is cheap — a thumbnail for a typical embed is a 600x400
+/// NSImage, ~1 MB peak; we cap the cache by NSCache's count limit.
+enum QuickLookThumbnailCache {
+
+    /// Process-wide cache. NSCache is thread-safe and self-evicts under
+    /// memory pressure.
+    static let shared: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    /// Synchronously return a cached thumbnail for `url`, or nil if not
+    /// yet rendered. Callers must tolerate a nil return — rendering is
+    /// asynchronous and the cache fills opportunistically.
+    static func cachedThumbnail(for url: URL) -> NSImage? {
+        return shared.object(forKey: url as NSURL)
+    }
+
+    /// Render a thumbnail for `url` at `size` (points) using
+    /// `QLThumbnailGenerator` and store it in the cache when ready.
+    /// `completion` runs on the main thread with the rendered image
+    /// (or nil on failure). Idempotent: if a thumbnail is already
+    /// cached, the completion fires synchronously with the cached value.
+    static func renderThumbnail(
+        for url: URL,
+        size: NSSize,
+        completion: @escaping (NSImage?) -> Void
+    ) {
+        if let cached = cachedThumbnail(for: url) {
+            completion(cached)
+            return
+        }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: size,
+            scale: scale,
+            representationTypes: .thumbnail
+        )
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
+            let image: NSImage?
+            if let rep = rep {
+                image = rep.nsImage
+            } else {
+                image = nil
+            }
+            DispatchQueue.main.async {
+                if let image = image {
+                    shared.setObject(image, forKey: url as NSURL)
+                }
+                completion(image)
+            }
+        }
+    }
+}
 
 // MARK: - InlineQuickLookView
 
@@ -39,6 +115,12 @@ class InlineQuickLookView: NSView {
     private var openButton: NSButton!
     private var separatorView: NSView!
     private var containerWidth: CGFloat
+    /// Fallback thumbnail layer rendered behind the QLPreviewView.
+    /// Stays visible as long as we have a cached thumbnail; covers the
+    /// brief gap while QLPreviewView async-renders after the view is
+    /// reattached to the window (Bug #19 — Numbers thumbnail loss on
+    /// scroll-recycle).
+    private var thumbnailFallback: NSImageView!
 
     /// Maximum height for the preview (scales with note font).
     private var maxHeight: CGFloat {
@@ -118,13 +200,70 @@ class InlineQuickLookView: NSView {
         openButton.controlSize = .small
         addSubview(openButton)
 
+        // --- Thumbnail fallback (rendered BEHIND the QLPreviewView) ---
+        // Bug #19: when TK2 scrolls a QuickLook attachment out and back
+        // in, the QLPreviewView's async render sometimes does not
+        // re-fire (most reliably observed with `.numbers` files). The
+        // fallback layer displays a cached thumbnail so the user always
+        // sees the document while QLPreviewView re-hydrates. If the
+        // cache is empty, the fallback stays hidden and we render the
+        // thumbnail lazily for next time.
+        thumbnailFallback = NSImageView()
+        thumbnailFallback.imageScaling = .scaleProportionallyUpOrDown
+        thumbnailFallback.imageAlignment = .alignCenter
+        thumbnailFallback.isHidden = true
+        addSubview(thumbnailFallback)
+
         // --- QuickLook preview ---
         previewView = QLPreviewView(frame: .zero, style: .compact)!
         previewView.autostarts = true
         previewView.previewItem = fileURL as QLPreviewItem
         addSubview(previewView)
 
+        // Bug #23: double-click anywhere on the inline preview opens
+        // the underlying file in its default macOS app (Numbers,
+        // Pages, etc.). Same rationale as InlinePDFView — QLPreviewView
+        // consumes mouse events on its own surface, so a `mouseDown`
+        // override on the container would never fire for clicks
+        // landing on the preview content. A click gesture recognizer
+        // intercepts before subviews see the event. Single clicks are
+        // not captured, so default selection / focus behavior in the
+        // QuickLook content is preserved.
+        let doubleClick = NSClickGestureRecognizer(
+            target: self, action: #selector(handleDoubleClick(_:))
+        )
+        doubleClick.numberOfClicksRequired = 2
+        addGestureRecognizer(doubleClick)
+
+        // Show cached thumbnail (if any) and kick off async render so
+        // it's available next time the view recycles.
+        refreshThumbnailFallback()
+
         layoutSubviews()
+    }
+
+    /// Update the fallback thumbnail image from the process-wide cache.
+    /// If the cache is empty, request a render so the next mount shows
+    /// the thumbnail immediately. Called on init and on
+    /// `viewDidMoveToWindow` so a recycled view always reflects the
+    /// latest cached thumbnail.
+    private func refreshThumbnailFallback() {
+        if let cached = QuickLookThumbnailCache.cachedThumbnail(for: fileURL) {
+            thumbnailFallback.image = cached
+            thumbnailFallback.isHidden = false
+            return
+        }
+        // No cached thumbnail — render asynchronously so the cache is
+        // warm for the next loadView() / window-attach.
+        let size = NSSize(
+            width: max(64, containerWidth),
+            height: max(64, frame.height > 0 ? frame.height - toolbarHeight : 300)
+        )
+        QuickLookThumbnailCache.renderThumbnail(for: fileURL, size: size) { [weak self] image in
+            guard let self = self, let image = image else { return }
+            self.thumbnailFallback.image = image
+            self.thumbnailFallback.isHidden = false
+        }
     }
 
     // MARK: - Layout
@@ -164,7 +303,10 @@ class InlineQuickLookView: NSView {
 
         // QuickLook preview fills area below toolbar
         let contentHeight = frame.height - tbH
-        previewView.frame = NSRect(x: 0, y: 0, width: w, height: contentHeight)
+        let previewFrame = NSRect(x: 0, y: 0, width: w, height: contentHeight)
+        previewView.frame = previewFrame
+        // Fallback thumbnail occupies the same area, behind the preview.
+        thumbnailFallback.frame = previewFrame
     }
 
     override func layout() {
@@ -175,6 +317,28 @@ class InlineQuickLookView: NSView {
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         layoutSubviews()
+    }
+
+    // MARK: - Re-attach lifecycle (Bug #19)
+
+    /// `QLPreviewView`'s async render does not always re-fire after the
+    /// host view detaches and reattaches to a window — the symptom the
+    /// user reported is `.numbers` files showing an empty preview frame
+    /// after the user scrolls past the embed and back. Re-setting
+    /// `previewItem` here forces QLPreviewView to reload, and refreshing
+    /// the thumbnail fallback covers the gap until the live preview
+    /// finishes loading.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        refreshThumbnailFallback()
+        // Force QLPreviewView to re-load its preview item. The nil-then-
+        // set sequence is the documented pattern for forcing a reload
+        // (Apple sample: PreviewKit / QLPreviewView). Without this the
+        // view sometimes stays blank after a scroll-recycle because the
+        // first load fired before the view was in the hierarchy.
+        previewView.previewItem = nil
+        previewView.previewItem = fileURL as QLPreviewItem
     }
 
     // MARK: - Computed Size
@@ -203,6 +367,17 @@ class InlineQuickLookView: NSView {
     // MARK: - Actions
 
     @objc private func openInNativeApp() {
+        NSWorkspace.shared.open(fileURL)
+    }
+
+    /// Bug #23: double-click anywhere on the inline preview opens the
+    /// file in its default macOS app. Routes through the same
+    /// `NSWorkspace.open` call as the toolbar "Open" button so
+    /// behavior is identical regardless of trigger.
+    @objc private func handleDoubleClick(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended,
+              InlineAttachmentOpenPolicy.shouldOpenOnDoubleClick(clickCount: recognizer.numberOfClicksRequired)
+        else { return }
         NSWorkspace.shared.open(fileURL)
     }
 

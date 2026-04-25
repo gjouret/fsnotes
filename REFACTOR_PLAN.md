@@ -1611,7 +1611,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 16. Bullet-list format only first line of multi-selection
 17. Pane doesn't re-expand on window resize
 18. Triple-click paragraph + delete demotes list below
-19. Numbers QuickLook thumbnail doesn't re-render on scroll
+19. Numbers QuickLook thumbnail doesn't re-render on scroll ✅ (force-reload `previewItem` in `viewDidMoveToWindow` + `QuickLookThumbnailCache` fallback layer)
 20. `<kbd>` tag missing rounded rectangle ✅ (kbd-tag attribute probe migrated; bitmap probe migrated)
 21. Clicking checkbox directly doesn't toggle ✅ (just shipped: `12dc300`)
 22. QuickLook scroll propagation not implemented ✅ (consume-then-propagate at boundary; pure predicate + 14 unit tests)

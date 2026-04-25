@@ -175,4 +175,47 @@ final class InlineQuickLookScrollPropagationTests: XCTestCase {
         let scroll = NSScrollView()
         XCTAssertTrue(InlineQuickLookView.findInnerScrollView(in: scroll) === scroll)
     }
+
+    // MARK: - Bug #19: QuickLookThumbnailCache
+
+    /// The cache is keyed by URL and should round-trip a stored image.
+    /// Pinning this contract guards the bug-#19 thumbnail-fallback path —
+    /// if the cache stops returning the stored image, the fallback layer
+    /// goes blank and the user sees the empty preview frame again.
+    func test_thumbnailCache_storesAndReturnsImageByURL() {
+        let url = URL(fileURLWithPath: "/tmp/quicklook_cache_test_\(UUID().uuidString).bin")
+        let image = NSImage(size: NSSize(width: 32, height: 32))
+        // Defensive: clear any prior entry for this URL.
+        QuickLookThumbnailCache.shared.removeObject(forKey: url as NSURL)
+        XCTAssertNil(
+            QuickLookThumbnailCache.cachedThumbnail(for: url),
+            "Cache should be empty before insertion."
+        )
+        QuickLookThumbnailCache.shared.setObject(image, forKey: url as NSURL)
+        XCTAssertTrue(
+            QuickLookThumbnailCache.cachedThumbnail(for: url) === image,
+            "Cache must return the same instance that was stored."
+        )
+        // Cleanup.
+        QuickLookThumbnailCache.shared.removeObject(forKey: url as NSURL)
+    }
+
+    /// Distinct URLs must not collide. The cache uses NSURL identity via
+    /// hash + isEqual, not pointer equality.
+    func test_thumbnailCache_keysByURLValue() {
+        let urlA = URL(fileURLWithPath: "/tmp/quicklook_cache_A_\(UUID().uuidString).bin")
+        let urlB = URL(fileURLWithPath: "/tmp/quicklook_cache_B_\(UUID().uuidString).bin")
+        let imageA = NSImage(size: NSSize(width: 16, height: 16))
+        let imageB = NSImage(size: NSSize(width: 32, height: 32))
+
+        QuickLookThumbnailCache.shared.setObject(imageA, forKey: urlA as NSURL)
+        QuickLookThumbnailCache.shared.setObject(imageB, forKey: urlB as NSURL)
+
+        XCTAssertTrue(QuickLookThumbnailCache.cachedThumbnail(for: urlA) === imageA)
+        XCTAssertTrue(QuickLookThumbnailCache.cachedThumbnail(for: urlB) === imageB)
+
+        // Cleanup.
+        QuickLookThumbnailCache.shared.removeObject(forKey: urlA as NSURL)
+        QuickLookThumbnailCache.shared.removeObject(forKey: urlB as NSURL)
+    }
 }
