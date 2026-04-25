@@ -119,6 +119,11 @@ public final class BlockquoteLayoutFragment: NSTextLayoutFragment {
         if depth > 0 {
             drawBars(depth: depth, at: point, in: context)
         }
+        // Bug #51: paint inline-code chrome behind any `.inlineCodeRange`
+        // runs in the blockquote paragraph text. Comes after the bars so
+        // the bars sit underneath everything, but before super.draw so
+        // glyphs render on top of the chrome fill.
+        InlineCodeChromeDrawer.paint(in: self, at: point, context: context)
         super.draw(at: point, in: context)
     }
 

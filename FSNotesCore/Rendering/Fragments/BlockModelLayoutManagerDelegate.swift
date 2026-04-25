@@ -149,11 +149,23 @@ public final class BlockModelLayoutManagerDelegate: NSObject, NSTextLayoutManage
             )
         }
 
-        // Other block types (paragraph, list item) currently render via
-        // the default fragment. List-item bullets / checkboxes are baked
-        // into storage as NSTextAttachments so they draw via the
-        // attachment cell. A fragment-level list-marker draw is a
-        // follow-up 2d sub-slice.
+        // Plain paragraphs and list items: dispatch to
+        // `ParagraphLayoutFragment` so any `.inlineCodeRange` runs get
+        // the rounded-rect chrome paint pass behind them (bug #51).
+        // Otherwise inherits default `NSTextLayoutFragment` behaviour
+        // unchanged. List-item bullets / checkboxes are still baked
+        // into storage as NSTextAttachments and draw via the attachment
+        // cell.
+        if textElement is ParagraphElement || textElement is ListItemElement {
+            return ParagraphLayoutFragment(
+                textElement: textElement,
+                range: textElement.elementRange
+            )
+        }
+
+        // Fall-through for any block-model element class without a
+        // specific fragment dispatch (defensive — every concrete
+        // subclass above is covered).
         return NSTextLayoutFragment(
             textElement: textElement,
             range: textElement.elementRange

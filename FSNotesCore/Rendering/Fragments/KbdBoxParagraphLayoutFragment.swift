@@ -126,6 +126,12 @@ public final class KbdBoxParagraphLayoutFragment: NSTextLayoutFragment {
 
     public override func draw(at point: CGPoint, in context: CGContext) {
         drawKbdBoxes(at: point, in: context)
+        // Bug #51: paint inline-code chrome behind any `.inlineCodeRange`
+        // runs in the same paragraph (kbd and inline-code can co-exist).
+        // After kbd boxes so the relative paint order matches plain
+        // paragraphs (chrome under text), before super.draw so text
+        // renders on top.
+        InlineCodeChromeDrawer.paint(in: self, at: point, context: context)
         // Text renders on top of the boxes so the kbd glyphs sit
         // legibly inside the key face.
         super.draw(at: point, in: context)

@@ -57,6 +57,8 @@
 		DMLF000000000000000000B1 /* DisplayMathLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */; };
 		CBLF000000000000000000B1 /* CodeBlockLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */; };
 		KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */; };
+		INCD000000000000000000B1 /* InlineCodeChromeDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = INCD000000000000000000F1 /* InlineCodeChromeDrawer.swift */; };
+		PARL000000000000000000B1 /* ParagraphLayoutFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = PARL000000000000000000F1 /* ParagraphLayoutFragment.swift */; };
 		BSTH000000000000000000B1 /* BlockStyleTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTH000000000000000000F1 /* BlockStyleTheme.swift */; };
 		THM7000000000000000000B1 /* ThemeSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = THM7000000000000000000F1 /* ThemeSchema.swift */; };
 		THMJ000000000000000000B1 /* default-theme.json in Resources */ = {isa = PBXBuildFile; fileRef = THMJ000000000000000000F1 /* default-theme.json */; };
@@ -1256,6 +1258,8 @@
 		DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/DisplayMathLayoutFragment.swift; sourceTree = "<group>"; };
 		CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/CodeBlockLayoutFragment.swift; sourceTree = "<group>"; };
 		KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/KbdBoxParagraphLayoutFragment.swift; sourceTree = "<group>"; };
+		INCD000000000000000000F1 /* InlineCodeChromeDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/InlineCodeChromeDrawer.swift; sourceTree = "<group>"; };
+		PARL000000000000000000F1 /* ParagraphLayoutFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fragments/ParagraphLayoutFragment.swift; sourceTree = "<group>"; };
 		BSTH000000000000000000F1 /* BlockStyleTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockStyleTheme.swift; sourceTree = "<group>"; };
 		THM7000000000000000000F1 /* ThemeSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSchema.swift; sourceTree = "<group>"; };
 		THMJ000000000000000000F1 /* default-theme.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "default-theme.json"; path = "default-theme.json"; sourceTree = "<group>"; };
@@ -1928,6 +1932,8 @@
 				DMLF000000000000000000F1 /* DisplayMathLayoutFragment.swift */,
 				CBLF000000000000000000F1 /* CodeBlockLayoutFragment.swift */,
 				KBLF000000000000000000F1 /* KbdBoxParagraphLayoutFragment.swift */,
+				INCD000000000000000000F1 /* InlineCodeChromeDrawer.swift */,
+				PARL000000000000000000F1 /* ParagraphLayoutFragment.swift */,
 				BMLM000000000000000000F1 /* BlockModelLayoutManagerDelegate.swift */,
 				FOLF000000000000000000F1 /* FoldedLayoutFragment.swift */,
 				TELE000000000000000000F1 /* TableElement.swift */,
@@ -3827,6 +3833,8 @@
 				DMLF000000000000000000B1 /* DisplayMathLayoutFragment.swift in Sources */,
 				CBLF000000000000000000B1 /* CodeBlockLayoutFragment.swift in Sources */,
 				KBLF000000000000000000B1 /* KbdBoxParagraphLayoutFragment.swift in Sources */,
+				INCD000000000000000000B1 /* InlineCodeChromeDrawer.swift in Sources */,
+				PARL000000000000000000B1 /* ParagraphLayoutFragment.swift in Sources */,
 				BSTH000000000000000000B1 /* BlockStyleTheme.swift in Sources */,
 				THM7000000000000000000B1 /* ThemeSchema.swift in Sources */,
 				THM7200000000000000000B1 /* ThemeAccess.swift in Sources */,

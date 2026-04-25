@@ -202,6 +202,9 @@ public final class HeadingLayoutFragment: NSTextLayoutFragment {
     // MARK: - Drawing
 
     public override func draw(at point: CGPoint, in context: CGContext) {
+        // Bug #51: paint inline-code chrome behind any `.inlineCodeRange`
+        // runs in the heading text BEFORE super.draw paints the glyphs.
+        InlineCodeChromeDrawer.paint(in: self, at: point, context: context)
         // Draw the heading text first — the hairline and the folded
         // indicator sit alongside / below the text, so paint order is:
         // text, then rule, then indicator.
