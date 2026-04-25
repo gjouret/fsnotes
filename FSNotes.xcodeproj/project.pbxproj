@@ -750,6 +750,10 @@
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
 		23EAB390742AF720CE975FB6 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8C /* AIService.swift */; };
 		23EAB390742AF720CE975FB8 /* AIChatPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */; };
+		MCP01000000000000000000B1 /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP01000000000000000000F1 /* MCPServer.swift */; };
+		MCP02000000000000000000B1 /* MCPTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP02000000000000000000F1 /* MCPTool.swift */; };
+		MCP03000000000000000000B1 /* ToolOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP03000000000000000000F1 /* ToolOutput.swift */; };
+		MCP04000000000000000000B1 /* AppBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP04000000000000000000F1 /* AppBridge.swift */; };
 		D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77CC042216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77E0536246312B200AD7772 /* StorageType.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77E05282463124300AD7772 /* StorageType.swift */; };
@@ -1590,6 +1594,10 @@
 		9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceEditor.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8C /* AIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIService.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanelView.swift; sourceTree = "<group>"; };
+		MCP01000000000000000000F1 /* MCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
+		MCP02000000000000000000F1 /* MCPTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTool.swift; sourceTree = "<group>"; };
+		MCP03000000000000000000F1 /* ToolOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOutput.swift; sourceTree = "<group>"; };
+		MCP04000000000000000000F1 /* AppBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBridge.swift; sourceTree = "<group>"; };
 		D77CC040216A608500582B97 /* EditorScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScrollView.swift; sourceTree = "<group>"; };
 		D77E05282463124300AD7772 /* StorageType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageType.swift; sourceTree = "<group>"; };
 		D77F41B22A0D48F500E2B7A2 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
@@ -2504,11 +2512,31 @@
 				9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */,
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
 				9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */,
+				MCPGRP000000000000000G01 /* MCP */,
 				6F13BB3820FEDE230005E120 /* UserDataService.swift */,
 				D75EE7F92078B3C00055F159 /* Sidebar.swift */,
 				D74D479E256DF2EB00D97647 /* FSNTextAttachmentCell.swift */,
 			);
 			path = Helpers;
+			sourceTree = "<group>";
+		};
+		MCPGRP000000000000000G01 /* MCP */ = {
+			isa = PBXGroup;
+			children = (
+				MCP01000000000000000000F1 /* MCPServer.swift */,
+				MCP02000000000000000000F1 /* MCPTool.swift */,
+				MCP03000000000000000000F1 /* ToolOutput.swift */,
+				MCP04000000000000000000F1 /* AppBridge.swift */,
+				MCPGRP000000000000000G02 /* Tools */,
+			);
+			path = MCP;
+			sourceTree = "<group>";
+		};
+		MCPGRP000000000000000G02 /* Tools */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Tools;
 			sourceTree = "<group>";
 		};
 		D7ED3FFB20CD0AA3001438EE /* View */ = {
@@ -3878,6 +3906,10 @@
 				23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */,
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,
 				23EAB390742AF720CE975FB8 /* AIChatPanelView.swift in Sources */,
+				MCP01000000000000000000B1 /* MCPServer.swift in Sources */,
+				MCP02000000000000000000B1 /* MCPTool.swift in Sources */,
+				MCP03000000000000000000B1 /* ToolOutput.swift in Sources */,
+				MCP04000000000000000000B1 /* AppBridge.swift in Sources */,
 				D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */,
 				110BE0232EE8C53C00C5E456 /* TypeScript.swift in Sources */,
 				110BE0122EE86B4A00C5E456 /* Clojure.swift in Sources */,
