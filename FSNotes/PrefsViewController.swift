@@ -21,7 +21,7 @@ class PrefsViewController: NSTabViewController  {
     @IBOutlet weak var advancedTabViewItem: NSTabViewItem!
 
     override func viewDidLoad() {
-        self.title = NSLocalizedString("Settings", comment: "") 
+        self.title = NSLocalizedString("Settings", comment: "")
         super.viewDidLoad()
 
         if #available(macOS 11.0, *) {
@@ -42,6 +42,27 @@ class PrefsViewController: NSTabViewController  {
                 webTabViewItem.image = web
                 advancedTabViewItem.image = advanced
             }
+        }
+
+        installAITab()
+    }
+
+    /// Inserts the AI preferences tab programmatically — the view controller and
+    /// its UI live entirely in `PreferencesAIViewController` (no storyboard scene)
+    /// so adding the feature touches no .storyboard files.
+    private func installAITab() {
+        let aiVC = PreferencesAIViewController()
+        let item = NSTabViewItem(viewController: aiVC)
+        item.label = NSLocalizedString("AI", comment: "AI preferences tab label")
+        item.identifier = "ai"
+        if #available(macOS 11.0, *) {
+            item.image = NSImage(systemSymbolName: "brain", accessibilityDescription: nil)
+        }
+        // Insert just before "Advanced" so the tab order stays logical.
+        if let advancedIndex = tabViewItems.firstIndex(of: advancedTabViewItem) {
+            insertTabViewItem(item, at: advancedIndex)
+        } else {
+            addTabViewItem(item)
         }
     }
 

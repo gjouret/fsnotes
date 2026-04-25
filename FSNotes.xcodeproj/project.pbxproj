@@ -772,6 +772,7 @@
 		OLLAMA00000000000000000B3 /* Phase1OllamaClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */; };
 		OLLAMA00000000000000000B4 /* OllamaProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F4 /* OllamaProvider.swift */; };
 		OLLAMA00000000000000000B5 /* Phase1OllamaProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */; };
+		OLLAMA00000000000000000B6 /* PreferencesAIViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */; };
 		D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77CC042216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77E0536246312B200AD7772 /* StorageType.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77E05282463124300AD7772 /* StorageType.swift */; };
@@ -1623,6 +1624,7 @@
 		OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase1OllamaClientTests.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F4 /* OllamaProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaProvider.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase1OllamaProviderTests.swift; sourceTree = "<group>"; };
+		OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesAIViewController.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanelView.swift; sourceTree = "<group>"; };
 		MCP01000000000000000000F1 /* MCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
 		MCP02000000000000000000F1 /* MCPTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTool.swift; sourceTree = "<group>"; };
@@ -2303,6 +2305,7 @@
 				D7F5C0F4223ED5620038F172 /* PreferencesEditorViewController.swift */,
 				D7F5C0F7223ED57D0038F172 /* PreferencesSecurityViewController.swift */,
 				D7F5C0FA223ED58F0038F172 /* PreferencesAdvancedViewController.swift */,
+				OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */,
 				D738356C2242871400B260DD /* MasterPasswordViewController.swift */,
 				D7CA7FD3232652E300E9717A /* PreferencesGitViewController.swift */,
 				D77A6F7E28B11496006A0353 /* PreferencesWebViewController.swift */,
@@ -3987,6 +3990,7 @@
 				OLLAMA00000000000000000B1 /* OllamaModel.swift in Sources */,
 				OLLAMA00000000000000000B2 /* OllamaClient.swift in Sources */,
 				OLLAMA00000000000000000B4 /* OllamaProvider.swift in Sources */,
+				OLLAMA00000000000000000B6 /* PreferencesAIViewController.swift in Sources */,
 				D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */,
 				110BE0232EE8C53C00C5E456 /* TypeScript.swift in Sources */,
 				110BE0122EE86B4A00C5E456 /* Clojure.swift in Sources */,
