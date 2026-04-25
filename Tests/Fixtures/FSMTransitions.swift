@@ -367,8 +367,7 @@ enum FSMTransitionTable {
             action: .pressReturn,
             expected: .splitBlock(into: .heading(level: 1), firstBecomes: .paragraph),
             cursorAfter: .atStartOfNewBlock,
-            note: "Return at start of heading: an empty paragraph appears BEFORE; the heading is preserved (Slice B #6). Currently the heading degrades to blankLine — bug-row.",
-            bugId: 6
+            note: "Return at start of heading: an empty paragraph appears BEFORE; the heading is preserved (Slice B #6)."
         ),
         FSMTransition(
             blockKind: .heading(level: 1),
@@ -740,8 +739,7 @@ enum FSMTransitionTable {
             cursorPosition: .atStart,
             action: .pressReturn,
             expected: .splitBlock(into: .heading(level: 3), firstBecomes: .paragraph),
-            note: "Return at start of H3: empty paragraph appears BEFORE; heading is preserved (Slice B #6 generalized).",
-            bugId: 6
+            note: "Return at start of H3: empty paragraph appears BEFORE; heading is preserved (Slice B #6 generalized)."
         ),
         FSMTransition(
             blockKind: .heading(level: 2),

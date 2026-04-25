@@ -913,54 +913,66 @@ public enum EditingOps {
                     let beforeSuffix = String(suffix.prefix(suffixOffset))
                     let afterSuffix = String(suffix.dropFirst(suffixOffset))
                     
-                    // Build new blocks: heading with text before cursor, then
-                    // a plain paragraph with text after cursor. No blankLine
-                    // between — the paragraphSpacing on heading and paragraph
-                    // provides the visual gap, and serialization round-trips
-                    // correctly because MarkdownSerializer emits a blank
-                    // separator between non-blank siblings anyway.
+                    // Build new blocks. Two shapes:
+                    //
+                    //  (A) Cursor at start of heading text (Slice B #6) —
+                    //      `headingIsEmpty && level > 0`: emit an empty
+                    //      paragraph BEFORE and preserve the heading at
+                    //      blockIndex+1 with its original suffix. Cursor
+                    //      lands at the start of the preserved heading.
+                    //
+                    //  (B) Cursor mid- or end-of-heading: heading keeps
+                    //      the prefix at blockIndex; a new paragraph with
+                    //      the suffix-text appears at blockIndex+1. Cursor
+                    //      lands at the start of the new paragraph.
+                    //
+                    // No blankLine between the two blocks — the
+                    // paragraphSpacing on heading and paragraph provides
+                    // the visual gap, and MarkdownSerializer emits a
+                    // blank separator between non-blank siblings on save.
                     //
                     // Do NOT trim user-typed whitespace — only the single
-                    // leading space that HeadingRenderer strips is re-added.
-                    var newBlocks: [Block] = []
-
-                    // First block: heading with text before cursor. If the
-                    // heading ended up empty (user split right at the " ##"
-                    // marker boundary), degrade it to a blankLine so we
-                    // don't render an orphan heading glyph.
+                    // leading space that HeadingRenderer strips is re-added
+                    // on the kept-prefix path.
                     let headingIsEmpty = String(beforeSuffix.dropFirst(leading)).isEmpty
+                    var newBlocks: [Block] = []
+                    let cursorBlockIdx: Int
+                    let firstSlotAction: EditAction
+
                     if headingIsEmpty && level > 0 {
-                        newBlocks.append(.blankLine)
+                        // Shape (A): empty paragraph before, heading
+                        // preserved with original suffix after. The
+                        // heading's storage index changes (now N+1
+                        // instead of N) but its kind, level, and content
+                        // are unchanged.
+                        newBlocks.append(.paragraph(inline: []))
+                        newBlocks.append(.heading(level: level, suffix: suffix))
+                        cursorBlockIdx = blockIndex + 1
+                        // First slot at blockIndex changes kind
+                        // (heading → paragraph); the heading is the
+                        // newly-inserted second slot.
+                        firstSlotAction = .changeBlockKind(at: blockIndex)
                     } else {
+                        // Shape (B): heading keeps the prefix; new
+                        // paragraph holds the suffix.
                         newBlocks.append(.heading(level: level, suffix: beforeSuffix))
+                        let parsedInlines = afterSuffix.isEmpty
+                            ? []
+                            : MarkdownParser.parseInlines(afterSuffix)
+                        newBlocks.append(.paragraph(inline: parsedInlines))
+                        cursorBlockIdx = blockIndex + 1
+                        // First slot keeps its kind (heading, shorter
+                        // suffix) — only its inline content changed.
+                        firstSlotAction = .modifyInline(blockIndex: blockIndex)
                     }
 
-                    // Second block: paragraph with text after cursor (parsed
-                    // through the inline parser so completed inline markers
-                    // become real inline nodes). Empty when cursor is at
-                    // end — that's the expected "Return at end of heading
-                    // → new empty paragraph below" behavior.
-                    let parsedInlines = afterSuffix.isEmpty
-                        ? []
-                        : MarkdownParser.parseInlines(afterSuffix)
-                    newBlocks.append(.paragraph(inline: parsedInlines))
-
                     var result = try replaceBlocks(atIndex: blockIndex, with: newBlocks, in: projection)
-                    // Cursor goes to the start of the paragraph (the second
-                    // new block).
-                    let paraBlockIdx = blockIndex + 1
-                    result.newCursorPosition = result.newProjection.blockSpans[paraBlockIdx].location
-                    // Contract: heading split always produces two blocks. The
-                    // first block-slot either:
-                    //   - keeps kind (heading, shortened suffix) →
-                    //     `.modifyInline`, OR
-                    //   - degrades to blankLine (when the user split at the
-                    //     marker boundary and the heading text is empty) →
-                    //     `.changeBlockKind`.
-                    // The second slot is always a newly-inserted paragraph.
-                    let firstSlotAction: EditAction = (headingIsEmpty && level > 0)
-                        ? .changeBlockKind(at: blockIndex)
-                        : .modifyInline(blockIndex: blockIndex)
+                    result.newCursorPosition = result.newProjection.blockSpans[cursorBlockIdx].location
+                    // Contract: heading split always produces two blocks.
+                    // First slot: either kind change (paragraph for shape
+                    // A, blankLine never anymore) or modifyInline (shape
+                    // B). Second slot: always a newly-inserted block —
+                    // a heading in shape A, a paragraph in shape B.
                     result.contract = EditContract(
                         declaredActions: [
                             firstSlotAction,

@@ -458,20 +458,69 @@ class EditingOperationsTests: XCTestCase {
     }
     
     func test_newline_atStartOfHeading_createsParagraphBefore() throws {
-        // "# Title\n" → rendered "Title\n"
+        // Bug #6 (Slice B): Return at start of heading must produce
+        //   block[0] = empty paragraph
+        //   block[1] = heading preserved (kind, level, suffix unchanged)
+        //   cursor at start of block[1] (the preserved heading)
+        // Previously the heading degraded to a `blankLine` and the
+        // suffix was promoted into a fresh paragraph — the heading was
+        // lost.
         let p = project("# Title\n")
         XCTAssertEqual(p.attributed.string, "Title\n")
-        // Insert "\n" at offset 0 (start of heading) — creates blank paragraph before
         let r = try EditingOps.insert("\n", at: 0, in: p)
-        // First block becomes blank (or paragraph), heading keeps "Title"
+
+        // Exactly two blocks.
+        XCTAssertEqual(r.newProjection.document.blocks.count, 2)
+
+        // Block 0: empty paragraph.
+        if case .paragraph(let inline) = r.newProjection.document.blocks[0] {
+            XCTAssertTrue(inline.isEmpty, "Block 0 must be an empty paragraph")
+        } else {
+            XCTFail("Block 0 must be a paragraph, got \(r.newProjection.document.blocks[0])")
+        }
+
+        // Block 1: heading(level: 1) preserved with the original suffix
+        // (so the leading-space marker survives and the title text is
+        // intact).
+        if case .heading(let level, let suffix) = r.newProjection.document.blocks[1] {
+            XCTAssertEqual(level, 1, "Heading level must be preserved")
+            XCTAssertEqual(suffix, " Title", "Heading suffix must be preserved verbatim")
+        } else {
+            XCTFail("Block 1 must be a heading, got \(r.newProjection.document.blocks[1])")
+        }
+
+        // Cursor at the start of the preserved heading.
+        let headingBlockStart = r.newProjection.blockSpans[1].location
+        XCTAssertEqual(r.newCursorPosition, headingBlockStart,
+                       "Cursor must land at the start of the preserved heading")
+
+        // Round-trip: serialize must contain the heading marker + title.
         let serialized = MarkdownSerializer.serialize(r.newProjection.document)
-        // The heading text should be preserved
-        XCTAssertTrue(serialized.contains("Title"), "Should preserve heading text: \(serialized)")
-        // Should have 2 or 3 blocks (blank/para + heading, or blank + para if text moved)
-        XCTAssertGreaterThan(r.newProjection.blockSpans.count, 1, "Should have created additional block")
-        // Cursor should be at a valid position within the document
-        XCTAssertGreaterThanOrEqual(r.newCursorPosition, 0)
-        XCTAssertLessThanOrEqual(r.newCursorPosition, r.newProjection.attributed.length)
+        XCTAssertTrue(serialized.contains("# Title"),
+                      "Serialized markdown must preserve `# Title`: \(serialized)")
+
+        assertSpliceInvariant(old: p, result: r)
+    }
+
+    /// Slice B #6 generalization: same expected shape for H3.
+    func test_newline_atStartOfH3_preservesHeading() throws {
+        let p = project("### Sub\n")
+        XCTAssertEqual(p.attributed.string, "Sub\n")
+        let r = try EditingOps.insert("\n", at: 0, in: p)
+
+        XCTAssertEqual(r.newProjection.document.blocks.count, 2)
+        if case .paragraph(let inline) = r.newProjection.document.blocks[0] {
+            XCTAssertTrue(inline.isEmpty)
+        } else {
+            XCTFail("Block 0 must be an empty paragraph")
+        }
+        if case .heading(let level, let suffix) = r.newProjection.document.blocks[1] {
+            XCTAssertEqual(level, 3)
+            XCTAssertEqual(suffix, " Sub")
+        } else {
+            XCTFail("Block 1 must be a heading(level:3)")
+        }
+        XCTAssertEqual(r.newCursorPosition, r.newProjection.blockSpans[1].location)
         assertSpliceInvariant(old: p, result: r)
     }
 
