@@ -1555,6 +1555,11 @@ Convert every user-reported bug from this 2-week window into a named regression 
 23. Double-click PDF should Open in native app
 24. Insert Table → type doesn't land in cell ✅ (just shipped: `c08d3ee`)
 25. Tab on numbered list L1→L2 doesn't demote
+26. H1 button on multi-paragraph selection makes ALL paragraphs H1, not just the first
+27. Image resize (shrink) draws image left-aligned instead of centered
+28. Folded header keeps the table-copy gutter icon visible even after the table is hidden by the fold
+29. Click in top-left cell paints caret ABOVE the cell (in the column-handle strip area) — text DOES land in the cell, but the visual caret is mis-positioned (currently being fixed by a subagent)
+30. Tab inside a table cell inserts a literal `\t` instead of moving focus to the next cell (currently being fixed by a subagent)
 
 **Done when:** every bug has a named regression test; the test passes (bug fixed) OR is wrapped in `XCTExpectFailure` with an issue link.
 
