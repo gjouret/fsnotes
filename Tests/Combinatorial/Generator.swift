@@ -352,6 +352,126 @@ enum CBSeedTable {
 
 // MARK: - Matrix factory
 
+// MARK: - Sequence axis (length 2 + 3)
+
+/// Single action in a sequence. Exercises the chainable `EditorScenario`
+/// verbs (`type`, `pressReturn`, `pressDelete`, `pressTab`, `pressShiftTab`).
+/// Sequences leverage the composability of the harness — what it was
+/// built for — instead of single-action scenarios on freshly-parsed seeds.
+enum CBSequenceAction: Equatable, CustomStringConvertible {
+    case typeChar          // type("a")
+    case pressReturn
+    case pressDelete       // backspace
+    case pressTab
+    case pressShiftTab
+
+    var description: String {
+        switch self {
+        case .typeChar:      return "type"
+        case .pressReturn:   return "ret"
+        case .pressDelete:   return "bks"
+        case .pressTab:      return "tab"
+        case .pressShiftTab: return "stab"
+        }
+    }
+
+    static var all: [CBSequenceAction] {
+        return [.typeChar, .pressReturn, .pressDelete,
+                .pressTab, .pressShiftTab]
+    }
+}
+
+/// One sequence scenario: a seed (block kind only — start at home offset),
+/// a 2- or 3-action sequence, and an empty selection. Selection axes from
+/// the single-action matrix don't compose well with sequences (most
+/// selection states are erased by the first edit).
+struct CBSequenceScenario: Equatable {
+    let blockKind: CBBlockKind
+    let actions: [CBSequenceAction]
+
+    var label: String {
+        let actionStr = actions.map(\.description).joined(separator: ".")
+        return "seq | \(blockKind) | \(actionStr)"
+    }
+}
+
+enum CBSequenceMatrix {
+    /// Block kinds used as seeds for sequence scenarios. Subset of
+    /// `CBBlockKind.all` — keeps the matrix small while covering the
+    /// kinds where sequences are most informative (lists for FSM,
+    /// blockquote for line-level FSM, paragraph for typing baseline,
+    /// codeBlock + table for atomic-block edges).
+    static var seedKinds: [CBBlockKind] {
+        return [
+            .paragraph,
+            .heading(level: 1),
+            .bulletList,
+            .numberedList,
+            .todoList,
+            .blockquote,
+            .codeBlock,
+            .table,
+            .multiItemList,
+            .nestedList,
+        ]
+    }
+
+    /// All length-2 + length-3 sequences. Pruned by `isViable` to drop
+    /// trivially-redundant patterns (e.g. type → backspace → type → …
+    /// where the net is one character).
+    static var allValid: [CBSequenceScenario] {
+        var out: [CBSequenceScenario] = []
+        let actions = CBSequenceAction.all
+        for kind in seedKinds {
+            // Length-2
+            for a1 in actions {
+                for a2 in actions {
+                    let s = CBSequenceScenario(
+                        blockKind: kind, actions: [a1, a2]
+                    )
+                    if s.isViable { out.append(s) }
+                }
+            }
+            // Length-3
+            for a1 in actions {
+                for a2 in actions {
+                    for a3 in actions {
+                        let s = CBSequenceScenario(
+                            blockKind: kind, actions: [a1, a2, a3]
+                        )
+                        if s.isViable { out.append(s) }
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /// Total raw size before pruning. ~10 seeds × (5² + 5³) = ~1500.
+    static var rawSize: Int {
+        return seedKinds.count * (25 + 125)
+    }
+}
+
+extension CBSequenceScenario {
+    /// Drop sequences whose net effect is trivially equivalent to a
+    /// shorter sequence. `type → bks` is a no-op pair; `bks → type` is
+    /// "delete preceding char then type one char" which is interesting
+    /// (single-character replacement) so we keep it.
+    var isViable: Bool {
+        // No-op pair: type then immediately backspace it.
+        if actions.count >= 2 {
+            for i in 0..<(actions.count - 1) {
+                if actions[i] == .typeChar
+                    && actions[i + 1] == .pressDelete {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+}
+
 enum CBMatrix {
     /// All scenarios after pruning impossible / equivalent tuples.
     static var allValid: [CBScenario] {

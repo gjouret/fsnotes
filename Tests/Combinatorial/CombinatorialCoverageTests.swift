@@ -245,6 +245,28 @@ final class CombinatorialCoverageTests: XCTestCase {
                 )
             }
         }
+
+        // ----- Invariant 5: live Document round-trips through serialize/parse.
+        // The strongest single invariant — catches attribute drift, inline
+        // reordering, identity changes, and any state that can't survive
+        // save+reload. Mirrors EditorHTMLParityTests.assertLiveDocumentRoundTrips.
+        assertRoundTripParity(label: scenario.label, doc: afterProjection.document)
+    }
+
+    /// Assert that `HTML(parse(serialize(doc))) == HTML(doc)`. Failures
+    /// here mean the live document is in a state that won't survive
+    /// save+reload — the strongest single invariant we have.
+    private func assertRoundTripParity(label: String, doc: Document) {
+        let liveHTML = CommonMarkHTMLRenderer.render(doc)
+        let reparsed = MarkdownParser.parse(MarkdownSerializer.serialize(doc))
+        let reparsedHTML = CommonMarkHTMLRenderer.render(reparsed)
+        if liveHTML != reparsedHTML {
+            XCTFail(
+                "[\(label)] live Document does NOT round-trip through " +
+                "serialize→parse. Live HTML differs from re-parsed HTML — " +
+                "this state cannot survive save+reload."
+            )
+        }
     }
 
     // MARK: - Cursor / selection resolution
@@ -547,5 +569,153 @@ final class CombinatorialCoverageTests: XCTestCase {
         let thisFile = URL(fileURLWithPath: #filePath)
         return thisFile.deletingLastPathComponent()
             .appendingPathComponent("DiscoveredBugs.txt")
+    }
+
+    // MARK: - Sequence runner (length 2 + 3, leverages composable harness)
+
+    /// Drives every length-2 and length-3 action sequence from
+    /// `CBSequenceMatrix.allValid` against each seed kind. This is what
+    /// the composable `EditorScenario` was built for: chain
+    /// `pressReturn`/`type`/`pressDelete`/`pressTab`/`pressShiftTab` and
+    /// assert at the end. Same minimal-invariants + round-trip parity
+    /// as the single-action runner.
+    func test_combinatorialSequences() {
+        let scenarios = CBSequenceMatrix.allValid
+        let discovered = loadDiscoveredBugs()
+
+        XCTAssertGreaterThanOrEqual(
+            scenarios.count, 500,
+            "Sequence matrix dropped below 500. Got \(scenarios.count). " +
+            "Either pruning is too aggressive or seedKinds shrank."
+        )
+
+        let traceURL = traceLogURL()
+        try? FileManager.default.createDirectory(
+            at: traceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        // Append (not truncate) — the single-action runner already wrote
+        // its trace; we want both in one file for post-mortem.
+        appendTrace("\n=== SEQUENCE RUN ===\n", to: traceURL)
+
+        for scenario in scenarios {
+            appendTrace("RUN: \(scenario.label)\n", to: traceURL)
+            XCTContext.runActivity(named: scenario.label) { _ in
+                if discovered.contains(scenario.label) {
+                    XCTExpectFailure(
+                        "Discovered sequence bug — recorded in DiscoveredBugs.txt.",
+                        strict: true
+                    ) {
+                        runSequenceScenario(scenario)
+                    }
+                } else {
+                    runSequenceScenario(scenario)
+                }
+            }
+        }
+    }
+
+    /// Drive one sequence scenario:
+    ///   1. Build a fresh `EditorScenario` seeded for the block kind.
+    ///   2. Move cursor to the block's home offset.
+    ///   3. Apply each action in `actions` via the chainable harness verbs.
+    ///   4. Assert minimal invariants + round-trip parity at the end.
+    private func runSequenceScenario(_ scenario: CBSequenceScenario) {
+        let seed = CBSeedTable.seed(for: scenario.blockKind, position: .atStart)
+        let editorScenario = Given.note(markdown: seed.markdown)
+
+        guard let beforeProj = editorScenario.editor.documentProjection else {
+            XCTFail("[\(scenario.label)] no projection after seeding.")
+            return
+        }
+        guard let cursorOffset = resolveCursorOffset(
+            scenario: CBScenario(
+                blockKind: scenario.blockKind, position: .atStart,
+                edit: .pressReturn, selection: .empty
+            ),
+            seed: seed,
+            projection: beforeProj
+        ) else {
+            XCTFail("[\(scenario.label)] could not resolve cursor offset.")
+            return
+        }
+        editorScenario.cursorAt(cursorOffset)
+
+        // Drive each action in the sequence. Uses the chainable
+        // EditorScenario verbs the composable harness exposes. Snapshot
+        // failure count per-action so harness-side contract failures
+        // (which fire from inside `pressDelete` / `pressReturn` and
+        // don't carry the scenario label) get attributed to a label
+        // via the trace log.
+        for (i, action) in scenario.actions.enumerated() {
+            let before = self.testRun?.failureCount ?? 0
+            applySequenceAction(action, on: editorScenario)
+            let after = self.testRun?.failureCount ?? 0
+            if after > before {
+                appendTrace(
+                    "  HARNESS_FAIL: \(scenario.label) at action[\(i)]=\(action)\n",
+                    to: traceLogURL()
+                )
+            }
+        }
+
+        // Snapshot the after-state.
+        guard let afterProj = editorScenario.editor.documentProjection else {
+            XCTFail("[\(scenario.label)] no projection after sequence.")
+            return
+        }
+
+        // Invariant 1: no crash (we got here).
+        // Invariant 2: cursor inside SOME block.
+        let postCursor = editorScenario.editor.selectedRange().location
+        let storageLen = editorScenario.editor.textStorage?.length ?? 0
+        if postCursor < 0 || postCursor > storageLen {
+            XCTFail(
+                "[\(scenario.label)] cursor \(postCursor) outside storage " +
+                "length \(storageLen)."
+            )
+            return
+        }
+        if postCursor < storageLen,
+           afterProj.blockContaining(storageIndex: postCursor) == nil {
+            XCTFail(
+                "[\(scenario.label)] cursor does not resolve to any block."
+            )
+            return
+        }
+
+        // Invariant 3 (loose): block-count delta sane. Sequences can
+        // grow up to +3 blocks (each Return splits) and shrink up to -3
+        // (each Backspace merges); be permissive — we want round-trip
+        // to be the strong gate.
+        let beforeCount = beforeProj.document.blocks.count
+        let afterCount = afterProj.document.blocks.count
+        let delta = afterCount - beforeCount
+        if !(-5...5).contains(delta) {
+            XCTFail(
+                "[\(scenario.label)] block-count delta \(delta) outside ±5."
+            )
+        }
+
+        // Invariant 5: round-trip parity (the strong one).
+        assertRoundTripParity(label: scenario.label, doc: afterProj.document)
+    }
+
+    private func applySequenceAction(
+        _ action: CBSequenceAction,
+        on scenario: EditorScenario
+    ) {
+        switch action {
+        case .typeChar:
+            scenario.type("a")
+        case .pressReturn:
+            scenario.pressReturn()
+        case .pressDelete:
+            scenario.pressDelete()
+        case .pressTab:
+            simulateTabKey(on: scenario.editor, withShift: false)
+        case .pressShiftTab:
+            simulateTabKey(on: scenario.editor, withShift: true)
+        }
     }
 }

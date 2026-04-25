@@ -1,22 +1,77 @@
 # DiscoveredBugs.txt — Phase 11 Slice E
 #
-# One line per (blockKind | cursorPosition | edit | selection) tuple
-# whose minimal-invariant assertions fail. The runner
-# `CombinatorialCoverageTests.test_combinatorialCoverage` reads this
-# file and `XCTExpectFailure(strict: true)`-wraps each listed scenario
-# so the suite passes today; entries flip to red ("unexpectedly
-# passed") when the underlying behaviour is fixed.
+# One line per (blockKind | cursorPosition | edit | selection) or
+# (seq | blockKind | a1.a2.a3) scenario whose minimal-invariant
+# assertions fail. The runner reads this file and
+# `XCTExpectFailure(strict: true)`-wraps each listed scenario so the
+# suite passes today; entries flip to red ("unexpectedly passed") when
+# the underlying behaviour is fixed.
 #
 # Format: "<label> → <one-line explanation>"
 # The runner extracts the label as everything before the first " → ".
 #
 # Lines starting with "#" and empty lines are ignored.
 #
-# Initial population: this file is empty pending the first matrix run.
-# Add entries as the runner discovers minimal-invariant violations.
 
+# ----- Bug #37 — table backspace at cell start crosses block boundary
 table | atStart | pressBackspace | empty → block-count delta -1 disagrees with FSM row 'table | atStart | pressBackspace → stayInBlock'; backspace at the start-of-cell offset crosses the block boundary instead of staying inside the cell.
+
+# ----- Bug #38 — list exit-to-body mints fresh Block UUID (3 variants, single root cause)
 bulletList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; exit-to-body transition regenerates the projection slot UUID instead of mutating in place.
 numberedList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; same exit-to-body slot-id regeneration as the bullet variant.
 todoList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; same exit-to-body slot-id regeneration.
 
+# ----- Bug #39 — paragraph forward-delete at atEnd doesn't round-trip
+paragraph | atEnd | pressForwardDelete | empty → live Document does NOT round-trip through serialize→parse. Forward-delete at the end of a paragraph merges with the next block but produces state that won't survive save+reload.
+
+# ----- Bug #40 — blockquote forward-delete at atEnd doesn't round-trip
+blockquote | atEnd | pressForwardDelete | empty → live Document does NOT round-trip through serialize→parse. Same shape as #39 but inside a blockquote.
+
+# ----- Bug #41 — cross-block selection touching a table corrupts state (3 actions, single root cause)
+table | atEnd | pressReturn | crossBlock → live Document does NOT round-trip through serialize→parse. Cross-block selection that includes a table boundary corrupts the table block on Return.
+table | atEnd | pressBackspace | crossBlock → same as above on Backspace.
+table | atEnd | pressForwardDelete | crossBlock → same as above on ForwardDelete.
+
+# ----- Bug #42 — HR backspace at atStart doesn't round-trip
+horizontalRule | atStart | pressBackspace | empty → live Document does NOT round-trip through serialize→parse. Backspace at the boundary before an HR should remove it (or merge with predecessor) but produces unround-trippable state.
+
+# ----- Bug #43 — display-math block edits don't round-trip (9 variants, single root cause)
+displayMathBlock | atStart | pressReturn | intraBlock → live Document does NOT round-trip. Display-math source presence/absence in the serialized form doesn't match the live projection.
+displayMathBlock | atStart | pressBackspace | intraBlock → same root cause as above.
+displayMathBlock | atStart | pressForwardDelete | empty → same root cause.
+displayMathBlock | atStart | pressForwardDelete | intraBlock → same root cause.
+displayMathBlock | atEnd | pressReturn | intraBlock → same root cause.
+displayMathBlock | atEnd | pressBackspace | empty → same root cause.
+displayMathBlock | atEnd | pressBackspace | intraBlock → same root cause.
+displayMathBlock | atEnd | pressForwardDelete | empty → same root cause.
+displayMathBlock | atEnd | pressForwardDelete | intraBlock → same root cause.
+
+# ----- Bug #44 — numbered-list type.ret.tab doesn't round-trip
+seq | numberedList | type.ret.tab → live Document does NOT round-trip after the 3-action sequence. Real user flow (extend list with sub-item) produces unround-trippable state.
+
+# ----- Bug #46 — blockquote Return-then-Backspace mints fresh Block UUID at index 2 (13 sequence variants, single root cause)
+seq | blockquote | ret.bks → harness contract fail: ~block@2 slot identity not preserved. Backspace after a Return-split inside a blockquote regenerates the projection slot UUID instead of mutating in place. Same shape as #38 but for blockquote split-and-merge.
+seq | blockquote | type.ret.bks → same root cause as #46 above.
+seq | blockquote | ret.ret.bks → same root cause.
+seq | blockquote | ret.bks.type → same root cause.
+seq | blockquote | ret.bks.ret → same root cause.
+seq | blockquote | ret.bks.bks → same root cause.
+seq | blockquote | ret.bks.tab → same root cause.
+seq | blockquote | ret.bks.stab → same root cause.
+seq | blockquote | ret.tab.bks → same root cause.
+seq | blockquote | ret.stab.bks → same root cause.
+seq | blockquote | bks.ret.bks → same root cause.
+seq | blockquote | tab.ret.bks → same root cause.
+seq | blockquote | stab.ret.bks → same root cause.
+
+# ----- Bug #45 — table double-backspace cascades (10 sequence variants, downstream of #37 + their own corruption modes)
+seq | table | bks.bks → live Document does NOT round-trip. First backspace triggers #37 (crosses cell boundary); second backspace operates on the corrupted state and worsens it.
+seq | table | bks.bks.bks → same root cause + a third backspace.
+seq | table | bks.bks.ret → same root cause + Return on the corrupted state.
+seq | table | bks.bks.tab → same root cause + Tab.
+seq | table | bks.bks.stab → same root cause + Shift-Tab.
+seq | table | bks.bks.type → same root cause + typing.
+seq | table | bks.tab.bks → backspace, then Tab, then backspace — interleaving corrupts.
+seq | table | bks.stab.bks → backspace, then Shift-Tab, then backspace.
+seq | table | tab.bks.bks → Tab, then double backspace.
+seq | table | stab.bks.bks → Shift-Tab, then double backspace.
