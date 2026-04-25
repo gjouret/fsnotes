@@ -1614,7 +1614,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 19. Numbers QuickLook thumbnail doesn't re-render on scroll
 20. `<kbd>` tag missing rounded rectangle ✅ (kbd-tag attribute probe migrated; bitmap probe migrated)
 21. Clicking checkbox directly doesn't toggle
-22. QuickLook scroll propagation not implemented
+22. QuickLook scroll propagation not implemented ✅ (consume-then-propagate at boundary; pure predicate + 14 unit tests)
 23. Double-click PDF should Open in native app
 24. Insert Table → type doesn't land in cell ✅ (just shipped: `c08d3ee`)
 25. Tab on numbered list L1→L2 doesn't demote

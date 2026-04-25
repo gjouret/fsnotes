@@ -208,13 +208,94 @@ class InlineQuickLookView: NSView {
 
     // MARK: - Scroll Behavior
 
+    /// Pure predicate used by `scrollWheel(with:)` to decide whether a
+    /// vertical scroll event should propagate up to the parent note's
+    /// scroll view, or be consumed by the inline preview's inner scroll
+    /// view.
+    ///
+    /// - Parameters:
+    ///   - deltaY: `event.scrollingDeltaY`. Positive = content scrolling
+    ///     down (user gesture is upward). Negative = content scrolling up.
+    ///   - contentOffsetY: the inner scroll view's `contentView.bounds.origin.y`
+    ///     (ignoring sign-flip — caller normalizes for unflipped views).
+    ///   - contentHeight: the inner scroll view's documentView height.
+    ///   - viewportHeight: the inner scroll view's contentView height.
+    ///   - canScroll: whether an inner scroll view exists at all. If false,
+    ///     all scrolls propagate (no inner content to consume them).
+    /// - Returns: `true` when the event should be forwarded to the parent
+    ///   note's responder (boundary reached or no inner scroll view);
+    ///   `false` when the inner scroll view should consume the event.
+    static func shouldPropagateVerticalScroll(
+        deltaY: CGFloat,
+        contentOffsetY: CGFloat,
+        contentHeight: CGFloat,
+        viewportHeight: CGFloat,
+        canScroll: Bool
+    ) -> Bool {
+        guard canScroll else { return true }
+        // Content fits in viewport — nothing to scroll, propagate.
+        if contentHeight <= viewportHeight { return true }
+
+        // Tolerance for floating-point boundary detection. macOS scroll
+        // views can sit at offsets like 0.0001 or `maxOffset - 0.0001`
+        // after a momentum animation; treat sub-pixel residue as "at
+        // boundary."
+        let epsilon: CGFloat = 0.5
+        let maxOffsetY = contentHeight - viewportHeight
+
+        // deltaY > 0: gesture is upward → content offset would decrease
+        //   → forward when already at top (offset ≈ 0).
+        // deltaY < 0: gesture is downward → content offset would increase
+        //   → forward when already at bottom (offset ≈ maxOffsetY).
+        if deltaY > 0 && contentOffsetY <= epsilon {
+            return true
+        }
+        if deltaY < 0 && contentOffsetY >= maxOffsetY - epsilon {
+            return true
+        }
+        return false
+    }
+
+    /// Find the first descendant `NSScrollView` of `root`. `QLPreviewView`
+    /// hosts its content inside a private scroll view; we walk the
+    /// hierarchy because the exact subview path is not part of Apple's
+    /// public API.
+    static func findInnerScrollView(in root: NSView) -> NSScrollView? {
+        if let sv = root as? NSScrollView { return sv }
+        for sub in root.subviews {
+            if let sv = findInnerScrollView(in: sub) { return sv }
+        }
+        return nil
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        // Horizontal scroll stays in the preview (for spreadsheets, etc.).
-        // Vertical scroll passes through to the note editor.
+        // Horizontal scroll always stays in the preview (for spreadsheets,
+        // wide PDFs, etc.). Vertical scroll is consumed by the inner
+        // QuickLook scroll view until it reaches a boundary, at which
+        // point it propagates to the parent note (Obsidian-style).
         if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
             super.scrollWheel(with: event)
-        } else {
+            return
+        }
+
+        let innerScroll = Self.findInnerScrollView(in: previewView)
+        let canScroll = innerScroll != nil
+        let contentOffsetY = innerScroll?.contentView.bounds.origin.y ?? 0
+        let contentHeight = innerScroll?.documentView?.frame.height ?? 0
+        let viewportHeight = innerScroll?.contentView.bounds.height ?? 0
+
+        let propagate = Self.shouldPropagateVerticalScroll(
+            deltaY: event.scrollingDeltaY,
+            contentOffsetY: contentOffsetY,
+            contentHeight: contentHeight,
+            viewportHeight: viewportHeight,
+            canScroll: canScroll
+        )
+
+        if propagate {
             nextResponder?.scrollWheel(with: event)
+        } else {
+            innerScroll?.scrollWheel(with: event)
         }
     }
 }

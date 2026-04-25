@@ -97,6 +97,7 @@
 		P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */; };
 		P5AD000000000000000000B1 /* Phase5aDeleteBypassFixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */; };
 		P6AR000000000000000000B1 /* Phase6AttachmentScrollRecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P6AR000000000000000000F1 /* Phase6AttachmentScrollRecycleTests.swift */; };
+		IQLS000000000000000000B1 /* InlineQuickLookScrollPropagationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IQLS000000000000000000F1 /* InlineQuickLookScrollPropagationTests.swift */; };
 		P6IRS00000000000000000B4 /* Phase6ImageResizeSpliceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P6IRS00000000000000000F4 /* Phase6ImageResizeSpliceTests.swift */; };
 		P5FD000000000000000000B1 /* Phase5fDragOperationBypassRetirementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */; };
 		P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */; };
@@ -109,6 +110,7 @@
 		EDSN000000000000000000B1 /* EditorSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSN000000000000000000F1 /* EditorSnapshot.swift */; };
 		EDST000000000000000000B1 /* EditorSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDST000000000000000000F1 /* EditorSnapshotTests.swift */; };
 		UIBR000000000000000000B1 /* UIBugRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UIBR000000000000000000F1 /* UIBugRegressionTests.swift */; };
+		SVPR000000000000000000B1 /* SplitViewPaneRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVPR000000000000000000F1 /* SplitViewPaneRestoreTests.swift */; };
 		TCCH000000000000000000B1 /* TableCellClickHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCH000000000000000000F1 /* TableCellClickHarnessTests.swift */; };
 		CBEW000000000000000000B1 /* CodeBlockEditToggleWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */; };
 		UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */; };
@@ -125,7 +127,11 @@
 		EDSC000000000000000000B1 /* EditorScenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSC000000000000000000F1 /* EditorScenario.swift */; };
 		EDAS000000000000000000B1 /* EditorAssertions.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDAS000000000000000000F1 /* EditorAssertions.swift */; };
 		EABM000000000000000000B1 /* EditorAssertions+Bitmap.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABM000000000000000000F1 /* EditorAssertions+Bitmap.swift */; };
+		EAAS000000000000000000B1 /* EditorAssertions+Async.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAS000000000000000000F1 /* EditorAssertions+Async.swift */; };
+		AHTT000000000000000000B1 /* AsyncHydrationThenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AHTT000000000000000000F1 /* AsyncHydrationThenTests.swift */; };
 		IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */; };
+		FSMT000000000000000000B1 /* FSMTransitions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FSMT000000000000000000F1 /* FSMTransitions.swift */; };
+		FSMR000000000000000000B1 /* FSMTransitionTableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */; };
 		BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BRBT000000000000000000F1 /* BitmapReadbackTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
 		TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */; };
@@ -1234,6 +1240,7 @@
 		P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aSingleWritePathTests.swift; sourceTree = "<group>"; };
 		P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5aDeleteBypassFixTests.swift; sourceTree = "<group>"; };
 		P6AR000000000000000000F1 /* Phase6AttachmentScrollRecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase6AttachmentScrollRecycleTests.swift; sourceTree = "<group>"; };
+		IQLS000000000000000000F1 /* InlineQuickLookScrollPropagationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineQuickLookScrollPropagationTests.swift; sourceTree = "<group>"; };
 		P6IRS00000000000000000F4 /* Phase6ImageResizeSpliceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase6ImageResizeSpliceTests.swift; sourceTree = "<group>"; };
 		P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5fDragOperationBypassRetirementTests.swift; sourceTree = "<group>"; };
 		P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase5bCursorCanonicalizationTests.swift; sourceTree = "<group>"; };
@@ -1246,6 +1253,7 @@
 		EDSN000000000000000000F1 /* EditorSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSnapshot.swift; sourceTree = "<group>"; };
 		EDST000000000000000000F1 /* EditorSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSnapshotTests.swift; sourceTree = "<group>"; };
 		UIBR000000000000000000F1 /* UIBugRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIBugRegressionTests.swift; sourceTree = "<group>"; };
+		SVPR000000000000000000F1 /* SplitViewPaneRestoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitViewPaneRestoreTests.swift; sourceTree = "<group>"; };
 		TCCH000000000000000000F1 /* TableCellClickHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellClickHarnessTests.swift; sourceTree = "<group>"; };
 		CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleWiringTests.swift; sourceTree = "<group>"; };
 		UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTIConformanceMigrationTests.swift; sourceTree = "<group>"; };
@@ -1262,7 +1270,11 @@
 		EDSC000000000000000000F1 /* EditorScenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScenario.swift; sourceTree = "<group>"; };
 		EDAS000000000000000000F1 /* EditorAssertions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAssertions.swift; sourceTree = "<group>"; };
 		EABM000000000000000000F1 /* EditorAssertions+Bitmap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorAssertions+Bitmap.swift"; sourceTree = "<group>"; };
+		EAAS000000000000000000F1 /* EditorAssertions+Async.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorAssertions+Async.swift"; sourceTree = "<group>"; };
+		AHTT000000000000000000F1 /* AsyncHydrationThenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncHydrationThenTests.swift; sourceTree = "<group>"; };
 		IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsertTableThenTypeTests.swift; sourceTree = "<group>"; };
+		FSMT000000000000000000F1 /* FSMTransitions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSMTransitions.swift; sourceTree = "<group>"; };
+		FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSMTransitionTableTests.swift; sourceTree = "<group>"; };
 		BRBT000000000000000000F1 /* BitmapReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitmapReadbackTests.swift; sourceTree = "<group>"; };
 		T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2eT2fFindAcrossTableCellsTests.swift; sourceTree = "<group>"; };
 		TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCursorMathTests.swift; sourceTree = "<group>"; };
@@ -2657,6 +2669,7 @@
 				P5AT000000000000000000F1 /* Phase5aSingleWritePathTests.swift */,
 				P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */,
 				P6AR000000000000000000F1 /* Phase6AttachmentScrollRecycleTests.swift */,
+				IQLS000000000000000000F1 /* InlineQuickLookScrollPropagationTests.swift */,
 				P6IRS00000000000000000F4 /* Phase6ImageResizeSpliceTests.swift */,
 				P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */,
 				P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */,
@@ -2668,6 +2681,7 @@
 				EDSN000000000000000000F1 /* EditorSnapshot.swift */,
 				EDST000000000000000000F1 /* EditorSnapshotTests.swift */,
 				UIBR000000000000000000F1 /* UIBugRegressionTests.swift */,
+				SVPR000000000000000000F1 /* SplitViewPaneRestoreTests.swift */,
 				TCCH000000000000000000F1 /* TableCellClickHarnessTests.swift */,
 				CBEW000000000000000000F1 /* CodeBlockEditToggleWiringTests.swift */,
 				UTICM000000000000000000F1 /* UTIConformanceMigrationTests.swift */,
@@ -2707,9 +2721,20 @@
 				EDSC000000000000000000F1 /* EditorScenario.swift */,
 				EDAS000000000000000000F1 /* EditorAssertions.swift */,
 				EABM000000000000000000F1 /* EditorAssertions+Bitmap.swift */,
+				EAAS000000000000000000F1 /* EditorAssertions+Async.swift */,
 				USRFLW000000000000000005 /* UserFlows */,
+				FSMTFIX0000000000000005 /* Fixtures */,
+				FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */,
 			);
 			path = Tests;
+			sourceTree = "<group>";
+		};
+		FSMTFIX0000000000000005 /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				FSMT000000000000000000F1 /* FSMTransitions.swift */,
+			);
+			path = Fixtures;
 			sourceTree = "<group>";
 		};
 		USRFLW000000000000000005 /* UserFlows */ = {
@@ -2717,6 +2742,7 @@
 			children = (
 				IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */,
 				BRBT000000000000000000F1 /* BitmapReadbackTests.swift */,
+				AHTT000000000000000000F1 /* AsyncHydrationThenTests.swift */,
 			);
 			path = UserFlows;
 			sourceTree = "<group>";
@@ -4211,6 +4237,7 @@
 				P5AT000000000000000000B1 /* Phase5aSingleWritePathTests.swift in Sources */,
 				P5AD000000000000000000B1 /* Phase5aDeleteBypassFixTests.swift in Sources */,
 				P6AR000000000000000000B1 /* Phase6AttachmentScrollRecycleTests.swift in Sources */,
+				IQLS000000000000000000B1 /* InlineQuickLookScrollPropagationTests.swift in Sources */,
 				P6IRS00000000000000000B4 /* Phase6ImageResizeSpliceTests.swift in Sources */,
 				P5FD000000000000000000B1 /* Phase5fDragOperationBypassRetirementTests.swift in Sources */,
 				P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */,
@@ -4222,6 +4249,7 @@
 				EDSN000000000000000000B1 /* EditorSnapshot.swift in Sources */,
 				EDST000000000000000000B1 /* EditorSnapshotTests.swift in Sources */,
 				UIBR000000000000000000B1 /* UIBugRegressionTests.swift in Sources */,
+				SVPR000000000000000000B1 /* SplitViewPaneRestoreTests.swift in Sources */,
 				TCCH000000000000000000B1 /* TableCellClickHarnessTests.swift in Sources */,
 				CBEW000000000000000000B1 /* CodeBlockEditToggleWiringTests.swift in Sources */,
 				UTICM000000000000000000B1 /* UTIConformanceMigrationTests.swift in Sources */,
@@ -4238,7 +4266,11 @@
 				EDSC000000000000000000B1 /* EditorScenario.swift in Sources */,
 				EDAS000000000000000000B1 /* EditorAssertions.swift in Sources */,
 				EABM000000000000000000B1 /* EditorAssertions+Bitmap.swift in Sources */,
+				EAAS000000000000000000B1 /* EditorAssertions+Async.swift in Sources */,
+				AHTT000000000000000000B1 /* AsyncHydrationThenTests.swift in Sources */,
 				IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */,
+				FSMT000000000000000000B1 /* FSMTransitions.swift in Sources */,
+				FSMR000000000000000000B1 /* FSMTransitionTableTests.swift in Sources */,
 				BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,
 				T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */,
