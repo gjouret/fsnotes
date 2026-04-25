@@ -1658,7 +1658,7 @@ WKWebView and image attachments hydrate asynchronously. The harness needs an `ev
 Then.mermaidBlock(at: 2).hasRendered.eventually(within: 2.0)
 ```
 
-### Slice E — Combinatorial coverage (find bugs Claude didn't know to ask about)
+### Slice E ✅ — Combinatorial coverage (find bugs Claude didn't know to ask about)
 
 The previous slices migrate KNOWN bugs. Slice E generates user-flow tests from a state-space matrix to surface bugs the user hasn't yet reported. The point is to stop relying on the user as a manual fuzzer.
 

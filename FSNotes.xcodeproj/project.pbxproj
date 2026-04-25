@@ -132,6 +132,8 @@
 		IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */; };
 		FSMT000000000000000000B1 /* FSMTransitions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FSMT000000000000000000F1 /* FSMTransitions.swift */; };
 		FSMR000000000000000000B1 /* FSMTransitionTableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */; };
+		CBGN000000000000000000B1 /* Generator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBGN000000000000000000F1 /* Generator.swift */; };
+		CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */; };
 		BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BRBT000000000000000000F1 /* BitmapReadbackTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
 		TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */; };
@@ -1278,6 +1280,9 @@
 		IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsertTableThenTypeTests.swift; sourceTree = "<group>"; };
 		FSMT000000000000000000F1 /* FSMTransitions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSMTransitions.swift; sourceTree = "<group>"; };
 		FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSMTransitionTableTests.swift; sourceTree = "<group>"; };
+		CBGN000000000000000000F1 /* Generator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Generator.swift; sourceTree = "<group>"; };
+		CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CombinatorialCoverageTests.swift; sourceTree = "<group>"; };
+		CBDB000000000000000000F1 /* DiscoveredBugs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = DiscoveredBugs.txt; sourceTree = "<group>"; };
 		BRBT000000000000000000F1 /* BitmapReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitmapReadbackTests.swift; sourceTree = "<group>"; };
 		T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2eT2fFindAcrossTableCellsTests.swift; sourceTree = "<group>"; };
 		TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCursorMathTests.swift; sourceTree = "<group>"; };
@@ -2734,6 +2739,7 @@
 				USRFLW000000000000000005 /* UserFlows */,
 				FSMTFIX0000000000000005 /* Fixtures */,
 				FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */,
+				CBCOMB00000000000000005 /* Combinatorial */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -2744,6 +2750,16 @@
 				FSMT000000000000000000F1 /* FSMTransitions.swift */,
 			);
 			path = Fixtures;
+			sourceTree = "<group>";
+		};
+		CBCOMB00000000000000005 /* Combinatorial */ = {
+			isa = PBXGroup;
+			children = (
+				CBGN000000000000000000F1 /* Generator.swift */,
+				CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */,
+				CBDB000000000000000000F1 /* DiscoveredBugs.txt */,
+			);
+			path = Combinatorial;
 			sourceTree = "<group>";
 		};
 		USRFLW000000000000000005 /* UserFlows */ = {
@@ -4282,6 +4298,8 @@
 				IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */,
 				FSMT000000000000000000B1 /* FSMTransitions.swift in Sources */,
 				FSMR000000000000000000B1 /* FSMTransitionTableTests.swift in Sources */,
+				CBGN000000000000000000B1 /* Generator.swift in Sources */,
+				CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */,
 				BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,
 				T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */,

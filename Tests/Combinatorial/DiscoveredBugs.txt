@@ -1,0 +1,22 @@
+# DiscoveredBugs.txt — Phase 11 Slice E
+#
+# One line per (blockKind | cursorPosition | edit | selection) tuple
+# whose minimal-invariant assertions fail. The runner
+# `CombinatorialCoverageTests.test_combinatorialCoverage` reads this
+# file and `XCTExpectFailure(strict: true)`-wraps each listed scenario
+# so the suite passes today; entries flip to red ("unexpectedly
+# passed") when the underlying behaviour is fixed.
+#
+# Format: "<label> → <one-line explanation>"
+# The runner extracts the label as everything before the first " → ".
+#
+# Lines starting with "#" and empty lines are ignored.
+#
+# Initial population: this file is empty pending the first matrix run.
+# Add entries as the runner discovers minimal-invariant violations.
+
+table | atStart | pressBackspace | empty → block-count delta -1 disagrees with FSM row 'table | atStart | pressBackspace → stayInBlock'; backspace at the start-of-cell offset crosses the block boundary instead of staying inside the cell.
+bulletList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; exit-to-body transition regenerates the projection slot UUID instead of mutating in place.
+numberedList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; same exit-to-body slot-id regeneration as the bullet variant.
+todoList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; same exit-to-body slot-id regeneration.
+
