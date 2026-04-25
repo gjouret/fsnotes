@@ -163,6 +163,21 @@ class InlinePDFView: NSView {
         pdfView.interpolationQuality = .high
         addSubview(pdfView)
 
+        // Bug #23: double-click anywhere on the inline preview opens
+        // the underlying file in its default macOS app (Preview for
+        // PDFs). PDFKit's `PDFView` consumes mouse events on its own
+        // surface, so a `mouseDown` override on the container would
+        // never fire for clicks landing on the PDF itself. A click
+        // gesture recognizer attached to the container intercepts
+        // the click before subviews see it. Single clicks are not
+        // captured (`numberOfClicksRequired = 2`), so existing
+        // PDFView text-selection behavior is preserved.
+        let doubleClick = NSClickGestureRecognizer(
+            target: self, action: #selector(handleDoubleClick(_:))
+        )
+        doubleClick.numberOfClicksRequired = 2
+        addGestureRecognizer(doubleClick)
+
         // Load the PDF document
         if let document = PDFDocument(url: pdfURL) {
             pdfView.document = document
@@ -323,6 +338,18 @@ class InlinePDFView: NSView {
     // MARK: - Actions
 
     @objc private func openInPreview() {
+        NSWorkspace.shared.open(pdfURL)
+    }
+
+    /// Bug #23: double-click anywhere on the inline preview opens the
+    /// PDF in its default macOS app. Routes through the same
+    /// `NSWorkspace.open` call as the toolbar "Open in Preview"
+    /// button so behavior is identical regardless of which trigger
+    /// the user chose.
+    @objc private func handleDoubleClick(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended,
+              InlineAttachmentOpenPolicy.shouldOpenOnDoubleClick(clickCount: recognizer.numberOfClicksRequired)
+        else { return }
         NSWorkspace.shared.open(pdfURL)
     }
 

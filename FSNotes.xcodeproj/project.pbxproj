@@ -731,6 +731,8 @@
 		23EAB390742AF720CE975FB0 /* TableEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */; };
 		BB1234560001000100010021 /* InlinePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010020 /* InlinePDFView.swift */; };
 		BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB1234560001000100010030 /* InlineQuickLookView.swift */; };
+		IAOP00000000000000000B1 /* InlineAttachmentOpenPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = IAOP00000000000000000F1 /* InlineAttachmentOpenPolicy.swift */; };
+		IADC00000000000000000B1 /* InlineAttachmentDoubleClickTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IADC00000000000000000F1 /* InlineAttachmentDoubleClickTests.swift */; };
 		IILF000000000000000000B1 /* InlineImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = IILF000000000000000000F1 /* InlineImageView.swift */; };
 		CBETV00000000000000000B1 /* CodeBlockEditToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBETV00000000000000000F1 /* CodeBlockEditToggleView.swift */; };
 		CBETO00000000000000000B1 /* CodeBlockEditToggleOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */; };
@@ -1564,6 +1566,8 @@
 		9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableEditorViewController.swift; sourceTree = "<group>"; };
 		BB1234560001000100010020 /* InlinePDFView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlinePDFView.swift; sourceTree = "<group>"; };
 		BB1234560001000100010030 /* InlineQuickLookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineQuickLookView.swift; sourceTree = "<group>"; };
+		IAOP00000000000000000F1 /* InlineAttachmentOpenPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineAttachmentOpenPolicy.swift; sourceTree = "<group>"; };
+		IADC00000000000000000F1 /* InlineAttachmentDoubleClickTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineAttachmentDoubleClickTests.swift; sourceTree = "<group>"; };
 		IILF000000000000000000F1 /* InlineImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineImageView.swift; sourceTree = "<group>"; };
 		CBETV00000000000000000F1 /* CodeBlockEditToggleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleView.swift; sourceTree = "<group>"; };
 		CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockEditToggleOverlay.swift; sourceTree = "<group>"; };
@@ -2480,6 +2484,7 @@
 				9A36172A2C1AAB13AFAE9D86 /* TableEditorViewController.swift */,
 				BB1234560001000100010020 /* InlinePDFView.swift */,
 				BB1234560001000100010030 /* InlineQuickLookView.swift */,
+				IAOP00000000000000000F1 /* InlineAttachmentOpenPolicy.swift */,
 				IILF000000000000000000F1 /* InlineImageView.swift */,
 				CBETV00000000000000000F1 /* CodeBlockEditToggleView.swift */,
 				CBETO00000000000000000F1 /* CodeBlockEditToggleOverlay.swift */,
@@ -2670,6 +2675,7 @@
 				P5AD000000000000000000F1 /* Phase5aDeleteBypassFixTests.swift */,
 				P6AR000000000000000000F1 /* Phase6AttachmentScrollRecycleTests.swift */,
 				IQLS000000000000000000F1 /* InlineQuickLookScrollPropagationTests.swift */,
+				IADC00000000000000000F1 /* InlineAttachmentDoubleClickTests.swift */,
 				P6IRS00000000000000000F4 /* Phase6ImageResizeSpliceTests.swift */,
 				P5FD000000000000000000F1 /* Phase5fDragOperationBypassRetirementTests.swift */,
 				P5BT000000000000000000F1 /* Phase5bCursorCanonicalizationTests.swift */,
@@ -3839,6 +3845,7 @@
 				23EAB390742AF720CE975FB0 /* TableEditorViewController.swift in Sources */,
 				BB1234560001000100010021 /* InlinePDFView.swift in Sources */,
 				BB1234560001000100010031 /* InlineQuickLookView.swift in Sources */,
+				IAOP00000000000000000B1 /* InlineAttachmentOpenPolicy.swift in Sources */,
 				IILF000000000000000000B1 /* InlineImageView.swift in Sources */,
 				CBETV00000000000000000B1 /* CodeBlockEditToggleView.swift in Sources */,
 				CBETO00000000000000000B1 /* CodeBlockEditToggleOverlay.swift in Sources */,
@@ -4238,6 +4245,7 @@
 				P5AD000000000000000000B1 /* Phase5aDeleteBypassFixTests.swift in Sources */,
 				P6AR000000000000000000B1 /* Phase6AttachmentScrollRecycleTests.swift in Sources */,
 				IQLS000000000000000000B1 /* InlineQuickLookScrollPropagationTests.swift in Sources */,
+				IADC00000000000000000B1 /* InlineAttachmentDoubleClickTests.swift in Sources */,
 				P6IRS00000000000000000B4 /* Phase6ImageResizeSpliceTests.swift in Sources */,
 				P5FD000000000000000000B1 /* Phase5fDragOperationBypassRetirementTests.swift in Sources */,
 				P5BT000000000000000000B1 /* Phase5bCursorCanonicalizationTests.swift in Sources */,
