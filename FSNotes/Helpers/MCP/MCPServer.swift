@@ -10,11 +10,12 @@
 //
 //  See docs/AI.md "MCPServer" and "App Bridge" sections.
 //
-//  TODO Phase 2 follow-up: wire OllamaProvider into
-//  MCPServer.handleToolCalls (the OllamaProvider streaming loop will
-//  call `await MCPServer.shared.handleToolCalls(calls)` and feed the
-//  resulting `[ToolResult]` back into the conversation as `tool`
-//  role messages).
+//  OllamaProvider drives `handleToolCalls`: see
+//  `FSNotes/Helpers/Ollama/OllamaProvider.swift` —
+//  `runChatRound` / `dispatchToolCallsAndContinue` invoke it after
+//  each streamed `tool_calls` outcome and feed the resulting
+//  `[ToolResult]` back into the conversation as `role: "tool"`
+//  messages, capped at `OllamaProvider.maxToolRounds` round trips.
 //
 //  TODO Phase 2 follow-up: ViewController implements AppBridge.
 //  Until that lands, `MCPServer.shared.appBridge` defaults to a
