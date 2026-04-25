@@ -756,6 +756,9 @@
 		MCP04000000000000000000B1 /* AppBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP04000000000000000000F1 /* AppBridge.swift */; };
 		MCPT01000000000000000000B1 /* NotePathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT01000000000000000000F1 /* NotePathResolver.swift */; };
 		MCPT02000000000000000000B1 /* ReadNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT02000000000000000000F1 /* ReadNoteTool.swift */; };
+		MCPT03000000000000000000B1 /* SearchNotesTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT03000000000000000000F1 /* SearchNotesTool.swift */; };
+		MCPT04000000000000000000B1 /* ListFoldersTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT04000000000000000000F1 /* ListFoldersTool.swift */; };
+		MCPT05000000000000000000B1 /* GetFolderNotesTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT05000000000000000000F1 /* GetFolderNotesTool.swift */; };
 		D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77CC042216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
 		D77E0536246312B200AD7772 /* StorageType.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77E05282463124300AD7772 /* StorageType.swift */; };
@@ -1602,6 +1605,9 @@
 		MCP04000000000000000000F1 /* AppBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBridge.swift; sourceTree = "<group>"; };
 		MCPT01000000000000000000F1 /* NotePathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotePathResolver.swift; sourceTree = "<group>"; };
 		MCPT02000000000000000000F1 /* ReadNoteTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadNoteTool.swift; sourceTree = "<group>"; };
+		MCPT03000000000000000000F1 /* SearchNotesTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchNotesTool.swift; sourceTree = "<group>"; };
+		MCPT04000000000000000000F1 /* ListFoldersTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListFoldersTool.swift; sourceTree = "<group>"; };
+		MCPT05000000000000000000F1 /* GetFolderNotesTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetFolderNotesTool.swift; sourceTree = "<group>"; };
 		D77CC040216A608500582B97 /* EditorScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScrollView.swift; sourceTree = "<group>"; };
 		D77E05282463124300AD7772 /* StorageType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageType.swift; sourceTree = "<group>"; };
 		D77F41B22A0D48F500E2B7A2 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
@@ -2541,6 +2547,9 @@
 			children = (
 				MCPT01000000000000000000F1 /* NotePathResolver.swift */,
 				MCPT02000000000000000000F1 /* ReadNoteTool.swift */,
+				MCPT03000000000000000000F1 /* SearchNotesTool.swift */,
+				MCPT04000000000000000000F1 /* ListFoldersTool.swift */,
+				MCPT05000000000000000000F1 /* GetFolderNotesTool.swift */,
 			);
 			path = Tools;
 			sourceTree = "<group>";
@@ -3918,6 +3927,9 @@
 				MCP04000000000000000000B1 /* AppBridge.swift in Sources */,
 				MCPT01000000000000000000B1 /* NotePathResolver.swift in Sources */,
 				MCPT02000000000000000000B1 /* ReadNoteTool.swift in Sources */,
+				MCPT03000000000000000000B1 /* SearchNotesTool.swift in Sources */,
+				MCPT04000000000000000000B1 /* ListFoldersTool.swift in Sources */,
+				MCPT05000000000000000000B1 /* GetFolderNotesTool.swift in Sources */,
 				D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */,
 				110BE0232EE8C53C00C5E456 /* TypeScript.swift in Sources */,
 				110BE0122EE86B4A00C5E456 /* Clojure.swift in Sources */,
