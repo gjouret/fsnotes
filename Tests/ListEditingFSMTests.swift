@@ -58,12 +58,15 @@ class ListEditingFSMTests: XCTestCase {
         XCTAssertEqual(t, .indent)
     }
 
-    func test_depth0_tab_noPrevSibling_noOp() {
+    func test_depth0_tab_noPrevSibling_indent() {
+        // Bug #25: Tab demotes one level even without a previous
+        // sibling — `EditingOps.indentListItem` synthesises an empty
+        // parent so the tree depth still increases.
         let t = ListEditingFSM.transition(
             state: .listItem(depth: 0, hasPreviousSibling: false),
             action: .tab
         )
-        XCTAssertEqual(t, .noOp)
+        XCTAssertEqual(t, .indent)
     }
 
     func test_depth0_shiftTab_exit() {
@@ -106,12 +109,14 @@ class ListEditingFSMTests: XCTestCase {
         XCTAssertEqual(t, .indent)
     }
 
-    func test_depth1_tab_noPrevSibling_noOp() {
+    func test_depth1_tab_noPrevSibling_indent() {
+        // Bug #25: nested item without a previous sibling still
+        // demotes (synthetic-parent wrap).
         let t = ListEditingFSM.transition(
             state: .listItem(depth: 1, hasPreviousSibling: false),
             action: .tab
         )
-        XCTAssertEqual(t, .noOp)
+        XCTAssertEqual(t, .indent)
     }
 
     func test_depth1_shiftTab_unindent() {
@@ -213,11 +218,37 @@ class ListEditingFSMTests: XCTestCase {
         XCTAssertEqual(items[0].children[0].inline, [.text("beta")])
     }
 
-    func test_indent_firstItem_fails() {
+    func test_indent_firstItem_wrapsUnderSyntheticParent() {
+        // Bug #25: indenting the first item wraps it under a fresh
+        // empty parent rather than refusing the operation.
         let proj = makeProjection("- alpha\n- beta\n")
-        // Try to indent the first item (no previous sibling).
-        // alpha inline starts at prefix 1, so offset 1 is inside alpha.
-        XCTAssertThrowsError(try EditingOps.indentListItem(at: 1, in: proj))
+        let result = try! EditingOps.indentListItem(at: 1, in: proj)
+        let newDoc = result.newProjection.document
+        guard case .list(let items, _) = newDoc.blocks[0] else {
+            XCTFail("Expected list block"); return
+        }
+        // Two top-level items now: synthetic empty parent (with alpha
+        // nested), then beta.
+        XCTAssertEqual(items.count, 2, "Synthetic parent + beta")
+        XCTAssertEqual(items[0].inline, [], "Parent has empty inline")
+        XCTAssertEqual(items[0].children.count, 1, "alpha is the parent's child")
+        XCTAssertEqual(items[0].children[0].inline, [.text("alpha")])
+        XCTAssertEqual(items[1].inline, [.text("beta")])
+    }
+
+    func test_indent_singleItem_wrapsUnderSyntheticParent() {
+        // Edge case: single item in the list. Tab indents it under a
+        // synthetic parent, leaving a one-item top-level list whose
+        // sole item has one child (the original).
+        let proj = makeProjection("- alpha\n")
+        let result = try! EditingOps.indentListItem(at: 1, in: proj)
+        guard case .list(let items, _) = result.newProjection.document.blocks[0] else {
+            XCTFail("Expected list block"); return
+        }
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].inline, [])
+        XCTAssertEqual(items[0].children.count, 1)
+        XCTAssertEqual(items[0].children[0].inline, [.text("alpha")])
     }
 
     func test_indent_roundTrip() {

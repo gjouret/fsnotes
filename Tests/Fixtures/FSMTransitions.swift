@@ -451,8 +451,8 @@ enum FSMTransitionTable {
             blockKind: .bulletList,
             cursorPosition: .atStart,
             action: .pressTab,
-            expected: .noOp,
-            note: "Tab at top-level item with no previous sibling is a noOp (can't indent the first item)."
+            expected: .indent,
+            note: "Tab on a top-level bullet item demotes one level. With no previous sibling the applier wraps the item under a synthetic empty parent so tree depth still increases (bug #25 single-fix-multiple-rows: same FSM behaviour for bullet, numbered, and todo lists)."
         ),
         // Multi-item bullet list — second item, has previous sibling.
         // Encoded via a custom seed in the runner.
@@ -484,8 +484,7 @@ enum FSMTransitionTable {
             cursorPosition: .atStart,
             action: .pressTab,
             expected: .indent,
-            note: "Tab on a numbered list item should demote one level when applicable (Slice B #25). On the first item with no previous sibling the FSM noOps — bug-row asserts .indent.",
-            bugId: 25
+            note: "Tab on a numbered list item demotes one level. With no previous sibling the applier wraps the item under a synthetic empty parent so tree depth still increases (bug #25)."
         ),
         FSMTransition(
             blockKind: .numberedList,

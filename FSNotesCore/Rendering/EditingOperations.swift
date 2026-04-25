@@ -5076,9 +5076,12 @@ public enum EditingOps {
         let entry = entries[entryIdx]
 
         // Move item to be child of its previous sibling at the same level.
+        // When the item is the first sibling at its level (no previous
+        // sibling) `indentItemAtPath` wraps it under a synthetic empty
+        // parent so depth still increases — see bug #25.
         let newItems = indentItemAtPath(items, path: entry.path)
         guard let newItems = newItems else {
-            throw EditingError.unsupported(reason: "indentListItem: no previous sibling to nest under")
+            throw EditingError.unsupported(reason: "indentListItem: invalid path")
         }
 
         let newBlock = Block.list(items: newItems)
@@ -5345,8 +5348,17 @@ public enum EditingOps {
     // MARK: - Tree manipulation helpers
 
     /// Move the item at `path` to be the last child of its previous
-    /// sibling. Returns nil if there is no previous sibling.
+    /// sibling. Returns nil only if the path is structurally invalid
+    /// (empty, or unreachable via the children chain).
     /// Updates the item's indent to be parent's indent + 2 spaces.
+    ///
+    /// Bug #25: when the item is the first sibling at its level (no
+    /// previous sibling to nest under), wrap it under a freshly-minted
+    /// empty parent so depth still increases — the "demote one level"
+    /// behaviour user expects from Tab. The synthetic parent inherits
+    /// the moving item's marker family (so a numbered list stays
+    /// numbered, a bullet list stays bulleted, a todo stays a todo
+    /// with the same checkbox state) and has empty inline content.
     private static func indentItemAtPath(
         _ items: [ListItem],
         path: [Int]
@@ -5355,25 +5367,44 @@ public enum EditingOps {
         var result = items
 
         if path.count == 1 {
-            // Top-level path: item is items[first]. Previous sibling is items[first-1].
-            guard first > 0 else { return nil }
             let movingItem = items[first]
-            let prevSibling = items[first - 1]
-            // Update indent: child indent = parent indent + 2 spaces.
-            let childIndent = prevSibling.indent + "  "
-            let reindented = ListItem(
+            if first > 0 {
+                // Existing previous sibling — nest under it.
+                let prevSibling = items[first - 1]
+                // Update indent: child indent = parent indent + 2 spaces.
+                let childIndent = prevSibling.indent + "  "
+                let reindented = ListItem(
+                    indent: childIndent, marker: movingItem.marker,
+                    afterMarker: movingItem.afterMarker, checkbox: movingItem.checkbox,
+                    inline: movingItem.inline, children: movingItem.children
+                )
+                let newPrev = ListItem(
+                    indent: prevSibling.indent, marker: prevSibling.marker,
+                    afterMarker: prevSibling.afterMarker, checkbox: prevSibling.checkbox,
+                    inline: prevSibling.inline, children: prevSibling.children + [reindented]
+                )
+                result[first - 1] = newPrev
+                result.remove(at: first)
+                return result
+            }
+            // No previous sibling — wrap under a synthetic empty parent
+            // so the tree depth still increases (bug #25).
+            let parentIndent = movingItem.indent
+            let childIndent = parentIndent + "  "
+            let syntheticParentCheckbox: Checkbox? = movingItem.checkbox.map {
+                Checkbox(text: $0.text, afterText: $0.afterText)
+            }
+            let nested = ListItem(
                 indent: childIndent, marker: movingItem.marker,
                 afterMarker: movingItem.afterMarker, checkbox: movingItem.checkbox,
                 inline: movingItem.inline, children: movingItem.children
             )
-            // Add reindented movingItem as last child of prevSibling.
-            let newPrev = ListItem(
-                indent: prevSibling.indent, marker: prevSibling.marker,
-                afterMarker: prevSibling.afterMarker, checkbox: prevSibling.checkbox,
-                inline: prevSibling.inline, children: prevSibling.children + [reindented]
+            let syntheticParent = ListItem(
+                indent: parentIndent, marker: movingItem.marker,
+                afterMarker: movingItem.afterMarker, checkbox: syntheticParentCheckbox,
+                inline: [], children: [nested]
             )
-            result[first - 1] = newPrev
-            result.remove(at: first)
+            result[first] = syntheticParent
             return result
         } else {
             // Recurse into children.

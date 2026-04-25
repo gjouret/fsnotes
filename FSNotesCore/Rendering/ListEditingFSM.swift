@@ -95,11 +95,13 @@ public enum ListEditingFSM {
             return .noOp
 
         // --- depth 0: top-level item ---
-        case (.listItem(depth: 0, hasPreviousSibling: true), .tab):
+        // Tab demotes one level regardless of previous-sibling presence
+        // (bug #25). When there is no previous sibling to nest under,
+        // `EditingOps.indentListItem` synthesises an empty parent so the
+        // tree depth still increases — matching the "real-world editor"
+        // behaviour users expect (Bear / Obsidian / Word all demote).
+        case (.listItem(depth: 0, _), .tab):
             return .indent
-        case (.listItem(depth: 0, hasPreviousSibling: false), .tab):
-            // Can't indent the first item — no previous sibling to nest under.
-            return .noOp
         case (.listItem(depth: 0, _), .shiftTab):
             return .exitToBody
         case (.listItem(depth: 0, _), .deleteAtHome):
@@ -110,10 +112,8 @@ public enum ListEditingFSM {
             return .exitToBody
 
         // --- depth > 0: nested item ---
-        case (.listItem(depth: _, hasPreviousSibling: true), .tab):
+        case (.listItem(depth: _, _), .tab):
             return .indent
-        case (.listItem(depth: _, hasPreviousSibling: false), .tab):
-            return .noOp
         case (.listItem(depth: _, _), .shiftTab):
             return .unindent
         case (.listItem(depth: _, _), .deleteAtHome):
