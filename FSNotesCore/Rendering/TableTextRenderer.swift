@@ -186,8 +186,20 @@ public enum TableTextRenderer {
                 note: nil,
                 theme: .shared
             )
+            // Bug #12 + return-in-cell-fragments-the-table: cells must
+            // not contain `\n`. NSTextStorage treats `\n` as a paragraph
+            // terminator, so even a single `<br>` (which `InlineRenderer`
+            // renders as `\n`) splits the table's storage range across
+            // multiple paragraphs — and the content-storage delegate
+            // returns one `TableElement` per paragraph, producing
+            // multiple `TableLayoutFragment`s for a single table block.
+            // Substitute `\n` with U+2028 (Unicode LINE SEPARATOR), which
+            // NSLayoutManager treats as a soft line break within a
+            // paragraph: same visual line break, no paragraph
+            // termination, single fragment per table.
+            let safe = sanitizeCellNewlines(rendered)
             let start = result.length
-            result.append(rendered)
+            result.append(safe)
             let cellRange = NSRange(location: start, length: result.length - start)
             if isHeader, cellRange.length > 0 {
                 result.addAttribute(.tableHeader, value: true, range: cellRange)
@@ -196,6 +208,29 @@ public enum TableTextRenderer {
                 result.append(cellSeparator)
             }
         }
+    }
+
+    /// Replace every `\n` (U+000A) in the rendered cell content with
+    /// U+2028 (LINE SEPARATOR). Preserves all attributes byte-for-byte
+    /// because `NSMutableString.replaceCharacters` on a same-length
+    /// substitution doesn't disturb attribute runs. See bug #12 above.
+    private static func sanitizeCellNewlines(
+        _ rendered: NSAttributedString
+    ) -> NSAttributedString {
+        let m = NSMutableAttributedString(attributedString: rendered)
+        let str = m.string as NSString
+        let len = str.length
+        var i = 0
+        while i < len {
+            if str.character(at: i) == 0x0A {
+                m.mutableString.replaceCharacters(
+                    in: NSRange(location: i, length: 1),
+                    with: "\u{2028}"
+                )
+            }
+            i += 1
+        }
+        return m
     }
     #endif
 }
