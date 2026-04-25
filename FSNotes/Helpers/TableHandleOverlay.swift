@@ -306,6 +306,17 @@ final class TableHandleOverlay {
         let fragFrame = fragment.layoutFragmentFrame
         let origin = editor.textContainerOrigin
 
+        // The fragment draws the grid relative to the LEFT EDGE OF
+        // THE CONTAINER, not relative to the fragment's natural-flow
+        // origin. From `TableLayoutFragment.draw`:
+        //     containerOriginX = point.x - frame.origin.x
+        //     gridLeft = containerOriginX + handleBarWidth
+        // Translated to editor view coords: gridLeft (editor) =
+        //     textContainerOrigin.x + handleBarWidth
+        // i.e. NOT offset by `fragFrame.origin.x`. The chip frame
+        // must use the same origin or it lands shifted right by the
+        // fragment's natural x-offset (the gap left by handle strip
+        // + any other paragraph indent).
         func columnRect(col: Int) -> CGRect? {
             guard col >= 0 else { return nil }
             guard let geom = fragment.geometryForHandleOverlay() else {
@@ -315,7 +326,7 @@ final class TableHandleOverlay {
             var x = TableGeometry.handleBarWidth
             for i in 0..<col { x += geom.columnWidths[i] }
             return CGRect(
-                x: fragFrame.origin.x + origin.x + x,
+                x: origin.x + x,
                 y: fragFrame.origin.y + origin.y,
                 width: geom.columnWidths[col],
                 height: TableGeometry.handleBarHeight
@@ -330,7 +341,7 @@ final class TableHandleOverlay {
             var y = TableGeometry.handleBarHeight
             for i in 0..<row { y += geom.rowHeights[i] }
             return CGRect(
-                x: fragFrame.origin.x + origin.x,
+                x: origin.x,
                 y: fragFrame.origin.y + origin.y + y,
                 width: TableGeometry.handleBarWidth,
                 height: geom.rowHeights[row]
