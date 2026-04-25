@@ -173,3 +173,150 @@ final class ToolCallBubble: NSView {
     /// Test-only accessor for the detail / preview label text.
     var detailText: String { detailLabel.stringValue }
 }
+
+// MARK: - Confirmation bubble
+
+/// Variant rendered when a destructive tool call (`delete_note`,
+/// `move_note`) is awaiting user approval. Carries the
+/// `CheckedContinuation` that resumes the provider's dispatch loop
+/// with the user's decision. Two buttons: Approve / Reject.
+///
+/// Phase 4 polish (docs/AI.md:880): destructive ops MUST be confirmed
+/// by the user, not the LLM. The continuation is owned by the bubble
+/// so the panel can `resolve(approved:)` to flush a pending decision
+/// even if the chat is cleared mid-flight (treated as rejection).
+final class ToolCallConfirmationBubble: NSView {
+
+    let call: ToolCall
+    private let nameLabel: NSTextField
+    private let summaryLabel: NSTextField
+    private let approveButton: NSButton
+    private let rejectButton: NSButton
+    private let onDecision: (Bool) -> Void
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private var resolved: Bool = false
+
+    init(call: ToolCall,
+         maxWidth: CGFloat,
+         onDecision: @escaping (Bool) -> Void) {
+        self.call = call
+        self.onDecision = onDecision
+        self.nameLabel = NSTextField(labelWithString: "Confirm: \(call.name)")
+        self.summaryLabel = NSTextField(wrappingLabelWithString: ToolCallBubble.formatArguments(call.arguments))
+        self.approveButton = NSButton(title: "Approve",
+                                      target: nil,
+                                      action: nil)
+        self.rejectButton = NSButton(title: "Reject",
+                                     target: nil,
+                                     action: nil)
+
+        super.init(frame: .zero)
+
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.08).cgColor
+        layer?.borderColor = NSColor.systemYellow.withAlphaComponent(0.3).cgColor
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 6
+        translatesAutoresizingMaskIntoConstraints = false
+
+        nameLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+        nameLabel.textColor = .labelColor
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        summaryLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        summaryLabel.textColor = .secondaryLabelColor
+        summaryLabel.isSelectable = true
+        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        approveButton.bezelStyle = .rounded
+        approveButton.target = self
+        approveButton.action = #selector(approveClicked)
+        approveButton.translatesAutoresizingMaskIntoConstraints = false
+
+        rejectButton.bezelStyle = .rounded
+        rejectButton.target = self
+        rejectButton.action = #selector(rejectClicked)
+        rejectButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let buttonRow = NSStackView(views: [approveButton, rejectButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 6
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(nameLabel)
+        addSubview(summaryLabel)
+        addSubview(buttonRow)
+
+        NSLayoutConstraint.activate([
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+
+            summaryLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+            summaryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            summaryLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            summaryLabel.widthAnchor.constraint(lessThanOrEqualToConstant: max(maxWidth, 100)),
+
+            buttonRow.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 6),
+            buttonRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            buttonRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported for ToolCallConfirmationBubble")
+    }
+
+    /// Capture the continuation that the provider's dispatch loop is
+    /// suspended on. The bubble retains it until either button is
+    /// clicked, the chat is cleared, or the panel is torn down.
+    func attach(continuation: CheckedContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    /// Resume the captured continuation. Idempotent — additional
+    /// calls are ignored so a re-entrant resolve (clearChat fires
+    /// while a button click is in flight, etc.) cannot trap.
+    func resolve(approved: Bool) {
+        guard !resolved else { return }
+        resolved = true
+        approveButton.isEnabled = false
+        rejectButton.isEnabled = false
+        if approved {
+            nameLabel.stringValue = "\u{2713} Approved: \(call.name)"
+            nameLabel.textColor = .systemGreen
+        } else {
+            nameLabel.stringValue = "\u{2717} Rejected: \(call.name)"
+            nameLabel.textColor = .systemRed
+        }
+        continuation?.resume(returning: approved)
+        continuation = nil
+    }
+
+    @objc private func approveClicked() {
+        guard !resolved else { return }
+        onDecision(true)
+    }
+
+    @objc private func rejectClicked() {
+        guard !resolved else { return }
+        onDecision(false)
+    }
+
+    // MARK: - Test accessors
+
+    /// Test-only accessor: headline label text.
+    var nameText: String { nameLabel.stringValue }
+
+    /// Test-only accessor: argument-summary label text.
+    var summaryText: String { summaryLabel.stringValue }
+
+    /// Test-only: simulate the user clicking Approve.
+    func _testApprove() { approveClicked() }
+
+    /// Test-only: simulate the user clicking Reject.
+    func _testReject() { rejectClicked() }
+
+    /// Test-only: has this bubble already been resolved?
+    var isResolved: Bool { resolved }
+}

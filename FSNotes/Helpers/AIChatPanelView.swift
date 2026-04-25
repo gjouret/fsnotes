@@ -75,6 +75,13 @@ class AIChatPanelView: NSView {
     /// themselves are removed via stack-view tear-down.
     private var toolCallBubbles: [String: ToolCallBubble] = [:]
 
+    /// Confirmation bubbles awaiting user click, keyed by
+    /// `ToolCall.id`. Each bubble holds a continuation that resumes
+    /// the provider's dispatch loop once the user clicks Approve or
+    /// Reject. Cleared on cancel / approve / reject so we never
+    /// resume a continuation twice (which would trap).
+    private var pendingConfirmationBubbles: [String: ToolCallConfirmationBubble] = [:]
+
     weak var editorViewController: EditorViewController?
 
     static let panelWidth: CGFloat = 320
@@ -324,6 +331,15 @@ class AIChatPanelView: NSView {
                 // errors that never reach the tool dispatcher.
                 self?.store.dispatch(.toolCallCompleted(call, .success(output)))
             }
+            // Confirmation gate for destructive ops. Dispatch the
+            // .toolCallConfirmRequested action and await the user's
+            // click via a CheckedContinuation. The continuation is
+            // captured by the bubble view; clicking Approve / Reject
+            // resumes it with the matching Bool.
+            ollama.confirmationRequester = { [weak self] call in
+                guard let self = self else { return false }
+                return await self.requestConfirmation(for: call)
+            }
         }
 
         provider.sendMessage(messages: conversationToSend, context: context, onToken: { [weak self] token in
@@ -539,9 +555,64 @@ class AIChatPanelView: NSView {
             // array. Future Phase 4 follow-up to handle clearChat
             // rebuild more cleanly.
             toolCallBubbles.removeAll()
+            // Cancel any in-flight confirmations by resuming with
+            // false (treated as rejection). Without this the
+            // provider's continuation would leak.
+            for (_, bubble) in pendingConfirmationBubbles {
+                bubble.resolve(approved: false)
+            }
+            pendingConfirmationBubbles.removeAll()
         default:
             break
         }
+    }
+
+    // MARK: - Confirmation bubbles
+
+    /// Async entry point invoked by the provider's confirmation
+    /// requester. Dispatches the `.toolCallConfirmRequested` action
+    /// (which the reducer adds to `pendingConfirmations`), inserts a
+    /// confirmation bubble into the stack, and suspends until the
+    /// user clicks Approve or Reject. The continuation is owned by
+    /// the bubble — its `resolve(approved:)` resumes the suspension.
+    @MainActor
+    private func requestConfirmation(for call: ToolCall) async -> Bool {
+        store.dispatch(.toolCallConfirmRequested(call))
+        return await withCheckedContinuation { continuation in
+            addConfirmationBubble(for: call, continuation: continuation)
+        }
+    }
+
+    private func addConfirmationBubble(for call: ToolCall,
+                                        continuation: CheckedContinuation<Bool, Never>) {
+        if !emptyStateRemoved {
+            messagesStack.arrangedSubviews
+                .filter { $0.tag == 999 }
+                .forEach { $0.removeFromSuperview() }
+            emptyStateRemoved = true
+        }
+        let bubble = ToolCallConfirmationBubble(
+            call: call,
+            maxWidth: AIChatPanelView.panelWidth - 40
+        ) { [weak self] approved in
+            self?.handleConfirmation(call: call, approved: approved)
+        }
+        bubble.attach(continuation: continuation)
+        pendingConfirmationBubbles[call.id] = bubble
+        messagesStack.addArrangedSubview(bubble)
+        scrollToBottom()
+    }
+
+    private func handleConfirmation(call: ToolCall, approved: Bool) {
+        guard let bubble = pendingConfirmationBubbles.removeValue(forKey: call.id) else {
+            return
+        }
+        if approved {
+            store.dispatch(.toolCallApproved(call))
+        } else {
+            store.dispatch(.toolCallRejected(call))
+        }
+        bubble.resolve(approved: approved)
     }
 
     private func addToolCallBubble(_ call: ToolCall) {

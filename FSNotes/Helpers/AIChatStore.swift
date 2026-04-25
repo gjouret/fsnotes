@@ -38,6 +38,14 @@ struct AIChatState {
     var error: AIError?
     var pendingToolCalls: [ToolCall]
 
+    /// Tool calls awaiting user confirmation before they execute.
+    /// Phase 4 polish: destructive operations (delete_note, move_note)
+    /// must be approved by the user, not the LLM. The provider's
+    /// dispatch loop pauses while the matching call sits here; the
+    /// view renders a confirm/reject bubble; one of `.toolCallApproved`
+    /// or `.toolCallRejected` resumes the loop and removes the entry.
+    var pendingConfirmations: [ToolCall]
+
     /// Buffer for the assistant token stream currently in flight.
     /// Surfaces in the view as the streaming bubble's text. Cleared
     /// on `.completeResponse` (when the buffered text is appended to
@@ -48,11 +56,13 @@ struct AIChatState {
          isStreaming: Bool = false,
          error: AIError? = nil,
          pendingToolCalls: [ToolCall] = [],
+         pendingConfirmations: [ToolCall] = [],
          streamingResponse: String = "") {
         self.messages = messages
         self.isStreaming = isStreaming
         self.error = error
         self.pendingToolCalls = pendingToolCalls
+        self.pendingConfirmations = pendingConfirmations
         self.streamingResponse = streamingResponse
     }
 }
@@ -89,6 +99,25 @@ enum AIChatAction {
     /// Reset the conversation. Clears messages, streaming state,
     /// error, pending tool calls. Subscribers are still notified.
     case clearChat
+
+    /// LLM requested a destructive tool call. Reducer appends to
+    /// `pendingConfirmations`; the provider's dispatch loop is
+    /// paused until the user dispatches `.toolCallApproved` or
+    /// `.toolCallRejected`. The view renders a confirm-bubble in
+    /// response.
+    case toolCallConfirmRequested(ToolCall)
+
+    /// User approved a pending confirmation. Reducer removes the
+    /// matching entry from `pendingConfirmations`; the provider's
+    /// continuation observes the action via `subscribeToActions`
+    /// and resumes the chat round.
+    case toolCallApproved(ToolCall)
+
+    /// User rejected a pending confirmation. Reducer removes the
+    /// matching entry. The provider feeds back a synthetic
+    /// `ToolOutput.error("user rejected destructive operation")`
+    /// in place of the real result and continues the chat loop.
+    case toolCallRejected(ToolCall)
 }
 
 // MARK: - Reducer
@@ -136,7 +165,17 @@ func reduce(state: AIChatState, action: AIChatAction) -> AIChatState {
         s.isStreaming = false
         s.error = nil
         s.pendingToolCalls = []
+        s.pendingConfirmations = []
         s.streamingResponse = ""
+
+    case .toolCallConfirmRequested(let call):
+        s.pendingConfirmations.append(call)
+
+    case .toolCallApproved(let call):
+        s.pendingConfirmations.removeAll { $0.id == call.id }
+
+    case .toolCallRejected(let call):
+        s.pendingConfirmations.removeAll { $0.id == call.id }
     }
     return s
 }

@@ -46,6 +46,25 @@ class OllamaProvider: AIProvider {
     /// uses this to update the in-flight bubble with the outcome.
     var onToolCallCompleted: ((ToolCall, ToolOutput) -> Void)?
 
+    /// Optional async hook that pauses the dispatch loop while the
+    /// user decides whether to approve a destructive tool call. The
+    /// panel adopts this to dispatch `.toolCallConfirmRequested` and
+    /// resume the continuation when the user clicks Approve / Reject.
+    /// Returns `true` to proceed, `false` to feed back a synthetic
+    /// rejection error. When nil (test path / non-UI provider use)
+    /// destructive ops proceed without confirmation, preserving the
+    /// pre-Phase-4 contract.
+    var confirmationRequester: (@MainActor (ToolCall) async -> Bool)?
+
+    /// Tools whose dispatch must be gated by user confirmation. Kept
+    /// as a `static` set so unit tests can inspect it without
+    /// instantiating a provider, and so future tools can opt in by
+    /// adding their wire name here.
+    static let needsConfirmToolNames: Set<String> = [
+        "delete_note",
+        "move_note"
+    ]
+
     /// Hard cap on tool-calling round trips per `sendMessage` call.
     /// 10 rounds is enough for any realistic chained-tool workflow
     /// (read → search → write → confirm) and small enough that a buggy
@@ -243,29 +262,50 @@ class OllamaProvider: AIProvider {
             ToolCall(id: call.id, name: call.name, arguments: call.arguments)
         }
 
-        // Fire the started-observer for each call so the chat panel
-        // can render in-flight bubbles before the tool runs.
-        if let started = self.onToolCallStarted {
-            DispatchQueue.main.async {
-                for call in toolCalls {
-                    started(call)
-                }
-            }
-        }
-
         Task.detached { [weak self] in
             guard let self = self else { return }
-            let results = await self.mcpServer.handleToolCalls(toolCalls)
 
-            // Notify the completion observer per result. We zip on
-            // index because handleToolCalls preserves order.
-            if let completed = self.onToolCallCompleted {
-                let pairs = Array(zip(toolCalls, results))
-                DispatchQueue.main.async {
-                    for (call, result) in pairs {
-                        completed(call, result.output)
-                    }
+            // Phase 4 polish: gate destructive ops behind user
+            // confirmation. We process tool calls sequentially here
+            // (rather than handing the whole batch to MCPServer) so
+            // a rejected call surfaces a synthetic error result while
+            // the rest of the batch still runs.
+            var results: [ToolResult] = []
+            results.reserveCapacity(toolCalls.count)
+            for call in toolCalls {
+                // Per-call started-observer: render the bubble whether
+                // or not the call needs confirmation.
+                if let started = self.onToolCallStarted {
+                    let captured = call
+                    await MainActor.run { started(captured) }
                 }
+
+                let needsConfirm = OllamaProvider.needsConfirmToolNames.contains(call.name)
+                let approved: Bool
+                if needsConfirm, let requester = self.confirmationRequester {
+                    let captured = call
+                    approved = await requester(captured)
+                } else {
+                    approved = true
+                }
+
+                let output: ToolOutput
+                if approved {
+                    let batch = await self.mcpServer.handleToolCalls([call])
+                    output = batch.first?.output ?? .error("missing tool result")
+                } else {
+                    output = .error("user rejected destructive operation")
+                }
+
+                if let completed = self.onToolCallCompleted {
+                    let capturedCall = call
+                    let capturedOutput = output
+                    await MainActor.run { completed(capturedCall, capturedOutput) }
+                }
+
+                results.append(ToolResult(callID: call.id,
+                                          toolName: call.name,
+                                          output: output))
             }
 
             // Append a role:"tool" message per result. Ollama matches them
