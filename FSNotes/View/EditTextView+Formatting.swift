@@ -377,12 +377,42 @@ extension EditTextView {
             // mode; in source mode the raw markdown is inserted and the
             // user sees it as plain text (still round-trips correctly).
             let insertRange = selectedRange()
-            let prefix = insertRange.location > 0 ? "\n" : ""
+            let storageString = textStorage?.string ?? ""
+            let prefix = EditTextView.tablePrefixForSourceModeInsertion(
+                at: insertRange.location, in: storageString
+            )
             // Phase 5a bypass — IBAction insertText skips shouldChangeText.
             StorageWriteGuard.performingLegacyStorageWrite {
                 insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
             }
         }
+    }
+
+    /// Pure helper for the source-mode `insertTableMenu` prefix logic.
+    ///
+    /// GFM requires a BLANK line between a paragraph and a following
+    /// table — otherwise external parsers (GitHub, Obsidian, Bear) eat
+    /// the table's first row as paragraph continuation. The prefix
+    /// returned here produces the required blank separator while
+    /// avoiding a stray double-blank-line:
+    ///
+    /// - `location == 0` (document start): `""` — nothing before us.
+    /// - char before `location` is `\n` (cursor on a fresh line):
+    ///   `"\n"` — one extra newline plus the existing one = blank line.
+    /// - otherwise (mid-paragraph or end-of-paragraph without
+    ///   trailing newline): `"\n\n"` — full blank-line separator.
+    ///
+    /// Bug #34 fix.
+    public static func tablePrefixForSourceModeInsertion(
+        at location: Int, in text: String
+    ) -> String {
+        guard location > 0 else { return "" }
+        let nsText = text as NSString
+        guard location <= nsText.length else { return "\n\n" }
+        let prevChar = nsText.substring(
+            with: NSRange(location: location - 1, length: 1)
+        )
+        return (prevChar == "\n") ? "\n" : "\n\n"
     }
 
     @IBAction func horizontalRuleMenu(_ sender: Any) {

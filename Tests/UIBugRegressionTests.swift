@@ -1539,4 +1539,84 @@ final class UIBugRegressionTests: XCTestCase {
             "\(count)"
         )
     }
+
+    // MARK: - Bug #34: insertTableMenu source-mode prefix logic
+
+    /// Bug #34 — `insertTableMenu` source-mode path inserts a table
+    /// markdown block with a BLANK line separator (`\n\n`) before it,
+    /// not a single `\n`. Without the blank line, GFM parsers treat
+    /// the table's first row as paragraph continuation.
+    ///
+    /// Pure-function coverage of the four contract cases of
+    /// `tablePrefixForSourceModeInsertion(at:in:)`:
+    ///   1. doc-start  → "" (no prefix needed)
+    ///   2. after `\n` → "\n" (one more newline = blank line)
+    ///   3. after non-`\n` → "\n\n" (full blank-line separator)
+    ///   4. out-of-range → "\n\n" (defensive default)
+    func test_insertTable_sourceMode_prefixHelper_contract() {
+        // 1. doc-start.
+        XCTAssertEqual(
+            EditTextView.tablePrefixForSourceModeInsertion(at: 0, in: ""),
+            ""
+        )
+        XCTAssertEqual(
+            EditTextView.tablePrefixForSourceModeInsertion(at: 0, in: "abc"),
+            ""
+        )
+        // 2. after `\n` — already on a fresh line.
+        XCTAssertEqual(
+            EditTextView.tablePrefixForSourceModeInsertion(
+                at: 4, in: "abc\n"
+            ),
+            "\n"
+        )
+        // 3. after non-`\n` — must add full blank line separator.
+        XCTAssertEqual(
+            EditTextView.tablePrefixForSourceModeInsertion(
+                at: 3, in: "abc"
+            ),
+            "\n\n"
+        )
+        // 4. out-of-range — defensive default.
+        XCTAssertEqual(
+            EditTextView.tablePrefixForSourceModeInsertion(
+                at: 99, in: "abc"
+            ),
+            "\n\n"
+        )
+    }
+
+    /// Bug #34 — end-to-end via the editor. Force the source-mode
+    /// branch by clearing `documentProjection` and `blockModelActive`
+    /// after the harness's normal seed, then call the IBAction with
+    /// a paragraph-trailing-newline cursor. Expect the inserted
+    /// table to be preceded by a blank line.
+    func test_insertTable_sourceMode_endToEnd_prefixIsBlankLine() {
+        let md = "preceding paragraph\n"
+        let h = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        h.editor.documentProjection = nil
+        h.editor.textStorageProcessor?.blockModelActive = false
+        StorageWriteGuard.performingFill {
+            h.editor.textStorage?.setAttributedString(
+                NSAttributedString(string: md)
+            )
+        }
+        let len = h.editor.textStorage?.length ?? 0
+        h.selectRange(NSRange(location: len, length: 0))
+        h.editor.insertTableMenu(NSMenuItem())
+        let after = h.editor.textStorage?.string ?? ""
+        XCTAssertTrue(
+            after.contains("preceding paragraph\n\n|"),
+            "Expected blank line between paragraph and inserted " +
+            "table; got: \(after.debugDescription)"
+        )
+        XCTAssertFalse(
+            after.contains("paragraph\n|"),
+            "Single `\\n` between paragraph and table is invalid " +
+            "GFM; got: \(after.debugDescription)"
+        )
+    }
 }
