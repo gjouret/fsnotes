@@ -1414,8 +1414,110 @@ class EditingOperationsTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(attachmentCount, 1, "Splice should contain at least 1 checkbox attachment")
     }
 
+    // MARK: - Bug #38: list exit-to-body must preserve slot UUID
+
+    /// Bug #38: Pressing Return on an empty top-level list item triggers
+    /// the FSM transition `(.listItem(_, _), .returnOnEmpty) → .exitToBody`,
+    /// which converts the list block in-place into a paragraph. The
+    /// resulting paragraph occupies the SAME positional slot as the
+    /// original list block, so the slot's `Block.id` (in
+    /// `Document.blockIds`) must be preserved. Re-minting the UUID would
+    /// split what should be one undo entry under `UndoJournal` and break
+    /// future identity-stable diffing.
+    private func runBug38_exitToBody_preservesSlotIdentity(seed: String) throws {
+        let p = project(seed)
+        // Block index 2 is the list (after "first" + blankLine separator).
+        XCTAssertEqual(p.document.blocks.count, 5, "seed must parse to 5 blocks")
+        guard case .list = p.document.blocks[2] else {
+            XCTFail("seed block 2 must be a list; got \(p.document.blocks[2])")
+            return
+        }
+        let originalListId = p.document.blockIds[2]
+
+        // Cursor at home of the empty list item (one prefix char into the block).
+        let cursor = p.blockSpans[2].location + 1
+        let r = try EditingOps.returnOnEmptyListItem(at: cursor, in: p)
+
+        // Block at index 2 in the post-edit doc must be a paragraph and
+        // must carry the original list block's slot id.
+        XCTAssertGreaterThan(r.newProjection.document.blocks.count, 2)
+        guard case .paragraph = r.newProjection.document.blocks[2] else {
+            XCTFail("post-edit block 2 must be paragraph; got \(r.newProjection.document.blocks[2])")
+            return
+        }
+        XCTAssertEqual(
+            r.newProjection.document.blockIds[2], originalListId,
+            "Slot identity at index 2 not preserved by exit-to-body: " +
+            "before=\(originalListId) after=\(r.newProjection.document.blockIds[2])"
+        )
+    }
+
+    func test_bug38_returnOnEmptyListItem_preservesSlotIdentity_bullet() throws {
+        try runBug38_exitToBody_preservesSlotIdentity(seed: "first\n\n- \n\nafter\n")
+    }
+
+    func test_bug38_returnOnEmptyListItem_preservesSlotIdentity_numbered() throws {
+        try runBug38_exitToBody_preservesSlotIdentity(seed: "first\n\n1. \n\nafter\n")
+    }
+
+    func test_bug38_returnOnEmptyListItem_preservesSlotIdentity_todo() throws {
+        try runBug38_exitToBody_preservesSlotIdentity(seed: "first\n\n- [ ] \n\nafter\n")
+    }
+
+    /// Bug #38 — combinatorial harness reproducer. The harness's
+    /// `onEmptyBlock + intraBlock` tuple selects 1 char starting at the
+    /// home offset of the empty bullet. For an empty bullet with span
+    /// `(loc, 1)` (the bullet attachment only), `homeOffset = loc + 1`
+    /// equals `blockEnd`, so `min(homeOffset, blockEnd-1)` clamps the
+    /// selection start to `loc` — covering the bullet attachment, not
+    /// the inline content. `pressReturn` then routes through
+    /// `handleEditViaBlockModel`'s replace branch (range.length=1 +
+    /// replacement="\n"), which falls back to delete+insert. Without
+    /// the fix the delete leaves `.list(items: [])` and the insert
+    /// throws, sending the editor through `clearBlockModelAndRefill`
+    /// and re-minting every slot UUID.
+    private func runBug38_intraBlockReturn_preservesSlotIdentity(seed: String) throws {
+        let p = project(seed)
+        let originalListId = p.document.blockIds[2]
+        let homeOffset = p.blockSpans[2].location + 1
+
+        // Step 1: delete the bullet attachment (selection start clamps
+        // to span.location; length 1 = the attachment).
+        let deleteRange = NSRange(location: p.blockSpans[2].location, length: 1)
+        let r1 = try EditingOps.delete(range: deleteRange, in: p)
+
+        // After the fix: the only-item list collapses to an empty
+        // paragraph, NOT an empty list. The slot id at index 2
+        // survives the kind change.
+        XCTAssertEqual(r1.newProjection.document.blockIds[2], originalListId)
+        guard case .paragraph = r1.newProjection.document.blocks[2] else {
+            XCTFail("post-delete block 2 must be paragraph; got \(r1.newProjection.document.blocks[2])")
+            return
+        }
+
+        // Step 2: insert "\n" at the same offset on the post-delete
+        // projection. This used to throw on `.list(items: [])`; with
+        // the fix the target is `.paragraph(inline: [])`, which
+        // splits cleanly.
+        let r2 = try EditingOps.insert("\n", at: homeOffset - 1, in: r1.newProjection)
+        XCTAssertEqual(r2.newProjection.document.blockIds[2], originalListId,
+                       "End-to-end slot identity at index 2 must survive delete + insert")
+    }
+
+    func test_bug38_intraBlockReturn_emptyBullet() throws {
+        try runBug38_intraBlockReturn_preservesSlotIdentity(seed: "first\n\n- \n\nafter\n")
+    }
+
+    func test_bug38_intraBlockReturn_emptyNumbered() throws {
+        try runBug38_intraBlockReturn_preservesSlotIdentity(seed: "first\n\n1. \n\nafter\n")
+    }
+
+    func test_bug38_intraBlockReturn_emptyTodo() throws {
+        try runBug38_intraBlockReturn_preservesSlotIdentity(seed: "first\n\n- [ ] \n\nafter\n")
+    }
+
     // MARK: - Bug: Heading conversion affects all paragraphs
-    
+
     func test_changeHeadingLevel_onlyAffectsSelectedBlock() throws {
         // Three paragraphs - clicking in the middle one and applying H2
         // should only convert the middle one, not all three

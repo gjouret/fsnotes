@@ -13,10 +13,20 @@
 # Lines starting with "#" and empty lines are ignored.
 #
 
-# ----- Bug #38 — list exit-to-body mints fresh Block UUID (3 variants, single root cause)
-bulletList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; exit-to-body transition regenerates the projection slot UUID instead of mutating in place.
-numberedList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; same exit-to-body slot-id regeneration as the bullet variant.
-todoList | onEmptyBlock | pressReturn | intraBlock → harness contract fail: slot-identity at index 2 not preserved by ~inline@2; same exit-to-body slot-id regeneration.
+# ----- Bug #38 — fixed: pressing Return on an empty bullet/numbered/todo
+# item with a 1-char `intraBlock` selection (the harness's
+# onEmptyBlock + intraBlock tuple) used to delete the bullet
+# attachment and leave `.list(items: [])`, which then made
+# `EditingOps.insert("\n", …)` throw `splitListOnNewline: cannot
+# split at offset 0 (not in inline content)`. The catch path in
+# `handleEditViaBlockModel` then ran `clearBlockModelAndRefill`,
+# re-minting every slot UUID and breaking the slot-identity
+# contract.
+# Fix: `EditingOps.deleteInList` now collapses an only-item
+# removal directly to `.paragraph(inline: [])` — same slot, kind
+# change, no empty list — and the caller's contract reports
+# `.changeBlockKind(at:)` instead of `.modifyInline(blockIndex:)`.
+# (See test_bug38_returnOnEmptyListItem_preservesSlotIdentity_*.)
 
 # ----- Bug #39 — paragraph forward-delete at atEnd doesn't round-trip
 paragraph | atEnd | pressForwardDelete | empty → live Document does NOT round-trip through serialize→parse. Forward-delete at the end of a paragraph merges with the next block but produces state that won't survive save+reload.

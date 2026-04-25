@@ -1323,11 +1323,21 @@ public enum EditingOps {
             in: projection
         )
         result.newCursorPosition = storageRange.location
-        // Contract: single-block inner delete. `deleteInBlock` preserves
-        // the block kind (code stays code, paragraph stays paragraph,
-        // etc.) so this is strictly an inline-level change.
+        // Contract: single-block inner delete. `deleteInBlock` ALMOST
+        // always preserves the block kind (code stays code, paragraph
+        // stays paragraph, etc.); the lone exception is the bug-#38
+        // path where removing a list's only item collapses the block
+        // to an empty paragraph (see `deleteInList`). Detect kind
+        // changes so the contract correctly declares
+        // `.changeBlockKind` instead of `.modifyInline` — the
+        // identity-preservation invariant is the same in either case,
+        // but the structural-equality check downstream of the
+        // harness's `assertContract` walk would flag the leak.
+        let kindChanged = !sameBlockKind(oldBlock, newBlock)
         result.contract = EditContract(
-            declaredActions: [.modifyInline(blockIndex: startBlock)],
+            declaredActions: kindChanged
+                ? [.changeBlockKind(at: startBlock)]
+                : [.modifyInline(blockIndex: startBlock)],
             postCursor: result.newProjection.cursor(
                 atStorageIndex: storageRange.location
             ),
@@ -3771,7 +3781,7 @@ public enum EditingOps {
         // Single-item deletion (existing behavior)
         if startEntry == endEntry {
             let entry = entries[startEntry]
-            
+
             // Check if the entire item is selected (including prefix and separator)
             // In this case, remove the entire item
             let inlineLength = entry.inlineLength
@@ -3782,6 +3792,21 @@ public enum EditingOps {
                     if i != startEntry {
                         newItems.append(entries[i].item)
                     }
+                }
+                // Bug #38: removing the only item leaves an empty
+                // `.list(items: [])`. That state is not actually
+                // editable — `splitListOnNewline` and
+                // `listEntryContaining` both throw on `entries: []`,
+                // so a follow-up insert (e.g. the delete-then-insert
+                // fallback in `handleEditViaBlockModel` for
+                // Return-on-selected-bullet) routes into
+                // `clearBlockModelAndRefill`, which re-mints every
+                // slot UUID and breaks the slot-identity contract.
+                // Convert the empty list into an empty paragraph at
+                // the same slot — the caller (`delete`) will surface
+                // this as a kind change rather than an inline edit.
+                if newItems.isEmpty {
+                    return .paragraph(inline: [])
                 }
                 return .list(items: newItems)
             }
