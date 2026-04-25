@@ -643,6 +643,11 @@ CA
                                                 <action selector="toggleSidebar:" target="L4m-js-agn" id="MRM-fh-zTo"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Hide/Show AI Chat" image="bubble.left.and.text.bubble.right" catalog="system" keyEquivalent="A" identifier="view.toggleAIChat" id="aic-ht-001">
+                                            <connections>
+                                                <action selector="toggleAIChat:" target="L4m-js-agn" id="aic-ht-002"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem isSeparatorItem="YES" id="2A1-iA-fhx"/>
                                         <menuItem title="Back" image="backward" catalog="system" keyEquivalent="[" identifier="viewMenu.historyBack" id="qNE-oZ-zJr">
                                             <modifierMask key="keyEquivalentModifierMask" shift="YES" command="YES"/>
