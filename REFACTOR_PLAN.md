@@ -1598,7 +1598,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 3. Phase 5a crash on hardware-keyboard typing
 4. Group A: emoji/paste into empty doc
 5. `returnAfterHeading_producesParagraph`
-6. `returnAtStartOfHeading_createsEmptyParagraphBefore`
+6. `returnAtStartOfHeading_createsEmptyParagraphBefore` ✅ (`3fc565f`: `EditingOps.newLine` heading-atStart branch now inserts an empty paragraph BEFORE the heading and preserves the heading at index N+1; cursor lands at start of the preserved heading. FSMTransitions.swift drops `bugId: 6` from both H1 and H3 rows.)
 7. `returnInListItem_producesAnotherListItem` (assertion shape)
 8. `backspaceMergesParagraphs`
 9. `firstFill_yieldsEmptySelection` (arguable)
