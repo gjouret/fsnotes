@@ -274,12 +274,22 @@ enum AIError: LocalizedError {
 
 class AIServiceFactory {
     static func createProvider() -> AIProvider? {
-        let apiKey = UserDefaultsManagement.aiAPIKey
-        guard !apiKey.isEmpty else { return nil }
-
         let provider = UserDefaultsManagement.aiProvider
         let model = UserDefaultsManagement.aiModel
         let endpoint = UserDefaultsManagement.aiEndpoint
+
+        // Ollama is local and has no API key.
+        if provider == "ollama" {
+            let host = UserDefaultsManagement.aiOllamaHost
+            return OllamaProvider(
+                host: host.isEmpty ? "http://localhost:11434" : host,
+                model: model.isEmpty ? "llama3.2" : model
+            )
+        }
+
+        // The cloud providers below all require an API key.
+        let apiKey = UserDefaultsManagement.aiAPIKey
+        guard !apiKey.isEmpty else { return nil }
 
         switch provider {
         case "openai":
