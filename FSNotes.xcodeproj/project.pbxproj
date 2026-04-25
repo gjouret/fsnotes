@@ -768,6 +768,7 @@
 		23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */; };
 		23EAB390742AF720CE975FB6 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8C /* AIService.swift */; };
 		23EAB390742AF720CE975FB8 /* AIChatPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */; };
+		AICHATSTOREB1 /* AIChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATSTOREF1 /* AIChatStore.swift */; };
 		MCP01000000000000000000B1 /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP01000000000000000000F1 /* MCPServer.swift */; };
 		MCP02000000000000000000B1 /* MCPTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP02000000000000000000F1 /* MCPTool.swift */; };
 		MCP03000000000000000000B1 /* ToolOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP03000000000000000000F1 /* ToolOutput.swift */; };
@@ -794,6 +795,7 @@
 		OLLAMA00000000000000000B3 /* Phase1OllamaClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */; };
 		OLLAMA00000000000000000B4 /* OllamaProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F4 /* OllamaProvider.swift */; };
 		OLLAMA00000000000000000B5 /* Phase1OllamaProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */; };
+		AICHATSTORETESTSB1 /* AIChatStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATSTORETESTSF1 /* AIChatStoreTests.swift */; };
 		OLLAMA00000000000000000B6 /* PreferencesAIViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */; };
 		OLLAMA00000000000000000B7 /* Phase2OllamaToolCallingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */; };
 		D77CC041216A608500582B97 /* EditorScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CC040216A608500582B97 /* EditorScrollView.swift */; };
@@ -1658,9 +1660,11 @@
 		OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase1OllamaClientTests.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F4 /* OllamaProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaProvider.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase1OllamaProviderTests.swift; sourceTree = "<group>"; };
+		AICHATSTORETESTSF1 /* AIChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStoreTests.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesAIViewController.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2OllamaToolCallingTests.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanelView.swift; sourceTree = "<group>"; };
+		AICHATSTOREF1 /* AIChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStore.swift; sourceTree = "<group>"; };
 		MCP01000000000000000000F1 /* MCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
 		MCP02000000000000000000F1 /* MCPTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTool.swift; sourceTree = "<group>"; };
 		MCP03000000000000000000F1 /* ToolOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOutput.swift; sourceTree = "<group>"; };
@@ -2597,6 +2601,7 @@
 				9A36172A2C1AAB13AFAE9D8A /* BlockSourceEditor.swift */,
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
 				9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */,
+				AICHATSTOREF1 /* AIChatStore.swift */,
 				MCPGRP000000000000000G01 /* MCP */,
 				OLLAMA00000000000000000G1 /* Ollama */,
 				6F13BB3820FEDE230005E120 /* UserDataService.swift */,
@@ -2765,6 +2770,7 @@
 				OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */,
 				OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */,
 				OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */,
+				AICHATSTORETESTSF1 /* AIChatStoreTests.swift */,
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
 				GOVL0000000000000000000F1 /* GutterOverlayTests.swift */,
 				RCT0000000000000000000F1 /* RenderingCorrectnessTests.swift */,
@@ -4048,6 +4054,7 @@
 				23EAB390742AF720CE975FB4 /* BlockSourceEditor.swift in Sources */,
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,
 				23EAB390742AF720CE975FB8 /* AIChatPanelView.swift in Sources */,
+				AICHATSTOREB1 /* AIChatStore.swift in Sources */,
 				MCP01000000000000000000B1 /* MCPServer.swift in Sources */,
 				MCP02000000000000000000B1 /* MCPTool.swift in Sources */,
 				MCP03000000000000000000B1 /* ToolOutput.swift in Sources */,
@@ -4400,6 +4407,7 @@
 				OLLAMA00000000000000000B3 /* Phase1OllamaClientTests.swift in Sources */,
 				OLLAMA00000000000000000B5 /* Phase1OllamaProviderTests.swift in Sources */,
 				OLLAMA00000000000000000B7 /* Phase2OllamaToolCallingTests.swift in Sources */,
+				AICHATSTORETESTSB1 /* AIChatStoreTests.swift in Sources */,
 				F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */,
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
 				P47S0000000000000000000B1 /* Phase47SaveConsolidationTests.swift in Sources */,
