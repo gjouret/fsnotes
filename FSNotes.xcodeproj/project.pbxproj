@@ -2583,6 +2583,8 @@
 				MCPT06000000000000000000F1 /* MoveNoteTool.swift */,
 			);
 			path = Tools;
+			sourceTree = "<group>";
+		};
 		OLLAMA00000000000000000G1 /* Ollama */ = {
 			isa = PBXGroup;
 			children = (
