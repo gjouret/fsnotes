@@ -42,6 +42,7 @@
 		BF30000000000000000000B1 /* BugFixes3Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF30000000000000000000F1 /* BugFixes3Tests.swift */; };
 		RVT0000000000000000000B1 /* RenderingValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RVT0000000000000000000F1 /* RenderingValidationTests.swift */; };
 		CST0000000000000000000B1 /* CodeSpanRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CST0000000000000000000F1 /* CodeSpanRoundTripTests.swift */; };
+		ICCT000000000000000000B1 /* InlineCodeChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ICCT000000000000000000F1 /* InlineCodeChromeTests.swift */; };
 		LSR0000000000000000000B1 /* ListRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = LSR0000000000000000000F1 /* ListRenderer.swift */; };
 		LST0000000000000000000B1 /* ListRoundTripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LST0000000000000000000F1 /* ListRoundTripTests.swift */; };
 		HRR0000000000000000000B1 /* HorizontalRuleRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRR0000000000000000000F1 /* HorizontalRuleRenderer.swift */; };
@@ -1083,7 +1084,6 @@
 		D7FB716C2BE7F66500808E56 /* EditorViewController+QuickLook.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7FB716B2BE7F66500808E56 /* EditorViewController+QuickLook.swift */; };
 		D7FDA4F7236DBC6900C3B4AA /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7FDA4F6236DBC6900C3B4AA /* Sidebar.swift */; };
 		D7FFD09C1FF677ED0064CBA6 /* NotesTextProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7F95F391FF2759300E2A447 /* NotesTextProcessor.swift */; };
-		TEST00000000000000000004 /* RendererComparisonTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TEST00000000000000000002 /* RendererComparisonTests.swift */; };
 		EOT0000000000000000000B1 /* EditingOperationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EOT0000000000000000000F1 /* EditingOperationsTests.swift */; };
 		EHN0000000000000000000B1 /* EditorHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = EHN0000000000000000000F1 /* EditorHarness.swift */; };
 		PDFX000000000000000000B1 /* PDFExporterMeasurementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */; };
@@ -1243,6 +1243,7 @@
 		BF30000000000000000000F1 /* BugFixes3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFixes3Tests.swift; sourceTree = "<group>"; };
 		RVT0000000000000000000F1 /* RenderingValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderingValidationTests.swift; sourceTree = "<group>"; };
 		CST0000000000000000000F1 /* CodeSpanRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeSpanRoundTripTests.swift; sourceTree = "<group>"; };
+		ICCT000000000000000000F1 /* InlineCodeChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineCodeChromeTests.swift; sourceTree = "<group>"; };
 		LSR0000000000000000000F1 /* ListRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListRenderer.swift; sourceTree = "<group>"; };
 		LST0000000000000000000F1 /* ListRoundTripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListRoundTripTests.swift; sourceTree = "<group>"; };
 		HRR0000000000000000000F1 /* HorizontalRuleRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleRenderer.swift; sourceTree = "<group>"; };
@@ -1813,7 +1814,6 @@
 		F616385FF783029192B97DF6 /* Pods_FSNotes.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_FSNotes.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderFoldingTests.swift; sourceTree = "<group>"; };
 		GOVL0000000000000000000F1 /* GutterOverlayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GutterOverlayTests.swift; sourceTree = "<group>"; };
-		TEST00000000000000000002 /* RendererComparisonTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererComparisonTests.swift; sourceTree = "<group>"; };
 		EOT0000000000000000000F1 /* EditingOperationsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditingOperationsTests.swift; sourceTree = "<group>"; };
 		EHN0000000000000000000F1 /* EditorHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorHarness.swift; sourceTree = "<group>"; };
 		PDFX000000000000000000F1 /* PDFExporterMeasurementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFExporterMeasurementTests.swift; sourceTree = "<group>"; };
@@ -2788,7 +2788,6 @@
 				IMGSZ00000000000000000F2 /* MarkdownParserImageSizeTests.swift */,
 				IMGSZ00000000000000000F3 /* MarkdownSerializerImageSizeTests.swift */,
 				IMGSZ00000000000000000F4 /* EditingOpsSetImageSizeTests.swift */,
-				TEST00000000000000000002 /* RendererComparisonTests.swift */,
 				992A7F1EEF372989B048ABA4 /* FacadeTests.swift */,
 				0C040A7462F5D219DAC3CD56 /* FoldSnapshotTests.swift */,
 				P47S0000000000000000000F1 /* Phase47SaveConsolidationTests.swift */,
@@ -2804,6 +2803,7 @@
 				BF30000000000000000000F1 /* BugFixes3Tests.swift */,
 				RVT0000000000000000000F1 /* RenderingValidationTests.swift */,
 				CST0000000000000000000F1 /* CodeSpanRoundTripTests.swift */,
+				ICCT000000000000000000F1 /* InlineCodeChromeTests.swift */,
 				LST0000000000000000000F1 /* ListRoundTripTests.swift */,
 				HRX0000000000000000000F1 /* HorizontalRuleRoundTripTests.swift */,
 				BQT0000000000000000000F1 /* BlockquoteRoundTripTests.swift */,
@@ -4437,6 +4437,7 @@
 				BF30000000000000000000B1 /* BugFixes3Tests.swift in Sources */,
 				RVT0000000000000000000B1 /* RenderingValidationTests.swift in Sources */,
 				CST0000000000000000000B1 /* CodeSpanRoundTripTests.swift in Sources */,
+				ICCT000000000000000000B1 /* InlineCodeChromeTests.swift in Sources */,
 				LST0000000000000000000B1 /* ListRoundTripTests.swift in Sources */,
 				HRX0000000000000000000B1 /* HorizontalRuleRoundTripTests.swift in Sources */,
 				BQT0000000000000000000B1 /* BlockquoteRoundTripTests.swift in Sources */,
@@ -4449,7 +4450,6 @@
 				AS20000000000000000000B1 /* AttributedStringToInlineTests.swift in Sources */,
 				SUP000000000000000000B17 /* SuperscriptSubscriptTests.swift in Sources */,
 				84D63040A3134E8F95408F64 /* NewLineTransitionTests.swift in Sources */,
-				TEST00000000000000000004 /* RendererComparisonTests.swift in Sources */,
 				EOT0000000000000000000B1 /* EditingOperationsTests.swift in Sources */,
 				LFT0000000000000000000B1 /* ListEditingFSMTests.swift in Sources */,
 				SIT0000000000000000000B1 /* SystemIntegrityTests.swift in Sources */,

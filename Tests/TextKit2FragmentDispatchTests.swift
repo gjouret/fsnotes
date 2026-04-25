@@ -93,15 +93,30 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
 
     // MARK: - Other block-model subclasses → default fragment
 
-    /// Non-HR `BlockModelElement` subclasses currently render via the
-    /// default fragment — their custom fragments land later in Phase 2c.
-    /// Guarding that the default is returned (NOT the HR fragment, NOT
-    /// some other subclass) prevents a regression where, for example,
-    /// adding `if textElement is ParagraphElement { return X }` above
-    /// the default branch would accidentally route every block through
-    /// `X`.
-    func test_phase2c_paragraphElement_dispatchesToDefaultFragment() {
-        assertDefaultFragment(for: element(kind: .paragraph))
+    /// `ParagraphElement` dispatches to `ParagraphLayoutFragment`
+    /// (bug #51). The fragment subclass exists solely to host the
+    /// inline-code chrome paint pass; otherwise it inherits default
+    /// `NSTextLayoutFragment` behaviour unchanged. Routing for plain
+    /// `NSTextParagraph` (the mid-splice fallback) still falls through
+    /// to the default class — see
+    /// `test_phase2c_plainNSTextParagraph_dispatchesToDefaultFragment`.
+    func test_bug51_paragraphElement_dispatchesToParagraphLayoutFragment() {
+        let (delegate, lm, loc) = makeDelegateTriple()
+        let p = element(kind: .paragraph)
+        XCTAssertTrue(p is ParagraphElement,
+            "Factory must produce ParagraphElement for .paragraph")
+
+        let fragment = delegate.textLayoutManager(
+            lm,
+            textLayoutFragmentFor: loc,
+            in: p
+        )
+
+        XCTAssertTrue(
+            fragment is ParagraphLayoutFragment,
+            "ParagraphElement must dispatch to ParagraphLayoutFragment, " +
+            "got \(type(of: fragment))"
+        )
     }
 
     // HeadingElement now dispatches to HeadingLayoutFragment (the fragment
@@ -127,8 +142,26 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         )
     }
 
-    func test_phase2c_listItemElement_dispatchesToDefaultFragment() {
-        assertDefaultFragment(for: element(kind: .list))
+    /// `ListItemElement` also dispatches to `ParagraphLayoutFragment`
+    /// (bug #51) so list-item text gets the same inline-code chrome
+    /// paint pass as plain paragraphs.
+    func test_bug51_listItemElement_dispatchesToParagraphLayoutFragment() {
+        let (delegate, lm, loc) = makeDelegateTriple()
+        let li = element(kind: .list)
+        XCTAssertTrue(li is ListItemElement,
+            "Factory must produce ListItemElement for .list")
+
+        let fragment = delegate.textLayoutManager(
+            lm,
+            textLayoutFragmentFor: loc,
+            in: li
+        )
+
+        XCTAssertTrue(
+            fragment is ParagraphLayoutFragment,
+            "ListItemElement must dispatch to ParagraphLayoutFragment, " +
+            "got \(type(of: fragment))"
+        )
     }
 
     // BlockquoteElement now dispatches to BlockquoteLayoutFragment (the
