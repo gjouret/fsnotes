@@ -93,6 +93,13 @@ public enum InlineRenderer {
             attrs[.font] = PlatformFont.monospacedSystemFont(
                 ofSize: baseSize * codeMultiplier, weight: .regular
             )
+            // Bug #51: tag the run so layout fragments can paint the
+            // rounded-rect light-gray chrome behind it. The shared
+            // `InlineCodeChromeDrawer` helper (called from each block-
+            // bearing fragment subclass) reads this attribute. Color +
+            // chrome geometry come from `Theme.shared.colors.
+            // inlineCodeBackground` and `Theme.shared.chrome.inlineCode*`.
+            attrs[.inlineCodeRange] = true
             return NSAttributedString(string: s, attributes: attrs)
         case .math(let content):
             // Inline math: placeholder text with .inlineMathSource marker.

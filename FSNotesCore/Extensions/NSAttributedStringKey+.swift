@@ -32,6 +32,14 @@ public extension NSAttributedString.Key {
     static let listDepth = NSAttributedString.Key(rawValue: "es.fsnot.list.depth")
     static let codeFence = NSAttributedString.Key(rawValue: "es.fsnot.code.fence")
     static let kbdTag = NSAttributedString.Key(rawValue: "es.fsnot.kbd")
+    /// Bug #51: tags an inline `.code` run so layout fragments can paint
+    /// the rounded-rect light-gray chrome behind it. Set by
+    /// `InlineRenderer` on every `.code(s)` inline; read by
+    /// `ParagraphLayoutFragment` / `HeadingLayoutFragment` /
+    /// `BlockquoteLayoutFragment` / `KbdBoxParagraphLayoutFragment` via
+    /// the shared `InlineCodeChromeDrawer` helper. Value: singleton
+    /// (presence of the key matters, not its value).
+    static let inlineCodeRange = NSAttributedString.Key(rawValue: "es.fsnot.inline.code")
     static let foldedContent = NSAttributedString.Key(rawValue: "es.fsnot.folded.content")
     static let inlineMathSource = NSAttributedString.Key(rawValue: "es.fsnot.inline.math")
     static let displayMathSource = NSAttributedString.Key(rawValue: "es.fsnot.display.math")

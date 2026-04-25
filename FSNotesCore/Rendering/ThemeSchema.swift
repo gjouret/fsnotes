@@ -404,6 +404,18 @@ public struct ThemeChrome: Codable, Equatable {
     public var kbdVerticalPaddingTop: CGFloat
     public var kbdVerticalPaddingBottom: CGFloat
 
+    /// Inline-code chrome (bug #51). Matches `InlineCodeChromeDrawer` /
+    /// `ParagraphLayoutFragment`. Defaults mirror the original FSNotes
+    /// inline-code visual: 3pt corner radius, 0pt border, 2pt horizontal
+    /// padding, 0pt vertical padding (the fill hugs the glyph height
+    /// because inline code text already shares the line's typographic
+    /// bounds; over-padding vertically would clip neighbouring lines).
+    public var inlineCodeCornerRadius: CGFloat
+    public var inlineCodeBorderWidth: CGFloat
+    public var inlineCodeHorizontalPadding: CGFloat
+    public var inlineCodeVerticalPaddingTop: CGFloat
+    public var inlineCodeVerticalPaddingBottom: CGFloat
+
     /// Code block. Matches `CodeBlockLayoutFragment`.
     public var codeBlockCornerRadius: CGFloat
     public var codeBlockHorizontalBleed: CGFloat
@@ -506,6 +518,11 @@ public struct ThemeChrome: Codable, Equatable {
         kbdHorizontalPadding: CGFloat = 2.0,
         kbdVerticalPaddingTop: CGFloat = 1.0,
         kbdVerticalPaddingBottom: CGFloat = 1.0,
+        inlineCodeCornerRadius: CGFloat = 3.0,
+        inlineCodeBorderWidth: CGFloat = 0.0,
+        inlineCodeHorizontalPadding: CGFloat = 2.0,
+        inlineCodeVerticalPaddingTop: CGFloat = 0.0,
+        inlineCodeVerticalPaddingBottom: CGFloat = 0.0,
         codeBlockCornerRadius: CGFloat = 5.0,
         codeBlockHorizontalBleed: CGFloat = 5.0,
         codeBlockBorderWidth: CGFloat = 1.0,
@@ -541,6 +558,11 @@ public struct ThemeChrome: Codable, Equatable {
         self.kbdHorizontalPadding = kbdHorizontalPadding
         self.kbdVerticalPaddingTop = kbdVerticalPaddingTop
         self.kbdVerticalPaddingBottom = kbdVerticalPaddingBottom
+        self.inlineCodeCornerRadius = inlineCodeCornerRadius
+        self.inlineCodeBorderWidth = inlineCodeBorderWidth
+        self.inlineCodeHorizontalPadding = inlineCodeHorizontalPadding
+        self.inlineCodeVerticalPaddingTop = inlineCodeVerticalPaddingTop
+        self.inlineCodeVerticalPaddingBottom = inlineCodeVerticalPaddingBottom
         self.codeBlockCornerRadius = codeBlockCornerRadius
         self.codeBlockHorizontalBleed = codeBlockHorizontalBleed
         self.codeBlockBorderWidth = codeBlockBorderWidth
@@ -573,6 +595,9 @@ public struct ThemeChrome: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case kbdCornerRadius, kbdBorderWidth,
              kbdHorizontalPadding, kbdVerticalPaddingTop, kbdVerticalPaddingBottom,
+             inlineCodeCornerRadius, inlineCodeBorderWidth,
+             inlineCodeHorizontalPadding,
+             inlineCodeVerticalPaddingTop, inlineCodeVerticalPaddingBottom,
              codeBlockCornerRadius, codeBlockHorizontalBleed, codeBlockBorderWidth,
              blockquoteBarWidth, blockquoteBarSpacing, blockquoteBarInitialOffset,
              hrThickness, headingBorderThickness, headingBorderOffsetBelowText,
@@ -601,6 +626,16 @@ public struct ThemeChrome: Codable, Equatable {
             CGFloat.self, forKey: .kbdVerticalPaddingTop) ?? def.kbdVerticalPaddingTop
         self.kbdVerticalPaddingBottom = try c.decodeIfPresent(
             CGFloat.self, forKey: .kbdVerticalPaddingBottom) ?? def.kbdVerticalPaddingBottom
+        self.inlineCodeCornerRadius = try c.decodeIfPresent(
+            CGFloat.self, forKey: .inlineCodeCornerRadius) ?? def.inlineCodeCornerRadius
+        self.inlineCodeBorderWidth = try c.decodeIfPresent(
+            CGFloat.self, forKey: .inlineCodeBorderWidth) ?? def.inlineCodeBorderWidth
+        self.inlineCodeHorizontalPadding = try c.decodeIfPresent(
+            CGFloat.self, forKey: .inlineCodeHorizontalPadding) ?? def.inlineCodeHorizontalPadding
+        self.inlineCodeVerticalPaddingTop = try c.decodeIfPresent(
+            CGFloat.self, forKey: .inlineCodeVerticalPaddingTop) ?? def.inlineCodeVerticalPaddingTop
+        self.inlineCodeVerticalPaddingBottom = try c.decodeIfPresent(
+            CGFloat.self, forKey: .inlineCodeVerticalPaddingBottom) ?? def.inlineCodeVerticalPaddingBottom
         self.codeBlockCornerRadius = try c.decodeIfPresent(
             CGFloat.self, forKey: .codeBlockCornerRadius) ?? def.codeBlockCornerRadius
         self.codeBlockHorizontalBleed = try c.decodeIfPresent(
