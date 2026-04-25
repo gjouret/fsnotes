@@ -16,7 +16,14 @@ final class Phase1OllamaProviderTests: XCTestCase {
     // MARK: - Request body construction
 
     func testOllamaProvider_buildsCorrectChatRequest() throws {
-        let provider = OllamaProvider(host: "http://localhost:11434", model: "llama3.2")
+        // Phase 2 follow-up: provider now reads tool schemas from its
+        // MCPServer reference. Inject an isolated empty server so this
+        // test stays stable independent of what `MCPServer.shared` has
+        // registered at the time it runs.
+        let emptyServer = MCPServer(storageRoot: nil, appBridge: NoOpAppBridge())
+        let provider = OllamaProvider(host: "http://localhost:11434",
+                                      model: "llama3.2",
+                                      mcpServer: emptyServer)
         let messages: [ChatMessage] = [
             ChatMessage(role: .user, content: "Hello")
         ]
@@ -37,10 +44,10 @@ final class Phase1OllamaProviderTests: XCTestCase {
         XCTAssertEqual(json["model"] as? String, "llama3.2")
         XCTAssertEqual(json["stream"] as? Bool, true)
 
-        // Phase 1 ships streaming-only chat. The `tools` slot must be present-but-empty
-        // so Phase 2 (MCP integration) only needs to populate it, not introduce it.
+        // With an empty MCPServer the tools slot is a present-but-empty array.
         if let tools = json["tools"] as? [Any] {
-            XCTAssertEqual(tools.count, 0, "tools array should be empty in Phase 1")
+            XCTAssertEqual(tools.count, 0,
+                           "tools array should be empty when no MCP tools are registered")
         } else {
             XCTFail("Expected `tools` array in request body (present-but-empty per spec)")
         }
@@ -142,7 +149,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
             onToken: {
                 tokenLock.lock(); tokens.append($0); tokenLock.unlock()
             },
-            onComplete: { _ in
+            onComplete: { (_: Result<OllamaStreamOutcome, Error>) in
                 done = true
                 exp.fulfill()
             }
@@ -165,7 +172,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
     func testOllamaStreamParser_handlesPartialLines() {
         let parser = OllamaStreamParser(
             onToken: { _ in },
-            onComplete: { _ in }
+            onComplete: { (_: Result<OllamaStreamOutcome, Error>) in }
         )
         // No newline yet — parser must buffer instead of treating "par" as a line.
         parser.feed(#"{"message":{"role":"assistant","content":"par"#)
@@ -184,7 +191,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
         var captured: Error?
         let parser = OllamaStreamParser(
             onToken: { _ in },
-            onComplete: { result in
+            onComplete: { (result: Result<OllamaStreamOutcome, Error>) in
                 if case .failure(let err) = result { captured = err }
                 exp.fulfill()
             }
@@ -199,7 +206,7 @@ final class Phase1OllamaProviderTests: XCTestCase {
         var success = false
         let parser = OllamaStreamParser(
             onToken: { _ in },
-            onComplete: { result in
+            onComplete: { (result: Result<OllamaStreamOutcome, Error>) in
                 if case .success = result { success = true }
                 exp.fulfill()
             }
