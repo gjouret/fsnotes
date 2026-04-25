@@ -716,6 +716,164 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         }
     }
 
+    /// Bug #31: a fenced code block whose body contains a blank line
+    /// in the middle (e.g. `line 1\n\nline 3`) must keep its gray
+    /// rounded-rect background continuous across the blank line.
+    ///
+    /// Failure mode: the empty paragraph for the blank line has
+    /// `layoutFragmentFrame.width == 0` (no glyphs). The
+    /// `CodeBlockLayoutFragment.drawBackground` early-return on
+    /// `guard frame.width > 0` then skips painting that fragment's
+    /// background entirely, leaving a visible white strip in the
+    /// middle of the gray code-block container.
+    ///
+    /// The fix removes the width gate (the container-derived `width > 0`
+    /// guard further down is the correct backstop). This test composes
+    /// the FIRST and MIDDLE fragments side-by-side into a magenta-
+    /// filled bitmap and asserts both fragments paint the SAME center
+    /// pixel — i.e. the blank-line bg fills with the same code-block
+    /// color as the surrounding fragments.
+    func test_bug31_codeBlockFragment_blankLineInMiddle_continuousShading() {
+        let md = "```\nline 1\n\nline 3\n```\n"
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let layoutManager = harness.editor.textLayoutManager else {
+            XCTFail("Phase 2a: editor must have TK2 layout manager")
+            return
+        }
+        let fullRange = layoutManager.documentRange
+        layoutManager.ensureLayout(for: fullRange)
+
+        guard let contentStorage =
+                layoutManager.textContentManager as? NSTextContentStorage,
+              let storage = contentStorage.textStorage else {
+            XCTFail("Bug #31: harness must expose NSTextContentStorage")
+            return
+        }
+
+        // Collect every fragment whose backing element starts at a
+        // character tagged `.blockModelKind = .codeBlock`. Walk all
+        // fragments (not just CodeBlockLayoutFragment instances) so we
+        // can also catch a regression where the blank-line paragraph
+        // gets dispatched to the default fragment.
+        var codeFragments: [CodeBlockLayoutFragment] = []
+        var nonCodeInsideBlock: [NSTextLayoutFragment] = []
+        layoutManager.enumerateTextLayoutFragments(
+            from: fullRange.location,
+            options: [.ensuresLayout]
+        ) { fragment in
+            guard let elementRange = fragment.textElement?.elementRange else {
+                return true
+            }
+            let docStart = contentStorage.documentRange.location
+            let startOffset = contentStorage.offset(
+                from: docStart, to: elementRange.location
+            )
+            guard startOffset >= 0, startOffset < storage.length else {
+                return true
+            }
+            let kind = storage.attribute(
+                .blockModelKind, at: startOffset, effectiveRange: nil
+            ) as? String
+            if kind == BlockModelKind.codeBlock.rawValue {
+                if let cb = fragment as? CodeBlockLayoutFragment {
+                    codeFragments.append(cb)
+                } else {
+                    nonCodeInsideBlock.append(fragment)
+                }
+            }
+            return true
+        }
+
+        XCTAssertTrue(
+            nonCodeInsideBlock.isEmpty,
+            "Bug #31: every paragraph tagged `.blockModelKind = .codeBlock` " +
+            "must dispatch to CodeBlockLayoutFragment so the gray bg paints " +
+            "continuously. Got \(nonCodeInsideBlock.count) non-code " +
+            "fragment(s) inside the block."
+        )
+        XCTAssertEqual(
+            codeFragments.count, 3,
+            "Bug #31: a 3-line fenced code body (`line 1` / blank / " +
+            "`line 3`) must produce exactly 3 CodeBlockLayoutFragments. " +
+            "Got \(codeFragments.count)."
+        )
+        guard codeFragments.count == 3 else { return }
+
+        XCTAssertEqual(
+            codeFragments[1].blockRunPosition, .middle,
+            "The blank-line fragment must report `.middle` so its bg " +
+            "rect merges into a single continuous container. " +
+            "Got \(codeFragments[1].blockRunPosition)."
+        )
+
+        // Pixel readback: render the FIRST and MIDDLE fragments into a
+        // single bitmap, both at the container width. The first fragment
+        // paints at y=pad, the middle directly below at y=pad+f1.height
+        // — mirroring the live vertical stack. The bitmap is initially
+        // filled with magenta so any unpainted pixels stand out.
+        let firstFragment = codeFragments[0]
+        let middleFragment = codeFragments[1]
+        let f1Frame = firstFragment.layoutFragmentFrame
+        let mFrame = middleFragment.layoutFragmentFrame
+        let containerWidth = harness.editor.textLayoutManager?
+            .textContainer?.size.width ?? 400.0
+        let pad: CGFloat = 4.0
+        let w = Int(containerWidth.rounded() + 2 * pad)
+        let h = Int((f1Frame.height + mFrame.height).rounded() + 2 * pad)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = pixels.withUnsafeMutableBytes({ buf -> CGContext? in
+            guard let base = buf.baseAddress else { return nil }
+            return CGContext(
+                data: base, width: w, height: h,
+                bitsPerComponent: 8, bytesPerRow: w * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        }) else {
+            XCTFail("Bug #31: could not allocate bitmap context.")
+            return
+        }
+        ctx.setFillColor(NSColor.magenta.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        firstFragment.draw(at: CGPoint(x: pad, y: pad), in: ctx)
+        middleFragment.draw(
+            at: CGPoint(x: pad, y: pad + f1Frame.height),
+            in: ctx
+        )
+        NSGraphicsContext.restoreGraphicsState()
+
+        // Sample one pixel at the center of each fragment's vertical
+        // band, well inside the container's content area. If the
+        // blank-line bg paint is suppressed by the buggy `frame.width >
+        // 0` guard, that pixel is still magenta and the diff blows up.
+        let stripX = Int((containerWidth / 3 + pad).rounded())
+        let firstStripY = Int(pad + f1Frame.height / 2)
+        let middleStripY = Int(pad + f1Frame.height + mFrame.height / 2)
+        let firstIdx = (firstStripY * w + stripX) * 4
+        let middleIdx = (middleStripY * w + stripX) * 4
+        let firstRGB = (pixels[firstIdx], pixels[firstIdx + 1], pixels[firstIdx + 2])
+        let middleRGB = (pixels[middleIdx], pixels[middleIdx + 1], pixels[middleIdx + 2])
+        let totalDiff =
+            abs(Int(firstRGB.0) - Int(middleRGB.0)) +
+            abs(Int(firstRGB.1) - Int(middleRGB.1)) +
+            abs(Int(firstRGB.2) - Int(middleRGB.2))
+        XCTAssertLessThan(
+            totalDiff, 30,
+            "Bug #31: blank-line fragment center pixel \(middleRGB) " +
+            "differs from first-fragment center pixel \(firstRGB) by " +
+            "channel diff \(totalDiff). Both should match the code-" +
+            "block bg color so shading is continuous. A large diff " +
+            "means the blank-line bg wasn't painted and the bitmap's " +
+            "magenta initial fill shows through (the bug)."
+        )
+    }
+
     /// A one-line fenced code block must report `.single` — full
     /// rounded rect with top + bottom border. This is the degenerate
     /// case of the multi-line detection logic.
@@ -2309,6 +2467,120 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         XCTAssertNil(
             committedWidth,
             "Non-handle click must not fire onResizeCommit — only handle-drags do."
+        )
+    }
+
+    // MARK: - Bug #27: InlineImageView keeps centered anchor on drag
+
+    /// Bug #27 — image-only paragraphs are centered by the renderer
+    /// (`DocumentRenderer.paragraphStyle` sets `.alignment = .center`
+    /// for `inline.count == 1, case .image`). When the user shrinks
+    /// the image by dragging a corner handle, the view's frame must
+    /// re-anchor around the pre-drag horizontal center on every
+    /// drag tick — otherwise `frame.origin.x` sticks at the OLD
+    /// (wider) view's left edge and the visible result is "image
+    /// drifts to the left as it shrinks," reported by users as
+    /// "image draws left-aligned instead of staying centered."
+    ///
+    /// Pins: after a shrink drag, `frame.midX` is unchanged from
+    /// drag-start.
+    func test_bug27_imageView_shrinkDrag_keepsHorizontalCenter() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        // Position the view at a non-zero origin so the centered-
+        // anchoring is observable. midX = 100 + 200/2 = 200.
+        let view = InlineImageView(frame: NSRect(x: 100, y: 50, width: 200, height: 200))
+        window.contentView?.addSubview(view)
+        let preMidX = view.frame.midX
+
+        // Grab the bottomRight handle so dragging LEFT (-x) shrinks
+        // the width via `widthDelta = dx` (dx negative).
+        let handleLocal = CGPoint(x: 200, y: 200)
+        let handleWindow = view.convert(handleLocal, to: nil)
+        guard let downEvt = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: handleWindow,
+            modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0
+        ) else {
+            XCTFail("Could not synthesize leftMouseDown event")
+            return
+        }
+        view.mouseDown(with: downEvt)
+
+        // Drag 80 px LEFT to shrink the width by 80pt (200 → 120).
+        guard let dragEvt = NSEvent.mouseEvent(
+            with: .leftMouseDragged,
+            location: NSPoint(x: handleWindow.x - 80, y: handleWindow.y),
+            modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: 1.0
+        ) else {
+            XCTFail("Could not synthesize leftMouseDragged event")
+            return
+        }
+        view.mouseDragged(with: dragEvt)
+
+        // Width shrunk by 80pt — sanity, not the bug.
+        XCTAssertEqual(
+            view.frame.width, 120, accuracy: 0.5,
+            "Drag -80px must shrink width from 200 → 120. Got \(view.frame.width)"
+        )
+
+        // Bug #27 contract: midX unchanged from pre-drag baseline.
+        // Without the fix, midX drifts to (origin.x_before + width/2)
+        // = 100 + 60 = 160 — the visible left-aligned drift. With the
+        // fix, midX stays at 200.
+        XCTAssertEqual(
+            view.frame.midX, preMidX, accuracy: 0.5,
+            "Bug #27: shrink drag must re-anchor frame around the pre-drag " +
+            "horizontal center (\(preMidX)). Got midX=\(view.frame.midX) — " +
+            "image is drifting left as it shrinks (the user-visible bug)."
+        )
+    }
+
+    /// Bug #27, growth direction: same invariant holds when the drag
+    /// GROWS the view. The center stays put — the view expands
+    /// symmetrically. Pins the round-trip behaviour: shrink + grow
+    /// must both re-anchor around the same center.
+    func test_bug27_imageView_growDrag_keepsHorizontalCenter() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let view = InlineImageView(frame: NSRect(x: 200, y: 50, width: 200, height: 200))
+        window.contentView?.addSubview(view)
+        let preMidX = view.frame.midX
+
+        // bottomRight handle, drag +60 px right → width 200 → 260.
+        let handleLocal = CGPoint(x: 200, y: 200)
+        let handleWindow = view.convert(handleLocal, to: nil)
+        guard let downEvt = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: handleWindow,
+            modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0
+        ), let dragEvt = NSEvent.mouseEvent(
+            with: .leftMouseDragged,
+            location: NSPoint(x: handleWindow.x + 60, y: handleWindow.y),
+            modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: 1.0
+        ) else {
+            XCTFail("Could not synthesize drag events")
+            return
+        }
+        view.mouseDown(with: downEvt)
+        view.mouseDragged(with: dragEvt)
+
+        XCTAssertEqual(view.frame.width, 260, accuracy: 0.5)
+        XCTAssertEqual(
+            view.frame.midX, preMidX, accuracy: 0.5,
+            "Bug #27: grow drag must keep the same horizontal center"
         )
     }
 

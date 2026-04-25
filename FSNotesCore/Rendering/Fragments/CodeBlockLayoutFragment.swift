@@ -214,7 +214,20 @@ public final class CodeBlockLayoutFragment: NSTextLayoutFragment {
 
     private func drawBackground(at point: CGPoint, in context: CGContext) {
         let frame = layoutFragmentFrame
-        guard frame.width > 0, frame.height > 0 else { return }
+        // Bug #31: do NOT gate on `frame.width > 0`. A code block whose
+        // body contains a blank line produces an EMPTY paragraph between
+        // the two non-empty lines; that paragraph's glyph-natural width
+        // is zero, so its `layoutFragmentFrame.width` is also zero. The
+        // background rect, however, is sized off the text CONTAINER's
+        // width (so every line in the block paints a uniform full-width
+        // rect, see comment below), not the fragment frame's natural
+        // width. Gating on `frame.width > 0` would skip the bg paint on
+        // every blank line and leave a visible white strip in the middle
+        // of the block — the visible "shading interrupted" bug. The
+        // container-derived `width > 0` guard further down is the
+        // correct degenerate-case backstop. `frame.height > 0` stays:
+        // a zero-height fragment has nothing to paint regardless.
+        guard frame.height > 0 else { return }
 
         // Container-width rect: x = containerLeft + padding - bleed,
         // width = containerContentWidth + 2 * bleed. This makes every
