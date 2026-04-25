@@ -120,6 +120,7 @@
 		TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */; };
 		TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TNAV000000000000000000F1 /* TableNavigationTests.swift */; };
 		TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCET000000000000000000F1 /* TableCellEditingTests.swift */; };
+		TCHT000000000000000000B1 /* TableCellHitTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCHT000000000000000000F1 /* TableCellHitTestTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
 		TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */; };
 		ETVF000000000000000000B1 /* EditTextViewFillRenderSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */; };
@@ -1250,6 +1251,7 @@
 		TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableLayoutFragmentRenderTests.swift; sourceTree = "<group>"; };
 		TNAV000000000000000000F1 /* TableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableNavigationTests.swift; sourceTree = "<group>"; };
 		TCET000000000000000000F1 /* TableCellEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellEditingTests.swift; sourceTree = "<group>"; };
+		TCHT000000000000000000F1 /* TableCellHitTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellHitTestTests.swift; sourceTree = "<group>"; };
 		T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2eT2fFindAcrossTableCellsTests.swift; sourceTree = "<group>"; };
 		TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCursorMathTests.swift; sourceTree = "<group>"; };
 		ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditTextViewFillRenderSyncTests.swift; sourceTree = "<group>"; };
@@ -2665,6 +2667,7 @@
 				TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */,
 				TNAV000000000000000000F1 /* TableNavigationTests.swift */,
 				TCET000000000000000000F1 /* TableCellEditingTests.swift */,
+				TCHT000000000000000000F1 /* TableCellHitTestTests.swift */,
 				T2GHST000000000000000F1 /* TableStructuralEditingTests.swift */,
 				T2G40000000000000000000F1 /* TableColumnResizeTests.swift */,
 				T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */,
@@ -4204,6 +4207,7 @@
 				TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */,
 				TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */,
 				TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */,
+				TCHT000000000000000000B1 /* TableCellHitTestTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,
 				T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */,
 				T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */,

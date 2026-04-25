@@ -71,6 +71,19 @@ extension EditTextView {
 
         dragDetected = false
         skipLoadSelectedRange = true
+
+        // Click-on-table-cell: place the cursor at the correct cell
+        // offset BEFORE super.mouseDown runs. TK2's default click→
+        // cursor mapping uses naturally-flowing text line fragments,
+        // but `TableLayoutFragment.draw` paints cells at custom grid
+        // positions. So the default mapping never lands clicks on
+        // cell text inside the right cell's storage range — the
+        // user can never place the caret in a cell to type.
+        if handleTableCellClick(event: event) {
+            saveSelectedRange()
+            return
+        }
+
         super.mouseDown(with: event)
 
         // Phase 4.8: legacy clear-color-marker skip removed. Before 4.4,
@@ -229,6 +242,60 @@ extension EditTextView {
     /// Post-4.5 this is the only hit-test path — the TK1
     /// NSLayoutManager.characterIndex path was removed with the custom
     /// layout-manager subclass.
+    /// Map a mouse-down event to a table cell + cursor offset, and
+    /// place the selection there. Returns true if the click landed
+    /// on a `TableLayoutFragment` cell (caller should NOT fall
+    /// through to `super.mouseDown`); false otherwise.
+    ///
+    /// Why we own this rather than letting NSTextView's default
+    /// click handler do the work: `TableLayoutFragment.draw` paints
+    /// cells at custom grid positions, but TK2's hit test uses the
+    /// naturally-flowing text line fragments. So a click on visible
+    /// cell text doesn't map to the storage offset of that cell's
+    /// content — typing after such a click never routes through
+    /// `handleTableCellEdit` because `cursorIsInTableElement()` only
+    /// holds when the cursor is in the element's range, not when
+    /// the click "missed" into adjacent paragraph storage.
+    fileprivate func handleTableCellClick(event: NSEvent) -> Bool {
+        guard let tlm = self.textLayoutManager,
+              let contentStorage = tlm.textContentManager
+                as? NSTextContentStorage
+        else { return false }
+        let point = self.convert(event.locationInWindow, from: nil)
+        // `textLayoutFragment(for: point)` expects text-container
+        // coords, same as `characterIndexTK2`.
+        let properPoint = NSPoint(
+            x: point.x - textContainerInset.width,
+            y: point.y - textContainerInset.height
+        )
+        guard let fragment = tlm.textLayoutFragment(for: properPoint),
+              let tableFrag = fragment as? TableLayoutFragment,
+              let element = fragment.textElement as? TableElement,
+              let elementRange = element.elementRange
+        else { return false }
+        let localPoint = CGPoint(
+            x: properPoint.x - fragment.layoutFragmentFrame.origin.x,
+            y: properPoint.y - fragment.layoutFragmentFrame.origin.y
+        )
+        guard let (row, col) = tableFrag.cellHit(at: localPoint),
+              let cellLocalRange = element.cellRange(
+                forCellAt: (row: row, col: col)
+              )
+        else { return false }
+        let docStart = contentStorage.documentRange.location
+        let elementStart = contentStorage.offset(
+            from: docStart, to: elementRange.location
+        )
+        // Park the cursor at the END of the cell's content. Most
+        // intuitive for a click on a non-empty cell; for an empty
+        // cell, end == start so it's still right.
+        let target = elementStart + cellLocalRange.location +
+            cellLocalRange.length
+        setSelectedRange(NSRange(location: target, length: 0))
+        bmLog("🖱 handleTableCellClick: cell=(\(row),\(col)) target=\(target)")
+        return true
+    }
+
     func characterIndexTK2(at point: NSPoint) -> Int? {
         guard let tlm = self.textLayoutManager,
               let fragment = tlm.textLayoutFragment(for: point) else {

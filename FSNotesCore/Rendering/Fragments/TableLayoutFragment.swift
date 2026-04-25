@@ -241,6 +241,72 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
     }
 
+    /// Public accessor for the fragment's computed column widths +
+    /// row heights. Consumed by `TableHandleOverlay` to position
+    /// the handle chip subviews over the correct cell. Returns nil
+    /// when the underlying element isn't a `.table` block.
+    public func geometryForHandleOverlay() -> TableGeometry.Result? {
+        guard let element = tableElement,
+              case .table = element.block else { return nil }
+        return geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+    }
+
+    /// Map a click point in fragment-local coordinates to the
+    /// (row, col) of the cell that visually contains it. Returns
+    /// `nil` if the point is in the handle strips or outside the
+    /// grid. Drives click-to-place-cursor: the default TK2 hit
+    /// test uses naturally-laid-out text line fragments, but
+    /// `TableLayoutFragment.draw` paints cells at custom grid
+    /// positions, so the default mapping is wrong. The editor's
+    /// `mouseDown` consults this helper before falling through
+    /// to `super.mouseDown` so a click on cell text actually
+    /// places the cursor inside that cell's storage range.
+    ///
+    /// `localPoint` is expressed relative to the fragment's
+    /// rendering origin (i.e. clicker subtracts the fragment's
+    /// `layoutFragmentFrame.origin` before calling).
+    public func cellHit(at localPoint: CGPoint) -> (row: Int, col: Int)? {
+        guard let element = tableElement,
+              case .table(let header, _, _, _) = element.block,
+              header.count > 0
+        else { return nil }
+        let g = geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+        guard g.columnWidths.count == header.count else { return nil }
+        // Skip the top handle strip — clicks there belong to
+        // the column-handle UI, not cell-cursor placement.
+        if localPoint.y < TableGeometry.handleBarHeight { return nil }
+        // X axis: skip left handle strip; iterate column widths.
+        var x = TableGeometry.handleBarWidth
+        var col = -1
+        for (i, w) in g.columnWidths.enumerated() {
+            if localPoint.x >= x, localPoint.x < x + w {
+                col = i; break
+            }
+            x += w
+        }
+        if col < 0 { return nil }
+        // Y axis: iterate row heights, starting at the top of the
+        // grid (after the handle strip).
+        var y = TableGeometry.handleBarHeight
+        var row = -1
+        for (i, h) in g.rowHeights.enumerated() {
+            if localPoint.y >= y, localPoint.y < y + h {
+                row = i; break
+            }
+            y += h
+        }
+        if row < 0 { return nil }
+        return (row, col)
+    }
+
     // MARK: - Geometry overrides
 
     /// Height = `handleBarHeight` (top strip reserved for column hover
