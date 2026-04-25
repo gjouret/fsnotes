@@ -39,6 +39,7 @@ class AIChatPanelView: NSView {
     /// default for testability today.
     let store = AIChatStore()
     private var subscription: AIChatSubscription?
+    private var actionSubscription: AIChatSubscription?
 
     /// Number of messages already materialised as bubbles in the
     /// stack. The render reconciler appends bubbles for indices
@@ -63,6 +64,17 @@ class AIChatPanelView: NSView {
     /// removed when state.error transitions back to nil.
     private weak var currentErrorBubble: NSView?
 
+    /// Bubble views keyed by `ToolCall.id` for in-flight tool-call
+    /// status visualization. Phase 4 polish: the LLM may emit
+    /// tool_calls during a streaming response — each gets its own
+    /// distinct bubble that updates in place when the matching
+    /// `.toolCallCompleted` action fires (success or error). Bubbles
+    /// are inserted in chronological order between the assistant
+    /// message that triggered them and any text response that
+    /// follows. The dictionary survives clearChat — the bubble views
+    /// themselves are removed via stack-view tear-down.
+    private var toolCallBubbles: [String: ToolCallBubble] = [:]
+
     weak var editorViewController: EditorViewController?
 
     static let panelWidth: CGFloat = 320
@@ -81,6 +93,7 @@ class AIChatPanelView: NSView {
 
     deinit {
         subscription?.cancel()
+        actionSubscription?.cancel()
     }
 
     private func wireStore() {
@@ -89,6 +102,14 @@ class AIChatPanelView: NSView {
         // no error) — safe.
         subscription = store.subscribe { [weak self] state in
             self?.render(state: state)
+        }
+        // Action subscriber: tool-call completions erase the matching
+        // entry from `state.pendingToolCalls`, so the state-only
+        // subscriber can't tell whether a call ended with success or
+        // error. The action callback carries the Result and lets the
+        // view update the in-flight bubble in place.
+        actionSubscription = store.subscribeToActions { [weak self] action, _ in
+            self?.handleAction(action)
         }
     }
 
@@ -289,6 +310,22 @@ class AIChatPanelView: NSView {
         // streaming bubble in one pass.
         store.dispatch(.sendMessage(text))
 
+        // Wire tool-call observers when the provider supports them.
+        // Only Ollama emits tool calls today; other providers are
+        // text-only via the AIProvider protocol.
+        if let ollama = provider as? OllamaProvider {
+            ollama.onToolCallStarted = { [weak self] call in
+                self?.store.dispatch(.toolCallRequested(call))
+            }
+            ollama.onToolCallCompleted = { [weak self] call, output in
+                // Translate the wire-shape ToolOutput into the
+                // store's Result<ToolOutput, Error> envelope. The
+                // failure case is reserved for transport-level
+                // errors that never reach the tool dispatcher.
+                self?.store.dispatch(.toolCallCompleted(call, .success(output)))
+            }
+        }
+
         provider.sendMessage(messages: conversationToSend, context: context, onToken: { [weak self] token in
             self?.store.dispatch(.receiveToken(token))
         }, onComplete: { [weak self] result in
@@ -482,6 +519,52 @@ class AIChatPanelView: NSView {
 
         scrollToBottom()
         return label
+    }
+
+    // MARK: - Tool-call bubbles
+
+    /// Handle an action that affects tool-call bubble UI. Bubble
+    /// state only depends on `.toolCallRequested` and
+    /// `.toolCallCompleted`; everything else is ignored. Called from
+    /// the action subscriber.
+    private func handleAction(_ action: AIChatAction) {
+        switch action {
+        case .toolCallRequested(let call):
+            addToolCallBubble(call)
+        case .toolCallCompleted(let call, let result):
+            updateToolCallBubble(call, result: result)
+        case .clearChat:
+            // Drop the bubble dictionary; the message-stack tear-down
+            // happens in render() when it sees the empty messages
+            // array. Future Phase 4 follow-up to handle clearChat
+            // rebuild more cleanly.
+            toolCallBubbles.removeAll()
+        default:
+            break
+        }
+    }
+
+    private func addToolCallBubble(_ call: ToolCall) {
+        guard toolCallBubbles[call.id] == nil else { return }
+        // Drop the empty-state hint as soon as we have anything to
+        // show — mirrors the same logic in render().
+        if !emptyStateRemoved {
+            messagesStack.arrangedSubviews
+                .filter { $0.tag == 999 }
+                .forEach { $0.removeFromSuperview() }
+            emptyStateRemoved = true
+        }
+        let bubble = ToolCallBubble(call: call,
+                                    maxWidth: AIChatPanelView.panelWidth - 40)
+        toolCallBubbles[call.id] = bubble
+        messagesStack.addArrangedSubview(bubble)
+        scrollToBottom()
+    }
+
+    private func updateToolCallBubble(_ call: ToolCall, result: Result<ToolOutput, Error>) {
+        guard let bubble = toolCallBubbles[call.id] else { return }
+        bubble.applyResult(result)
+        scrollToBottom()
     }
 
     private func addApplyButton(for text: String) {

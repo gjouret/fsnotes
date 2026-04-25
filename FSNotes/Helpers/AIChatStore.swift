@@ -169,7 +169,12 @@ final class AIChatStore {
         let id: UUID
         let callback: (AIChatState) -> Void
     }
+    private struct ActionSubscriber {
+        let id: UUID
+        let callback: (AIChatAction, AIChatState) -> Void
+    }
     private var subscribers: [Subscriber] = []
+    private var actionSubscribers: [ActionSubscriber] = []
 
     init(initialState: AIChatState = AIChatState()) {
         self.state = initialState
@@ -181,9 +186,13 @@ final class AIChatStore {
         state = reduce(state: state, action: action)
         // Snapshot the subscriber list so cancellations triggered by
         // a subscriber don't mutate the array we're iterating.
-        let snapshot = subscribers
-        for sub in snapshot {
+        let stateSnapshot = subscribers
+        for sub in stateSnapshot {
             sub.callback(state)
+        }
+        let actionSnapshot = actionSubscribers
+        for sub in actionSnapshot {
+            sub.callback(action, state)
         }
     }
 
@@ -199,9 +208,24 @@ final class AIChatStore {
         return token
     }
 
+    /// Subscribe to actions. Callback fires AFTER the reducer has
+    /// applied the action, with both the action and the resulting
+    /// state. Lets the view layer react to transitions that erase
+    /// information from `state` (e.g. `.toolCallCompleted` removes
+    /// the matching pending call so the state alone can't drive a
+    /// bubble update). Cancel via the returned subscription.
+    @discardableResult
+    func subscribeToActions(_ callback: @escaping (AIChatAction, AIChatState) -> Void) -> AIChatSubscription {
+        Self.assertMainQueue()
+        let token = AIChatSubscription(id: UUID(), store: self)
+        actionSubscribers.append(ActionSubscriber(id: token.id, callback: callback))
+        return token
+    }
+
     fileprivate func unsubscribe(_ token: AIChatSubscription) {
         Self.assertMainQueue()
         subscribers.removeAll { $0.id == token.id }
+        actionSubscribers.removeAll { $0.id == token.id }
     }
 
     // MARK: - Threading

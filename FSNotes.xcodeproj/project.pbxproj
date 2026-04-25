@@ -155,6 +155,7 @@
 		MCPTSTEN000000000000000B1 /* EditNoteToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTEN000000000000000F1 /* EditNoteToolTests.swift */; };
 		MCPTSTAF000000000000000B1 /* ApplyFormattingToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTAF000000000000000F1 /* ApplyFormattingToolTests.swift */; };
 		MCPTSTEP000000000000000B1 /* ExportPDFToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTEP000000000000000F1 /* ExportPDFToolTests.swift */; };
+		AIE2E0000000000000000B1 /* AIToolCallE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIE2E0000000000000000F1 /* AIToolCallE2ETests.swift */; };
 		BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BRBT000000000000000000F1 /* BitmapReadbackTests.swift */; };
 		BIRT000000000000000000B1 /* BugInventoryRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BIRT000000000000000000F1 /* BugInventoryRegressionTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
@@ -772,6 +773,7 @@
 		23EAB390742AF720CE975FB6 /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8C /* AIService.swift */; };
 		23EAB390742AF720CE975FB8 /* AIChatPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */; };
 		AICHATSTOREB1 /* AIChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATSTOREF1 /* AIChatStore.swift */; };
+		AICHATBUBBLEB1 /* AIChatToolCallBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATBUBBLEF1 /* AIChatToolCallBubble.swift */; };
 		MCP01000000000000000000B1 /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP01000000000000000000F1 /* MCPServer.swift */; };
 		MCP02000000000000000000B1 /* MCPTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP02000000000000000000F1 /* MCPTool.swift */; };
 		MCP03000000000000000000B1 /* ToolOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP03000000000000000000F1 /* ToolOutput.swift */; };
@@ -799,6 +801,8 @@
 		OLLAMA00000000000000000B4 /* OllamaProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F4 /* OllamaProvider.swift */; };
 		OLLAMA00000000000000000B5 /* Phase1OllamaProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */; };
 		AICHATSTORETESTSB1 /* AIChatStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATSTORETESTSF1 /* AIChatStoreTests.swift */; };
+		AICHATBUBTESTSB1 /* AIChatPanelToolBubblesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATBUBTESTSF1 /* AIChatPanelToolBubblesTests.swift */; };
+		AICHATKBDTESTSB1 /* AIChatKeyboardShortcutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATKBDTESTSF1 /* AIChatKeyboardShortcutTests.swift */; };
 		AIPROMPTCTXTESTSB1 /* AIPromptContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */; };
 		OLLAMA00000000000000000B6 /* PreferencesAIViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */; };
 		OLLAMA00000000000000000B7 /* Phase2OllamaToolCallingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */; };
@@ -1355,6 +1359,7 @@
 		MCPTSTEN000000000000000F1 /* EditNoteToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditNoteToolTests.swift; sourceTree = "<group>"; };
 		MCPTSTAF000000000000000F1 /* ApplyFormattingToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplyFormattingToolTests.swift; sourceTree = "<group>"; };
 		MCPTSTEP000000000000000F1 /* ExportPDFToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPDFToolTests.swift; sourceTree = "<group>"; };
+		AIE2E0000000000000000F1 /* AIToolCallE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIToolCallE2ETests.swift; sourceTree = "<group>"; };
 		CBDB000000000000000000F1 /* DiscoveredBugs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = DiscoveredBugs.txt; sourceTree = "<group>"; };
 		BRBT000000000000000000F1 /* BitmapReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitmapReadbackTests.swift; sourceTree = "<group>"; };
 		BIRT000000000000000000F1 /* BugInventoryRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugInventoryRegressionTests.swift; sourceTree = "<group>"; };
@@ -1667,11 +1672,14 @@
 		OLLAMA00000000000000000F4 /* OllamaProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaProvider.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase1OllamaProviderTests.swift; sourceTree = "<group>"; };
 		AICHATSTORETESTSF1 /* AIChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStoreTests.swift; sourceTree = "<group>"; };
+		AICHATBUBTESTSF1 /* AIChatPanelToolBubblesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanelToolBubblesTests.swift; sourceTree = "<group>"; };
+		AICHATKBDTESTSF1 /* AIChatKeyboardShortcutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatKeyboardShortcutTests.swift; sourceTree = "<group>"; };
 		AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPromptContextTests.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesAIViewController.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2OllamaToolCallingTests.swift; sourceTree = "<group>"; };
 		9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanelView.swift; sourceTree = "<group>"; };
 		AICHATSTOREF1 /* AIChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStore.swift; sourceTree = "<group>"; };
+		AICHATBUBBLEF1 /* AIChatToolCallBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatToolCallBubble.swift; sourceTree = "<group>"; };
 		MCP01000000000000000000F1 /* MCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
 		MCP02000000000000000000F1 /* MCPTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTool.swift; sourceTree = "<group>"; };
 		MCP03000000000000000000F1 /* ToolOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOutput.swift; sourceTree = "<group>"; };
@@ -2610,6 +2618,7 @@
 				9A36172A2C1AAB13AFAE9D8C /* AIService.swift */,
 				9A36172A2C1AAB13AFAE9D8E /* AIChatPanelView.swift */,
 				AICHATSTOREF1 /* AIChatStore.swift */,
+				AICHATBUBBLEF1 /* AIChatToolCallBubble.swift */,
 				MCPGRP000000000000000G01 /* MCP */,
 				OLLAMA00000000000000000G1 /* Ollama */,
 				6F13BB3820FEDE230005E120 /* UserDataService.swift */,
@@ -2779,6 +2788,8 @@
 				OLLAMA00000000000000000F5 /* Phase1OllamaProviderTests.swift */,
 				OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */,
 				AICHATSTORETESTSF1 /* AIChatStoreTests.swift */,
+				AICHATBUBTESTSF1 /* AIChatPanelToolBubblesTests.swift */,
+				AICHATKBDTESTSF1 /* AIChatKeyboardShortcutTests.swift */,
 				AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */,
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
 				GOVL0000000000000000000F1 /* GutterOverlayTests.swift */,
@@ -2902,6 +2913,7 @@
 				FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */,
 				CBCOMB00000000000000005 /* Combinatorial */,
 				MCPTSTGRP000000000000005 /* MCP */,
+				AIE2EGRP00000000000000005 /* IntegrationTests */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -2947,6 +2959,14 @@
 				MCPTSTEP000000000000000F1 /* ExportPDFToolTests.swift */,
 			);
 			path = MCP;
+			sourceTree = "<group>";
+		};
+		AIE2EGRP00000000000000005 /* IntegrationTests */ = {
+			isa = PBXGroup;
+			children = (
+				AIE2E0000000000000000F1 /* AIToolCallE2ETests.swift */,
+			);
+			path = IntegrationTests;
 			sourceTree = "<group>";
 		};
 		USRFLW000000000000000005 /* UserFlows */ = {
@@ -4066,6 +4086,7 @@
 				23EAB390742AF720CE975FB6 /* AIService.swift in Sources */,
 				23EAB390742AF720CE975FB8 /* AIChatPanelView.swift in Sources */,
 				AICHATSTOREB1 /* AIChatStore.swift in Sources */,
+				AICHATBUBBLEB1 /* AIChatToolCallBubble.swift in Sources */,
 				MCP01000000000000000000B1 /* MCPServer.swift in Sources */,
 				MCP02000000000000000000B1 /* MCPTool.swift in Sources */,
 				MCP03000000000000000000B1 /* ToolOutput.swift in Sources */,
@@ -4419,6 +4440,8 @@
 				OLLAMA00000000000000000B5 /* Phase1OllamaProviderTests.swift in Sources */,
 				OLLAMA00000000000000000B7 /* Phase2OllamaToolCallingTests.swift in Sources */,
 				AICHATSTORETESTSB1 /* AIChatStoreTests.swift in Sources */,
+				AICHATBUBTESTSB1 /* AIChatPanelToolBubblesTests.swift in Sources */,
+				AICHATKBDTESTSB1 /* AIChatKeyboardShortcutTests.swift in Sources */,
 				AIPROMPTCTXTESTSB1 /* AIPromptContextTests.swift in Sources */,
 				F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */,
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,
@@ -4539,6 +4562,7 @@
 				MCPTSTEN000000000000000B1 /* EditNoteToolTests.swift in Sources */,
 				MCPTSTAF000000000000000B1 /* ApplyFormattingToolTests.swift in Sources */,
 				MCPTSTEP000000000000000B1 /* ExportPDFToolTests.swift in Sources */,
+				AIE2E0000000000000000B1 /* AIToolCallE2ETests.swift in Sources */,
 				BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */,
 				BIRT000000000000000000B1 /* BugInventoryRegressionTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,

@@ -36,6 +36,16 @@ class OllamaProvider: AIProvider {
     /// mock-protocol class so they can serve canned NDJSON responses.
     private let sessionFactory: (URLSessionDelegate) -> URLSession
 
+    /// Optional observer fired BEFORE a tool is dispatched. The chat
+    /// panel uses this to render an in-flight tool-call bubble. Always
+    /// invoked on the main queue.
+    var onToolCallStarted: ((ToolCall) -> Void)?
+
+    /// Optional observer fired AFTER a tool has produced a result
+    /// (success or error). Fired on the main queue. The chat panel
+    /// uses this to update the in-flight bubble with the outcome.
+    var onToolCallCompleted: ((ToolCall, ToolOutput) -> Void)?
+
     /// Hard cap on tool-calling round trips per `sendMessage` call.
     /// 10 rounds is enough for any realistic chained-tool workflow
     /// (read → search → write → confirm) and small enough that a buggy
@@ -233,9 +243,30 @@ class OllamaProvider: AIProvider {
             ToolCall(id: call.id, name: call.name, arguments: call.arguments)
         }
 
+        // Fire the started-observer for each call so the chat panel
+        // can render in-flight bubbles before the tool runs.
+        if let started = self.onToolCallStarted {
+            DispatchQueue.main.async {
+                for call in toolCalls {
+                    started(call)
+                }
+            }
+        }
+
         Task.detached { [weak self] in
             guard let self = self else { return }
             let results = await self.mcpServer.handleToolCalls(toolCalls)
+
+            // Notify the completion observer per result. We zip on
+            // index because handleToolCalls preserves order.
+            if let completed = self.onToolCallCompleted {
+                let pairs = Array(zip(toolCalls, results))
+                DispatchQueue.main.async {
+                    for (call, result) in pairs {
+                        completed(call, result.output)
+                    }
+                }
+            }
 
             // Append a role:"tool" message per result. Ollama matches them
             // back to the call by name (and tool_call_id when present).
