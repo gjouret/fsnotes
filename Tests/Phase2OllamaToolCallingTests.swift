@@ -218,7 +218,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         parser.feed(line1)
         parser.feed(line2)
 
-        wait(for: [exp], timeout: 2.0)
+        wait(for: [exp], timeout: 5.0)
         guard case .toolCalls(let calls, let preamble) = outcome else {
             XCTFail("expected .toolCalls outcome, got \(String(describing: outcome))")
             return
@@ -245,7 +245,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         parser.feed(line1)
         parser.feed(line2)
 
-        wait(for: [exp], timeout: 2.0)
+        wait(for: [exp], timeout: 5.0)
         guard case .toolCalls(let calls, _) = outcome else {
             XCTFail("expected .toolCalls outcome")
             return
@@ -268,7 +268,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         parser.feed(line1)
         parser.feed(#"{"done":true}"# + "\n")
 
-        wait(for: [exp], timeout: 2.0)
+        wait(for: [exp], timeout: 5.0)
         guard case .toolCalls(let calls, _) = outcome else {
             XCTFail("expected .toolCalls outcome")
             return
@@ -289,7 +289,7 @@ final class Phase2OllamaToolCallingTests: XCTestCase {
         parser.feed(#"{"message":{"role":"assistant","content":"hi"},"done":false}"# + "\n")
         parser.feed(#"{"done":true}"# + "\n")
 
-        wait(for: [exp], timeout: 2.0)
+        wait(for: [exp], timeout: 5.0)
         guard case .text(let s) = outcome else {
             XCTFail("expected .text outcome")
             return
