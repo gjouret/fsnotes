@@ -813,67 +813,6 @@ class ProjectionCoverageTests: XCTestCase {
         }
     }
 
-    // MARK: - Code Block Emphasis Exclusion Tests
-
-    /// Emphasis markers (bold/italic underscores) must NOT be hidden
-    /// inside code blocks. When source-mode renders `__init__` inside
-    /// a fenced code block, the underscores must remain visible.
-    ///
-    /// Root cause caught: highlightMarkdown's italic/bold regex
-    /// processing didn't check codeBlockRanges, so `__init__` matched
-    /// the bold pattern and underscores were hidden via hideSyntax.
-    func test_codeBlock_underscoresNotHidden() {
-        let markdown = """
-        ```python
-        def __init__(self):
-            pass
-        ```
-        """
-
-        let attr = NSMutableAttributedString(string: markdown)
-        let fullRange = NSRange(location: 0, length: attr.length)
-
-        // Simulate code block detection
-        let codeStart = (markdown as NSString).range(of: "```python")
-        let codeEnd = (markdown as NSString).range(of: "```", options: [], range: NSRange(location: codeStart.location + codeStart.length, length: attr.length - codeStart.location - codeStart.length))
-        let codeBlockRange = NSRange(
-            location: codeStart.location,
-            length: codeEnd.location + codeEnd.length - codeStart.location
-        )
-
-        // Run highlight with code block ranges
-        NotesTextProcessor.highlightMarkdown(
-            attributedString: attr,
-            paragraphRange: fullRange,
-            codeBlockRanges: [codeBlockRange]
-        )
-
-        // Find __init__ in the string
-        let initRange = (markdown as NSString).range(of: "__init__")
-        guard initRange.location != NSNotFound else {
-            XCTFail("Could not find __init__ in test markdown")
-            return
-        }
-
-        // The underscores before "init" must NOT have clear foreground
-        // (which would mean they were hidden by hideSyntax)
-        let leadingUnderscoreRange = NSRange(location: initRange.location, length: 2)
-        let fg = attr.attribute(.foregroundColor, at: leadingUnderscoreRange.location, effectiveRange: nil) as? NSColor
-        XCTAssertNotEqual(
-            fg, NSColor.clear,
-            "Underscores in __init__ inside code block must not be hidden (clear foreground)"
-        )
-
-        // Also check kern is not negative (another hiding mechanism)
-        let kern = attr.attribute(.kern, at: leadingUnderscoreRange.location, effectiveRange: nil) as? CGFloat
-        if let k = kern {
-            XCTAssertGreaterThanOrEqual(
-                k, 0,
-                "Underscores in __init__ inside code block must not have negative kern"
-            )
-        }
-    }
-
     // MARK: - Heading font size hierarchy tests
 
     /// Heading font sizes must be non-increasing (H1 >= H2 >= ... >= H6),

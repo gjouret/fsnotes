@@ -2,8 +2,7 @@
 //  Phase44SourceModeTests.swift
 //  FSNotesTests
 //
-//  Phase 4.4 — source mode flipped to `SourceRenderer` + markdown
-//  `NotesTextProcessor.highlight*` path retired.
+//  Phase 4.4 — source mode flipped to `SourceRenderer` + markdown.
 //
 //  Pure-function tests for the three block kinds completed in 4.4
 //  (`.list`, `.table`, `.htmlBlock`) plus regression guards for the
@@ -54,10 +53,10 @@ final class Phase44SourceModeTests: XCTestCase {
     // MARK: - Live renderer assertions (regression anchor)
 
     /// The key guarantee of 4.4: `SourceRenderer` IS the live source-mode
-    /// renderer — its output carries `.markerRange` runs (and NOT the
-    /// legacy colour attributes `NotesTextProcessor.highlightMarkdown`
-    /// used to emit). Any future drift where someone re-wires source
-    /// mode back to the legacy path will fail this test.
+    /// renderer — its output carries `.markerRange` runs that the
+    /// `SourceLayoutFragment` paints in `Theme.shared.chrome.sourceMarker`.
+    /// Any future drift where someone re-wires source mode away from this
+    /// path will fail this test.
     func test_phase44_sourceRenderer_isLiveRenderer() {
         let doc = Document(
             blocks: [.heading(level: 2, suffix: " Hello")],

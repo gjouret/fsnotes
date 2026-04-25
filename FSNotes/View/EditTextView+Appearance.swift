@@ -200,13 +200,9 @@ extension EditTextView {
 
         guard let _ = self.note else { return }
 
-        // Phase 4.4: both WYSIWYG (block-model) and source-mode
-        // (SourceRenderer) re-render from the Document via
-        // `refillEditArea(force: true)` below. The legacy
-        // `NotesTextProcessor.highlight(attributedString: note.content)`
-        // call was retired in 4.4 — it applied TK1-shaped attributes to
-        // `note.content` that neither renderer reads from.
-
+        // Both WYSIWYG (block-model) and source-mode (SourceRenderer)
+        // re-render from the Document via `refillEditArea(force: true)`
+        // below.
         viewDelegate?.refillEditArea(force: true)
     }
 

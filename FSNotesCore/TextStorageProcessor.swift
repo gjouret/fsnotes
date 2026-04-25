@@ -662,10 +662,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Rendering pipeline. Runs ONLY when the block-model pipeline is
     /// not driving this edit. When `blockModelActive==true`,
     /// rendering is handled by `DocumentRenderer` + `EditingOps`.
-    /// When `sourceRendererActive==true` (Phase 4.4), source-mode
-    /// marker coloring is handled by re-rendering via `SourceRenderer`
-    /// and copying attributes onto the edited range — the legacy
-    /// `NotesTextProcessor.highlightMarkdown` path has been retired.
+    /// When `sourceRendererActive==true`, source-mode marker coloring is
+    /// handled by re-rendering via `SourceRenderer` and copying
+    /// attributes onto the edited range.
     private func process(textStorage: NSTextStorage, range editedRange: NSRange, changeInLength delta: Int) {
         guard let note = editor?.note, textStorage.length > 0 else { return }
         guard !isRendering else { return }

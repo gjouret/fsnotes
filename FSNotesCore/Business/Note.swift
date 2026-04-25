@@ -1827,13 +1827,12 @@ public class Note: NSObject  {
 
     #if os(macOS)
     /// Background pre-cache entry point called at app startup and after
-    /// tag scans. Phase 4.4: the legacy
-    /// `NotesTextProcessor.highlight(content)` pre-render was retired —
-    /// the WYSIWYG (block-model) and source-mode (SourceRenderer)
-    /// pipelines both re-render from the raw markdown at fill time and
-    /// do not read the pre-rendered `.content` attribute cache. What's
-    /// retained is `cacheCodeBlocks()`, which populates the
-    /// fenced-code-block preview cache used by the WYSIWYG renderer.
+    /// tag scans. The WYSIWYG (block-model) and source-mode
+    /// (SourceRenderer) pipelines both re-render from the raw markdown
+    /// at fill time and do not read any pre-rendered `.content`
+    /// attribute cache. What's retained is `cacheCodeBlocks()`, which
+    /// populates the fenced-code-block preview cache used by the
+    /// WYSIWYG renderer.
     public func cache() {
         if cacheLock { return }
         cacheLock = true

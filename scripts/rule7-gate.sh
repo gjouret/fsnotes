@@ -102,15 +102,6 @@ add_pattern "localInlineParse"    'func[[:space:]]+parseInlineMarkdown\b'       
 # of either token indicates the source-mode save path is being resurrected.
 add_pattern "legacySaveContent"   '\.save\(content:|prepareForSave\b'                                          ""
 
-# --- Phase 4.4: legacy NotesTextProcessor.highlight* markdown path retired ---
-# Source-mode markdown rendering now flows through `SourceRenderer` (which
-# tags `.markerRange` runs painted by `SourceLayoutFragment`) instead of
-# the TK1-shaped `NotesTextProcessor.highlight(_:)` /
-# `NotesTextProcessor.highlightMarkdown(_:)` path. `SwiftHighlighter`
-# (fenced code-block syntax highlighting via highlightr) is a separate
-# subsystem and is NOT matched by this regex.
-add_pattern "legacyMarkdownHighlight" 'NotesTextProcessor\.highlight'                                         ""
-
 # --- Phase 4.6: legacy TextStorageProcessor.blocks peer + syncBlocksFromProjection ---
 # retired. Fold/unfold and gutter-draw now consume `Document.blocks` via the
 # `documentProjection` setter's auto-sync. No app-layer caller should invoke

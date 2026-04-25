@@ -65,7 +65,7 @@ public func buildInlineTagDefinitions(baseFont: PlatformFont) -> [InlineTagDefin
     ]
 }
 
-/// Process all inline tags in a single pass. Called from NotesTextProcessor.highlightMarkdown.
+/// Process all inline tags in a single pass.
 ///
 /// For each tag definition:
 /// 1. Find all matches of the regex in the given range
@@ -73,6 +73,10 @@ public func buildInlineTagDefinitions(baseFont: PlatformFont) -> [InlineTagDefin
 /// 3. Set the marker attribute if defined (consumed by the source-mode
 ///    paint path, historically by the deleted TK1 `LayoutManager` subclass)
 /// 4. Hide the open and close tags (clear color + negative kern)
+///
+/// Note: as of Phase 6 Tier C, the only callers are `InlineTagTests`.
+/// The pure-function inline-tag rendering used in `InlineRenderer` is
+/// driven directly by `buildInlineTagDefinitions` rather than this helper.
 public func processInlineTags(
     definitions: [InlineTagDefinition],
     in attributedString: NSMutableAttributedString,

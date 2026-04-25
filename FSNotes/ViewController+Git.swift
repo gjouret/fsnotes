@@ -102,12 +102,9 @@ extension EditorViewController {
 
         _ = note.reload()
 
-        // Phase 4.4: both WYSIWYG (block-model) and source-mode
-        // (SourceRenderer) paths re-render from the Document via the
-        // refill that happens inside `reloadAllOpenedWindows`. The
-        // legacy `NotesTextProcessor.highlight(note.content)` call was
-        // retired in 4.4 — it wrote TK1-shaped attributes onto
-        // `note.content`, which neither renderer reads from.
+        // Both WYSIWYG (block-model) and source-mode (SourceRenderer)
+        // paths re-render from the Document via the refill that happens
+        // inside `reloadAllOpenedWindows`.
         reloadAllOpenedWindows(note: note)
         
         ViewController.shared()?.notesTableView.reloadRow(note: note)
