@@ -121,6 +121,7 @@ public class UserDefaultsManagement {
         static let AIProvider = "aiProvider"
         static let AIModel = "aiModel"
         static let AIEndpoint = "aiEndpoint"
+        static let AIOllamaHost = "aiOllamaHost"
         static let NonContiguousLayout = "allowsNonContiguousLayout"
         static let NoteContainer = "noteContainer"
         static let Preview = "preview"
@@ -1281,6 +1282,11 @@ public class UserDefaultsManagement {
     static var aiEndpoint: String {
         get { shared?.string(forKey: Constants.AIEndpoint) ?? "" }
         set { shared?.set(newValue, forKey: Constants.AIEndpoint) }
+    }
+
+    static var aiOllamaHost: String {
+        get { shared?.string(forKey: Constants.AIOllamaHost) ?? "http://localhost:11434" }
+        set { shared?.set(newValue, forKey: Constants.AIOllamaHost) }
     }
 
     static var wysiwygMode: Bool {
