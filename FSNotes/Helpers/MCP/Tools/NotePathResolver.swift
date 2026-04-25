@@ -169,8 +169,11 @@ public enum NotePathResolver {
                 continue
             }
 
-            // Plain markdown files.
-            if markdownExtensions.contains(url.pathExtension.lowercased()) {
+            // Plain markdown files (or encrypted .etp variants —
+            // surfacing them lets read/write tools return a clear
+            // "encrypted" error rather than a misleading "not found").
+            let ext = url.pathExtension.lowercased()
+            if markdownExtensions.contains(ext) || encryptedExtensions.contains(ext) {
                 if !recursive && !isDirectChild(url: url, of: folderURL) {
                     continue
                 }

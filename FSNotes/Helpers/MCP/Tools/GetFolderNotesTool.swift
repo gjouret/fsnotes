@@ -14,7 +14,7 @@ public struct GetFolderNotesTool: MCPTool {
     public let name = "get_folder_notes"
     public let description = "List notes in a specific folder. Returns title, folder, path, modified date, and isTextBundle for each note."
 
-    private weak var server: MCPServer?
+    private let server: MCPServer
 
     public init(server: MCPServer = .shared) {
         self.server = server
@@ -38,7 +38,7 @@ public struct GetFolderNotesTool: MCPTool {
     }
 
     public func execute(input: [String: Any]) async -> ToolOutput {
-        guard let storageRoot = (server ?? MCPServer.shared).storageRoot else {
+        guard let storageRoot = server.storageRoot else {
             return .error("FSNotes++ storage root is not configured")
         }
         guard let folder = input["folder"] as? String else {

@@ -21,7 +21,7 @@ public struct MoveNoteTool: MCPTool {
     public let name = "move_note"
     public let description = "Move a note to a different folder. Works on plain markdown files and TextBundle directories. Refuses to overwrite an existing destination or move encrypted notes."
 
-    private weak var server: MCPServer?
+    private let server: MCPServer
 
     public init(server: MCPServer = .shared) {
         self.server = server
@@ -53,7 +53,7 @@ public struct MoveNoteTool: MCPTool {
     }
 
     public func execute(input: [String: Any]) async -> ToolOutput {
-        let serverRef = server ?? MCPServer.shared
+        let serverRef = server
         guard let storageRoot = serverRef.storageRoot else {
             return .error("FSNotes++ storage root is not configured")
         }
@@ -115,12 +115,17 @@ public struct MoveNoteTool: MCPTool {
         }
 
         // If the note is currently open and dirty, ask the bridge.
+        // Compare on standardized paths because the resolver returns
+        // URLs without the /private/var symlink prefix while the
+        // bridge may report the raw path it received from the editor.
         let bridge = serverRef.appBridge
-        if let openPath = bridge.currentNotePath(),
-           openPath == note.url.path,
-           bridge.hasUnsavedChanges(path: openPath) {
-            if !bridge.requestWriteLock(path: openPath) {
-                return .error("Note has unsaved changes; the editor declined the write lock. Save first and retry.")
+        let notePath = note.url.standardizedFileURL.path
+        if let openPathRaw = bridge.currentNotePath() {
+            let openPath = URL(fileURLWithPath: openPathRaw).standardizedFileURL.path
+            if openPath == notePath, bridge.hasUnsavedChanges(path: openPathRaw) {
+                if !bridge.requestWriteLock(path: openPathRaw) {
+                    return .error("Note has unsaved changes; the editor declined the write lock. Save first and retry.")
+                }
             }
         }
 

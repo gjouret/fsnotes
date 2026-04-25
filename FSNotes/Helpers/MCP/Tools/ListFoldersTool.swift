@@ -13,7 +13,7 @@ public struct ListFoldersTool: MCPTool {
     public let name = "list_folders"
     public let description = "List subfolders under the storage root. By default returns top-level folders only; pass recursive=true for the full tree."
 
-    private weak var server: MCPServer?
+    private let server: MCPServer
 
     public init(server: MCPServer = .shared) {
         self.server = server
@@ -33,7 +33,7 @@ public struct ListFoldersTool: MCPTool {
     }
 
     public func execute(input: [String: Any]) async -> ToolOutput {
-        guard let storageRoot = (server ?? MCPServer.shared).storageRoot else {
+        guard let storageRoot = server.storageRoot else {
             return .error("FSNotes++ storage root is not configured")
         }
         let recursive = (input["recursive"] as? Bool) ?? false

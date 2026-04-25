@@ -21,8 +21,11 @@ public struct ReadNoteTool: MCPTool {
 
     /// Reference back to the server so the tool can resolve
     /// `storageRoot` lazily and pick up test overrides without
-    /// recompiling the registry.
-    private weak var server: MCPServer?
+    /// recompiling the registry. `unowned(unsafe)` because the
+    /// shared server lives for the app's lifetime; tests pass a
+    /// short-lived server but the test holds it for the duration of
+    /// the test method, so the tool never outlives its server.
+    private let server: MCPServer
 
     public init(server: MCPServer = .shared) {
         self.server = server
@@ -50,7 +53,7 @@ public struct ReadNoteTool: MCPTool {
     }
 
     public func execute(input: [String: Any]) async -> ToolOutput {
-        guard let storageRoot = (server ?? MCPServer.shared).storageRoot else {
+        guard let storageRoot = server.storageRoot else {
             return .error("FSNotes++ storage root is not configured")
         }
 

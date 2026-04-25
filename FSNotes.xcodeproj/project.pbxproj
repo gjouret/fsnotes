@@ -134,6 +134,13 @@
 		FSMR000000000000000000B1 /* FSMTransitionTableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */; };
 		CBGN000000000000000000B1 /* Generator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBGN000000000000000000F1 /* Generator.swift */; };
 		CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */; };
+		MCPTSTFX000000000000000B1 /* MCPTestFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTFX000000000000000F1 /* MCPTestFixture.swift */; };
+		MCPTSTRN000000000000000B1 /* ReadNoteToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTRN000000000000000F1 /* ReadNoteToolTests.swift */; };
+		MCPTSTSN000000000000000B1 /* SearchNotesToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTSN000000000000000F1 /* SearchNotesToolTests.swift */; };
+		MCPTSTLF000000000000000B1 /* ListFoldersToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTLF000000000000000F1 /* ListFoldersToolTests.swift */; };
+		MCPTSTGF000000000000000B1 /* GetFolderNotesToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTGF000000000000000F1 /* GetFolderNotesToolTests.swift */; };
+		MCPTSTMV000000000000000B1 /* MoveNoteToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTMV000000000000000F1 /* MoveNoteToolTests.swift */; };
+		MCPTSTSR000000000000000B1 /* MCPServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTSR000000000000000F1 /* MCPServerTests.swift */; };
 		BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BRBT000000000000000000F1 /* BitmapReadbackTests.swift */; };
 		BIRT000000000000000000B1 /* BugInventoryRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BIRT000000000000000000F1 /* BugInventoryRegressionTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
@@ -1293,6 +1300,13 @@
 		FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSMTransitionTableTests.swift; sourceTree = "<group>"; };
 		CBGN000000000000000000F1 /* Generator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Generator.swift; sourceTree = "<group>"; };
 		CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CombinatorialCoverageTests.swift; sourceTree = "<group>"; };
+		MCPTSTFX000000000000000F1 /* MCPTestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTestFixture.swift; sourceTree = "<group>"; };
+		MCPTSTRN000000000000000F1 /* ReadNoteToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadNoteToolTests.swift; sourceTree = "<group>"; };
+		MCPTSTSN000000000000000F1 /* SearchNotesToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchNotesToolTests.swift; sourceTree = "<group>"; };
+		MCPTSTLF000000000000000F1 /* ListFoldersToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListFoldersToolTests.swift; sourceTree = "<group>"; };
+		MCPTSTGF000000000000000F1 /* GetFolderNotesToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetFolderNotesToolTests.swift; sourceTree = "<group>"; };
+		MCPTSTMV000000000000000F1 /* MoveNoteToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveNoteToolTests.swift; sourceTree = "<group>"; };
+		MCPTSTSR000000000000000F1 /* MCPServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServerTests.swift; sourceTree = "<group>"; };
 		CBDB000000000000000000F1 /* DiscoveredBugs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = DiscoveredBugs.txt; sourceTree = "<group>"; };
 		BRBT000000000000000000F1 /* BitmapReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitmapReadbackTests.swift; sourceTree = "<group>"; };
 		BIRT000000000000000000F1 /* BugInventoryRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugInventoryRegressionTests.swift; sourceTree = "<group>"; };
@@ -2788,6 +2802,7 @@
 				FSMTFIX0000000000000005 /* Fixtures */,
 				FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */,
 				CBCOMB00000000000000005 /* Combinatorial */,
+				MCPTSTGRP000000000000005 /* MCP */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -2808,6 +2823,20 @@
 				CBDB000000000000000000F1 /* DiscoveredBugs.txt */,
 			);
 			path = Combinatorial;
+			sourceTree = "<group>";
+		};
+		MCPTSTGRP000000000000005 /* MCP */ = {
+			isa = PBXGroup;
+			children = (
+				MCPTSTFX000000000000000F1 /* MCPTestFixture.swift */,
+				MCPTSTRN000000000000000F1 /* ReadNoteToolTests.swift */,
+				MCPTSTSN000000000000000F1 /* SearchNotesToolTests.swift */,
+				MCPTSTLF000000000000000F1 /* ListFoldersToolTests.swift */,
+				MCPTSTGF000000000000000F1 /* GetFolderNotesToolTests.swift */,
+				MCPTSTMV000000000000000F1 /* MoveNoteToolTests.swift */,
+				MCPTSTSR000000000000000F1 /* MCPServerTests.swift */,
+			);
+			path = MCP;
 			sourceTree = "<group>";
 		};
 		USRFLW000000000000000005 /* UserFlows */ = {
@@ -4359,6 +4388,13 @@
 				FSMR000000000000000000B1 /* FSMTransitionTableTests.swift in Sources */,
 				CBGN000000000000000000B1 /* Generator.swift in Sources */,
 				CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */,
+				MCPTSTFX000000000000000B1 /* MCPTestFixture.swift in Sources */,
+				MCPTSTRN000000000000000B1 /* ReadNoteToolTests.swift in Sources */,
+				MCPTSTSN000000000000000B1 /* SearchNotesToolTests.swift in Sources */,
+				MCPTSTLF000000000000000B1 /* ListFoldersToolTests.swift in Sources */,
+				MCPTSTGF000000000000000B1 /* GetFolderNotesToolTests.swift in Sources */,
+				MCPTSTMV000000000000000B1 /* MoveNoteToolTests.swift in Sources */,
+				MCPTSTSR000000000000000B1 /* MCPServerTests.swift in Sources */,
 				BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */,
 				BIRT000000000000000000B1 /* BugInventoryRegressionTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,

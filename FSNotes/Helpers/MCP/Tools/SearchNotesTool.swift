@@ -19,7 +19,7 @@ public struct SearchNotesTool: MCPTool {
     public let name = "search_notes"
     public let description = "Search note titles and content for a query string. Returns up to 50 matches with surrounding-text snippets. Optionally scoped to a folder."
 
-    private weak var server: MCPServer?
+    private let server: MCPServer
 
     /// Cap on returned hits — protects the LLM context window from a
     /// pathological query that matches every note in the vault.
@@ -57,7 +57,7 @@ public struct SearchNotesTool: MCPTool {
     }
 
     public func execute(input: [String: Any]) async -> ToolOutput {
-        guard let storageRoot = (server ?? MCPServer.shared).storageRoot else {
+        guard let storageRoot = server.storageRoot else {
             return .error("FSNotes++ storage root is not configured")
         }
         guard let rawQuery = input["query"] as? String, !rawQuery.isEmpty else {
