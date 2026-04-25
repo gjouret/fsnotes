@@ -141,6 +141,7 @@
 		MCPTSTGF000000000000000B1 /* GetFolderNotesToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTGF000000000000000F1 /* GetFolderNotesToolTests.swift */; };
 		MCPTSTMV000000000000000B1 /* MoveNoteToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTMV000000000000000F1 /* MoveNoteToolTests.swift */; };
 		MCPTSTSR000000000000000B1 /* MCPServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTSR000000000000000F1 /* MCPServerTests.swift */; };
+		MCPTSTBR000000000000000B1 /* AppBridgeImplTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTBR000000000000000F1 /* AppBridgeImplTests.swift */; };
 		MCPTSTLN000000000000000B1 /* ListNotesToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTLN000000000000000F1 /* ListNotesToolTests.swift */; };
 		MCPTSTGP000000000000000B1 /* GetProjectsToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTGP000000000000000F1 /* GetProjectsToolTests.swift */; };
 		MCPTSTGC000000000000000B1 /* GetCurrentNoteToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTGC000000000000000F1 /* GetCurrentNoteToolTests.swift */; };
@@ -771,6 +772,7 @@
 		MCP02000000000000000000B1 /* MCPTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP02000000000000000000F1 /* MCPTool.swift */; };
 		MCP03000000000000000000B1 /* ToolOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP03000000000000000000F1 /* ToolOutput.swift */; };
 		MCP04000000000000000000B1 /* AppBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP04000000000000000000F1 /* AppBridge.swift */; };
+		MCP05000000000000000000B1 /* AppBridgeImpl.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCP05000000000000000000F1 /* AppBridgeImpl.swift */; };
 		MCPT01000000000000000000B1 /* NotePathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT01000000000000000000F1 /* NotePathResolver.swift */; };
 		MCPT02000000000000000000B1 /* ReadNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT02000000000000000000F1 /* ReadNoteTool.swift */; };
 		MCPT03000000000000000000B1 /* SearchNotesTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT03000000000000000000F1 /* SearchNotesTool.swift */; };
@@ -1334,6 +1336,7 @@
 		MCPTSTGF000000000000000F1 /* GetFolderNotesToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetFolderNotesToolTests.swift; sourceTree = "<group>"; };
 		MCPTSTMV000000000000000F1 /* MoveNoteToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveNoteToolTests.swift; sourceTree = "<group>"; };
 		MCPTSTSR000000000000000F1 /* MCPServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServerTests.swift; sourceTree = "<group>"; };
+		MCPTSTBR000000000000000F1 /* AppBridgeImplTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBridgeImplTests.swift; sourceTree = "<group>"; };
 		MCPTSTLN000000000000000F1 /* ListNotesToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListNotesToolTests.swift; sourceTree = "<group>"; };
 		MCPTSTGP000000000000000F1 /* GetProjectsToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetProjectsToolTests.swift; sourceTree = "<group>"; };
 		MCPTSTGC000000000000000F1 /* GetCurrentNoteToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetCurrentNoteToolTests.swift; sourceTree = "<group>"; };
@@ -1662,6 +1665,7 @@
 		MCP02000000000000000000F1 /* MCPTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTool.swift; sourceTree = "<group>"; };
 		MCP03000000000000000000F1 /* ToolOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOutput.swift; sourceTree = "<group>"; };
 		MCP04000000000000000000F1 /* AppBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBridge.swift; sourceTree = "<group>"; };
+		MCP05000000000000000000F1 /* AppBridgeImpl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBridgeImpl.swift; sourceTree = "<group>"; };
 		MCPT01000000000000000000F1 /* NotePathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotePathResolver.swift; sourceTree = "<group>"; };
 		MCPT02000000000000000000F1 /* ReadNoteTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadNoteTool.swift; sourceTree = "<group>"; };
 		MCPT03000000000000000000F1 /* SearchNotesTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchNotesTool.swift; sourceTree = "<group>"; };
@@ -2609,6 +2613,7 @@
 				MCP02000000000000000000F1 /* MCPTool.swift */,
 				MCP03000000000000000000F1 /* ToolOutput.swift */,
 				MCP04000000000000000000F1 /* AppBridge.swift */,
+				MCP05000000000000000000F1 /* AppBridgeImpl.swift */,
 				MCPGRP000000000000000G02 /* Tools */,
 			);
 			path = MCP;
@@ -2914,6 +2919,7 @@
 				MCPTSTGF000000000000000F1 /* GetFolderNotesToolTests.swift */,
 				MCPTSTMV000000000000000F1 /* MoveNoteToolTests.swift */,
 				MCPTSTSR000000000000000F1 /* MCPServerTests.swift */,
+				MCPTSTBR000000000000000F1 /* AppBridgeImplTests.swift */,
 				MCPTSTLN000000000000000F1 /* ListNotesToolTests.swift */,
 				MCPTSTGP000000000000000F1 /* GetProjectsToolTests.swift */,
 				MCPTSTGC000000000000000F1 /* GetCurrentNoteToolTests.swift */,
@@ -4046,6 +4052,7 @@
 				MCP02000000000000000000B1 /* MCPTool.swift in Sources */,
 				MCP03000000000000000000B1 /* ToolOutput.swift in Sources */,
 				MCP04000000000000000000B1 /* AppBridge.swift in Sources */,
+				MCP05000000000000000000B1 /* AppBridgeImpl.swift in Sources */,
 				MCPT01000000000000000000B1 /* NotePathResolver.swift in Sources */,
 				MCPT02000000000000000000B1 /* ReadNoteTool.swift in Sources */,
 				MCPT03000000000000000000B1 /* SearchNotesTool.swift in Sources */,
@@ -4501,6 +4508,7 @@
 				MCPTSTGF000000000000000B1 /* GetFolderNotesToolTests.swift in Sources */,
 				MCPTSTMV000000000000000B1 /* MoveNoteToolTests.swift in Sources */,
 				MCPTSTSR000000000000000B1 /* MCPServerTests.swift in Sources */,
+				MCPTSTBR000000000000000B1 /* AppBridgeImplTests.swift in Sources */,
 				MCPTSTLN000000000000000B1 /* ListNotesToolTests.swift in Sources */,
 				MCPTSTGP000000000000000B1 /* GetProjectsToolTests.swift in Sources */,
 				MCPTSTGC000000000000000B1 /* GetCurrentNoteToolTests.swift in Sources */,
