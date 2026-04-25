@@ -144,11 +144,11 @@ public struct ExportPDFTool: MCPTool {
             }
         }
 
-        if !routedThroughBridge {
-            return .error("export_pdf currently requires the note to be open in WYSIWYG mode (the renderer reuses the live TK2 layout). Open the note and retry. Closed-note headless rendering is a Phase 3 follow-up.")
-        }
-
-        // Unreachable — both bridge branches return above.
-        return .error("export_pdf reached an unexpected state")
+        // routedThroughBridge is left as a marker for future
+        // headless-render expansion; today every bridge-applied path
+        // returns above, so any miss falls through to the
+        // "open in WYSIWYG" error.
+        _ = routedThroughBridge
+        return .error("export_pdf currently requires the note to be open in WYSIWYG mode (the renderer reuses the live TK2 layout). Open the note and retry. Closed-note headless rendering is a Phase 3 follow-up.")
     }
 }
