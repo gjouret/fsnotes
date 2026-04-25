@@ -180,7 +180,12 @@ class GutterController {
             let frame = fragment.layoutFragmentFrame
             let minY = frame.minY + originY
             let maxY = frame.maxY + originY
-            let midY = frame.midY + originY
+            // Center on the first text-line's typographicBounds, not
+            // the fragment frame: per-heading paragraphSpacing biases
+            // push the geometric midY off the glyph row.
+            let textCenterLocalY = fragment.textLineFragments.first?
+                .typographicBounds.midY ?? frame.height / 2
+            let midY = frame.minY + originY + textCenterLocalY
 
             result.append(VisibleHeadingTK2(
                 minY: minY, maxY: maxY, midY: midY,
