@@ -1626,6 +1626,7 @@ Convert every user-reported bug from this 2-week window into a named regression 
 31. Code block with a blank line in the middle — the background shading is interrupted (white) at the blank line and resumes on the next code line. Shading should span the full code block including blank lines.
 32. Shift-Tab from (0,0) of a table wraps to the LAST cell instead of staying at (0,0). Modular arithmetic in `moveToAdjacentCell` should not wrap.
 33. Stale column-handle subview lingers after `Insert Column Left/Right` — a "ghost" handle stuck at the position the user clicked, while the real handle tracks elsewhere. (Earlier user report; deferred from the chip-tracking fix landing.)
+34. `insertTableMenu` source-mode path inserts a single `\n` before the table instead of a blank line (`\n\n`). Result is invalid GFM when the table follows a paragraph: the table's first row gets eaten as paragraph continuation by external GFM parsers (GitHub, Obsidian, Bear). Block-model path is fine — `MarkdownSerializer` already joins blocks with `\n\n` on save.
 
 **Done when:** every bug has a named regression test; the test passes (bug fixed) OR is wrapped in `XCTExpectFailure` with an issue link.
 
