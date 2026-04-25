@@ -199,11 +199,23 @@ final class FSMTransitionTableTests: XCTestCase {
             }
 
         case .mergeWithPrevious:
-            assertEqual(
-                afterCount, beforeCount - 1,
-                row: row,
-                what: "block count (mergeWithPrevious expects −1)"
-            )
+            // Delta = -1 for the simple two-block case (no blank
+            // separator between the target and its predecessor).
+            // Delta = -2 when a blankLine separator sits between the
+            // two non-blank paragraphs and the merge consumes the
+            // separator too — that's the round-trip-correct behavior
+            // since `[para "a", blankLine, para "b"]` serializes to
+            // "a\n\nb\n" and parsing "ab\n" yields one paragraph.
+            // Either shape is a valid `mergeWithPrevious`; the seed
+            // choice (with vs. without blank separator) decides which.
+            let delta = afterCount - beforeCount
+            if delta != -1 && delta != -2 {
+                assertEqual(
+                    afterCount, beforeCount - 1,
+                    row: row,
+                    what: "block count (mergeWithPrevious expects −1 or −2)"
+                )
+            }
 
         case .exitToBlock(let kind):
             assertEqual(

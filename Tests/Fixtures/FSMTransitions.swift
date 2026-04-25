@@ -289,8 +289,7 @@ enum FSMTransitionTable {
             action: .pressBackspace,
             expected: .mergeWithPrevious,
             cursorAfter: .atEndOfPreviousBlock,
-            note: "Backspace at start of paragraph N (with previous block) merges with previous block (Slice B #8).",
-            bugId: 8
+            note: "Backspace at start of paragraph N merges with the preceding context (Slice B #8). Delta is -1 in the simple two-block case, -2 when a blankLine separator sits between the merged paragraphs (the merge consumes the separator to keep serialize→parse round-trip correct: [para a, blankLine, para b] would serialize to \"a\\n\\nb\\n\" and re-parse \"ab\\n\" to one paragraph)."
         ),
         FSMTransition(
             blockKind: .paragraph,
