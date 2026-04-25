@@ -135,6 +135,7 @@
 		CBGN000000000000000000B1 /* Generator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBGN000000000000000000F1 /* Generator.swift */; };
 		CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */; };
 		BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BRBT000000000000000000F1 /* BitmapReadbackTests.swift */; };
+		BIRT000000000000000000B1 /* BugInventoryRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BIRT000000000000000000F1 /* BugInventoryRegressionTests.swift */; };
 		T2FG000000000000000000B1 /* Phase2eT2fFindAcrossTableCellsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */; };
 		TCCM000000000000000000B1 /* TableCellCursorMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */; };
 		ETVF000000000000000000B1 /* EditTextViewFillRenderSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */; };
@@ -1284,6 +1285,7 @@
 		CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CombinatorialCoverageTests.swift; sourceTree = "<group>"; };
 		CBDB000000000000000000F1 /* DiscoveredBugs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = DiscoveredBugs.txt; sourceTree = "<group>"; };
 		BRBT000000000000000000F1 /* BitmapReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitmapReadbackTests.swift; sourceTree = "<group>"; };
+		BIRT000000000000000000F1 /* BugInventoryRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugInventoryRegressionTests.swift; sourceTree = "<group>"; };
 		T2FG000000000000000000F1 /* Phase2eT2fFindAcrossTableCellsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2eT2fFindAcrossTableCellsTests.swift; sourceTree = "<group>"; };
 		TCCM000000000000000000F1 /* TableCellCursorMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCursorMathTests.swift; sourceTree = "<group>"; };
 		ETVF000000000000000000F1 /* EditTextViewFillRenderSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditTextViewFillRenderSyncTests.swift; sourceTree = "<group>"; };
@@ -2768,6 +2770,7 @@
 				IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */,
 				BRBT000000000000000000F1 /* BitmapReadbackTests.swift */,
 				AHTT000000000000000000F1 /* AsyncHydrationThenTests.swift */,
+				BIRT000000000000000000F1 /* BugInventoryRegressionTests.swift */,
 			);
 			path = UserFlows;
 			sourceTree = "<group>";
@@ -4301,6 +4304,7 @@
 				CBGN000000000000000000B1 /* Generator.swift in Sources */,
 				CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */,
 				BRBT000000000000000000B1 /* BitmapReadbackTests.swift in Sources */,
+				BIRT000000000000000000B1 /* BugInventoryRegressionTests.swift in Sources */,
 				T2GHST000000000000000B1 /* TableStructuralEditingTests.swift in Sources */,
 				T2G40000000000000000000B1 /* TableColumnResizeTests.swift in Sources */,
 				BUG36000000000000000000B1 /* TableDragReorderTests.swift in Sources */,

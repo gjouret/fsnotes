@@ -49,6 +49,7 @@ struct EditorAssertions {
     var tableHandle: TableHandleAssertions { TableHandleAssertions(parent: self) }
     var fragment: FragmentAssertions { FragmentAssertions(parent: self) }
     var tableContent: TableContentAssertions { TableContentAssertions(parent: self) }
+    var block: BlockAssertions { BlockAssertions(parent: self) }
 }
 
 // MARK: - Shared TK2 walkers
@@ -613,5 +614,83 @@ struct TableCellAssertion {
             file: file, line: line
         )
         return parent
+    }
+}
+
+// MARK: - Block kind readback
+
+struct BlockAssertions {
+    let parent: EditorAssertions
+
+    /// Locate block `idx` in the live document projection and return a
+    /// chained assertion handle. The handle's `.is(_:)` asserts the
+    /// block's case discriminator. Reuses the `BlockKindFixture` enum
+    /// already defined for the FSM transition table fixture
+    /// (`Tests/Fixtures/FSMTransitions.swift`) so cross-block bug tests
+    /// (e.g. Bug #18: triple-click paragraph + delete must NOT demote
+    /// the list block below — assert `kind(at: 1).is(.bulletList)`)
+    /// share the same vocabulary as the per-block FSM coverage.
+    func kind(at idx: Int) -> BlockKindAssertion {
+        return BlockKindAssertion(parent: parent, blockIdx: idx)
+    }
+}
+
+struct BlockKindAssertion {
+    let parent: EditorAssertions
+    let blockIdx: Int
+
+    @discardableResult
+    func `is`(
+        _ expected: BlockKindFixture,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        guard let projection = parent.scenario.editor.documentProjection else {
+            XCTFail(
+                "Then.block.kind(at: \(blockIdx)).is: no projection.",
+                file: file, line: line
+            )
+            return parent
+        }
+        let blocks = projection.document.blocks
+        guard blockIdx >= 0, blockIdx < blocks.count else {
+            XCTFail(
+                "Then.block.kind(at: \(blockIdx)).is: out of range " +
+                "(\(blocks.count) blocks).",
+                file: file, line: line
+            )
+            return parent
+        }
+        let actual = mapBlockToFixture(blocks[blockIdx])
+        XCTAssertEqual(
+            actual, expected,
+            "Then.block.kind(at: \(blockIdx)).is: expected \(expected), " +
+            "got \(actual).",
+            file: file, line: line
+        )
+        return parent
+    }
+
+    /// Mirrors the FSM-fixture mapping in `FSMTransitionTableTests.blockMatches`:
+    /// the `.list` Block case fans out to `.bulletList` / `.numberedList`
+    /// / `.todoList` based on the first item's marker shape.
+    private func mapBlockToFixture(_ block: Block) -> BlockKindFixture {
+        switch block {
+        case .paragraph:      return .paragraph
+        case .heading(let l, _): return .heading(level: l)
+        case .blockquote:     return .blockquote
+        case .codeBlock:      return .codeBlock
+        case .table:          return .table
+        case .horizontalRule: return .horizontalRule
+        case .blankLine:      return .blankLine
+        case .htmlBlock:      return .paragraph  // FSM fixture has no htmlBlock
+        case .list(let items, _):
+            guard let first = items.first else { return .bulletList }
+            if first.marker.contains(where: { $0.isNumber }) {
+                return .numberedList
+            }
+            // Todo lists carry a `[ ]` / `[x]` checkbox on item content.
+            if first.checkbox != nil { return .todoList }
+            return .bulletList
+        }
     }
 }

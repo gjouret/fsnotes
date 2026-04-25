@@ -128,4 +128,61 @@ extension EditTextView {
         let len = max(0, min(range.length, maxLen))
         return NSRange(location: loc, length: len)
     }
+
+    /// Triple-click semantics in stock NSTextView select the paragraph
+    /// PLUS the trailing `\n` that anchors the next block. In the
+    /// FSNotes++ block model that newline is the inter-block separator
+    /// — not data the user "owns" — so including it in the selection
+    /// turns a "delete this paragraph's content" gesture into a
+    /// cross-block merge that corrupts the next block (Bug #18:
+    /// triple-click paragraph above a list, press Delete, the list
+    /// block gets demoted/merged).
+    ///
+    /// Override `selectionRange(forProposedRange:granularity:)` so
+    /// `.selectByParagraph` (the granularity NSTextView uses for
+    /// triple-click) clamps off the trailing inter-block separator
+    /// when the proposed range exactly covers a single block + its
+    /// trailing `\n`. Word/character granularity is untouched.
+    public override func selectionRange(
+        forProposedRange proposedCharRange: NSRange,
+        granularity: NSSelectionGranularity
+    ) -> NSRange {
+        let proposed = super.selectionRange(
+            forProposedRange: proposedCharRange,
+            granularity: granularity
+        )
+        guard granularity == .selectByParagraph,
+              let projection = documentProjection,
+              let processor = textStorageProcessor,
+              processor.blockModelActive,
+              !processor.sourceRendererActive,
+              proposed.length > 0
+        else {
+            return proposed
+        }
+        // Find the block whose span starts at the proposed range's
+        // location. If the proposed range covers exactly that block's
+        // span PLUS the trailing inter-block separator (`\n`), strip
+        // the separator off. We don't shrink any other shape — multi-
+        // block paragraph selections, ranges that don't start at a
+        // block boundary, etc. — so caller intent is preserved.
+        let blocks = projection.blockSpans
+        let storageLen = textStorage?.length ?? 0
+        let proposedEnd = proposed.location + proposed.length
+        for span in blocks {
+            guard span.location == proposed.location else { continue }
+            let spanEnd = span.location + span.length
+            // Proposed = block span + 1 trailing newline char.
+            if proposedEnd == spanEnd + 1, spanEnd < storageLen,
+               let str = textStorage?.string,
+               str.utf16.count > spanEnd {
+                let nlIdx = str.utf16.index(str.utf16.startIndex, offsetBy: spanEnd)
+                if str.utf16[nlIdx] == 0x0A /* '\n' */ {
+                    return NSRange(location: span.location, length: span.length)
+                }
+            }
+            break
+        }
+        return proposed
+    }
 }
