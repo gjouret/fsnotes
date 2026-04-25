@@ -307,6 +307,140 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         return (row, col)
     }
 
+    /// Compute the visual caret rectangle for a cursor at
+    /// `cellLocalOffset` characters into cell `(row, col)`, expressed
+    /// in fragment-local coordinates (origin at the fragment's top-
+    /// left). Pairs with `EditTextView.drawInsertionPoint` to paint
+    /// the caret inside the visible cell rather than at the natural-
+    /// flow position TK2's default caret math computes.
+    ///
+    /// Why this is needed: `draw(at:in:)` paints cells at custom grid
+    /// positions via `drawCellContent`. TK2 still lays out the
+    /// fragment's `textLineFragments` in natural left-to-right text
+    /// order; its caret painter reads positions from those line
+    /// fragments and ends up drawing the caret at the top-left of
+    /// the fragment, in the column-handle strip area, regardless of
+    /// where the cursor actually sits in the grid. This helper
+    /// computes the geometrically correct rect so the editor
+    /// override can hand the right rect to the caret painter.
+    ///
+    /// Geometry mirrors `drawRowCells`: each cell's content sub-rect
+    /// is `(colX + padH, rowY + padTop, width - padH*2,
+    /// rowHeight - padTop - padBot)`. We measure the rendered text up
+    /// to `cellLocalOffset` to position the caret horizontally.
+    ///
+    /// Returns `nil` when the (row, col) is out of range for the
+    /// underlying block, or the element isn't a `.table` block.
+    public func caretRectInCell(
+        row: Int,
+        col: Int,
+        cellLocalOffset: Int = 0,
+        caretWidth: CGFloat = 1.0
+    ) -> CGRect? {
+        guard let element = tableElement,
+              case .table(let header, let alignments, let rows, _) = element.block,
+              header.count > 0,
+              row >= 0, row <= rows.count,
+              col >= 0, col < header.count
+        else { return nil }
+        let g = geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+        guard g.columnWidths.count == header.count,
+              g.rowHeights.count == 1 + rows.count
+        else { return nil }
+
+        // Locate the cell (mirror `drawRowCells`).
+        var colX = TableGeometry.handleBarWidth
+        for i in 0..<col { colX += g.columnWidths[i] }
+        let cellWidth = g.columnWidths[col]
+
+        var rowY = TableGeometry.handleBarHeight
+        for i in 0..<row { rowY += g.rowHeights[i] }
+        let rowHeight = g.rowHeights[row]
+
+        let padH = TableGeometry.cellPaddingH()
+        let padTop = TableGeometry.cellPaddingTop()
+        let padBot = TableGeometry.cellPaddingBot()
+        let contentX = colX + padH
+        let contentY = rowY + padTop
+        let contentWidth = max(0, cellWidth - padH * 2)
+        let contentHeight = max(0, rowHeight - padTop - padBot)
+
+        // Measure rendered text width up to `cellLocalOffset` so the
+        // caret sits at the right column inside the cell. For an
+        // empty cell, or offset 0, the caret hugs the content's left
+        // edge — which matches NSText behaviour for an empty line.
+        let isHeader = (row == 0)
+        let cellsForRow: [TableCell]
+        if isHeader { cellsForRow = header }
+        else { cellsForRow = rows[row - 1] }
+        guard col < cellsForRow.count else { return nil }
+        let cell = cellsForRow[col]
+
+        let baseFont = bodyFont
+        let drawFont: NSFont
+        if isHeader {
+            drawFont = NSFontManager.shared.convert(
+                baseFont, toHaveTrait: .boldFontMask
+            )
+        } else {
+            drawFont = baseFont
+        }
+        let alignment = col < alignments.count
+            ? TableGeometry.nsAlignment(for: alignments[col])
+            : .left
+
+        // Build the same attributed string `drawRowCells` paints, then
+        // measure the substring [0, cellLocalOffset) to find the caret
+        // x. NSAttributedString.size() ignores wrapping, which matches
+        // single-line cell content; cells with `<br>` newlines are
+        // multi-line but the caret still sits on its own line — for
+        // this slice we treat the cell as single-line and place the
+        // caret at the measured-text x. Multi-line caret routing is a
+        // follow-up (the cell's wrapped layout would need to be probed).
+        let attributed = NSMutableAttributedString(string: cell.rawText)
+        attributed.addAttribute(
+            .font, value: drawFont,
+            range: NSRange(location: 0, length: attributed.length)
+        )
+
+        let clampedOffset = max(0, min(cellLocalOffset, attributed.length))
+        let measured: CGFloat
+        if clampedOffset == 0 || attributed.length == 0 {
+            measured = 0
+        } else {
+            let prefix = attributed.attributedSubstring(
+                from: NSRange(location: 0, length: clampedOffset)
+            )
+            measured = prefix.size().width
+        }
+
+        // Apply alignment so right- / center-aligned cells place the
+        // caret next to the visible text rather than at the cell's
+        // left edge.
+        let caretX: CGFloat
+        switch alignment {
+        case .right:
+            let totalWidth = attributed.size().width
+            caretX = contentX + max(0, contentWidth - totalWidth) + measured
+        case .center:
+            let totalWidth = attributed.size().width
+            caretX = contentX + max(0, (contentWidth - totalWidth) / 2) + measured
+        default:
+            caretX = contentX + measured
+        }
+
+        return CGRect(
+            x: caretX,
+            y: contentY,
+            width: caretWidth,
+            height: contentHeight
+        )
+    }
+
     // MARK: - Geometry overrides
 
     /// Height = `handleBarHeight` (top strip reserved for column hover

@@ -213,6 +213,40 @@ public final class TableElement: NSTextParagraph {
         return nil
     }
 
+    /// Cursor-aware variant of `cellLocation(forOffset:)`. Where the
+    /// strict locator returns `nil` for offsets that land exactly on
+    /// a separator character (U+001F / U+001E), this variant resolves
+    /// such an offset to the cell whose content immediately precedes
+    /// the separator. This matches the natural cursor semantics: a
+    /// caret parked at the END of a cell's content sits on the
+    /// following separator (or at the element's tail for the very
+    /// last cell), but the user perceives the cursor as being inside
+    /// that cell — Tab from there should advance to the NEXT cell,
+    /// not be interpreted as "no cell selected" and fall through to
+    /// the default tab-character insertion.
+    ///
+    /// Used by `EditTextView+TableNav.tableCursorContext()` and
+    /// `EditTextView.caretRectIfInTableCell()` so cursor-at-cell-end
+    /// (the natural park position after click-to-cell) routes
+    /// through table-aware handling instead of falling back to TK2's
+    /// natural-flow defaults.
+    public func cellAtCursor(forOffset offset: Int) -> (row: Int, col: Int)? {
+        if let strict = cellLocation(forOffset: offset) {
+            return strict
+        }
+        // Strict locator returned nil — offset is either out of range
+        // or sits exactly on a separator. For the latter, walk
+        // backwards one step: the preceding character is the last
+        // content character of the cell whose end the cursor is
+        // parked at. (For an empty cell whose offset == separator
+        // position, `cellLocation` already resolves it via the
+        // `cellStart == i, offset == i` branch — so a nil here
+        // implies a non-empty preceding cell.)
+        let length = (attributedString.string as NSString).length
+        guard offset > 0, offset <= length else { return nil }
+        return cellLocation(forOffset: offset - 1)
+    }
+
     /// Element-local UTF-16 range of the cell at `(row, col)`. The
     /// range covers the cell's content characters — from the first
     /// character after the preceding separator (or element start) up
