@@ -278,9 +278,14 @@ final class TableNavigationTests: XCTestCase {
         )
     }
 
-    // MARK: - 5. Tab wraps to next row
+    // MARK: - 5. Tab advances across the row boundary
 
-    func test_T2d_tabKey_wrapsToNextRow() throws {
+    /// Tab from the last cell of one row should advance to the first
+    /// cell of the next row in row-major order. (Bug #32: this is not
+    /// a "wrap" — wrapping at grid edges was removed; this test
+    /// crosses an internal row boundary, which is just the next cell
+    /// in row-major sequence and still works post-clamp.)
+    func test_T2d_tabKey_advancesAcrossRowBoundary() throws {
         guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
@@ -299,7 +304,58 @@ final class TableNavigationTests: XCTestCase {
         let expected = ctx.offset(1, 0)
         XCTAssertEqual(
             harness.editor.selectedRange().location, expected,
-            "Tab from (0,1) should wrap to start of (1,0) — first body cell"
+            "Tab from (0,1) should advance to start of (1,0) — first body cell"
+        )
+    }
+
+    // MARK: - 5b. Tab at bottom-right cell clamps (no wrap; bug #32)
+
+    /// Tab from the last cell of the last row must NOT wrap back to
+    /// the top-left cell. The cursor stays in (lastRow, lastCol).
+    func test_bug32_tabAtBottomRightCell_clampsAndStays() throws {
+        guard let ctx = makeHarnessWith2x2Table() else {
+            XCTFail("Harness setup failed")
+            return
+        }
+        let harness = ctx.harness
+        defer { harness.teardown() }
+
+        // 2x2 body table → last cell is body row 1 (storage row 2),
+        // column 1.
+        let lastRow = 2
+        let lastCol = 1
+        let startLast = ctx.offset(lastRow, lastCol)
+        harness.editor.setSelectedRange(NSRange(location: startLast, length: 0))
+
+        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+
+        XCTAssertEqual(
+            harness.editor.selectedRange().location, startLast,
+            "Tab at bottom-right must clamp (no wrap to (0,0))"
+        )
+    }
+
+    // MARK: - 5c. Shift-Tab at top-left cell clamps (no wrap; bug #32)
+
+    /// Shift-Tab from cell (0, 0) must NOT wrap to the bottom-right
+    /// cell. The cursor stays at (0, 0). Direct user-prescribed
+    /// behaviour for bug #32.
+    func test_bug32_shiftTabAtTopLeftCell_clampsAndStays() throws {
+        guard let ctx = makeHarnessWith2x2Table() else {
+            XCTFail("Harness setup failed")
+            return
+        }
+        let harness = ctx.harness
+        defer { harness.teardown() }
+
+        let start00 = ctx.offset(0, 0)
+        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+
+        harness.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+
+        XCTAssertEqual(
+            harness.editor.selectedRange().location, start00,
+            "Shift-Tab at top-left must clamp (no wrap to bottom-right)"
         )
     }
 
@@ -435,13 +491,11 @@ final class TableNavigationTests: XCTestCase {
         )
     }
 
-    /// Shift-Tab from start of cell (0, 0) stays at (0, 0) — there
-    /// is no previous cell to wrap into beyond the wrap-around at
-    /// the end of the body, but the test from line 308 already
-    /// verifies the wrap-back-to-(0,0) path. Here we lock in the
-    /// edge: Shift-Tab from (0, 0) start must NOT insert a literal
-    /// `\t`. The current FSM does wrap to the last cell — that's
-    /// fine; we just assert no tab character was inserted.
+    /// Shift-Tab from start of cell (0, 0) must not insert a literal
+    /// `\t` into storage. After the bug #32 fix, the cursor also stays
+    /// at (0, 0) — clamped at the grid's start. (`bug32_*` tests
+    /// above own the clamp assertion specifically; this one keeps the
+    /// no-tab-character contract for the same scenario.)
     func test_phase11sliceB_shiftTabAtStartOfFirstCell_doesNotInsertTab() throws {
         guard let ctx = makeHarnessWith2x2Table() else {
             XCTFail("Harness setup failed"); return
@@ -460,14 +514,14 @@ final class TableNavigationTests: XCTestCase {
             storageBefore, storageAfter,
             "Shift-Tab inside table must not modify storage (no literal \\t)"
         )
-        // Cursor lands somewhere inside the table — the wrap-around
-        // moves it to the last cell. The exact target is asserted in
-        // the dedicated wrap-around test; here we only need to know
-        // the cursor stayed inside the table element.
+        // Bug #32 contract: clamps at the grid's start — cursor stays
+        // at (0, 0). This is stricter than "still in table"; the
+        // dedicated bug32 test asserts identity, this one re-verifies
+        // it as a side-channel check on the no-tab-character path.
         let cursor = harness.editor.selectedRange().location
-        XCTAssertTrue(
-            harness.editor.storageOffsetIsInTableElement(cursor),
-            "Shift-Tab cursor must remain in table"
+        XCTAssertEqual(
+            cursor, start00,
+            "Shift-Tab from (0,0) must clamp — cursor stays at (0,0)"
         )
     }
 

@@ -6,7 +6,7 @@
 //  grid. Does NOT edit cell text (T2-e) and does NOT implement hover /
 //  drag-reorder / focus ring (T2-g). Pure routing:
 //
-//    * Tab / Shift-Tab  → next / previous cell (wraps across rows)
+//    * Tab / Shift-Tab  → next / previous cell (clamped at grid edges)
 //    * Right-arrow at cell end    → start of next cell
 //    * Left-arrow  at cell start  → end   of previous cell
 //    * Down-arrow  inside a cell  → same column, row below
@@ -248,11 +248,12 @@ extension EditTextView {
     // MARK: - Cell-granularity movement (Tab / Shift-Tab)
 
     /// Tab / Shift-Tab: advance to the next / previous cell in
-    /// row-major order, wrapping across rows. At the end of the last
-    /// cell, Tab wraps to the header's first cell; at the start of
-    /// the first cell, Shift-Tab wraps to the last body cell. This
-    /// mirrors the pre-Phase-2e `InlineTableView` widget's wrap-around
-    /// behaviour (the widget was deleted in commit de1f146).
+    /// row-major order, clamped at the grid boundaries. Tab from the
+    /// bottom-right cell stays put (no "create new row" behaviour);
+    /// Shift-Tab from the top-left cell stays put (no wrap to the last
+    /// body cell). Bug #32: the prior implementation used modular
+    /// arithmetic that wrapped in both directions, so Shift-Tab from
+    /// (0, 0) jumped to the bottom-right cell.
     private func moveToAdjacentCell(
         from ctx: TableCursorContext,
         offset delta: Int
@@ -266,8 +267,10 @@ extension EditTextView {
 
         let totalCells = cols * totalRows
         let currentIdx = ctx.row * cols + ctx.col
-        // Modular arithmetic so negative delta wraps correctly.
-        let targetIdx = ((currentIdx + delta) % totalCells + totalCells) % totalCells
+        // Clamp so Tab at end-of-grid and Shift-Tab at start-of-grid
+        // are no-ops (cursor stays in its current cell), matching the
+        // user's "should not wrap" prescription for bug #32.
+        let targetIdx = max(0, min(totalCells - 1, currentIdx + delta))
         let targetRow = targetIdx / cols
         let targetCol = targetIdx % cols
 

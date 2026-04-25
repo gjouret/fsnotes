@@ -171,6 +171,33 @@ final class EditorScenario {
         return self
     }
 
+    /// Press Tab. Routes through `handleTableNavCommand` so the
+    /// table-cell move semantics (advance-cell, no literal `\t`) are
+    /// exercised when the cursor is in a TableElement; falls through to
+    /// default handling otherwise.
+    @discardableResult
+    func pressTab(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> EditorScenario {
+        _ = editor.handleTableNavCommand(
+            #selector(NSResponder.insertTab(_:))
+        )
+        return self
+    }
+
+    /// Press Shift-Tab. Mirrors `pressTab` for the previous-cell move.
+    @discardableResult
+    func pressShiftTab(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> EditorScenario {
+        _ = editor.handleTableNavCommand(
+            #selector(NSResponder.insertBacktab(_:))
+        )
+        return self
+    }
+
     /// Paste markdown at the current selection.
     @discardableResult
     func paste(

@@ -574,29 +574,19 @@ final class BugInventoryRegressionTests: XCTestCase {
         )
     }
 
-    // MARK: - Bug #32: Shift-Tab from (0,0) of table doesn't wrap (UNFIXED)
+    // MARK: - Bug #32: Shift-Tab from (0,0) of table doesn't wrap (FIXED)
 
     /// Modular arithmetic in `moveToAdjacentCell` should not wrap.
-    /// User-reported: Shift-Tab from cell (0,0) wraps to the LAST
-    /// cell. Selection-state assertion outside the FSM table.
+    /// User-reported: Shift-Tab from cell (0, 0) used to wrap to the
+    /// LAST cell. Fix: clamp the row-major target index to
+    /// `[0, totalCells - 1]` instead of taking it mod totalCells. Now
+    /// Shift-Tab from (0, 0) is a no-op; cursor stays at (0, 0).
     func test_bug32_shiftTabFromTopLeftCell_doesNotWrap() {
-        XCTExpectFailure(
-            "Bug #32 — Shift-Tab from cell (0,0) wraps to the LAST cell " +
-            "instead of staying at (0,0). Modular arithmetic in " +
-            "moveToAdjacentCell shouldn't wrap.",
-            options: strict()
-        )
         Given.keyWindowNote()
             .with(markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n")
             .clickInCell(row: 0, col: 0)
-        // TODO: needs a Then.cursor.isInCell at the same coords after
-        //       a Shift-Tab. The harness has no shiftTab verb yet —
-        //       composed-shape blocked until either pressShiftTab lands
-        //       on EditorScenario or this gets exercised at the FSM table.
-        XCTFail(
-            "Bug #32 readback not yet available. " +
-            "TODO: add EditorScenario.pressShiftTab + reuse Then.cursor.isInCell."
-        )
+            .pressShiftTab()
+            .Then.cursor.isInCell(row: 0, col: 0)
     }
 
     // MARK: - Bug #33: Stale column-handle subview after insert (UNFIXED)
