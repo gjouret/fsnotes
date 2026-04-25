@@ -767,6 +767,10 @@
 		MCPT04000000000000000000B1 /* ListFoldersTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT04000000000000000000F1 /* ListFoldersTool.swift */; };
 		MCPT05000000000000000000B1 /* GetFolderNotesTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT05000000000000000000F1 /* GetFolderNotesTool.swift */; };
 		MCPT06000000000000000000B1 /* MoveNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT06000000000000000000F1 /* MoveNoteTool.swift */; };
+		MCPT07000000000000000000B1 /* ListNotesTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT07000000000000000000F1 /* ListNotesTool.swift */; };
+		MCPT08000000000000000000B1 /* GetProjectsTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT08000000000000000000F1 /* GetProjectsTool.swift */; };
+		MCPT09000000000000000000B1 /* GetCurrentNoteTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT09000000000000000000F1 /* GetCurrentNoteTool.swift */; };
+		MCPT10000000000000000000B1 /* GetTagsTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPT10000000000000000000F1 /* GetTagsTool.swift */; };
 		OLLAMA00000000000000000B1 /* OllamaModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F1 /* OllamaModel.swift */; };
 		OLLAMA00000000000000000B2 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F2 /* OllamaClient.swift */; };
 		OLLAMA00000000000000000B3 /* Phase1OllamaClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F3 /* Phase1OllamaClientTests.swift */; };
@@ -1636,6 +1640,10 @@
 		MCPT04000000000000000000F1 /* ListFoldersTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListFoldersTool.swift; sourceTree = "<group>"; };
 		MCPT05000000000000000000F1 /* GetFolderNotesTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetFolderNotesTool.swift; sourceTree = "<group>"; };
 		MCPT06000000000000000000F1 /* MoveNoteTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveNoteTool.swift; sourceTree = "<group>"; };
+		MCPT07000000000000000000F1 /* ListNotesTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListNotesTool.swift; sourceTree = "<group>"; };
+		MCPT08000000000000000000F1 /* GetProjectsTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetProjectsTool.swift; sourceTree = "<group>"; };
+		MCPT09000000000000000000F1 /* GetCurrentNoteTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetCurrentNoteTool.swift; sourceTree = "<group>"; };
+		MCPT10000000000000000000F1 /* GetTagsTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GetTagsTool.swift; sourceTree = "<group>"; };
 		D77CC040216A608500582B97 /* EditorScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorScrollView.swift; sourceTree = "<group>"; };
 		D77E05282463124300AD7772 /* StorageType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageType.swift; sourceTree = "<group>"; };
 		D77F41B22A0D48F500E2B7A2 /* Launch Screen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = "Launch Screen.storyboard"; sourceTree = "<group>"; };
@@ -2581,6 +2589,10 @@
 				MCPT04000000000000000000F1 /* ListFoldersTool.swift */,
 				MCPT05000000000000000000F1 /* GetFolderNotesTool.swift */,
 				MCPT06000000000000000000F1 /* MoveNoteTool.swift */,
+				MCPT07000000000000000000F1 /* ListNotesTool.swift */,
+				MCPT08000000000000000000F1 /* GetProjectsTool.swift */,
+				MCPT09000000000000000000F1 /* GetCurrentNoteTool.swift */,
+				MCPT10000000000000000000F1 /* GetTagsTool.swift */,
 			);
 			path = Tools;
 			sourceTree = "<group>";
@@ -3989,6 +4001,10 @@
 				MCPT04000000000000000000B1 /* ListFoldersTool.swift in Sources */,
 				MCPT05000000000000000000B1 /* GetFolderNotesTool.swift in Sources */,
 				MCPT06000000000000000000B1 /* MoveNoteTool.swift in Sources */,
+				MCPT07000000000000000000B1 /* ListNotesTool.swift in Sources */,
+				MCPT08000000000000000000B1 /* GetProjectsTool.swift in Sources */,
+				MCPT09000000000000000000B1 /* GetCurrentNoteTool.swift in Sources */,
+				MCPT10000000000000000000B1 /* GetTagsTool.swift in Sources */,
 				OLLAMA00000000000000000B1 /* OllamaModel.swift in Sources */,
 				OLLAMA00000000000000000B2 /* OllamaClient.swift in Sources */,
 				OLLAMA00000000000000000B4 /* OllamaProvider.swift in Sources */,
