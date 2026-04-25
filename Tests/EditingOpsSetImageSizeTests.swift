@@ -163,4 +163,54 @@ class EditingOpsSetImageSizeTests: XCTestCase {
             try EditingOps.setImageSize(blockIndex: 0, inlinePath: [99], newWidth: 300, in: p)
         )
     }
+
+    // MARK: - Bug #27: image resize must preserve center alignment
+
+    /// `DocumentRenderer` centers image-only paragraphs (`inline.count == 1,
+    /// case .image`) by setting `NSParagraphStyle.alignment = .center` on
+    /// the rendered block's paragraph style. After a resize via
+    /// `setImageSize`, the resulting block is still an image-only paragraph
+    /// and its rendered paragraph style must therefore still carry
+    /// `.alignment = .center` — otherwise the image would draw left-aligned
+    /// in the live editor (bug #27, data-path leg).
+    func test_bug27_setWidth_preservesCenterAlignmentOnImageOnlyParagraph() throws {
+        let p = project("![alt](img.png)")
+
+        let beforeBlockSpan = p.blockSpans[0]
+        XCTAssertGreaterThan(beforeBlockSpan.length, 0)
+        let beforeStyle = p.attributed.attribute(
+            .paragraphStyle, at: beforeBlockSpan.location, effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(beforeStyle?.alignment, .center,
+                       "BEFORE: image-only paragraph should be centered by the renderer")
+
+        let result = try EditingOps.setImageSize(
+            blockIndex: 0, inlinePath: [0], newWidth: 200, in: p
+        )
+
+        let afterBlockSpan = result.newProjection.blockSpans[0]
+        XCTAssertGreaterThan(afterBlockSpan.length, 0)
+        let afterStyle = result.newProjection.attributed.attribute(
+            .paragraphStyle, at: afterBlockSpan.location, effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(afterStyle?.alignment, .center,
+                       "AFTER setImageSize: image-only paragraph must remain centered (bug #27)")
+    }
+
+    /// Same invariant via the splice replacement that `commitImageResize`
+    /// hands to `applyEditResultWithUndo` / `applyDocumentEdit`.
+    func test_bug27_setWidth_spliceReplacementCarriesCenterAlignment() throws {
+        let p = project("![alt](img.png)")
+        let result = try EditingOps.setImageSize(
+            blockIndex: 0, inlinePath: [0], newWidth: 200, in: p
+        )
+
+        XCTAssertGreaterThan(result.spliceReplacement.length, 0,
+                             "splice replacement should not be empty after a resize")
+        let spliceStyle = result.spliceReplacement.attribute(
+            .paragraphStyle, at: 0, effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(spliceStyle?.alignment, .center,
+                       "splice replacement must carry centered paragraph style (bug #27)")
+    }
 }

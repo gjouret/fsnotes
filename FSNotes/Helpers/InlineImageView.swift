@@ -239,6 +239,20 @@ public class InlineImageView: NSImageView {
     /// (startSize + delta), not (currentFrame + delta), so micro-deltas
     /// don't compound and the reverse direction unwinds cleanly.
     private var dragStartSize: NSSize = .zero
+    /// Horizontal center of the frame at drag start, in the parent's
+    /// coordinate space. Bug #27: image-only paragraphs are rendered
+    /// centered (`DocumentRenderer.paragraphStyle` sets `.alignment =
+    /// .center` for `inline.count == 1, case .image`). Without
+    /// re-anchoring `frame.origin.x` around this center on every drag
+    /// tick, shrinking the view leaves `frame.origin.x` at the OLD
+    /// (left-aligned-from-the-old-larger-width) position, producing
+    /// the visible "image draws left-aligned" symptom — even though
+    /// the underlying paragraph style is still `.center`. Storing the
+    /// center at drag-start (not the live `frame.origin.x` per tick)
+    /// matches the `dragStartSize`-based width math: both use the
+    /// pre-drag baseline so micro-deltas don't compound and reverse
+    /// drags unwind cleanly.
+    private var dragStartCenterX: CGFloat = 0
 
     /// Minimum width (in points) a handle drag can shrink to. Matches
     /// the clamp in `EditTextView+Interaction.swift`'s TK1 drag path
@@ -269,6 +283,13 @@ public class InlineImageView: NSImageView {
             activeHandle = handle
             dragStartPoint = event.locationInWindow
             dragStartSize = bounds.size
+            // Bug #27: capture the frame's pre-drag horizontal center so
+            // mouseDragged can re-anchor the view around it. Image-only
+            // paragraphs are centered by the renderer; keeping the same
+            // visual center across drag ticks matches the centered
+            // alignment instead of letting `frame.origin.x` stick at
+            // the pre-shrink left edge (the bug).
+            dragStartCenterX = frame.midX
             isSelected = true
             return
         }
@@ -309,9 +330,21 @@ public class InlineImageView: NSImageView {
         // Live visual update. No EditingOps call here — that runs once
         // on mouseUp. Resizing the frame re-triggers draw(...) which
         // repositions the handle overlay to match.
+        //
+        // Bug #27: re-anchor `frame.origin.x` around the pre-drag
+        // horizontal center so the view shrinks/grows symmetrically
+        // around its center — matching the centered paragraph style
+        // applied to image-only paragraphs by `DocumentRenderer`.
+        // Preserving `frame.origin.x` (the old behavior) keeps the
+        // LEFT edge fixed: shrinking the width then visibly pulls the
+        // right edge inward while the left edge stays put — which is
+        // exactly the "draws left-aligned" symptom users see. The
+        // attachment's storage paragraph style is still `.center`;
+        // this fixes the live frame to match it.
         let newSize = NSSize(width: newWidth, height: newHeight)
+        let newOriginX = dragStartCenterX - newSize.width / 2
         frame = NSRect(
-            x: frame.origin.x, y: frame.origin.y,
+            x: newOriginX, y: frame.origin.y,
             width: newSize.width, height: newSize.height
         )
         needsDisplay = true
