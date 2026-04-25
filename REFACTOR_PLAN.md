@@ -1621,9 +1621,11 @@ Convert every user-reported bug from this 2-week window into a named regression 
 26. H1 button on multi-paragraph selection makes ALL paragraphs H1, not just the first
 27. Image resize (shrink) draws image left-aligned instead of centered
 28. Folded header keeps the table-copy gutter icon visible even after the table is hidden by the fold
-29. Click in top-left cell paints caret ABOVE the cell (in the column-handle strip area) — text DOES land in the cell, but the visual caret is mis-positioned (currently being fixed by a subagent)
-30. Tab inside a table cell inserts a literal `\t` instead of moving focus to the next cell (currently being fixed by a subagent)
+29. Click in top-left cell paints caret ABOVE the cell ✅ (just shipped: `de68ca6`)
+30. Tab inside a table cell inserts a literal `\t` ✅ (just shipped: `f55f65a`)
 31. Code block with a blank line in the middle — the background shading is interrupted (white) at the blank line and resumes on the next code line. Shading should span the full code block including blank lines.
+32. Shift-Tab from (0,0) of a table wraps to the LAST cell instead of staying at (0,0). Modular arithmetic in `moveToAdjacentCell` should not wrap.
+33. Stale column-handle subview lingers after `Insert Column Left/Right` — a "ghost" handle stuck at the position the user clicked, while the real handle tracks elsewhere. (Earlier user report; deferred from the chip-tracking fix landing.)
 
 **Done when:** every bug has a named regression test; the test passes (bug fixed) OR is wrapped in `XCTExpectFailure` with an issue link.
 
