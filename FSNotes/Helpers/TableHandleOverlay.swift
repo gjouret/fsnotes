@@ -68,13 +68,17 @@ final class TableHandleOverlay {
     private var notificationObservers: [NSObjectProtocol] = []
     private var isApplyingEdit = false
 
-    /// Active column+row handle chip subviews — one pair per
-    /// visible table, keyed by fragment object identity. Persist
-    /// across hover updates so the only work on mouse-move is a
-    /// `.frame` reassignment (AppKit handles the redraw for free,
-    /// matching how the TK1 `GlassHandleView` worked).
-    private var chipsByFragment:
-        [ObjectIdentifier: (col: TableHandleChip, row: TableHandleChip)] = [:]
+    /// A single global pair of column + row handle chip subviews.
+    /// The user can only hover over one cell at a time, so only one
+    /// pair needs to exist at any moment. Keying chips per-fragment
+    /// produced stale duplicates: TK2 sometimes recreates fragment
+    /// instances across layout passes, and each fresh instance got
+    /// its own chip pair while old chips lingered as orphan
+    /// subviews — visible duplicates AND orphan hit-testers that
+    /// intercepted clicks meant for cells. One global pair sidesteps
+    /// the whole identity-stability question.
+    private var globalChips:
+        (col: TableHandleChip, row: TableHandleChip)?
 
     // MARK: - Init / deinit
 
@@ -152,14 +156,12 @@ final class TableHandleOverlay {
             view.blockIndex = record.blockIndex
             view.isHidden = false
         }
-        // Keep chip subviews in sync with visible-tables changes: any
-        // chips keyed on a fragment that's no longer visible get
-        // hidden. New table fragments will create their chips lazily
-        // in updateHover.
-        let visibleKeys = Set(visible.map { ObjectIdentifier($0.fragment) })
-        for (key, chips) in chipsByFragment where !visibleKeys.contains(key) {
-            chips.col.isHidden = true
-            chips.row.isHidden = true
+        // Hide the global chip pair on any reposition where no
+        // tables are visible. (When a table IS visible, the next
+        // hover event will repositiopn / unhide them.)
+        if visible.isEmpty {
+            globalChips?.col.isHidden = true
+            globalChips?.row.isHidden = true
         }
 
         if pool.count > visible.count {
@@ -283,16 +285,14 @@ final class TableHandleOverlay {
         // below do the visual work.
         _ = fragment.setHoverState(state)
 
-        // Lazily create per-fragment chip pair. They stay attached
-        // as subviews of the editor; on each hover update we just
-        // move/hide them. This mirrors the TK1 `InlineTableView`
-        // approach where a `GlassHandleView` subview was
-        // repositioned on mouseMoved — `.frame` reassignment marks
-        // the dirty rects automatically via NSView's invalidation
-        // machinery, so the chip always redraws at the new location.
-        let key = ObjectIdentifier(fragment)
+        // Lazily create the single global chip pair. The pair stays
+        // attached as subviews of the editor; on each hover update
+        // we just move/hide them. This mirrors the TK1 `InlineTableView`
+        // approach where a `GlassHandleView` subview was repositioned
+        // on mouseMoved — `.frame` reassignment marks the dirty rects
+        // automatically via NSView's invalidation machinery.
         let chips: (col: TableHandleChip, row: TableHandleChip)
-        if let existing = chipsByFragment[key] {
+        if let existing = globalChips {
             chips = existing
         } else {
             let col = TableHandleChip(orientation: .horizontal)
@@ -300,7 +300,7 @@ final class TableHandleOverlay {
             editor.addSubview(col)
             editor.addSubview(row)
             chips = (col, row)
-            chipsByFragment[key] = chips
+            globalChips = chips
         }
 
         let fragFrame = fragment.layoutFragmentFrame

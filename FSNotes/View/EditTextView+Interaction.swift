@@ -260,28 +260,41 @@ extension EditTextView {
         guard let tlm = self.textLayoutManager,
               let contentStorage = tlm.textContentManager
                 as? NSTextContentStorage
-        else { return false }
+        else {
+            bmLog("🖱 handleTableCellClick: no tlm or contentStorage")
+            return false
+        }
         let point = self.convert(event.locationInWindow, from: nil)
-        // `textLayoutFragment(for: point)` expects text-container
-        // coords, same as `characterIndexTK2`.
         let properPoint = NSPoint(
             x: point.x - textContainerInset.width,
             y: point.y - textContainerInset.height
         )
-        guard let fragment = tlm.textLayoutFragment(for: properPoint),
-              let tableFrag = fragment as? TableLayoutFragment,
+        guard let fragment = tlm.textLayoutFragment(for: properPoint) else {
+            bmLog("🖱 handleTableCellClick: no fragment at properPoint=\(properPoint)")
+            return false
+        }
+        let fragClass = String(describing: Swift.type(of: fragment))
+        guard let tableFrag = fragment as? TableLayoutFragment,
               let element = fragment.textElement as? TableElement,
               let elementRange = element.elementRange
-        else { return false }
+        else {
+            bmLog("🖱 handleTableCellClick: fragment is \(fragClass), not TableLayoutFragment — pass-through")
+            return false
+        }
         let localPoint = CGPoint(
             x: properPoint.x - fragment.layoutFragmentFrame.origin.x,
             y: properPoint.y - fragment.layoutFragmentFrame.origin.y
         )
-        guard let (row, col) = tableFrag.cellHit(at: localPoint),
-              let cellLocalRange = element.cellRange(
-                forCellAt: (row: row, col: col)
-              )
-        else { return false }
+        guard let (row, col) = tableFrag.cellHit(at: localPoint) else {
+            bmLog("🖱 handleTableCellClick: cellHit nil at localPoint=\(localPoint) fragFrame=\(fragment.layoutFragmentFrame)")
+            return false
+        }
+        guard let cellLocalRange = element.cellRange(
+            forCellAt: (row: row, col: col)
+        ) else {
+            bmLog("🖱 handleTableCellClick: no cellRange for (\(row),\(col))")
+            return false
+        }
         let docStart = contentStorage.documentRange.location
         let elementStart = contentStorage.offset(
             from: docStart, to: elementRange.location
@@ -292,7 +305,7 @@ extension EditTextView {
         let target = elementStart + cellLocalRange.location +
             cellLocalRange.length
         setSelectedRange(NSRange(location: target, length: 0))
-        bmLog("🖱 handleTableCellClick: cell=(\(row),\(col)) target=\(target)")
+        bmLog("🖱 handleTableCellClick: cell=(\(row),\(col)) target=\(target) elementStart=\(elementStart) cellLocal=\(cellLocalRange)")
         return true
     }
 

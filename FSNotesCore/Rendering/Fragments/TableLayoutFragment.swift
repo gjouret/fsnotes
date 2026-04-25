@@ -427,20 +427,15 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             gridWidth: gridWidth,
             gridHeight: gridHeight
         )
-        // Hover-driven handle chrome. In the default (`.none`) state
-        // this is a no-op — a steady-state table looks identical to
-        // the pre-T2-g render.
-        drawHoverHandles(
-            context: context,
-            columnWidths: g.columnWidths,
-            rowHeights: g.rowHeights,
-            gridLeft: gridLeft,
-            gridTop: gridTop,
-            gridWidth: gridWidth,
-            gridHeight: gridHeight,
-            containerOriginX: containerOriginX,
-            topStripY: point.y
-        )
+        // Handle chrome is now painted by `TableHandleChip` real
+        // NSView subviews (created by `TableHandleOverlay.updateHover`),
+        // not by the fragment. The chip approach moves with the mouse
+        // because AppKit invalidates a chip's dirty rect on `.frame`
+        // change for free; the fragment-level paint route never re-
+        // ran `draw(at:in:)` after the first hover (TK2 caches the
+        // rendering surface), which left "stuck" chrome at the first
+        // hovered cell while the chip moved correctly with the mouse.
+        // Calling `drawHoverHandles` here is now dead code.
         // T2-g.4 live drag-resize preview line. No-op when no preview
         // is set (the steady state).
         drawResizePreview(
