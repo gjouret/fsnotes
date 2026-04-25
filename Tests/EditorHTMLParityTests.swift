@@ -1360,13 +1360,20 @@ class EditorHTMLParityTests: XCTestCase {
         assertLiveDocumentRoundTrips(editor)
     }
 
-    func test_rc3_multiParagraphSelection_setHeading_convertsAll() {
+    func test_rc3_multiParagraphSelection_setHeading_promotesFirstOnly() {
+        // Bug #26 (user-reported): heading promotion on a multi-line
+        // selection only promotes the FIRST overlapped block. The
+        // common case is "select title plus body, click H2" — the
+        // user wants to title the first line, not promote everything.
+        // This is a deliberate departure from the other rc3
+        // multi-paragraph block-format primitives (toggleList,
+        // toggleTodo, toggleBlockquote) which apply to every block.
         let editor = makeEditor()
         fill(editor, "First\n\nSecond\n\nThird")
         let len = editor.textStorage?.length ?? 0
         run([.select(NSRange(location: 0, length: len)),
              .setHeading(level: 2)], on: editor)
-        assertEditorMatchesMarkdown(editor, "## First\n\n## Second\n\n## Third")
+        assertEditorMatchesMarkdown(editor, "## First\n\nSecond\n\nThird")
         assertLiveDocumentRoundTrips(editor)
     }
 

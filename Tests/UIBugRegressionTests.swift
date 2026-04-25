@@ -1287,6 +1287,59 @@ final class UIBugRegressionTests: XCTestCase {
         }
     }
 
+    // Bug #26 — H1/H2/H3 on a multi-paragraph selection promotes ONLY
+    // the first overlapped non-blank block. Promoting every paragraph
+    // in a multi-block selection produces a wall of headings; common
+    // user intent is "make the first line a title."
+    //
+    // SEMANTIC NOTE: this is a deliberate departure from the parallel
+    // multi-paragraph block-format primitives (toggleList, toggleTodo,
+    // toggleBlockquote) which apply to every overlapped block. Per
+    // the user's bug report the expectation here is "only the first
+    // paragraph becomes H1; the others stay paragraphs." If the
+    // convention is later relaxed back to "convert all," this test
+    // pins the chosen semantics.
+    func test_h1_onMultiLineSelection_promotesOnlyFirstLine() {
+        let md = "line one\n\nline two\n\nline three\n"
+        let h = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+        let len = h.editor.textStorage?.length ?? 0
+        h.selectRange(NSRange(location: 0, length: len))
+        _ = h.editor.changeHeadingLevelViaBlockModel(1)
+        guard let doc = h.document else {
+            XCTFail("no projection"); return
+        }
+        let headingCount = doc.blocks.filter {
+            if case .heading = $0 { return true }
+            return false
+        }.count
+        let paragraphCount = doc.blocks.filter {
+            if case .paragraph = $0 { return true }
+            return false
+        }.count
+        XCTAssertEqual(
+            headingCount, 1,
+            "H1 on multi-line selection should produce exactly ONE " +
+            "heading block; got \(headingCount). doc=\(doc.blocks)"
+        )
+        XCTAssertEqual(
+            paragraphCount, 2,
+            "H1 on multi-line selection should leave TWO paragraphs " +
+            "untouched; got \(paragraphCount). doc=\(doc.blocks)"
+        )
+        if case let .heading(level, suffix) = doc.blocks.first {
+            XCTAssertEqual(level, 1)
+            XCTAssertTrue(
+                suffix.contains("one"),
+                "first block should be heading containing 'one'; got '\(suffix)'"
+            )
+        } else {
+            XCTFail("first block should be .heading; got \(String(describing: doc.blocks.first))")
+        }
+    }
+
     // Probe 36b: USER REPORTED — toggling one todo checkbox wipes
     // ALL checkbox glyphs in the note. Routes through the same
     // primitive a checkbox click fires (toggleTodoCheckboxViaBlockModel).

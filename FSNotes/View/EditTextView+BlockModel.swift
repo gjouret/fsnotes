@@ -2161,11 +2161,42 @@ extension EditTextView {
     }
 
     /// Change heading level via the block model.
-    /// When multiple blocks are selected, applies to each non-blank block.
+    ///
+    /// Bug #26 semantics: when the user has a multi-paragraph
+    /// selection and clicks an H1/H2/H3 button, only the FIRST
+    /// non-blank block in the selection is promoted. The remaining
+    /// paragraphs stay paragraphs. Promoting *every* paragraph in a
+    /// multi-block selection produces a wall of headings that's almost
+    /// never what the user wants — selecting "title plus body" should
+    /// title the title, not promote the body. This is a deliberate
+    /// departure from the parallel `toggleList` / `toggleQuote` /
+    /// `toggleTodo` primitives which still apply to every overlapped
+    /// block.
+    ///
     /// Returns true if handled.
     func changeHeadingLevelViaBlockModel(_ level: Int) -> Bool {
-        return applyToggleAcrossSelection(actionName: "Heading") { proj, loc in
-            try EditingOps.changeHeadingLevel(level, at: loc, in: proj)
+        guard var projection = documentProjection else { return false }
+        let sel = selectedRange()
+        do {
+            let overlapping = projection.blockIndices(overlapping: sel)
+            // Skip blank lines (consistent with applyToggleAcrossSelection).
+            let nonBlank = overlapping.filter { idx in
+                if case .blankLine = projection.document.blocks[idx] { return false }
+                return true
+            }
+            let candidates = nonBlank.isEmpty ? overlapping : nonBlank
+            guard let firstIdx = candidates.first else { return false }
+            let span = projection.blockSpans[firstIdx]
+            let result = try EditingOps.changeHeadingLevel(
+                level, at: span.location, in: projection
+            )
+            applyEditResultWithUndo(result, actionName: "Heading")
+            projection = result.newProjection
+            documentProjection = projection
+            return true
+        } catch {
+            bmLog("⚠️ changeHeadingLevel failed: \(error)")
+            return false
         }
     }
 
