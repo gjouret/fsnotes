@@ -497,6 +497,7 @@
 		D70E9E1A2901AEF900A3C634 /* Tree.swift in Sources */ = {isa = PBXBuildFile; fileRef = D73BCC8228EB5EC2008B3BBC /* Tree.swift */; };
 		D70F830428CE858E004818C5 /* Git in Frameworks */ = {isa = PBXBuildFile; productRef = D70F830328CE858E004818C5 /* Git */; };
 		D70F830628CE8596004818C5 /* Git in Frameworks */ = {isa = PBXBuildFile; productRef = D70F830528CE8596004818C5 /* Git */; };
+		D7AA00012BFFAB0000000003 /* STTextKitPlus in Frameworks */ = {isa = PBXBuildFile; productRef = D7AA00012BFFAB0000000002 /* STTextKitPlus */; };
 		D7104A64230BD8C500B6D8EE /* SortDirection.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7104A63230BD8C500B6D8EE /* SortDirection.swift */; };
 		D7104A65230BD8C500B6D8EE /* SortDirection.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7104A63230BD8C500B6D8EE /* SortDirection.swift */; };
 		D7104A67230BD8C500B6D8EE /* SortDirection.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7104A63230BD8C500B6D8EE /* SortDirection.swift */; };
@@ -1900,6 +1901,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D7AA00012BFFAB0000000003 /* STTextKitPlus in Frameworks */,
 				D7D2F2822B54BE59003DCA47 /* Shout in Frameworks */,
 				D70F830628CE8596004818C5 /* Git in Frameworks */,
 				D4DB932C9F51CAE71393A28B /* Pods_FSNotes.framework in Frameworks */,
@@ -3081,6 +3083,7 @@
 			);
 			name = FSNotes;
 			packageProductDependencies = (
+				D7AA00012BFFAB0000000002 /* STTextKitPlus */,
 				D70F830528CE8596004818C5 /* Git */,
 				D7D2F2812B54BE59003DCA47 /* Shout */,
 			);
@@ -3246,6 +3249,7 @@
 			);
 			mainGroup = D7793C661F211C6000CA39B7;
 			packageReferences = (
+				D7AA00012BFFAB0000000001 /* XCRemoteSwiftPackageReference "STTextKitPlus" */,
 				D7B4CC5428C7B8860046A25F /* XCRemoteSwiftPackageReference "swift-git" */,
 				D7D2F27C2B54BD42003DCA47 /* XCRemoteSwiftPackageReference "Shout" */,
 			);
@@ -5234,6 +5238,14 @@
 				revision = 7b2f3af96c6947308b4f0b4ae02302fd47a5eff2;
 			};
 		};
+		D7AA00012BFFAB0000000001 /* XCRemoteSwiftPackageReference "STTextKitPlus" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/STTextKitPlus.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
 		D7D2F27C2B54BD42003DCA47 /* XCRemoteSwiftPackageReference "Shout" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/glushchenko/Shout";
@@ -5284,6 +5296,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D7D2F27C2B54BD42003DCA47 /* XCRemoteSwiftPackageReference "Shout" */;
 			productName = Shout;
+		};
+		D7AA00012BFFAB0000000002 /* STTextKitPlus */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D7AA00012BFFAB0000000001 /* XCRemoteSwiftPackageReference "STTextKitPlus" */;
+			productName = STTextKitPlus;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
