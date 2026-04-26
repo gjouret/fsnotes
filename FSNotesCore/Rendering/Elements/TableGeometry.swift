@@ -96,16 +96,19 @@ public enum TableGeometry {
 
     // MARK: - Rendered cell text
     //
-    // Mirrors `InlineTableView.renderedCellText` — runs the cell's
-    // inline tree through `InlineRenderer` with the given font +
-    // alignment, re-applies the paragraph style uniformly so alignment
-    // takes effect across runs, and replaces the HTML `<br>` token
-    // with a real newline. The replacement is load-bearing for
-    // measurement: cells store multi-line content as `<br>` but measure
-    // as wrapped lines.
+    // Runs the cell's inline tree through `InlineRenderer` with the
+    // given font + alignment, re-applies the paragraph style uniformly
+    // so alignment takes effect across runs, and replaces the HTML
+    // `<br>` token with a real newline. The replacement is load-bearing
+    // for measurement: cells store multi-line content as `<br>` but
+    // measure as wrapped lines.
+    //
+    // Shared between `TableGeometry`'s measurement path and
+    // `TableLayoutFragment`'s draw path so measured heights always
+    // match painted heights.
 
-    private static func renderedCellText(
-        _ cell: TableCell,
+    internal static func renderCellAttributedString(
+        cell: TableCell,
         font: NSFont,
         alignment: NSTextAlignment
     ) -> NSAttributedString {
@@ -187,7 +190,9 @@ public enum TableGeometry {
     ) -> CGFloat {
         let minH = minCellHeight(font: font)
         let cellPad = cellPaddingH() * 2
-        let rendered = renderedCellText(cell, font: font, alignment: alignment)
+        let rendered = renderCellAttributedString(
+            cell: cell, font: font, alignment: alignment
+        )
         guard let colWidth = colWidth else {
             // Fallback: count visible lines from the rendered string.
             let displayText = rendered.string
@@ -265,7 +270,9 @@ public enum TableGeometry {
         let padding: CGFloat = columnTextPadding()
 
         func renderedMaxLineWidth(_ cell: TableCell, alignment: NSTextAlignment, font: NSFont) -> CGFloat {
-            let attributed = renderedCellText(cell, font: font, alignment: alignment)
+            let attributed = renderCellAttributedString(
+                cell: cell, font: font, alignment: alignment
+            )
             let displayText = attributed.string
             let lines = displayText.components(separatedBy: "\n")
             if lines.count <= 1 {

@@ -840,7 +840,7 @@ private final class CheckboxGlyphView: NSView {
         if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
             let config = NSImage.SymbolConfiguration(pointSize: drawSize, weight: .regular)
             let configured = img.withSymbolConfiguration(config) ?? img
-            self.cachedImage = configured.tintedForCheckbox(with: NSColor.secondaryLabelColor)
+            self.cachedImage = configured.tinted(with: NSColor.secondaryLabelColor)
         } else {
             self.cachedImage = nil
         }
@@ -878,22 +878,6 @@ private final class CheckboxGlyphView: NSView {
         let x = cellFrame.minX
         let y = textCenter - imgSize.height / 2
         tinted.draw(in: NSRect(x: x, y: y, width: imgSize.width, height: imgSize.height))
-    }
-}
-
-/// Separate helper from the fileprivate `tinted(with:)` extension
-/// defined alongside `CheckboxAttachmentCell` — renamed to avoid
-/// duplicate-declaration warnings while keeping both extensions
-/// file-scoped to their respective sections.
-private extension NSImage {
-    func tintedForCheckbox(with color: NSColor) -> NSImage {
-        let img = self.copy() as! NSImage
-        img.lockFocus()
-        color.set()
-        NSRect(origin: .zero, size: img.size).fill(using: .sourceAtop)
-        img.unlockFocus()
-        img.isTemplate = false
-        return img
     }
 }
 

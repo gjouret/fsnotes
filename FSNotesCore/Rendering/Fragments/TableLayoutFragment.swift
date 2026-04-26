@@ -1020,9 +1020,10 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             if cellRect.width <= 0 || cellRect.height <= 0 { continue }
 
             // Render the cell's inline tree with the per-cell alignment
-            // and the header/body font. Matches the measurement path
-            // used by `TableGeometry.renderedCellText`.
-            let attributed = makeRenderedCellText(
+            // and the header/body font. Shares
+            // `TableGeometry.renderCellAttributedString` with the
+            // measurement path so painted heights match measured heights.
+            let attributed = TableGeometry.renderCellAttributedString(
                 cell: cell, font: font, alignment: alignment
             )
 
@@ -1031,54 +1032,6 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
                 options: [.usesLineFragmentOrigin, .usesFontLeading]
             )
         }
-    }
-
-    /// Mirror of `TableGeometry.renderedCellText`. The geometry module
-    /// keeps its copy private (measurement path) and we keep ours here
-    /// (draw path); both must produce the same attributed string so
-    /// measured heights match painted heights. The `<br>` → `\n`
-    /// replacement is load-bearing: cells store multi-line content as
-    /// `<br>` but lay out as wrapped lines.
-    ///
-    /// If this ever drifts from the geometry-side copy, row heights
-    /// will disagree with their painted content — the whole grid will
-    /// clip.
-    private func makeRenderedCellText(
-        cell: TableCell,
-        font: NSFont,
-        alignment: NSTextAlignment
-    ) -> NSAttributedString {
-        var attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.textColor
-        ]
-        let para = NSMutableParagraphStyle()
-        para.alignment = alignment
-        attrs[.paragraphStyle] = para
-        let rendered = InlineRenderer.render(
-            cell.inline, baseAttributes: attrs, note: nil
-        )
-        let mutable = NSMutableAttributedString(attributedString: rendered)
-        if mutable.length > 0 {
-            mutable.addAttribute(
-                .paragraphStyle, value: para,
-                range: NSRange(location: 0, length: mutable.length)
-            )
-        }
-        // `<br>` → `\n` for multi-line cell content.
-        var searchStart = 0
-        while searchStart < mutable.length {
-            let searchRange = NSRange(
-                location: searchStart, length: mutable.length - searchStart
-            )
-            let brRange = (mutable.string as NSString).range(
-                of: "<br>", options: [.caseInsensitive], range: searchRange
-            )
-            if brRange.location == NSNotFound { break }
-            mutable.replaceCharacters(in: brRange, with: "\n")
-            searchStart = brRange.location + 1
-        }
-        return mutable
     }
 
     // MARK: - Grid lines
