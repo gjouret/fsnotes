@@ -451,8 +451,71 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // stack directly so the content-storage delegate re-dispatches
         // the affected paragraphs (folded → `FoldedElement` → zero-height
         // `FoldedLayoutFragment`; unfolded → normal block-model element).
+        //
+        // Bug #55: invalidate the HEADING'S paragraph too, not just the
+        // fold range below it. `HeadingLayoutFragment.drawFoldedIndicator`
+        // peeks at the char immediately following the heading element
+        // range for `.foldedContent` to decide whether to paint the
+        // `[...]` chip. When `toggleFold` flips that attribute, the
+        // heading's fragment isn't invalidated by the fold-range call —
+        // its draw doesn't re-run until the next layout pass triggered
+        // by scroll. Invalidating the heading line forces the redraw.
+        //
+        // Bug #54: also invalidate a wider range covering the heading,
+        // its trailing newline, AND the full fold range below. Bullets
+        // and todo checkboxes in the fold range are attachments whose
+        // `NSTextAttachmentViewProvider`s get cached on `TableLayoutFragment`
+        // / paragraph fragments. A narrow invalidation of just the
+        // attachment-character offsets doesn't always trigger
+        // `loadView()` to re-run; expanding to the wider range, then
+        // forcing a full TextKit 2 re-layout via the layout manager,
+        // does.
         if let editTextView = editor as? EditTextView {
-            editTextView.invalidateTextKit2Layout(forCharacterRange: foldRange)
+            // Compute the heading line's range so the chip-painter
+            // fragment gets re-drawn.
+            let nsString = textStorage.string as NSString
+            let headerLineRange = nsString.lineRange(
+                for: NSRange(location: header.range.location, length: 0)
+            )
+            // Union: heading line + fold range. Use the broader span
+            // to force every attachment view provider in either region
+            // to reload.
+            let unionStart = min(headerLineRange.location, foldRange.location)
+            let unionEnd = max(
+                NSMaxRange(headerLineRange), NSMaxRange(foldRange)
+            )
+            let unionRange = NSRange(
+                location: unionStart, length: unionEnd - unionStart
+            )
+            editTextView.invalidateTextKit2Layout(forCharacterRange: unionRange)
+
+            // Force every attachment in the fold range to drop its
+            // cached view provider so `loadView()` runs fresh on the
+            // next layout pass. Without this step, `BulletAttachmentViewProvider`
+            // / `CheckboxAttachmentViewProvider` re-use the previous
+            // `view` (created during the pre-fold render) — and that
+            // view never gets re-positioned, so bullets visually
+            // disappear after unfold even though the attachment runs
+            // are intact in storage.
+            textStorage.enumerateAttribute(
+                .attachment,
+                in: foldRange,
+                options: []
+            ) { value, _, _ in
+                guard let attachment = value as? NSTextAttachment else {
+                    return
+                }
+                // Replacing the image with the same image triggers
+                // TK2's attachment-bounds-changed path, which clears
+                // the cached view provider. The image identity check
+                // is implementation-defined, so we use a fresh
+                // transparent placeholder of the same size.
+                let size = attachment.bounds.size
+                if size.width > 0, size.height > 0 {
+                    let img = NSImage(size: size, flipped: false) { _ in true }
+                    attachment.image = img
+                }
+            }
         }
 
         // RC5: Persist fold state to the note so it survives note switches.
