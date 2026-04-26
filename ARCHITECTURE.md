@@ -469,7 +469,7 @@ Plain paragraphs (`ParagraphElement`, `ListItemElement`) fall back to the defaul
 
 **Wire-in**: `EditTextView.applyEditResultWithUndo` (on TK2 — always today) calls `DocumentEditApplier.applyDocumentEdit` and attaches the `EditResult.contract` + the pre-edit projection to associated objects. `EditorHarness` reads those back after every scripted input and runs `Invariants.assertContract(before:after:contract:)` against the live post-edit projection — the same harness invariants run on the real editor that the contract unit tests enforce on pure calls.
 
-**Single-write-path enforcement (Phase 5a).** `StorageWriteGuard` (`FSNotesCore/Rendering/StorageWriteGuard.swift`) exposes three scoped authorization flags — `applyDocumentEditInFlight`, `fillInFlight`, `legacyStorageWriteInFlight` — each set by a `performing*` wrapper for the duration of its body. `applyDocumentEdit` runs its `performEditingTransaction` inside `performingApplyDocumentEdit`; fill paths (`fillViaBlockModel`, `fillViaSourceRenderer`, `fill(note:)` clears, `lockEncryptedView`, `clear()`) run under `performingFill`; **14 production call sites across 6 logical categories** run under `performingLegacyStorageWrite` with TODOs: fold re-splice; async attachment hydration for inline math, display math, PDF (×2), QuickLook; 8 formatting-IBAction `insertText` sites in `EditTextView+Formatting.swift` (commit `e1e700d`, added to close the `_insertText:replacementRange:` bypass class that Phase 5a's assertion exposed via a user-reported crash). Phase 5f retired the former "undo/redo state restore" category by removing `restoreBlockModelState`; a Phase 5f follow-up retired the former drag-and-drop category by re-routing the two `EditTextView+DragOperation.swift` drop handlers through `handleEditViaBlockModel`. A DEBUG assertion in `TextStorageProcessor.didProcessEditing` traps when `editedMask.contains(.editedCharacters) && blockModelActive && !sourceRendererActive && !StorageWriteGuard.isAnyAuthorized && !compositionSession.isActive` — it dumps `editedRange`, `editedMask`, and a 12-frame call stack for self-debugging. Release builds compile to no-ops. `scripts/rule7-gate.sh` has a `bypassStorageWrite` pattern flagging any `performEditingTransaction` outside `DocumentEditApplier.swift`. `CLAUDE.md` Invariant A is the authoritative rule text.
+**Single-write-path enforcement (Phase 5a).** `StorageWriteGuard` (`FSNotesCore/Rendering/StorageWriteGuard.swift`) exposes three scoped authorization flags — `applyDocumentEditInFlight`, `fillInFlight`, `legacyStorageWriteInFlight` — each set by a `performing*` wrapper for the duration of its body. `applyDocumentEdit` runs its `performEditingTransaction` inside `performingApplyDocumentEdit`; fill paths (`fillViaBlockModel`, `fillViaSourceRenderer`, `fill(note:)` clears, `lockEncryptedView`, `clear()`) run under `performingFill`; **18 production call sites across 6 logical categories** run under `performingLegacyStorageWrite` with TODOs: fold re-splice; async attachment hydration for inline math, display math, PDF (×2), QuickLook; 9 formatting-IBAction `insertText` sites in `EditTextView+Formatting.swift` (commit `e1e700d` + follow-ups, added to close the `_insertText:replacementRange:` bypass class that Phase 5a's assertion exposed via a user-reported crash); 1 input-path bypass in `EditTextView+Input.swift`. Audit live: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'`. Phase 5f retired the former "undo/redo state restore" category by removing `restoreBlockModelState`; a Phase 5f follow-up retired the former drag-and-drop category by re-routing the two `EditTextView+DragOperation.swift` drop handlers through `handleEditViaBlockModel`. A DEBUG assertion in `TextStorageProcessor.didProcessEditing` traps when `editedMask.contains(.editedCharacters) && blockModelActive && !sourceRendererActive && !StorageWriteGuard.isAnyAuthorized && !compositionSession.isActive` — it dumps `editedRange`, `editedMask`, and a 12-frame call stack for self-debugging. Release builds compile to no-ops. `scripts/rule7-gate.sh` has a `bypassStorageWrite` pattern flagging any `performEditingTransaction` outside `DocumentEditApplier.swift`. `CLAUDE.md` Invariant A is the authoritative rule text.
 
 ## IME Composition (`CompositionSession`)
 
@@ -637,13 +637,13 @@ Obsidian-style `</>` hover button that swaps a code block between its rendered f
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **524 / 652 passing (80.4%)** at the current baseline. The refactor phase target is 90%+ by end of phase. Live breakdown per spec section is in `CLAUDE.md`; the main gaps are nested list sub-block parsing, indented code blocks (deliberately deferred — they're low-value for a WYSIWYG editor), and tab expansion in prefix whitespace.
+Serializer compliance against CommonMark 0.31.2 spec: **620 / 652 passing (95.1%)** as of Phase 10 Slice A (shipped 2026-04-24, commits `f9aa284 → 3018ff0`, +19 examples). The refactor's 90% target is met. Live breakdown per spec section is in `CLAUDE.md`; remaining 32 failures cluster in Links (14 — delimiter-stack rewrite territory, Phase 12 candidate), List items + Lists (13 — multi-block list-item content where the continuation is fenced code / blockquote / HTML block, requires `ListItem.children: [ListItem]` → `[Block]` redesign with ~107 call-site updates, Phase 11 Slice B candidate), plus 5 long-tail edge cases (HR-vs-list precedence, lazy continuation in blockquote, image-vs-wikilink ambiguity, etc.).
 
 The full conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
 
 ## Test Infrastructure
 
-~1330+ test functions across ~85 files in `Tests/`. Four complementary harnesses:
+~1,800+ test functions across ~150 files in `Tests/`. Four complementary harnesses:
 
 **Pure-function unit tests** — `BlockParserTests`, `EditingOperationsTests`, `BlockModelFormattingTests`, `MarkdownSerializer*Tests`, `ListEditingFSMTests`, `EditContractTests`, `DocumentEditApplierTests`, etc. — call `EditingOps.*` / `MarkdownParser.parse` / `MarkdownSerializer.serialize` / `DocumentEditApplier.diffDocuments` directly on value-typed `Document`s. No AppKit setup.
 
@@ -669,4 +669,100 @@ xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes \
 - **`EditorError` enum** — structured error context (invalid block index, read-only block, cross-block selection, etc.) instead of stringly-typed errors.
 - **`TextBuffer` protocol** — abstraction over `NSTextStorage` so primitive-layer tests can run against an `InMemoryTextBuffer` without instantiating AppKit.
 - **`BlockCapabilities` OptionSet + `EditableBlock` protocol** — capability-based dispatch replaces the giant switch over block kinds in several primitives.
-- **`EditorStore` / `EditorAction` / `EditorReducer` / `EditorEffect`** — a Redux-style store with pure reducers and declared effects is defined in `EditingOperations.swift` and available for tests. The live editor does not currently route all actions through the store; primitives remain the public editing surface.
+
+The Redux-style `EditorStore` / `EditorAction` / `EditorReducer` / `EditorEffect` types that briefly lived in `EditingOperations.swift` were deleted in Phase 6 Tier C (commit `f72ee0d`) — the scaffold predated Phase 5a's `StorageWriteGuard` + Phase 5f's `UndoJournal` and never had a production caller. The actual editor-side unidirectional flow is `EditingOps` (pure primitives) → `applyEditResultWithUndo` → `DocumentEditApplier.applyDocumentEdit` (single write path, `StorageWriteGuard`-gated) → `UndoJournal` (per-editor coalescing FSM, single `registerUndo` site).
+
+## AI Chat / MCP
+
+FSNotes++ embeds an AI chat panel that the user can drive through three providers (Anthropic, OpenAI, Ollama). The Ollama path supports tool calling via an in-process MCP (Model Context Protocol) server, giving the LLM read/write access to notes, folders, and editor state. The full surface (Phases 1–4 plus the AppBridge wire-up) follows the same single-write-path discipline as the rest of the editor.
+
+```
+User → AIChatPanelView ──► AIChatStore ──► dispatch action
+                              │
+                              ▼
+                    AIProvider (Ollama / Anthropic / OpenAI)
+                              │  (Ollama only:)
+                              ▼
+                    OllamaProvider tool-call loop
+                              │   maxToolRounds = 10
+                              ▼
+                    MCPServer.handleToolCalls
+                              │
+                  ┌───────────┼─────────────┐
+                  ▼           ▼             ▼
+            filesystem    AppBridge    Note metadata
+            (read tools)  (writes)     (search / list)
+                              │
+                              ▼
+                    AppBridgeImpl
+              (refuses during IME composition)
+                              │
+              ┌───────────────┼────────────────┐
+              ▼               ▼                ▼
+         WYSIWYG path     source path     filesystem path
+         EditingOps  →    note.content =  FileManager
+         applyEditResult  + notify        + AppBridge.notify
+         WithUndo
+```
+
+### AIChatStore (Redux-style state)
+
+`FSNotes/Helpers/AIChatStore.swift` owns the chat conversation state. `AIChatState` carries `messages`, `isStreaming`, `error`, `pendingToolCalls`, `pendingConfirmations`, and `streamingResponse`. `AIChatAction` enumerates `sendMessage` / `receiveToken` / `completeResponse` / `toolCallRequested` / `toolCallCompleted` / `toolCallConfirmRequested` / `toolCallApproved` / `toolCallRejected` / `loadConversation` / `clearChat`. The `reduce(state:action:)` function is pure and tested directly (`AIChatStoreTests`, `AIChatStoreConfirmationTests`). The store does NOT call providers — the view layer drives the provider and feeds results back via `dispatch(...)`. Threading: every public method asserts main-queue.
+
+### MCPServer
+
+`FSNotes/Helpers/MCP/MCPServer.swift` is the singleton tool registry. Tools conform to `MCPTool` (name, description, JSON-schema input, async `execute(input:) -> ToolOutput`). `handleToolCalls(_:)` dispatches a batch of tool calls and returns `[ToolResult]` in order. Schemas flow into the Ollama request body via `MCPServer.shared.toolSchemasForLLM()` so the LLM has up-to-date tool descriptions on every turn — no hardcoded list.
+
+Tools (15 today, growing):
+- **Read tools** (filesystem-only, no AppBridge dep): `ReadNoteTool`, `SearchNotesTool`, `ListFoldersTool`, `GetFolderNotesTool`, `ListNotesTool`, `GetProjectsTool`, `GetTagsTool`, `GetCurrentNoteTool`.
+- **Write tools** (route through AppBridge for open notes): `EditNoteTool`, `CreateNoteTool`, `DeleteNoteTool`, `MoveNoteTool`, `AppendToNoteTool`, `ApplyFormattingTool`, `ExportPDFTool`.
+
+Path safety: `NotePathResolver` standardizes URLs and validates `relativePath(of:under:)` against the storage root, so a malicious LLM passing `path: "../../../../etc/passwd"` resolves to nil. Encrypted notes (`.etp` extension or encrypted-bundle metadata) return `ToolOutput.error("Note is encrypted")` from every tool.
+
+### AppBridge
+
+`FSNotes/Helpers/MCP/AppBridge.swift` defines the protocol that lets the (out-of-view-context) MCP layer query and mutate the live editor. Implemented by `AppBridgeImpl` in `FSNotes/Helpers/MCP/AppBridgeImpl.swift`. Methods split into:
+
+- **Read** (always safe): `currentNotePath`, `hasUnsavedChanges(path:)`, `editorMode(for:)` (`.wysiwyg` / `.source` / `.none`), `cursorState(for:)`.
+- **Write** (gated): `notifyFileChanged(path:)`, `requestWriteLock(path:)`, `appendMarkdown(toPath:markdown:)`, `applyStructuredEdit(toPath:request:)`, `applyFormatting(toPath:command:)`, `exportPDF(fromPath:to:)`.
+
+Each write method dispatches WYSIWYG mutations through `editor.applyEditResultWithUndo(...)` → `DocumentEditApplier.applyDocumentEdit` (the canonical single write path), and source-mode mutations through `note.content = ...` + `notifyFileChanged`. **Refuses with `BridgeEditOutcome.failed(reason:)` if `editor.compositionSession?.isActive == true`** — the IME composition window is the one sanctioned exemption to Invariant A and racing with `setMarkedText` corrupts the marked range. `AppBridgeImpl` is documented as main-thread-only; callers (notably `OllamaProvider.dispatchToolCallsAndContinue` running on a `Task.detached` queue) must marshal via `MainActor`.
+
+### OllamaProvider tool-calling loop
+
+`FSNotes/Helpers/Ollama/OllamaProvider.swift` adds tool calling on top of the Ollama `/api/chat` NDJSON stream. Each round:
+
+1. Send `messages` + `tools: [...schemas...]` to `/api/chat` with `stream: true`.
+2. Parse the streamed NDJSON. `message.content` chunks dispatch `.receiveToken`. `message.tool_calls` arrays buffer.
+3. On `done: true` with no tool_calls → dispatch `.completeResponse(.success(...))`.
+4. With tool_calls → for each call:
+   a. If the tool name is in `needsConfirm = ["delete_note", "move_note"]`, dispatch `.toolCallConfirmRequested(call)` and suspend on `withCheckedContinuation` until the chat panel resolves it via Approve/Reject. Reject → synthetic `ToolOutput.error("user rejected")` skips the tool. Approve → continue.
+   b. Run the call through `MCPServer.shared.handleToolCalls([call])`.
+   c. Append a `role: "tool"` message with the result.
+5. Re-issue the chat request and continue.
+6. Cap iteration at `maxToolRounds = 10`; on cap-hit, dispatch `.completeResponse(.failure(.apiError("Tool-calling exceeded 10 rounds...")))`.
+
+### AIPromptContext (system prompt enrichment)
+
+`FSNotes/Helpers/AIService.swift` exposes `aiSystemPrompt(_ ctx: AIPromptContext, mcpServer: MCPServer = .shared)` shared by all three providers. `AIPromptContext` carries `noteTitle?`, `noteContent`, `noteFolder?`, `projectName?`, `allTags`, `editorMode`, `isTextBundle`. The chat panel resolves the context per-message in `AIChatPanelView.makePromptContext()` from `note.project` / `Storage.shared().tags` / `NotesTextProcessor.hideSyntax`. Tool descriptions are read at runtime from `mcpServer.registeredTools.sorted` — adding a tool updates the prompt automatically.
+
+### Conversation persistence
+
+Per-note JSON in `~/Library/Application Support/FSNotes++/AIChats/<sha256-of-note-url>.json` (mirrors `Themes/`). `AIChatPersistence.save(noteId:messages:)` debounces by 500ms; `clearChat` deletes the on-disk file. Malformed/missing → `nil`, never blocks the user. Implemented in `FSNotes/Helpers/AIChatPersistence.swift` (173 LoC, 12 tests).
+
+### Keyboard
+
+Cmd+Shift+A toggles the panel via the View menu's "Hide/Show AI Chat" item (storyboard, action `toggleAIChat:` on `ViewController`).
+
+### Test coverage
+
+- `AIChatStoreTests` (16) + `AIChatStoreConfirmationTests` (11) — reducer + subscribe/dispatch + confirmation flow
+- `AIPromptContextTests` — full-context prompt rendering + provider parity
+- `AIChatPersistenceTests` (12) — per-note JSON round-trip + debounce + clearChat-deletes
+- `Phase1OllamaClientTests` (12) + `Phase1OllamaProviderTests` (10) — model listing + reachability + request body shape
+- `Phase2OllamaToolCallingTests` (11) — tool_calls parsing + dispatch loop + iteration cap
+- `MCPServerTests` (9) + per-tool tests (one suite per of the 15 tools, ~75 tests total)
+- `AppBridgeImplTests` (34) — including 8 IME-composition-refusal tests
+- `AIToolCallE2ETests` (5) — end-to-end Ollama → MCP → AppBridge → editor → save through `URLProtocol` mocks
+- `AIChatPanelToolBubblesTests` (10) — tool-call bubble rendering + status update + confirmation bubble
+- `AIChatKeyboardShortcutTests` (3) — menu-item key equivalent + action target
