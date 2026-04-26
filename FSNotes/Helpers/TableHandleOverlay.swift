@@ -635,6 +635,19 @@ final class TableHandleOverlay {
         editor.addSubview(line)
         defer { line.removeFromSuperview() }
 
+        // Bug #47: the fragment's `draw(at:in:)` cancels out its own
+        // `layoutFragmentFrame.origin.x` (computes
+        // `containerOriginX = point.x - frame.origin.x` then
+        // `gridLeft = containerOriginX + handleBarWidth`), so cells paint
+        // at view-X = textContainerOrigin.x + handleBarWidth regardless
+        // of fragment indent. `sourceRect` / `lineRect` were instead
+        // adding `frame.origin.x` on top, which offsets the chip right
+        // whenever the fragment has any non-zero x-origin. Mirror
+        // `columnRect`'s pattern: use `textContainerOrigin.x`, not
+        // `frame.origin.x`. The y-axis is taken from `frame.origin.y`
+        // (vertical position is per-fragment and isn't cancelled).
+        let containerOrigin = editor.textContainerOrigin
+
         let sourceHighlight = NSView()
         sourceHighlight.wantsLayer = true
         sourceHighlight.layer?.borderColor = NSColor.controlAccentColor.cgColor
@@ -646,14 +659,14 @@ final class TableHandleOverlay {
         sourceHighlight.frame = sourceRect(
             orientation: orientation, index: index,
             columnWidths: columnWidths, rowHeights: rowHeights,
-            frame: frame
+            frame: frame, containerOriginX: containerOrigin.x
         )
 
         var targetGap: Int = index
         line.frame = lineRect(
             orientation: orientation, gap: targetGap,
             columnWidths: columnWidths, rowHeights: rowHeights,
-            frame: frame
+            frame: frame, containerOriginX: containerOrigin.x
         )
 
         var keepTracking = true
@@ -668,7 +681,10 @@ final class TableHandleOverlay {
             let pt = editor.convert(evt.locationInWindow, from: nil)
             switch orientation {
             case .horizontal:
-                let gridX = frame.origin.x + TableGeometry.handleBarWidth
+                // Cursor-x relative to the grid's actual painted
+                // origin (textContainerOrigin.x + handleBarWidth),
+                // not to the fragment's frame origin.
+                let gridX = containerOrigin.x + TableGeometry.handleBarWidth
                 let cursor = pt.x - gridX
                 targetGap = EditingOps.dropGapIndex(
                     segments: columnWidths, cursor: cursor
@@ -683,7 +699,7 @@ final class TableHandleOverlay {
             line.frame = lineRect(
                 orientation: orientation, gap: targetGap,
                 columnWidths: columnWidths, rowHeights: rowHeights,
-                frame: frame
+                frame: frame, containerOriginX: containerOrigin.x
             )
         }
 
@@ -717,14 +733,22 @@ final class TableHandleOverlay {
         }
     }
 
+    /// Bug #47: x-axis uses `containerOriginX + handleBarWidth`, NOT
+    /// `frame.origin.x + handleBarWidth`. The fragment's
+    /// `draw(at:in:)` cancels out its own `frame.origin.x` so cells
+    /// always paint at the container's left edge + handle strip,
+    /// regardless of fragment indent. The chip / drag indicator must
+    /// follow the same rule. Y-axis stays from `frame.origin.y`
+    /// (vertical position IS per-fragment).
     private func sourceRect(
         orientation: TableHandleChip.Orientation,
         index: Int,
         columnWidths: [CGFloat],
         rowHeights: [CGFloat],
-        frame: CGRect
+        frame: CGRect,
+        containerOriginX: CGFloat
     ) -> CGRect {
-        let gridLeft = frame.origin.x + TableGeometry.handleBarWidth
+        let gridLeft = containerOriginX + TableGeometry.handleBarWidth
         let gridTop = frame.origin.y + TableGeometry.handleBarHeight
         let gridHeight = rowHeights.reduce(0, +)
         let gridWidth = columnWidths.reduce(0, +)
@@ -749,9 +773,10 @@ final class TableHandleOverlay {
         gap: Int,
         columnWidths: [CGFloat],
         rowHeights: [CGFloat],
-        frame: CGRect
+        frame: CGRect,
+        containerOriginX: CGFloat
     ) -> CGRect {
-        let gridLeft = frame.origin.x + TableGeometry.handleBarWidth
+        let gridLeft = containerOriginX + TableGeometry.handleBarWidth
         let gridTop = frame.origin.y + TableGeometry.handleBarHeight
         let gridHeight = rowHeights.reduce(0, +)
         let gridWidth = columnWidths.reduce(0, +)
