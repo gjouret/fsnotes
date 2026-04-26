@@ -43,7 +43,8 @@ public enum TableTextRenderer {
         rows: [[TableCell]],
         alignments: [TableAlignment],
         rawMarkdown: String,
-        bodyFont: PlatformFont
+        bodyFont: PlatformFont,
+        columnWidths: [CGFloat]? = nil
     ) -> NSAttributedString {
         #if os(OSX)
         return renderNative(
@@ -51,7 +52,8 @@ public enum TableTextRenderer {
             rows: rows,
             alignments: alignments,
             rawMarkdown: rawMarkdown,
-            bodyFont: bodyFont
+            bodyFont: bodyFont,
+            columnWidths: columnWidths
         )
         #else
         // iOS currently has no native-element TK2 path. Return an empty
@@ -86,7 +88,8 @@ public enum TableTextRenderer {
         rows: [[TableCell]],
         alignments: [TableAlignment],
         rawMarkdown: String,
-        bodyFont: PlatformFont
+        bodyFont: PlatformFont,
+        columnWidths: [CGFloat]? = nil
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
 
@@ -156,7 +159,7 @@ public enum TableTextRenderer {
                 header: header,
                 alignments: alignments,
                 rows: rows,
-                columnWidths: nil
+                columnWidths: columnWidths
             )
             result.addAttribute(
                 .tableAuthoritativeBlock,

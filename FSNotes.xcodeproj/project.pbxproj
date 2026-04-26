@@ -123,6 +123,7 @@
 		FTFL000000000000000000B1 /* FeatureFlag.swift in Sources */ = {isa = PBXBuildFile; fileRef = FTFL000000000000000000F1 /* FeatureFlag.swift */; };
 		TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TEET000000000000000000F1 /* TableElementEmissionTests.swift */; };
 		TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */; };
+		TCWR000000000000000000B1 /* TableColumnWidthsRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCWR000000000000000000F1 /* TableColumnWidthsRenderTests.swift */; };
 		TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TNAV000000000000000000F1 /* TableNavigationTests.swift */; };
 		TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCET000000000000000000F1 /* TableCellEditingTests.swift */; };
 		TCHT000000000000000000B1 /* TableCellHitTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCHT000000000000000000F1 /* TableCellHitTestTests.swift */; };
@@ -1331,6 +1332,7 @@
 		FTFL000000000000000000F1 /* FeatureFlag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureFlag.swift; sourceTree = "<group>"; };
 		TEET000000000000000000F1 /* TableElementEmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableElementEmissionTests.swift; sourceTree = "<group>"; };
 		TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableLayoutFragmentRenderTests.swift; sourceTree = "<group>"; };
+		TCWR000000000000000000F1 /* TableColumnWidthsRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableColumnWidthsRenderTests.swift; sourceTree = "<group>"; };
 		TNAV000000000000000000F1 /* TableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableNavigationTests.swift; sourceTree = "<group>"; };
 		TCET000000000000000000F1 /* TableCellEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellEditingTests.swift; sourceTree = "<group>"; };
 		TCHT000000000000000000F1 /* TableCellHitTestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellHitTestTests.swift; sourceTree = "<group>"; };
@@ -2888,6 +2890,7 @@
 				CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */,
 				TEET000000000000000000F1 /* TableElementEmissionTests.swift */,
 				TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */,
+				TCWR000000000000000000F1 /* TableColumnWidthsRenderTests.swift */,
 				TNAV000000000000000000F1 /* TableNavigationTests.swift */,
 				TCET000000000000000000F1 /* TableCellEditingTests.swift */,
 				TCHT000000000000000000F1 /* TableCellHitTestTests.swift */,
@@ -4546,6 +4549,7 @@
 				CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */,
 				TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */,
 				TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */,
+				TCWR000000000000000000B1 /* TableColumnWidthsRenderTests.swift in Sources */,
 				TNAV000000000000000000B1 /* TableNavigationTests.swift in Sources */,
 				TCET000000000000000000B1 /* TableCellEditingTests.swift in Sources */,
 				TCHT000000000000000000B1 /* TableCellHitTestTests.swift in Sources */,
