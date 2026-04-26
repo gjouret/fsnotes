@@ -524,16 +524,30 @@ public enum InlineRenderer {
         let length = attributed.length
         if length == 0 { return [] }
 
-        // Split into spans where newline characters break the string
+        // Split into spans where line-break characters break the string
         // into segments separated by `.rawHTML("<br>")` nodes. Each
-        // non-newline segment is converted independently, then joined.
+        // non-break segment is converted independently, then joined.
+        //
+        // Two characters are treated as breaks:
+        //   * `\n` (U+000A) — the canonical break used outside table
+        //     cells.
+        //   * U+2028 LINE SEPARATOR — the substitute used INSIDE table
+        //     cells. `TableTextRenderer.sanitizeCellNewlines` rewrites
+        //     `\n` to U+2028 in cell-rendered storage so a single
+        //     `<br>` doesn't fragment the table's storage range across
+        //     multiple paragraphs (bug #12 / Phase 2e-T2-f). Without
+        //     splitting on U+2028 here, a subsequent edit to the cell
+        //     reads U+2028 back as a regular text character and the
+        //     `<br>` collapses to a Unicode line-separator literal,
+        //     visually a space in most contexts. Splitting on U+2028
+        //     keeps the round trip `<br>` → `\n` → U+2028 → `<br>`.
         let nsString = attributed.string as NSString
         var out: [Inline] = []
         var segmentStart = 0
         var i = 0
         while i < length {
             let ch = nsString.character(at: i)
-            if ch == 0x0A /* \n */ {
+            if ch == 0x0A /* \n */ || ch == 0x2028 /* LINE SEPARATOR */ {
                 if i > segmentStart {
                     let segRange = NSRange(location: segmentStart, length: i - segmentStart)
                     let seg = attributed.attributedSubstring(from: segRange)

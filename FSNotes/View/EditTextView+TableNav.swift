@@ -90,9 +90,45 @@ extension EditTextView {
         // starts at that location. That's the behaviour we want — a
         // cursor at position 0 of a TableElement should resolve to the
         // table, not to whatever fragment precedes it.
-        guard let fragment = tlm.textLayoutFragment(for: cursorLoc),
-              let element = fragment.textElement as? TableElement,
-              let elementRange = element.elementRange
+        //
+        // Trailing-edge accommodation. TK2 maps a just-past-end-of-
+        // element offset to the FOLLOWING fragment (a cursor parked
+        // there by Tab into a trailing empty cell, or by typing the
+        // last character of the last cell). The strict lookup misses
+        // the table here. Probe `cursorOffset - 1`: if the resulting
+        // fragment is a `TableElement` whose element range ends
+        // exactly at `cursorOffset`, accept it. This mirrors the
+        // pattern already used by `storageOffsetIsInTableElement`
+        // (this file) and `tableCursorContextForOffset`
+        // (`EditTextView+BlockModel.swift`). Without this, Tab from
+        // the last cell falls through to `super.doCommand` and
+        // inserts a literal `\t`; Enter falls into the
+        // separator-newline swallow branch and silently no-ops.
+        var resolvedElement: TableElement?
+        var resolvedElementRange: NSTextRange?
+        if let fragment = tlm.textLayoutFragment(for: cursorLoc),
+           let element = fragment.textElement as? TableElement,
+           let elementRange = element.elementRange {
+            resolvedElement = element
+            resolvedElementRange = elementRange
+        }
+        if resolvedElement == nil, cursorOffset > 0,
+           let prevLoc = contentStorage.location(
+                docStart, offsetBy: cursorOffset - 1
+           ),
+           let prevFrag = tlm.textLayoutFragment(for: prevLoc),
+           let element = prevFrag.textElement as? TableElement,
+           let elementRange = element.elementRange {
+            let elementEnd = contentStorage.offset(
+                from: docStart, to: elementRange.endLocation
+            )
+            if elementEnd == cursorOffset {
+                resolvedElement = element
+                resolvedElementRange = elementRange
+            }
+        }
+        guard let element = resolvedElement,
+              let elementRange = resolvedElementRange
         else { return nil }
 
         let elementStart = contentStorage.offset(

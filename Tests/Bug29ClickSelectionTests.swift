@@ -393,4 +393,122 @@ final class Bug29ClickSelectionTests: XCTestCase {
             "expected exactly 1 block (the table); got \(parsed.blocks.count). Saved markdown:\n\(h.savedMarkdown)"
         )
     }
+
+    /// Tab from the last cell of a 3×3 table must NOT insert a literal
+    /// `\t` into the cell. The nav handler clamps `targetIdx` so the
+    /// cursor stays in (last row, last col) by design (bug #32 — no
+    /// modular wrap), but the keystroke still has to be consumed
+    /// (`handleTableNavCommand` returns true) — otherwise the default
+    /// `insertTab:` action falls through and inserts a tab character
+    /// into the cell content.
+    ///
+    /// User report (post-deploy of `a07d931`): "tab inserts a tab
+    /// spacing in cell 2,2".
+    func test_bug29_tabAtLastCell_isConsumedNotInsertedAsTab() throws {
+        let emptyMd = """
+        |  |  |  |
+        | --- | --- | --- |
+        |  |  |  |
+        |  |  |  |
+        """
+        guard let ctx = makeLiveTable(markdown: emptyMd) else {
+            XCTFail("harness setup failed"); return
+        }
+        let h = ctx.harness
+        defer { h.teardown() }
+
+        // Park the caret at the start of cell (2, 2) (= end of element
+        // for an empty 3×3) and type "X" so the cell is non-empty —
+        // this matches the user's flow (they typed before pressing
+        // Tab).
+        guard let cell22Start = ctx.element.offset(
+            forCellAt: (row: 2, col: 2)
+        ) else { XCTFail("no cell22 offset"); return }
+        h.editor.setSelectedRange(NSRange(
+            location: ctx.elementStart + cell22Start, length: 0
+        ))
+        h.type("X")
+
+        // Press Tab. Must be consumed.
+        h.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+
+        // Cell (2, 2) content must be exactly "X" — no `\t`, no extra
+        // characters. If Tab fell through to `insertTab:`, the cell
+        // would contain "X\t".
+        let parsed = MarkdownParser.parse(h.savedMarkdown)
+        guard let table = parsed.blocks.first(where: {
+            if case .table = $0 { return true } else { return false }
+        }) else { XCTFail("no table block"); return }
+        guard case .table(_, _, let rows, _) = table
+        else { XCTFail("not a table"); return }
+        XCTAssertGreaterThanOrEqual(rows.count, 2)
+        XCTAssertEqual(
+            rows[1][2].rawText, "X",
+            "Tab from last cell inserted a literal '\\t'. Cell content:\n\(rows[1][2].rawText.debugDescription). Saved markdown:\n\(h.savedMarkdown)"
+        )
+        XCTAssertEqual(
+            parsed.blocks.count, 1,
+            "expected exactly 1 block (the table); got \(parsed.blocks.count). Saved markdown:\n\(h.savedMarkdown)"
+        )
+    }
+
+    /// Enter inside a cell with content must insert a hard line break
+    /// (`<br>` per the Phase 2e-T2-e contract). It must NOT be silently
+    /// consumed (cursor stays put, no break inserted) and it must NOT
+    /// fall through to the default newline path (which would corrupt
+    /// the separator-encoded TableElement by inserting a real `\n`).
+    ///
+    /// User report (post-deploy of `a07d931`): "Enter is just consumed
+    /// — doing nothing".
+    func test_bug29_enterInCell_insertsLineBreak() throws {
+        let emptyMd = """
+        |  |  |  |
+        | --- | --- | --- |
+        |  |  |  |
+        |  |  |  |
+        """
+        guard let ctx = makeLiveTable(markdown: emptyMd) else {
+            XCTFail("harness setup failed"); return
+        }
+        let h = ctx.harness
+        defer { h.teardown() }
+
+        // Park caret in cell (1, 1), type "ab", press Enter, type "cd".
+        // The cell content must serialize as "ab<br>cd".
+        guard let cell11Start = ctx.element.offset(
+            forCellAt: (row: 1, col: 1)
+        ) else { XCTFail("no cell11 offset"); return }
+        h.editor.setSelectedRange(NSRange(
+            location: ctx.elementStart + cell11Start, length: 0
+        ))
+        h.type("ab")
+        h.editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        h.type("cd")
+
+        let parsed = MarkdownParser.parse(h.savedMarkdown)
+        guard let table = parsed.blocks.first(where: {
+            if case .table = $0 { return true } else { return false }
+        }) else { XCTFail("no table block"); return }
+        guard case .table(_, _, let rows, _) = table
+        else { XCTFail("not a table"); return }
+        XCTAssertGreaterThanOrEqual(rows.count, 1)
+        // Cell (1, 1) is body row 0, col 1.
+        let actual = rows[0][1].rawText
+        XCTAssertTrue(
+            actual.contains("<br>") || actual.contains("\\\n"),
+            "Enter in cell did not insert a hard line break. Cell content: \(actual.debugDescription). Saved markdown:\n\(h.savedMarkdown)"
+        )
+        XCTAssertTrue(
+            actual.contains("ab"),
+            "Pre-Enter text 'ab' missing from cell. Cell content: \(actual.debugDescription)"
+        )
+        XCTAssertTrue(
+            actual.contains("cd"),
+            "Post-Enter text 'cd' missing from cell — the keystroke after Enter went somewhere else. Cell content: \(actual.debugDescription)"
+        )
+        XCTAssertEqual(
+            parsed.blocks.count, 1,
+            "expected exactly 1 block (the table); got \(parsed.blocks.count). Saved markdown:\n\(h.savedMarkdown)"
+        )
+    }
 }
