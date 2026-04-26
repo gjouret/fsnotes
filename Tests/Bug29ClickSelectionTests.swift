@@ -452,6 +452,7 @@ final class Bug29ClickSelectionTests: XCTestCase {
         )
     }
 
+
     /// Enter inside a cell with content must insert a hard line break
     /// (`<br>` per the Phase 2e-T2-e contract). It must NOT be silently
     /// consumed (cursor stays put, no break inserted) and it must NOT

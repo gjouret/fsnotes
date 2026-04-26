@@ -68,6 +68,12 @@ extension EditTextView {
         super.setSelectedRanges(
             canonicalized, affinity: affinity, stillSelecting: stillSelecting
         )
+        // Bug #29 visual half: reposition the table-cell caret subview
+        // on every selection change. The subview is installed lazily
+        // by `updateTableCellCaret()` — when the selection isn't in a
+        // table cell, the call hides the existing instance and is a
+        // cheap no-op when there isn't one.
+        updateTableCellCaret()
     }
 
     /// Pure helper: given an array of `NSValue`-wrapped selection
