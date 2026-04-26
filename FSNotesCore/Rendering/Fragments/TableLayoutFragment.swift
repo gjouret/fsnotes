@@ -2,17 +2,14 @@
 //  TableLayoutFragment.swift
 //  FSNotesCore
 //
-//  Phase 2e-T2-c — Read-only grid rendering for the TK2 native-cell
-//  table path. Pairs with `TableElement`. The element carries a
-//  `Block.table` payload (placeholder in 2e-T2-c: body cells are the
-//  decoded separator-encoded text, alignments default to `.none` until
-//  2e-T2-e threads the authoritative alignments through — see the
-//  content-storage delegate's `synthesizePlaceholderTableBlock`).
-//
-//  This slice paints the grid: column borders, row borders, header
-//  background, zebra row shading, and per-cell content. Editing, cursor,
-//  and hover handles are deliberately out of scope and land in later
-//  slices (2e-T2-d, -e, -g).
+//  Grid rendering for the TK2 native-cell table path. Pairs with
+//  `TableElement`, which carries the authoritative `Block.table`
+//  payload (header, alignments, body rows, optional persisted column
+//  widths). Paints column borders, row borders, header background,
+//  zebra row shading, and per-cell content; editing entry points,
+//  caret-rect computation, and hover-handle hit-testing are also
+//  implemented here (see `caretRectInCell`, `geometryForHandleOverlay`,
+//  and the column-handle overlay region near the top of the fragment).
 //
 //  Draw contract:
 //    * `layoutFragmentFrame` returns `TableGeometry.compute(...).totalHeight`
@@ -43,15 +40,17 @@
 import AppKit
 
 /// Custom `NSTextLayoutFragment` for the TK2 native-cell table path.
-/// Landed in 2e-T2-c with read-only grid rendering; editing, cursor
-/// routing, and hover handles land in 2e-T2-d / -e / -g.
+/// Owns grid rendering, caret-rect computation, and column-handle
+/// hit-testing.
 public final class TableLayoutFragment: NSTextLayoutFragment {
 
     // MARK: - Visual constants
     //
-    // Mirrors `InlineTableView.drawGridLines` so the native-cell path is
-    // pixel-identical to the widget path. Any change here must be
-    // mirrored in the widget until slice 2e-T2-h deletes it.
+    // The legacy `InlineTableView` widget that originally mirrored these
+    // values was deleted in Phase 2e T2-h (commit `de1f146`); these
+    // constants are now the single source of truth for grid stroke
+    // widths and zebra fills (alongside `Theme.shared.chrome` for
+    // colors).
 
     /// Grid line thickness. Matches `InlineTableView.gridLineWidth`.
     public static let gridLineWidth: CGFloat = 0.5
@@ -1043,8 +1042,7 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
     ///
     /// If this ever drifts from the geometry-side copy, row heights
     /// will disagree with their painted content — the whole grid will
-    /// clip. Keep them in sync until slice 2e-T2-h collapses the
-    /// measurement/draw paths.
+    /// clip.
     private func makeRenderedCellText(
         cell: TableCell,
         font: NSFont,

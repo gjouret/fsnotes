@@ -2,33 +2,20 @@
 //  TableElement.swift
 //  FSNotesCore
 //
-//  Phase 2e-T2-a — Additive foundation for the TK2 native-cell table
-//  path. This class is dead code on disk: no dispatch path instantiates
-//  it, no layout manager consults it, no content-storage delegate vends
-//  it. Later slices will wire it in.
-//
-//  Design (from the T2 spike):
-//    * Each table will be ONE `NSTextElement` whose `attributedString`
-//      concatenates cell text. Cells within a row are separated by
-//      U+001F (UNIT SEPARATOR); rows are separated by U+001E (RECORD
-//      SEPARATOR). The header row comes first, followed by a single
-//      header/body boundary separator (U+001E), then the body rows.
-//    * The element carries the authoritative `Block.table` payload so
-//      downstream dispatch can reconstruct the structural shape without
-//      re-parsing the attributed string. The attributed string remains
-//      the source of truth for TextFinder / selection / accessibility.
-//
-//  This slice only ships the type and the separator-encoding helpers.
-//  Slice 2e-T2-b will stand up the emission path (feature flag + content
-//  storage delegate) and slice 2e-T2-c will override layout-fragment
-//  dispatch on the element's concrete class.
+//  Active TK2 element class for tables; dispatched by
+//  `BlockModelContentStorageDelegate` and routed to
+//  `TableLayoutFragment` by `BlockModelLayoutManagerDelegate`. The
+//  attributed string concatenates cell text separated by U+001F (UNIT
+//  SEPARATOR) within a row and U+001E (RECORD SEPARATOR) between rows;
+//  the authoritative `Block.table` payload is carried alongside so
+//  downstream dispatch can reconstruct alignments / widths without
+//  re-parsing the flat string.
 //
 
 import AppKit
 
 /// Single `NSTextElement` that represents an entire markdown table
-/// under the TK2 native-cell path. Dead code as of 2e-T2-a — no
-/// production code path constructs this yet.
+/// under the TK2 native-cell path.
 public final class TableElement: NSTextParagraph {
 
     // MARK: - Separator characters
@@ -49,9 +36,10 @@ public final class TableElement: NSTextParagraph {
     // MARK: - Block-model payload
 
     /// The authoritative `Block.table` value this element represents.
-    /// Downstream slices read `header`/`alignments`/`rows`/`raw` off
-    /// this payload to drive grid geometry and serialization without
-    /// re-parsing the attributed string.
+    /// Downstream readers (geometry, fragment draw, save path) read
+    /// `header`/`alignments`/`rows`/`columnWidths` off this payload to
+    /// drive grid geometry and serialization without re-parsing the
+    /// attributed string.
     public let block: Block
 
     // MARK: - Init
