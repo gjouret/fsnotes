@@ -48,6 +48,7 @@
 //
 
 import AppKit
+import STTextKitPlus
 
 public final class CodeBlockLayoutFragment: NSTextLayoutFragment {
 
@@ -121,13 +122,8 @@ public final class CodeBlockLayoutFragment: NSTextLayoutFragment {
         // Convert the fragment's NSTextRange to character offsets in
         // the underlying NSTextStorage so we can read attributes at
         // neighbor positions.
-        let docStart = contentStorage.documentRange.location
-        let startOffset = contentStorage.offset(
-            from: docStart, to: elementRange.location
-        )
-        let endOffset = contentStorage.offset(
-            from: docStart, to: elementRange.endLocation
-        )
+        let startOffset = NSRange(elementRange.location, in: contentStorage).location
+        let endOffset = NSRange(elementRange.endLocation, in: contentStorage).location
         guard startOffset >= 0, endOffset >= startOffset,
               endOffset <= storage.length else { return .single }
 

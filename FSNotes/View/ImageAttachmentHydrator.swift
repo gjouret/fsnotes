@@ -31,6 +31,7 @@
 
 import Foundation
 import Cocoa
+import STTextKitPlus
 
 enum ImageAttachmentHydrator {
 
@@ -321,11 +322,6 @@ enum ImageAttachmentHydrator {
         for range: NSRange,
         in tcs: NSTextContentStorage
     ) -> NSTextRange? {
-        let docStart = tcs.documentRange.location
-        guard let startLocation = tcs.location(docStart, offsetBy: range.location),
-              let endLocation = tcs.location(startLocation, offsetBy: range.length) else {
-            return nil
-        }
-        return NSTextRange(location: startLocation, end: endLocation)
+        return NSTextRange(range, in: tcs)
     }
 }

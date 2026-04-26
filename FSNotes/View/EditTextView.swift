@@ -8,6 +8,7 @@
 
 import Cocoa
 import PDFKit
+import STTextKitPlus
 
 class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelegate, EditorDelegate {
     public var editorViewController: EditorViewController?
@@ -80,14 +81,9 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         let docLength = textStorage?.length ?? 0
         let safeStart = max(0, min(range.location, docLength))
         let safeEnd = max(safeStart, min(NSMaxRange(range), docLength))
-        guard let startLoc = contentManager.location(
-            contentManager.documentRange.location,
-            offsetBy: safeStart
-        ), let endLoc = contentManager.location(
-            contentManager.documentRange.location,
-            offsetBy: safeEnd
-        ), let textRange = NSTextRange(
-            location: startLoc, end: endLoc
+        guard let textRange = NSTextRange(
+            NSRange(location: safeStart, length: safeEnd - safeStart),
+            in: contentManager
         ) else { return }
         tlm.invalidateLayout(for: textRange)
         needsDisplay = true

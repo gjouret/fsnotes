@@ -58,6 +58,7 @@ import AppKit
 #else
 import UIKit
 #endif
+import STTextKitPlus
 
 // MARK: - DocumentCursor ↔ NSTextLocation
 
@@ -83,8 +84,7 @@ public extension DocumentCursor {
         using projection: DocumentProjection
     ) -> NSTextLocation? {
         let storageIdx = projection.storageIndex(for: self)
-        let docStart = contentStorage.documentRange.location
-        return contentStorage.location(docStart, offsetBy: storageIdx)
+        return contentStorage.location(at: storageIdx)
     }
 
     /// Inverse: build a `DocumentCursor` from an `NSTextLocation` in the
@@ -105,17 +105,16 @@ public extension DocumentCursor {
         in contentStorage: NSTextContentStorage,
         using projection: DocumentProjection
     ) -> DocumentCursor? {
-        let docStart = contentStorage.documentRange.location
         let docEnd = contentStorage.documentRange.endLocation
         // Outside document range → nil. Equal to docEnd is allowed
         // (cursor at the very end of the document).
-        if contentStorage.offset(from: docStart, to: location) < 0 {
+        let storageIdx = NSRange(location, in: contentStorage).location
+        if storageIdx < 0 {
             return nil
         }
         if contentStorage.offset(from: location, to: docEnd) < 0 {
             return nil
         }
-        let storageIdx = contentStorage.offset(from: docStart, to: location)
         return projection.cursor(atStorageIndex: storageIdx)
     }
 }

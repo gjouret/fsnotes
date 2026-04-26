@@ -23,6 +23,7 @@
 //
 
 import AppKit
+import STTextKitPlus
 
 // MARK: - Public entry point
 
@@ -273,7 +274,6 @@ final class CodeBlockEditToggleOverlay {
             return []
         }
 
-        let docStart = contentStorage.documentRange.location
         let containerWidth = editor.textContainer?.size.width
             ?? editor.frame.width
         let containerOrigin = editor.textContainerOrigin
@@ -297,9 +297,7 @@ final class CodeBlockEditToggleOverlay {
                   let elementRange = element.elementRange
             else { return true }
 
-            let charIndex = contentStorage.offset(
-                from: docStart, to: elementRange.location
-            )
+            let charIndex = NSRange(elementRange.location, in: contentStorage).location
             guard charIndex >= 0, charIndex < storage.length else {
                 return true
             }

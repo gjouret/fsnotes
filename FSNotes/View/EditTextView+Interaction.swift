@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import STTextKitPlus
 
 extension EditTextView {
     override func mouseDown(with event: NSEvent) {
@@ -329,10 +330,7 @@ extension EditTextView {
             bmLog("🖱 handleTableCellClick: no cellRange for (\(row),\(col))")
             return false
         }
-        let docStart = contentStorage.documentRange.location
-        let elementStart = contentStorage.offset(
-            from: docStart, to: elementRange.location
-        )
+        let elementStart = NSRange(elementRange.location, in: contentStorage).location
         // Park the cursor at the END of the cell's content. Most
         // intuitive for a click on a non-empty cell; for an empty
         // cell, end == start so it's still right.
@@ -362,8 +360,7 @@ extension EditTextView {
               let elementRange = fragment.textElement?.elementRange else {
             return nil
         }
-        let docStart = contentStorage.documentRange.location
-        let elementStart = contentStorage.offset(from: docStart, to: elementRange.location)
+        let elementStart = NSRange(elementRange.location, in: contentStorage).location
         return elementStart + charOffsetInElement
     }
 

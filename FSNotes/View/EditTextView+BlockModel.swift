@@ -19,6 +19,7 @@
 
 import Foundation
 import AppKit
+import STTextKitPlus
 
 // MARK: - File-based diagnostic logging
 
@@ -2013,10 +2014,8 @@ extension EditTextView {
               storageOffset <= (textStorage?.length ?? 0)
         else { return nil }
 
-        let docStart = contentStorage.documentRange.location
-        guard let loc = contentStorage.location(
-            docStart, offsetBy: storageOffset
-        ) else { return nil }
+        guard let loc = contentStorage.location(at: storageOffset)
+        else { return nil }
 
         // Strict fragment lookup at `storageOffset`. TK2 maps a just-
         // past-end-of-element offset (e.g. cursor parked at end of an
@@ -2036,15 +2035,11 @@ extension EditTextView {
             resolvedElementRange = elementRange
         }
         if resolvedElement == nil, storageOffset > 0,
-           let prevLoc = contentStorage.location(
-                docStart, offsetBy: storageOffset - 1
-           ),
+           let prevLoc = contentStorage.location(at: storageOffset - 1),
            let prevFrag = tlm.textLayoutFragment(for: prevLoc),
            let element = prevFrag.textElement as? TableElement,
            let elementRange = element.elementRange {
-            let elementEnd = contentStorage.offset(
-                from: docStart, to: elementRange.endLocation
-            )
+            let elementEnd = NSRange(elementRange.endLocation, in: contentStorage).location
             if elementEnd == storageOffset {
                 resolvedElement = element
                 resolvedElementRange = elementRange
@@ -2054,9 +2049,7 @@ extension EditTextView {
               let elementRange = resolvedElementRange
         else { return nil }
 
-        let elementStart = contentStorage.offset(
-            from: docStart, to: elementRange.location
-        )
+        let elementStart = NSRange(elementRange.location, in: contentStorage).location
         let localOffset = storageOffset - elementStart
         // Use the cursor-aware variant so an offset parked on a
         // separator (U+001F / U+001E) — including the trailing-edge

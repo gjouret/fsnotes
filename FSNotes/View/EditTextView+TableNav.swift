@@ -45,6 +45,7 @@
 //
 
 import AppKit
+import STTextKitPlus
 
 extension EditTextView {
 
@@ -79,10 +80,8 @@ extension EditTextView {
               cursorOffset <= (textStorage?.length ?? 0)
         else { return nil }
 
-        let docStart = contentStorage.documentRange.location
-        guard let cursorLoc = contentStorage.location(
-            docStart, offsetBy: cursorOffset
-        ) else { return nil }
+        guard let cursorLoc = contentStorage.location(at: cursorOffset)
+        else { return nil }
 
         // `textLayoutFragment(for: NSTextLocation)` returns the fragment
         // that *contains* the location. For a cursor sitting on the
@@ -113,15 +112,11 @@ extension EditTextView {
             resolvedElementRange = elementRange
         }
         if resolvedElement == nil, cursorOffset > 0,
-           let prevLoc = contentStorage.location(
-                docStart, offsetBy: cursorOffset - 1
-           ),
+           let prevLoc = contentStorage.location(at: cursorOffset - 1),
            let prevFrag = tlm.textLayoutFragment(for: prevLoc),
            let element = prevFrag.textElement as? TableElement,
            let elementRange = element.elementRange {
-            let elementEnd = contentStorage.offset(
-                from: docStart, to: elementRange.endLocation
-            )
+            let elementEnd = NSRange(elementRange.endLocation, in: contentStorage).location
             if elementEnd == cursorOffset {
                 resolvedElement = element
                 resolvedElementRange = elementRange
@@ -131,9 +126,7 @@ extension EditTextView {
               let elementRange = resolvedElementRange
         else { return nil }
 
-        let elementStart = contentStorage.offset(
-            from: docStart, to: elementRange.location
-        )
+        let elementStart = NSRange(elementRange.location, in: contentStorage).location
         let localOffset = cursorOffset - elementStart
         // Cursor-aware lookup: when the caret is parked at end-of-
         // cell content (a click-to-cell with no further typing leaves
@@ -176,10 +169,8 @@ extension EditTextView {
         guard offset >= 0, offset <= (textStorage?.length ?? 0) else {
             return false
         }
-        let docStart = contentStorage.documentRange.location
-        guard let loc = contentStorage.location(
-            docStart, offsetBy: offset
-        ) else { return false }
+        guard let loc = contentStorage.location(at: offset)
+        else { return false }
         if let fragment = tlm.textLayoutFragment(for: loc),
            fragment.textElement is TableElement {
             return true
@@ -193,13 +184,11 @@ extension EditTextView {
         // `offset - 1` and accept if its fragment is a `TableElement`
         // whose element range END is exactly `offset`.
         if offset > 0,
-           let prevLoc = contentStorage.location(docStart, offsetBy: offset - 1),
+           let prevLoc = contentStorage.location(at: offset - 1),
            let prevFrag = tlm.textLayoutFragment(for: prevLoc),
            prevFrag.textElement is TableElement,
            let elementRange = prevFrag.textElement?.elementRange {
-            let elementEnd = contentStorage.offset(
-                from: docStart, to: elementRange.endLocation
-            )
+            let elementEnd = NSRange(elementRange.endLocation, in: contentStorage).location
             if elementEnd == offset {
                 return true
             }
@@ -222,17 +211,13 @@ extension EditTextView {
         guard offset >= 0, offset <= (textStorage?.length ?? 0) else {
             return false
         }
-        let docStart = contentStorage.documentRange.location
-        guard let loc = contentStorage.location(
-            docStart, offsetBy: offset
-        ) else { return false }
+        guard let loc = contentStorage.location(at: offset)
+        else { return false }
         guard let fragment = tlm.textLayoutFragment(for: loc),
               let element = fragment.textElement as? TableElement,
               let elementRange = element.elementRange
         else { return false }
-        let elementStart = contentStorage.offset(
-            from: docStart, to: elementRange.location
-        )
+        let elementStart = NSRange(elementRange.location, in: contentStorage).location
         let localOffset = offset - elementStart
         // Walk every (row, col) and check if any cell starts here.
         // Tables are small (header + body rows × cols), so an O(rows×cols)

@@ -44,6 +44,7 @@
 //
 
 import AppKit
+import STTextKitPlus
 
 final class TableHandleOverlay {
 
@@ -208,7 +209,6 @@ final class TableHandleOverlay {
         else {
             return []
         }
-        let docStart = contentStorage.documentRange.location
         let containerOrigin = editor.textContainerOrigin
 
         var out: [VisibleTable] = []
@@ -222,9 +222,7 @@ final class TableHandleOverlay {
             guard let element = tf.textElement as? TableElement,
                   let elementRange = element.elementRange
             else { return true }
-            let charIndex = contentStorage.offset(
-                from: docStart, to: elementRange.location
-            )
+            let charIndex = NSRange(elementRange.location, in: contentStorage).location
             // Resolve the block index.
             var blockIdx = -1
             for (i, span) in projection.blockSpans.enumerated() {
@@ -400,10 +398,7 @@ final class TableHandleOverlay {
                 as? NSTextContentStorage,
               let elementRange = fragment.textElement?.elementRange
         else { return -1 }
-        let docStart = contentStorage.documentRange.location
-        let charIndex = contentStorage.offset(
-            from: docStart, to: elementRange.location
-        )
+        let charIndex = NSRange(elementRange.location, in: contentStorage).location
         for (i, span) in projection.blockSpans.enumerated() {
             if NSLocationInRange(charIndex, span) ||
                 span.location == charIndex {

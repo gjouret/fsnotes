@@ -25,6 +25,7 @@
 //
 
 import AppKit
+import STTextKitPlus
 
 public final class HeadingLayoutFragment: NSTextLayoutFragment {
 
@@ -95,10 +96,7 @@ public final class HeadingLayoutFragment: NSTextLayoutFragment {
               let storage = contentStorage.textStorage,
               let elementRange = textElement?.elementRange
         else { return false }
-        let docStart = contentStorage.documentRange.location
-        let endOffset = contentStorage.offset(
-            from: docStart, to: elementRange.endLocation
-        )
+        let endOffset = NSRange(elementRange.endLocation, in: contentStorage).location
         guard endOffset >= 0, endOffset < storage.length else {
             return false
         }

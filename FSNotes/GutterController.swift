@@ -8,6 +8,7 @@
 //
 
 import Cocoa
+import STTextKitPlus
 
 class GutterController {
 
@@ -161,7 +162,6 @@ class GutterController {
               let tcs = tlm.textContentManager as? NSTextContentStorage else {
             return []
         }
-        let docStart = tcs.documentRange.location
         let originY = textView.textContainerOrigin.y
         var result: [VisibleHeadingTK2] = []
 
@@ -174,7 +174,7 @@ class GutterController {
                   let elementRange = element.elementRange else { return true }
 
             // Map TK2 NSTextLocation -> NSTextStorage character offset.
-            let charIndex = tcs.offset(from: docStart, to: elementRange.location)
+            let charIndex = NSRange(elementRange.location, in: tcs).location
             guard charIndex >= 0 else { return true }
 
             let frame = fragment.layoutFragmentFrame
@@ -388,7 +388,6 @@ class GutterController {
               let processor = textView.textStorageProcessor else {
             return []
         }
-        let docStart = tcs.documentRange.location
         let originY = textView.textContainerOrigin.y
         var result: [VisibleCodeBlockTK2] = []
         var lastSeenBlockStart: Int = -1
@@ -401,7 +400,7 @@ class GutterController {
             guard let element = fragment.textElement,
                   let elementRange = element.elementRange else { return true }
 
-            let charIndex = tcs.offset(from: docStart, to: elementRange.location)
+            let charIndex = NSRange(elementRange.location, in: tcs).location
             guard charIndex >= 0, charIndex < storage.length else { return true }
 
             // Bug #28: skip code blocks inside a folded heading range.
@@ -478,7 +477,6 @@ class GutterController {
               let storage = textView.textStorage else {
             return []
         }
-        let docStart = tcs.documentRange.location
         let originY = textView.textContainerOrigin.y
         let tableTypeValue = RenderedBlockType.table.rawValue
         var result: [VisibleTableTK2] = []
@@ -490,7 +488,7 @@ class GutterController {
             guard let element = fragment.textElement,
                   let elementRange = element.elementRange else { return true }
 
-            let charIndex = tcs.offset(from: docStart, to: elementRange.location)
+            let charIndex = NSRange(elementRange.location, in: tcs).location
             guard charIndex >= 0, charIndex < storage.length else { return true }
 
             // Non-table fragments skip in one attribute lookup.

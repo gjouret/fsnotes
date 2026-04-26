@@ -8,6 +8,7 @@
 
 import Foundation
 import AppKit
+import STTextKitPlus
 
 extension EditorViewController {
     
@@ -86,8 +87,7 @@ extension EditorViewController {
               let elementRange = fragment.textElement?.elementRange
         else { return nil }
 
-        let docStart = contentStorage.documentRange.location
-        let charOffset = contentStorage.offset(from: docStart, to: elementRange.location)
+        let charOffset = NSRange(elementRange.location, in: contentStorage).location
         let yOffset = visibleTopY - fragment.layoutFragmentFrame.origin.y
         return TK2ScrollPosition(charOffset: charOffset, yOffsetWithinFragment: yOffset)
     }
@@ -111,8 +111,7 @@ extension EditorViewController {
               let contentStorage = tlm.textContentManager as? NSTextContentStorage
         else { return }
 
-        let docStart = contentStorage.documentRange.location
-        guard let textLocation = contentStorage.location(docStart, offsetBy: charOffset)
+        guard let textLocation = contentStorage.location(at: charOffset)
         else { return }
 
         // Ensure layout has been realized around the target location before
