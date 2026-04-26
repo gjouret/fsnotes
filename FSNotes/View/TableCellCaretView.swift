@@ -108,6 +108,26 @@ extension EditTextView {
         }
     }
 
+    /// Saved insertion-point color for restoration when the caret
+    /// leaves a table cell. We set `insertionPointColor = .clear` to
+    /// suppress the platform `NSTextInsertionIndicator` while our
+    /// own caret view is active (otherwise both render — the platform
+    /// one at the natural-flow position outside the table grid, the
+    /// custom one inside the cell). When the cursor leaves the table,
+    /// we restore the saved color.
+    private var savedInsertionPointColor: NSColor? {
+        get {
+            objc_getAssociatedObject(self, &savedInsertionPointColorKey)
+                as? NSColor
+        }
+        set {
+            objc_setAssociatedObject(
+                self, &savedInsertionPointColorKey, newValue,
+                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+            )
+        }
+    }
+
     /// Reposition (or hide) the table-cell caret subview based on the
     /// current selection. Called from
     /// `setSelectedRanges(_:affinity:stillSelecting:)`.
@@ -116,8 +136,12 @@ extension EditTextView {
     ///   * If the selection is a single zero-length caret AND the
     ///     cursor is inside a `TableLayoutFragment`, install (lazily)
     ///     the caret subview, position it at the cell rect computed
-    ///     by `caretRectIfInTableCell()`, and show it.
-    ///   * Otherwise hide the caret subview.
+    ///     by `caretRectIfInTableCell()`, suppress the platform
+    ///     `NSTextInsertionIndicator` by clearing
+    ///     `insertionPointColor`, and show our subview.
+    ///   * Otherwise hide our caret subview and restore the saved
+    ///     `insertionPointColor` so the platform indicator paints
+    ///     normally outside the table.
     ///
     /// `caretRectIfInTableCell()` already returns view-coordinate
     /// rects (its math: `localRect + fragment.frame.origin
@@ -129,11 +153,21 @@ extension EditTextView {
               let rect = caretRectIfInTableCell()
         else {
             tableCellCaretView?.hide()
+            // Restore the platform indicator color when we leave the
+            // table. Save-then-restore handles the case where the user
+            // had a custom cursor color (insertionPointColor is
+            // settable via `Theme`).
+            if let saved = savedInsertionPointColor {
+                insertionPointColor = saved
+                savedInsertionPointColor = nil
+            }
             return
         }
-        // Caret rect from `caretRectIfInTableCell` is the cell's
-        // content rect (full row height inside cell padding); narrow
-        // to a 2-pt-wide caret stripe at the rect's left edge.
+        // Caret rect from `caretRectIfInTableCell` already returns a
+        // single-line-height rect (since the recent
+        // `TableLayoutFragment.caretRectInCell` change capped the
+        // height to the cell's text line height). Set the width to
+        // the standard caret stripe.
         var caretRect = rect
         caretRect.size.width = max(2, caretWidth)
 
@@ -148,5 +182,14 @@ extension EditTextView {
             view = v
         }
         view.show(at: caretRect)
+
+        // Suppress the platform indicator. Save the original color
+        // once so we can restore it when the caret leaves the table.
+        if savedInsertionPointColor == nil {
+            savedInsertionPointColor = insertionPointColor
+        }
+        insertionPointColor = .clear
     }
 }
+
+private var savedInsertionPointColorKey: UInt8 = 0

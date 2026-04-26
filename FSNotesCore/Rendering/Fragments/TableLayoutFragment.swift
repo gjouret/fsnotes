@@ -448,11 +448,31 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
             caretX = contentX + measured
         }
 
+        // Caret height should be one line of text, not the full cell
+        // content area — the platform's standard caret is line-tall,
+        // and using contentHeight makes the caret an out-sized blue
+        // stripe that fills the whole cell vertically when the row is
+        // tall (e.g. a multi-line cell or a cell rendered at increased
+        // line spacing). Use the typeset height of "X" with the cell's
+        // draw font (same metric `TableGeometry.minCellHeight` uses
+        // for natural row height); fall back to the (smaller of)
+        // contentHeight to cap at the cell's own bounds.
+        let lineHeight = ceil(
+            NSAttributedString(string: "X", attributes: [.font: drawFont])
+                .boundingRect(
+                    with: CGSize(
+                        width: CGFloat.greatestFiniteMagnitude,
+                        height: CGFloat.greatestFiniteMagnitude
+                    ),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading]
+                ).height
+        )
+        let caretHeight = min(max(lineHeight, 1), contentHeight)
         return CGRect(
             x: caretX,
             y: contentY,
             width: caretWidth,
-            height: contentHeight
+            height: caretHeight
         )
     }
 
