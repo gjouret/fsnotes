@@ -1093,4 +1093,156 @@ public final class TableLayoutFragment: NSTextLayoutFragment {
         }
         context.strokePath()
     }
+
+    // MARK: - Caret / selection routing (bug #29 visual half)
+    //
+    // `NSTextInsertionIndicator` (the standard caret-painting subview
+    // installed by `NSTextView` under TK2) reads its frame from
+    // `NSTextLayoutFragment.textLineFragments`. The natural-flow
+    // typeset of the separator-encoded backing string lays cells out
+    // in left-to-right text order — which is wrong for a fragment
+    // whose `draw(at:in:)` paints cells at custom grid positions.
+    // The default behaviour parks the caret at the top-left of the
+    // fragment (the column-handle-strip area), no matter which cell
+    // the cursor's storage offset is in.
+    //
+    // Override `textLineFragments` to return one
+    // `TableCellLineFragment` per cell, with `typographicBounds`
+    // equal to the cell's painted content rect and `characterRange`
+    // equal to the cell's element-local UTF-16 range. TK2 then
+    // routes caret, selection-rect, and find-result-highlight
+    // queries through cell-aligned fragments, and the indicator
+    // parks inside the right cell.
+    public override var textLineFragments: [NSTextLineFragment] {
+        guard let element = tableElement,
+              case .table(
+                let header, _, let rows, _
+              ) = element.block,
+              header.count > 0
+        else { return super.textLineFragments }
+
+        let g = geometry(
+            block: element.block,
+            containerWidth: containerWidth,
+            font: bodyFont
+        )
+        guard g.columnWidths.count == header.count,
+              g.rowHeights.count == 1 + rows.count
+        else { return super.textLineFragments }
+
+        let padH = TableGeometry.cellPaddingH()
+        let padTop = TableGeometry.cellPaddingTop()
+        let padBot = TableGeometry.cellPaddingBot()
+
+        // Use the parent element's actual attributedString as each
+        // line fragment's backing string; the cell's UTF-16 range
+        // within it positions the line fragment in element-local
+        // storage coordinates. Passing a freshly-typeset per-cell
+        // attributedString (with `range = (0, length)`) breaks TK2's
+        // internal `substringWithRange:` calls, which use
+        // `characterRange` as a substring index against the line
+        // fragment's own attributedString.
+        let elementAttributed = element.attributedString
+        let elementLength = (elementAttributed.string as NSString).length
+
+        var fragments: [TableCellLineFragment] = []
+
+        // Build one TableCellLineFragment per cell. Cell content
+        // ranges come straight off `TableElement.cellRange(forCellAt:)`
+        // — the canonical element-local range for that cell.
+        func appendCell(row: Int, col: Int) {
+            guard let cellLocalRange = element.cellRange(
+                forCellAt: (row: row, col: col)
+            ) else { return }
+            // Defensive clamp against the element's actual length.
+            let safeLoc = min(max(cellLocalRange.location, 0), elementLength)
+            let safeLen = max(
+                0,
+                min(cellLocalRange.length, elementLength - safeLoc)
+            )
+            let safeRange = NSRange(location: safeLoc, length: safeLen)
+
+            var colX = TableGeometry.handleBarWidth
+            for i in 0..<col { colX += g.columnWidths[i] }
+            let cellWidth = g.columnWidths[col]
+            var rowY = TableGeometry.handleBarHeight
+            for i in 0..<row { rowY += g.rowHeights[i] }
+            let rowHeight = g.rowHeights[row]
+            let cellRect = CGRect(
+                x: colX + padH,
+                y: rowY + padTop,
+                width: max(0, cellWidth - padH * 2),
+                height: max(0, rowHeight - padTop - padBot)
+            )
+
+            let lineFrag = TableCellLineFragment(
+                elementAttributedString: elementAttributed,
+                elementLocalRange: safeRange,
+                cellRect: cellRect
+            )
+            fragments.append(lineFrag)
+        }
+
+        // Header row.
+        for col in 0..<header.count {
+            appendCell(row: 0, col: col)
+        }
+        // Body rows.
+        for (rowIdx, _) in rows.enumerated() {
+            for col in 0..<header.count {
+                appendCell(row: rowIdx + 1, col: col)
+            }
+        }
+
+        return fragments
+    }
+}
+
+/// `NSTextLineFragment` subclass that exposes a custom
+/// `typographicBounds` (the cell's painted content rect in
+/// fragment-local coordinates) and a custom `characterRange` (the
+/// cell's UTF-16 range relative to the parent fragment's element).
+///
+/// Caret painting under TK2: when `NSTextInsertionIndicator` queries
+/// the layout manager for the rect at a given `NSTextLocation`, the
+/// manager finds the layout fragment containing the location and then
+/// the line fragment whose `characterRange` covers it; the indicator's
+/// frame is computed from `lineFragment.typographicBounds` plus the
+/// parent fragment's frame plus the text container origin.
+///
+/// The default `NSTextLineFragment` typesets the parent fragment's
+/// attributedString as a flat run, so for a separator-encoded table
+/// it produces a single line fragment whose typographic bounds cover
+/// the natural-flow text position — which has nothing to do with the
+/// custom grid `TableLayoutFragment.draw` paints. Returning one of
+/// these per cell, with the cell's painted rect as the typographic
+/// bounds, makes the indicator land inside the cell.
+private final class TableCellLineFragment: NSTextLineFragment {
+
+    private let cellRect: CGRect
+
+    init(
+        elementAttributedString: NSAttributedString,
+        elementLocalRange: NSRange,
+        cellRect: CGRect
+    ) {
+        self.cellRect = cellRect
+        // The init's `range` parameter is interpreted as a substring
+        // of the passed `attributedString`. Passing the parent
+        // element's full attributedString plus the cell's element-
+        // local range keeps TK2's internal `substringWithRange:` calls
+        // valid (they index against the line fragment's stored
+        // attributedString) and lets `characterRange` derive
+        // naturally.
+        super.init(
+            attributedString: elementAttributedString,
+            range: elementLocalRange
+        )
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("TableCellLineFragment does not support NSCoding")
+    }
+
+    override var typographicBounds: CGRect { cellRect }
 }
