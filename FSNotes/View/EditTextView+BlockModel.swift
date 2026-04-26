@@ -2017,9 +2017,41 @@ extension EditTextView {
         guard let loc = contentStorage.location(
             docStart, offsetBy: storageOffset
         ) else { return nil }
-        guard let fragment = tlm.textLayoutFragment(for: loc),
-              let element = fragment.textElement as? TableElement,
-              let elementRange = element.elementRange
+
+        // Strict fragment lookup at `storageOffset`. TK2 maps a just-
+        // past-end-of-element offset (e.g. cursor parked at end of an
+        // empty trailing cell after Tab or click-to-cell) to the
+        // FOLLOWING fragment, so the strict lookup misses the table
+        // here. Probe `offset - 1` and accept the resulting fragment
+        // when its `TableElement.elementRange` ends exactly at
+        // `storageOffset`. Use the original `storageOffset` for the
+        // cell-locator below — `cellAtCursor` correctly resolves
+        // end-of-element to the last cell.
+        var resolvedElement: TableElement?
+        var resolvedElementRange: NSTextRange?
+        if let fragment = tlm.textLayoutFragment(for: loc),
+           let element = fragment.textElement as? TableElement,
+           let elementRange = element.elementRange {
+            resolvedElement = element
+            resolvedElementRange = elementRange
+        }
+        if resolvedElement == nil, storageOffset > 0,
+           let prevLoc = contentStorage.location(
+                docStart, offsetBy: storageOffset - 1
+           ),
+           let prevFrag = tlm.textLayoutFragment(for: prevLoc),
+           let element = prevFrag.textElement as? TableElement,
+           let elementRange = element.elementRange {
+            let elementEnd = contentStorage.offset(
+                from: docStart, to: elementRange.endLocation
+            )
+            if elementEnd == storageOffset {
+                resolvedElement = element
+                resolvedElementRange = elementRange
+            }
+        }
+        guard let element = resolvedElement,
+              let elementRange = resolvedElementRange
         else { return nil }
 
         let elementStart = contentStorage.offset(

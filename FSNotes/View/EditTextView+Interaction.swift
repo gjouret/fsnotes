@@ -287,9 +287,21 @@ extension EditTextView {
             return false
         }
         let point = self.convert(event.locationInWindow, from: nil)
+        // Use `textContainerOrigin` (not `textContainerInset`) for the
+        // view → container conversion. The renderer paints content at
+        // `view.y = container.y + textContainerOrigin.y`; the inverse
+        // for a click hit-test is `container.y = view.y - origin.y`.
+        // `EditTextView` overrides `textContainerOrigin` to subtract 7
+        // pt from super's value (see `EditTextView.swift:625`), so
+        // origin.y differs from inset.height by exactly that 7 pt.
+        // Using inset here created a 7-pt dead zone at the visual top
+        // of every cell where clicks fell into `localY <
+        // handleBarHeight` and got rejected by `cellHit`, sending the
+        // user into TK2's natural-flow fallback (caret parked at the
+        // table's trailing edge or in an adjacent block).
         let properPoint = NSPoint(
-            x: point.x - textContainerInset.width,
-            y: point.y - textContainerInset.height
+            x: point.x - textContainerOrigin.x,
+            y: point.y - textContainerOrigin.y
         )
         guard let fragment = tlm.textLayoutFragment(for: properPoint) else {
             bmLog("🖱 handleTableCellClick: no fragment at properPoint=\(properPoint)")

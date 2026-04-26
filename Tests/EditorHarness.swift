@@ -567,7 +567,7 @@ final class EditorHarness {
         // the editor-local point. `convert(_:to: nil)` on a view yields
         // window coords.
         let windowPoint = editor.convert(point, to: nil)
-        guard let event = NSEvent.mouseEvent(
+        guard let downEvent = NSEvent.mouseEvent(
             with: .leftMouseDown,
             location: windowPoint,
             modifierFlags: modifiers,
@@ -577,10 +577,30 @@ final class EditorHarness {
             eventNumber: 0,
             clickCount: 1,
             pressure: 1.0
+        ),
+        let upEvent = NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: windowPoint,
+            modifierFlags: modifiers,
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 0.0
         ) else {
             return editor.selectedRange()
         }
-        editor.mouseDown(with: event)
+        // NSTextView's `mouseDown(with:)` enters a drag-tracking loop
+        // (`nextEventMatchingMask:`) that blocks until a `leftMouseUp`
+        // arrives. In a live app the OS posts the mouseUp; in this
+        // synthesised test path nothing else does, so without a
+        // matching enqueued mouseUp `mouseDown` spins the test runner
+        // forever. Post the mouseUp on the window's event queue
+        // BEFORE invoking `mouseDown` so the drag-tracking loop sees
+        // it and returns.
+        window.postEvent(upEvent, atStart: false)
+        editor.mouseDown(with: downEvent)
         return editor.selectedRange()
     }
 
