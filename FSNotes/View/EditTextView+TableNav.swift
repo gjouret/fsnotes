@@ -144,10 +144,31 @@ extension EditTextView {
         guard let loc = contentStorage.location(
             docStart, offsetBy: offset
         ) else { return false }
-        guard let fragment = tlm.textLayoutFragment(for: loc) else {
-            return false
+        if let fragment = tlm.textLayoutFragment(for: loc),
+           fragment.textElement is TableElement {
+            return true
         }
-        return fragment.textElement is TableElement
+        // Trailing-edge accommodation. TK2 maps the just-past-end-of-
+        // element offset to the FOLLOWING fragment (or returns nil at
+        // doc end), but a cursor parked there by click-to-cell or
+        // Tab-into-trailing-empty-cell logically belongs to the table:
+        // typing at that offset should route through the cell-edit
+        // path, not insert a new paragraph after the table. Probe
+        // `offset - 1` and accept if its fragment is a `TableElement`
+        // whose element range END is exactly `offset`.
+        if offset > 0,
+           let prevLoc = contentStorage.location(docStart, offsetBy: offset - 1),
+           let prevFrag = tlm.textLayoutFragment(for: prevLoc),
+           prevFrag.textElement is TableElement,
+           let elementRange = prevFrag.textElement?.elementRange {
+            let elementEnd = contentStorage.offset(
+                from: docStart, to: elementRange.endLocation
+            )
+            if elementEnd == offset {
+                return true
+            }
+        }
+        return false
     }
 
     /// `true` if `offset` is exactly the start of some `(row, col)` cell

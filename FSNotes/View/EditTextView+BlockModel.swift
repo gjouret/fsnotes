@@ -2026,7 +2026,14 @@ extension EditTextView {
             from: docStart, to: elementRange.location
         )
         let localOffset = storageOffset - elementStart
-        guard let (row, col) = element.cellLocation(forOffset: localOffset)
+        // Use the cursor-aware variant so an offset parked on a
+        // separator (U+001F / U+001E) — including the trailing-edge
+        // case for an empty last cell after a Tab — resolves to the
+        // cell whose content end the caret is sitting on. The strict
+        // `cellLocation(forOffset:)` returns nil for separator-park
+        // offsets, which would route the edit through the generic
+        // fall-through path and land typed text outside the table.
+        guard let (row, col) = element.cellAtCursor(forOffset: localOffset)
         else { return nil }
 
         return TableCursorContext(
