@@ -355,18 +355,21 @@ extension EditTextView {
         let currentIdx = ctx.row * cols + ctx.col
         let totalCells = cols * totalRows
 
+        bmLog("➡️ moveHorizontal dir=\(direction) ctx.cell=(\(ctx.row),\(ctx.col)) localOffset=\(ctx.localOffset) cellRange=[\(cellStart)..\(cellEnd)) selRange=\(selectedRange())")
         if direction > 0 {
             // At end of cell? Jump to next cell's start.
             if ctx.localOffset >= cellEnd {
                 let nextIdx = (currentIdx + 1) % totalCells
                 let targetRow = nextIdx / cols
                 let targetCol = nextIdx % cols
+                bmLog("➡️   end-of-cell jump → (\(targetRow),\(targetCol))")
                 return placeCursor(
                     in: ctx.element,
                     elementStart: ctx.elementStorageStart,
                     at: (row: targetRow, col: targetCol)
                 )
             }
+            bmLog("➡️   in-cell move → falling through to default")
             return false
         } else {
             // At start of cell? Jump to previous cell's end.

@@ -351,33 +351,43 @@ extension ViewController {
     }
 
     @objc public func toggleAIChat(_ sender: Any) {
-        // Bug #53 diagnostic: confirm the IBAction is reached at all.
-        // If the toolbar button click never logs this line, the
-        // responder chain isn't routing the action to ViewController.
-        bmLog("🤖 toggleAIChat invoked (sender: \(type(of: sender)))")
         if let panel = aiChatPanel, !panel.isHidden {
-            aiChatEditorTrailingConstraint?.isActive = false
-            aiChatEditorTrailingConstraint = nil
+            // Restore editAreaScroll's full width: shrink its frame
+            // back to the editorView's full bounds.
+            if let editorView = editAreaScroll?.superview {
+                editAreaScroll.frame = editorView.bounds
+            }
             panel.removeFromSuperview()
             aiChatPanel = nil
         } else {
-            guard let editorView = editAreaScroll.superview else { return }
+            guard let editorView = editAreaScroll?.superview else { return }
+            let panelW = AIChatPanelView.panelWidth
+            let bounds = editorView.bounds
 
+            // Frame-based layout — auto-layout constraints conflict with
+            // the storyboard's pinning of `editAreaScroll.trailing` to
+            // `editorView.trailing`, leaving the panel at zero width.
+            // Sit the panel on the right edge, shrink editAreaScroll's
+            // frame to make room, and use autoresizing masks so both
+            // track window resizes.
             let panel = AIChatPanelView()
             panel.editorViewController = self
-            panel.translatesAutoresizingMaskIntoConstraints = false
+            panel.translatesAutoresizingMaskIntoConstraints = true
+            panel.frame = NSRect(
+                x: bounds.maxX - panelW,
+                y: bounds.minY,
+                width: panelW,
+                height: bounds.height
+            )
+            panel.autoresizingMask = [.minXMargin, .height]
             editorView.addSubview(panel)
 
-            NSLayoutConstraint.activate([
-                panel.topAnchor.constraint(equalTo: editAreaScroll.topAnchor),
-                panel.trailingAnchor.constraint(equalTo: editorView.trailingAnchor),
-                panel.bottomAnchor.constraint(equalTo: editAreaScroll.bottomAnchor),
-                panel.widthAnchor.constraint(equalToConstant: AIChatPanelView.panelWidth),
-            ])
-
-            let trailing = editAreaScroll.trailingAnchor.constraint(equalTo: panel.leadingAnchor)
-            trailing.isActive = true
-            aiChatEditorTrailingConstraint = trailing
+            // Shrink editAreaScroll's frame so it doesn't sit under the
+            // panel. autoresizingMask preserved as-is (the storyboard
+            // already wires it for window resize tracking).
+            var scrollFrame = editAreaScroll.frame
+            scrollFrame.size.width = max(0, bounds.width - panelW)
+            editAreaScroll.frame = scrollFrame
 
             aiChatPanel = panel
         }

@@ -90,6 +90,7 @@ extension EditTextView {
         // correct in-cell caret rect. See `caretRectIfInTableCell`
         // for why TK2's default is wrong in this case.
         if let tableRect = caretRectIfInTableCell() {
+            bmLog("✏️ drawInsertionPoint: TK2-rect=\(rect) tableRect=\(tableRect) containerOrigin=\(textContainerOrigin) selRange=\(selectedRange())")
             newRect = tableRect
             newRect.size.width = caretWidth
         }
