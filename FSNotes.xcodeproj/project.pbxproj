@@ -806,6 +806,7 @@
 		AICHATCNFTESTSB1 /* AIChatStoreConfirmationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATCNFTESTSF1 /* AIChatStoreConfirmationTests.swift */; };
 		AICHATPRSTESTSB1 /* AIChatPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATPRSTESTSF1 /* AIChatPersistenceTests.swift */; };
 		AICHATKBDTESTSB1 /* AIChatKeyboardShortcutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATKBDTESTSF1 /* AIChatKeyboardShortcutTests.swift */; };
+		AICHATSCROLLTESTSB1 /* AIChatScrollToBottomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AICHATSCROLLTESTSF1 /* AIChatScrollToBottomTests.swift */; };
 		AIPROMPTCTXTESTSB1 /* AIPromptContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */; };
 		OLLAMA00000000000000000B6 /* PreferencesAIViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */; };
 		OLLAMA00000000000000000B7 /* Phase2OllamaToolCallingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */; };
@@ -1679,6 +1680,7 @@
 		AICHATCNFTESTSF1 /* AIChatStoreConfirmationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatStoreConfirmationTests.swift; sourceTree = "<group>"; };
 		AICHATPRSTESTSF1 /* AIChatPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPersistenceTests.swift; sourceTree = "<group>"; };
 		AICHATKBDTESTSF1 /* AIChatKeyboardShortcutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatKeyboardShortcutTests.swift; sourceTree = "<group>"; };
+		AICHATSCROLLTESTSF1 /* AIChatScrollToBottomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatScrollToBottomTests.swift; sourceTree = "<group>"; };
 		AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPromptContextTests.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F6 /* PreferencesAIViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesAIViewController.swift; sourceTree = "<group>"; };
 		OLLAMA00000000000000000F7 /* Phase2OllamaToolCallingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase2OllamaToolCallingTests.swift; sourceTree = "<group>"; };
@@ -2799,6 +2801,7 @@
 				AICHATCNFTESTSF1 /* AIChatStoreConfirmationTests.swift */,
 				AICHATPRSTESTSF1 /* AIChatPersistenceTests.swift */,
 				AICHATKBDTESTSF1 /* AIChatKeyboardShortcutTests.swift */,
+				AICHATSCROLLTESTSF1 /* AIChatScrollToBottomTests.swift */,
 				AIPROMPTCTXTESTSF1 /* AIPromptContextTests.swift */,
 				C1A9F0D22EFA8A1100A1B2C3 /* HeaderFoldingTests.swift */,
 				GOVL0000000000000000000F1 /* GutterOverlayTests.swift */,
@@ -4454,6 +4457,7 @@
 				AICHATCNFTESTSB1 /* AIChatStoreConfirmationTests.swift in Sources */,
 				AICHATPRSTESTSB1 /* AIChatPersistenceTests.swift in Sources */,
 				AICHATKBDTESTSB1 /* AIChatKeyboardShortcutTests.swift in Sources */,
+				AICHATSCROLLTESTSB1 /* AIChatScrollToBottomTests.swift in Sources */,
 				AIPROMPTCTXTESTSB1 /* AIPromptContextTests.swift in Sources */,
 				F2E2F3B4D92FC6657734134C /* FacadeTests.swift in Sources */,
 				B1C9F64ACC6F33145CB3E0C0 /* FoldSnapshotTests.swift in Sources */,

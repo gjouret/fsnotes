@@ -735,12 +735,60 @@ class AIChatPanelView: NSView {
     }
 
     private func scrollToBottom() {
-        DispatchQueue.main.async {
-            if let documentView = self.messagesScrollView.documentView {
-                documentView.scrollToEndOfDocument(nil)
-            }
+        DispatchQueue.main.async { [weak self] in
+            self?.scrollToBottomNow()
         }
     }
+
+    /// Synchronous core of `scrollToBottom()`. Exposed at `internal`
+    /// visibility so the regression test (`AIChatScrollToBottomTests`)
+    /// can drive the math deterministically without pumping the main
+    /// run loop. Production code path is the async wrapper above.
+    ///
+    /// The scrollable view is `messagesScrollView` (an NSScrollView);
+    /// its `documentView` is `messagesStack` (an NSStackView).
+    /// NSStackView does NOT respond to `scrollToEndOfDocument:` —
+    /// sending that selector here crashed with
+    /// "unrecognized selector sent to instance" when a quick-action
+    /// dropdown item appended a message and triggered this code path.
+    ///
+    /// Canonical AppKit pattern for "scroll to the end of the document
+    /// view": compute the bottom offset on the document view's bounds
+    /// and scroll the clip view there directly.
+    func scrollToBottomNow() {
+        guard let scrollView = self.messagesScrollView else { return }
+        guard let documentView = scrollView.documentView else { return }
+        let clipView = scrollView.contentView
+        let bottomY = max(0, documentView.bounds.height - clipView.bounds.height)
+        let bottom = NSPoint(x: 0, y: bottomY)
+        clipView.scroll(to: bottom)
+        scrollView.reflectScrolledClipView(clipView)
+    }
+
+    // MARK: - Test accessors
+
+    /// Test-only: drive the quick-action handler the same way the
+    /// `NSPopUpButton` action would. Returns `true` if the index was
+    /// in range and a user message was dispatched. Avoids needing an
+    /// NSWindow + popup-button selection event.
+    @discardableResult
+    func __test_invokeQuickAction(at index: Int) -> Bool {
+        guard let popup = quickActionsPopup else { return false }
+        guard index > 0 && index < popup.numberOfItems else { return false }
+        popup.selectItem(at: index)
+        quickActionSelected()
+        return true
+    }
+
+    /// Test-only: inspect the messages NSScrollView so the test can
+    /// assert scroll math results without poking private state via
+    /// reflection.
+    var __test_messagesScrollView: NSScrollView { return messagesScrollView }
+
+    /// Test-only: inspect the messages NSStackView (the documentView)
+    /// so the test can confirm the crash precondition (stackView is
+    /// the documentView) and read its bounds.
+    var __test_messagesStack: NSStackView { return messagesStack }
 }
 
 // MARK: - NSTextViewDelegate
