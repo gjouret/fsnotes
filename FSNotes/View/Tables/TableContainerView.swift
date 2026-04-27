@@ -35,11 +35,17 @@ final class TableContainerView: NSView {
     /// and is updated when the view's frame changes.
     private var containerWidth: CGFloat
 
+    /// Cells indexed [row][col] — header row at index 0, body rows
+    /// after. Subviews of self; created in `rebuildCellSubviews()`
+    /// and repositioned in `layout()`.
+    private var cellSubviews: [[TableCellTextView]] = []
+
     init(block: Block, containerWidth: CGFloat = 600) {
         self.block = block
         self.containerWidth = containerWidth
         super.init(frame: .zero)
         self.wantsLayer = true
+        rebuildCellSubviews()
     }
 
     required init?(coder: NSCoder) {
@@ -52,7 +58,9 @@ final class TableContainerView: NSView {
         guard case .table = block else { return }
         self.block = block
         invalidateIntrinsicContentSize()
+        rebuildCellSubviews()
         needsDisplay = true
+        needsLayout = true
     }
 
     /// Set the available container width. Called by the provider when
@@ -62,6 +70,100 @@ final class TableContainerView: NSView {
         self.containerWidth = width
         invalidateIntrinsicContentSize()
         needsDisplay = true
+        needsLayout = true
+    }
+
+    // MARK: - Cell subview lifecycle
+
+    /// Rebuild the cell subviews from the current `Block.table`. C0
+    /// uses a simple build-from-scratch approach; Phase B's splice
+    /// integration may switch to a diff-based update for performance.
+    private func rebuildCellSubviews() {
+        // Tear down existing.
+        for row in cellSubviews { for v in row { v.removeFromSuperview() } }
+        cellSubviews.removeAll()
+
+        guard case .table(let header, let alignments, let rows, _) = block,
+              header.count > 0 else { return }
+
+        let baseFont = bodyFont
+        let boldFont = NSFontManager.shared.convert(
+            baseFont, toHaveTrait: .boldFontMask
+        )
+        let nsAlignments = alignments.map { TableGeometry.nsAlignment(for: $0) }
+
+        // Header row.
+        var headerCells: [TableCellTextView] = []
+        for (col, cell) in header.enumerated() {
+            let alignment = col < nsAlignments.count ? nsAlignments[col] : .left
+            let v = TableCellTextView(
+                cell: cell,
+                font: boldFont,
+                alignment: alignment,
+                frame: .zero
+            )
+            v.cellRow = 0
+            v.cellCol = col
+            addSubview(v)
+            headerCells.append(v)
+        }
+        cellSubviews.append(headerCells)
+
+        // Body rows.
+        for (rowIdx, row) in rows.enumerated() {
+            var rowCells: [TableCellTextView] = []
+            for (col, cell) in row.enumerated() {
+                let alignment = col < nsAlignments.count ? nsAlignments[col] : .left
+                let v = TableCellTextView(
+                    cell: cell,
+                    font: baseFont,
+                    alignment: alignment,
+                    frame: .zero
+                )
+                v.cellRow = rowIdx + 1
+                v.cellCol = col
+                addSubview(v)
+                rowCells.append(v)
+            }
+            cellSubviews.append(rowCells)
+        }
+    }
+
+    /// Position each cell subview at its painted rect. Called by
+    /// AppKit on layout passes (responds to `needsLayout = true`).
+    override func layout() {
+        super.layout()
+        guard let g = geometry(),
+              case .table = block,
+              !cellSubviews.isEmpty,
+              g.columnWidths.count > 0,
+              g.rowHeights.count == cellSubviews.count
+        else { return }
+
+        let padH = TableGeometry.cellPaddingH()
+        let padTop = TableGeometry.cellPaddingTop()
+        let padBot = TableGeometry.cellPaddingBot()
+        let gridLeft = TableGeometry.handleBarWidth
+        let gridTop = TableGeometry.handleBarHeight
+
+        for (rowIdx, row) in cellSubviews.enumerated() {
+            var rowY = gridTop
+            for i in 0..<rowIdx { rowY += g.rowHeights[i] }
+            let rowHeight = g.rowHeights[rowIdx]
+            var colX = gridLeft
+            for (colIdx, cellView) in row.enumerated() {
+                guard colIdx < g.columnWidths.count else { break }
+                let w = g.columnWidths[colIdx]
+                let cellRect = CGRect(
+                    x: colX + padH,
+                    y: rowY + padTop,
+                    width: max(0, w - padH * 2),
+                    height: max(0, rowHeight - padTop - padBot)
+                )
+                cellView.frame = cellRect
+                colX += w
+            }
+        }
     }
 
     override var isFlipped: Bool { true }
@@ -115,15 +217,13 @@ final class TableContainerView: NSView {
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        guard case .table(let header, let alignments, _, _) = block,
+        guard case .table(let header, _, _, _) = block,
               header.count > 0,
               let g = geometry(),
               g.columnWidths.count == header.count,
               g.rowHeights.count >= 1,
               let context = NSGraphicsContext.current?.cgContext
         else { return }
-
-        let nsAlignments = alignments.map { TableGeometry.nsAlignment(for: $0) }
 
         // Grid origin: skip the top + left handle strips so handles
         // (Phase F) have reserved space without overlapping cells.
@@ -135,22 +235,17 @@ final class TableContainerView: NSView {
         context.saveGState()
         defer { context.restoreGState() }
 
+        // Row fills (header + zebra) are background paint. Cell text
+        // content is now rendered by `TableCellTextView` subviews in
+        // `layout()`, not by this draw pass — `drawCellContent` is no
+        // longer called here. Grid lines paint OVER row fills and
+        // UNDER subviews (subviews stack on top of view-layer paint).
         drawRowFills(
             context: context,
             rowHeights: g.rowHeights,
             gridLeft: gridLeft,
             gridTop: gridTop,
             gridWidth: gridWidth
-        )
-        drawCellContent(
-            header: header,
-            rows: tableRows,
-            columnWidths: g.columnWidths,
-            rowHeights: g.rowHeights,
-            alignments: nsAlignments,
-            font: bodyFont,
-            gridLeft: gridLeft,
-            gridTop: gridTop
         )
         drawGridLines(
             context: context,
@@ -161,11 +256,6 @@ final class TableContainerView: NSView {
             gridWidth: gridWidth,
             gridHeight: gridHeight
         )
-    }
-
-    private var tableRows: [[TableCell]] {
-        if case .table(_, _, let rows, _) = block { return rows }
-        return []
     }
 
     // MARK: - Row fills (header + zebra body shading)
@@ -205,93 +295,6 @@ final class TableContainerView: NSView {
                 context.restoreGState()
             }
             rowY += h
-        }
-    }
-
-    // MARK: - Cell content
-    //
-    // Read-only paint — Phase C replaces this with per-cell
-    // `TableCellTextView` subviews. Until then, cells are
-    // `attributed.draw(...)` calls onto the view's CG context, same
-    // as `TableLayoutFragment.drawRowCells` does. Header cells get
-    // the bold variant.
-    private func drawCellContent(
-        header: [TableCell],
-        rows: [[TableCell]],
-        columnWidths: [CGFloat],
-        rowHeights: [CGFloat],
-        alignments: [NSTextAlignment],
-        font: NSFont,
-        gridLeft: CGFloat,
-        gridTop: CGFloat
-    ) {
-        let boldFont = NSFontManager.shared.convert(
-            font, toHaveTrait: .boldFontMask
-        )
-        let padH = TableGeometry.cellPaddingH()
-        let padTop = TableGeometry.cellPaddingTop()
-        let padBot = TableGeometry.cellPaddingBot()
-
-        drawRowCells(
-            cells: header,
-            rowY: gridTop,
-            rowHeight: rowHeights[0],
-            columnWidths: columnWidths,
-            alignments: alignments,
-            gridLeft: gridLeft,
-            font: boldFont,
-            padH: padH, padTop: padTop, padBot: padBot
-        )
-
-        var rowY = gridTop + rowHeights[0]
-        for (idx, row) in rows.enumerated() {
-            let h = rowHeights[idx + 1]
-            drawRowCells(
-                cells: row,
-                rowY: rowY,
-                rowHeight: h,
-                columnWidths: columnWidths,
-                alignments: alignments,
-                gridLeft: gridLeft,
-                font: font,
-                padH: padH, padTop: padTop, padBot: padBot
-            )
-            rowY += h
-        }
-    }
-
-    private func drawRowCells(
-        cells: [TableCell],
-        rowY: CGFloat,
-        rowHeight: CGFloat,
-        columnWidths: [CGFloat],
-        alignments: [NSTextAlignment],
-        gridLeft: CGFloat,
-        font: NSFont,
-        padH: CGFloat, padTop: CGFloat, padBot: CGFloat
-    ) {
-        var colX = gridLeft
-        for (col, width) in columnWidths.enumerated() {
-            defer { colX += width }
-            guard col < cells.count else { continue }
-            let cell = cells[col]
-            let alignment = col < alignments.count ? alignments[col] : .left
-
-            let cellRect = CGRect(
-                x: colX + padH,
-                y: rowY + padTop,
-                width: max(0, width - padH * 2),
-                height: max(0, rowHeight - padTop - padBot)
-            )
-            if cellRect.width <= 0 || cellRect.height <= 0 { continue }
-
-            let attributed = TableGeometry.renderCellAttributedString(
-                cell: cell, font: font, alignment: alignment
-            )
-            attributed.draw(
-                with: cellRect,
-                options: [.usesLineFragmentOrigin, .usesFontLeading]
-            )
         }
     }
 
