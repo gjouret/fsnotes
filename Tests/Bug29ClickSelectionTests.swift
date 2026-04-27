@@ -461,6 +461,114 @@ final class Bug29ClickSelectionTests: XCTestCase {
     ///
     /// User report (post-deploy of `a07d931`): "Enter is just consumed
     /// — doing nothing".
+    /// Repro for the user's "caret jumps up after typing first char"
+    /// symptom. Before typing: caret rect is at view.y=Y_empty. After
+    /// typing one char in the same cell: caret rect is at view.y=Y_one.
+    /// Live observation: `Y_one ≈ Y_empty − 16pt` — caret moves up by
+    /// one line height despite the cell's row staying the same height.
+    /// This test captures the rect's y in both states and the three
+    /// components (`localRect.y`, `fragment.frame.origin.y`,
+    /// `textContainerOrigin.y`) so we can identify which component
+    /// is shifting without needing live diagnostic logging.
+    func test_bug29_caretJumpsUpAfterFirstChar() throws {
+        // Match the user's note shape: a single-line heading + one
+        // 2x2 table. The Insert Table toolbar action prepends a blank
+        // line, but parsing markdown with a blank line before the
+        // table gives the same Document shape.
+        let md = """
+        # Testy
+
+        |  |  |
+        |---|---|
+        |  |  |
+        """
+        let h = EditorHarness(markdown: md, windowActivation: .keyWindow)
+        defer { h.teardown() }
+        guard let tlm = h.editor.textLayoutManager,
+              let cs = tlm.textContentManager as? NSTextContentStorage
+        else { XCTFail("no tlm/cs"); return }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Find the table fragment + park cursor at start of cell (0, 0).
+        var tableFrag: TableLayoutFragment?
+        var element: TableElement?
+        var elementStart = 0
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { f in
+            if let tf = f as? TableLayoutFragment,
+               let el = f.textElement as? TableElement,
+               let range = el.elementRange {
+                tableFrag = tf
+                element = el
+                elementStart = NSRange(range.location, in: cs).location
+                return false
+            }
+            return true
+        }
+        guard let frag = tableFrag, let el = element
+        else { XCTFail("no table fragment"); return }
+        guard let cell00Local = el.offset(forCellAt: (row: 0, col: 0))
+        else { XCTFail("no cell00 offset"); return }
+
+        h.editor.setSelectedRange(NSRange(
+            location: elementStart + cell00Local, length: 0
+        ))
+        // Force layout pump so frames are populated.
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Snapshot component values BEFORE typing.
+        let rectEmpty = h.editor.caretRectIfInTableCell()
+        let frameEmpty = frag.layoutFragmentFrame.origin
+        let containerEmpty = h.editor.textContainerOrigin
+
+        // Type one char.
+        h.type("N")
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Re-resolve the (possibly new) fragment instance.
+        var fragAfter: TableLayoutFragment?
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { f in
+            if let tf = f as? TableLayoutFragment {
+                fragAfter = tf
+                return false
+            }
+            return true
+        }
+        guard let frag2 = fragAfter
+        else { XCTFail("no table fragment after type"); return }
+
+        // Snapshot AFTER typing.
+        let rectOne = h.editor.caretRectIfInTableCell()
+        let frameOne = frag2.layoutFragmentFrame.origin
+        let containerOne = h.editor.textContainerOrigin
+
+        // Compute the deltas. If any single component shifts ≥ 1pt,
+        // print which one — that's the source of the caret jump.
+        let dY = (rectOne?.origin.y ?? 0) - (rectEmpty?.origin.y ?? 0)
+        let dFrame = frameOne.y - frameEmpty.y
+        let dContainer = containerOne.y - containerEmpty.y
+        let dLocal = dY - dFrame - dContainer
+
+        print("CARET-JUMP DIAGNOSTIC:")
+        print("  rect: empty=\(rectEmpty?.origin.y ?? -1) one=\(rectOne?.origin.y ?? -1) Δ=\(dY)")
+        print("  fragment.frame.origin.y: empty=\(frameEmpty.y) one=\(frameOne.y) Δ=\(dFrame)")
+        print("  textContainerOrigin.y: empty=\(containerEmpty.y) one=\(containerOne.y) Δ=\(dContainer)")
+        print("  localRect.y: Δ (derived) = \(dLocal)")
+
+        // Assert the caret y is stable across the typing event.
+        // Tolerate sub-pixel rounding (≤1pt).
+        XCTAssertEqual(
+            rectOne?.origin.y ?? 0, rectEmpty?.origin.y ?? 0,
+            accuracy: 1.0,
+            "Caret y shifted by \(dY)pt after typing one char. Component deltas: frame=\(dFrame), container=\(dContainer), localRect=\(dLocal)"
+        )
+    }
+
     func test_bug29_enterInCell_insertsLineBreak() throws {
         let emptyMd = """
         |  |  |  |

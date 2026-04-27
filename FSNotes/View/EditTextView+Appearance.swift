@@ -35,6 +35,20 @@ extension EditTextView {
               let element = fragment.textElement as? TableElement,
               let elementRange = element.elementRange
         else { return nil }
+        // Force TK2 to finalize layout-fragment stacking before we
+        // read `fragment.layoutFragmentFrame.origin.y`. Without this,
+        // a query immediately after `Insert Table` (or any path that
+        // splices a new fragment into the document) returns an
+        // *estimated* origin — the layout manager hasn't yet settled
+        // the table fragment's vertical position relative to preceding
+        // fragments. The next caret query (after typing one char,
+        // which forces a real layout pass) returns the *settled*
+        // origin, ~16pt up the page. The user perceives this as the
+        // caret jumping up after typing the first character.
+        // `ensureLayout(for:)` is documented to drive a synchronous
+        // layout pass for the given range, so the next read returns
+        // the authoritative origin.
+        tlm.ensureLayout(for: elementRange)
         let elementStart = contentStorage.offset(
             from: docStart, to: elementRange.location
         )
