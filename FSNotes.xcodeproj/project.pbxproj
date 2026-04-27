@@ -221,6 +221,14 @@
 		P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F2 /* EditTextView+Selection.swift */; };
 		TCCV20260426A001 /* TableCellCaretView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCV20260426F001 /* TableCellCaretView.swift */; };
 		TCCV20260426A002 /* TableCellCaretView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCV20260426F001 /* TableCellCaretView.swift */; };
+		SVT20260427A001 /* TableAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F001 /* TableAttachment.swift */; };
+		SVT20260427A002 /* TableAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F001 /* TableAttachment.swift */; };
+		SVT20260427A003 /* TableAttachmentViewProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F002 /* TableAttachmentViewProvider.swift */; };
+		SVT20260427A004 /* TableAttachmentViewProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F002 /* TableAttachmentViewProvider.swift */; };
+		SVT20260427A005 /* TableContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F003 /* TableContainerView.swift */; };
+		SVT20260427A006 /* TableContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F003 /* TableContainerView.swift */; };
+		SVT20260427A007 /* TableCellTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F004 /* TableCellTextView.swift */; };
+		SVT20260427A008 /* TableCellTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427F004 /* TableCellTextView.swift */; };
 		11F5A1022F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
 		11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
 		11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */; };
@@ -1411,6 +1419,11 @@
 		FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+BlockModel.swift"; sourceTree = "<group>"; };
 		P5B0000000000000000000F2 /* EditTextView+Selection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Selection.swift"; sourceTree = "<group>"; };
 		TCCV20260426F001 /* TableCellCaretView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCaretView.swift; sourceTree = "<group>"; };
+		SVT20260427F001 /* TableAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableAttachment.swift; sourceTree = "<group>"; };
+		SVT20260427F002 /* TableAttachmentViewProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableAttachmentViewProvider.swift; sourceTree = "<group>"; };
+		SVT20260427F003 /* TableContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableContainerView.swift; sourceTree = "<group>"; };
+		SVT20260427F004 /* TableCellTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellTextView.swift; sourceTree = "<group>"; };
+		SVT20260427G001 /* Tables */ = {isa = PBXGroup; children = (SVT20260427F001 /* TableAttachment.swift */, SVT20260427F002 /* TableAttachmentViewProvider.swift */, SVT20260427F003 /* TableContainerView.swift */, SVT20260427F004 /* TableCellTextView.swift */); path = Tables; sourceTree = "<group>"; };
 		11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Formatting.swift"; sourceTree = "<group>"; };
 		11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Appearance.swift"; sourceTree = "<group>"; };
 		11F5A1D02F1A600100AAA001 /* EditTextView+Interaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Interaction.swift"; sourceTree = "<group>"; };
@@ -2573,6 +2586,7 @@
 				P5FW000000000000000000F1 /* EditTextView+UndoJournal.swift */,
 				P5B0000000000000000000F2 /* EditTextView+Selection.swift */,
 				TCCV20260426F001 /* TableCellCaretView.swift */,
+				SVT20260427G001 /* Tables */,
 				11F5A1202F1A200100AAA001 /* EditTextView+Formatting.swift */,
 				ETVT000000000000000000F1 /* EditTextView+ThemeObserver.swift */,
 				11F5A1C02F1A600100AAA001 /* EditTextView+Appearance.swift */,
@@ -4058,6 +4072,10 @@
 				P5FW000000000000000000B1 /* EditTextView+UndoJournal.swift in Sources */,
 				P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */,
 				TCCV20260426A001 /* TableCellCaretView.swift in Sources */,
+				SVT20260427A001 /* TableAttachment.swift in Sources */,
+				SVT20260427A003 /* TableAttachmentViewProvider.swift in Sources */,
+				SVT20260427A005 /* TableContainerView.swift in Sources */,
+				SVT20260427A007 /* TableCellTextView.swift in Sources */,
 				11F5A1222F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				ETVT000000000000000000B1 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C22F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,
@@ -4355,6 +4373,10 @@
 				C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */,
 				P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */,
 				TCCV20260426A002 /* TableCellCaretView.swift in Sources */,
+				SVT20260427A002 /* TableAttachment.swift in Sources */,
+				SVT20260427A004 /* TableAttachmentViewProvider.swift in Sources */,
+				SVT20260427A006 /* TableContainerView.swift in Sources */,
+				SVT20260427A008 /* TableCellTextView.swift in Sources */,
 				11F5A1212F1A200100AAA001 /* EditTextView+Formatting.swift in Sources */,
 				ETVT000000000000000000B2 /* EditTextView+ThemeObserver.swift in Sources */,
 				11F5A1C12F1A600100AAA001 /* EditTextView+Appearance.swift in Sources */,

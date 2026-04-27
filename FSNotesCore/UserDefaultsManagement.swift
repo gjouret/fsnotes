@@ -158,6 +158,7 @@ public class UserDefaultsManagement {
         static let UploadKey = "uploadKey"
         static let UseTextBundleToStoreDates = "useTextBundleToStoreDates"
         static let AutocloseBrackets = "autocloseBrackets"
+        static let UseSubviewTables = "useSubviewTables"
         static let Welcome = "welcome2026"
     }
 
@@ -223,6 +224,25 @@ public class UserDefaultsManagement {
         }
         set {
             shared?.set(newValue, forKey: "externalEditorApp")
+        }
+    }
+
+    /// Phase 8 (Subview Tables): when true, table blocks render via a
+    /// view-provider-hosted `TableContainerView` containing per-cell
+    /// `NSTextView` subviews instead of the native-cell separator-encoded
+    /// path that lives inside a single `TableLayoutFragment`. Default:
+    /// false — the native-cell path stays the active production path
+    /// throughout phases A–F. Phase G flips the default to true and
+    /// then deletes the old path.
+    static var useSubviewTables: Bool {
+        get {
+            if let v = shared?.object(forKey: Constants.UseSubviewTables) as? Bool {
+                return v
+            }
+            return false
+        }
+        set {
+            shared?.set(newValue, forKey: Constants.UseSubviewTables)
         }
     }
 
