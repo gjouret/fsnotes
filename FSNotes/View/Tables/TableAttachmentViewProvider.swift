@@ -2,25 +2,27 @@
 //  TableAttachmentViewProvider.swift
 //  FSNotes
 //
-//  Phase 8 / Subview Tables — A1.
+//  Phase 8 / Subview Tables — A3.
 //
 //  TK2 `NSTextAttachmentViewProvider` for `TableAttachment`. Returns
 //  a `TableContainerView` sized to the table's geometry. Lifecycles
 //  the container view across edit cycles.
 //
-//  In A1 this is skeletal: it constructs a `TableContainerView` from
-//  the attachment's `Block.table` and returns it. A3 fills in the
-//  view's read-only render. Later phases (C, F) extend the provider
-//  to coordinate cell-level editing and hover handles.
+//  In A3 this is read-only: `attachmentBounds(...)` returns
+//  `(containerWidth, container.totalHeight)`. The container itself
+//  paints the grid + cell content via the same `TableGeometry`
+//  helpers `TableLayoutFragment.draw` uses, so visual fidelity is
+//  pixel-equivalent to the native-cell path.
+//
+//  Phase B will gate this behind `useSubviewTables` from the
+//  rendering pipeline. Phase C extends the provider to drive
+//  per-cell `TableCellTextView` subviews for editing.
 //
 
 import AppKit
 
 final class TableAttachmentViewProvider: NSTextAttachmentViewProvider {
 
-    /// The container view that hosts this table's cell views. Created
-    /// lazily on first `loadView()`. TK2 calls `loadView` after the
-    /// provider is constructed.
     private weak var containerView: TableContainerView?
 
     override func loadView() {
@@ -29,12 +31,12 @@ final class TableAttachmentViewProvider: NSTextAttachmentViewProvider {
             self.view = NSView(frame: .zero)
             return
         }
-
-        let container = TableContainerView(block: attachment.block)
+        let width = textLayoutManager?.textContainer?.size.width ?? 600
+        let container = TableContainerView(
+            block: attachment.block, containerWidth: width
+        )
         self.containerView = container
         self.view = container
-        // Tracks attachment size from the container's intrinsic
-        // content size — A3 sets that based on geometry.
         self.tracksTextAttachmentViewBounds = true
     }
 
@@ -46,12 +48,21 @@ final class TableAttachmentViewProvider: NSTextAttachmentViewProvider {
         position: CGPoint
     ) -> CGRect {
         guard let attachment = self.textAttachment as? TableAttachment,
-              case .table = attachment.block else {
-            return .zero
+              case .table = attachment.block
+        else { return .zero }
+
+        let width = textContainer?.size.width
+            ?? proposedLineFragment.width
+        // Use the container view's geometry to size the attachment.
+        // If the view hasn't loaded yet, build a throwaway container
+        // for measurement — same `TableGeometry.compute` math.
+        if let view = containerView {
+            view.setContainerWidth(width)
+            return CGRect(x: 0, y: 0, width: width, height: view.totalHeight)
         }
-        // A1 returns a placeholder bound. A3 computes from
-        // `TableGeometry.compute(...)` for the real height.
-        let width = textContainer?.size.width ?? proposedLineFragment.width
-        return CGRect(x: 0, y: 0, width: width, height: 60)
+        let probe = TableContainerView(
+            block: attachment.block, containerWidth: width
+        )
+        return CGRect(x: 0, y: 0, width: width, height: probe.totalHeight)
     }
 }
