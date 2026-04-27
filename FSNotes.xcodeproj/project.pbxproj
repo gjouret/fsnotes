@@ -88,6 +88,7 @@
 		P44S000000000000000000B1 /* Phase44SourceModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = P44S000000000000000000F1 /* Phase44SourceModeTests.swift */; };
 		TGEO000000000000000000B1 /* TableGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGEO000000000000000000F1 /* TableGeometry.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
+		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
 		DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA0000000000000000000F1 /* DocumentEditApplier.swift */; };
 		P5A0000000000000000000B1 /* StorageWriteGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5A0000000000000000000F1 /* StorageWriteGuard.swift */; };
@@ -1310,6 +1311,7 @@
 		P44S000000000000000000F1 /* Phase44SourceModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase44SourceModeTests.swift; sourceTree = "<group>"; };
 		TGEO000000000000000000F1 /* TableGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableGeometry.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
+		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
 		DEA0000000000000000000F1 /* DocumentEditApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplier.swift; sourceTree = "<group>"; };
 		P5A0000000000000000000F1 /* StorageWriteGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageWriteGuard.swift; sourceTree = "<group>"; };
@@ -2911,6 +2913,7 @@
 				P5DS000000000000000000F1 /* Phase5dCopyPasteSlicingTests.swift */,
 				P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */,
 				TGET000000000000000000F1 /* TableGeometryTests.swift */,
+				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
 				CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */,
 				TEET000000000000000000F1 /* TableElementEmissionTests.swift */,
 				TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */,
@@ -4584,6 +4587,7 @@
 				P5DS000000000000000000B1 /* Phase5dCopyPasteSlicingTests.swift in Sources */,
 				P5ET000000000000000000B1 /* Phase5eCompositionSessionTests.swift in Sources */,
 				TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */,
+				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
 				CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */,
 				TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */,
 				TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */,

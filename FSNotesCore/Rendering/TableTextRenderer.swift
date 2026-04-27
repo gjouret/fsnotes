@@ -29,6 +29,24 @@ import UIKit
 
 public enum TableTextRenderer {
 
+    /// Phase 8 / Subview Tables — A4. Emits a single-character
+    /// attributed string (U+FFFC) carrying a `TableAttachment` that
+    /// holds the authoritative `Block.table` payload. The TK2 view
+    /// provider on the attachment vends a `TableContainerView` which
+    /// paints the cells and (Phase C) hosts per-cell `TableCellTextView`
+    /// subviews for editing.
+    ///
+    /// Used only when `UserDefaultsManagement.useSubviewTables` is
+    /// `true`. The current native-cell path stays the default and is
+    /// served by `render(...)` below.
+    #if os(OSX)
+    public static func renderAsAttachment(block: Block) -> NSAttributedString {
+        guard case .table = block else { return NSAttributedString() }
+        let attachment = TableAttachment(block: block)
+        return NSAttributedString(attachment: attachment)
+    }
+    #endif
+
     /// Render a table to an attributed string.
     ///
     /// Emits a flat, separator-encoded string of each cell's

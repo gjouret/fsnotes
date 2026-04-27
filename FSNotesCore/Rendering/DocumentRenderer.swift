@@ -580,6 +580,16 @@ public enum DocumentRenderer {
             let raw = EditingOps.rebuildTableRaw(
                 header: header, alignments: alignments, rows: rows
             )
+            #if os(OSX)
+            // Phase 8 / Subview Tables: when the flag is on, emit a
+            // single U+FFFC attachment carrying the `Block.table`
+            // payload. TK2's view provider on the attachment renders
+            // the table via `TableContainerView`. Default (flag off)
+            // is the native-cell separator-encoded path below.
+            if UserDefaultsManagement.useSubviewTables {
+                return TableTextRenderer.renderAsAttachment(block: block)
+            }
+            #endif
             return TableTextRenderer.render(
                 header: header,
                 rows: rows,
