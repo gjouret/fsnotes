@@ -84,6 +84,13 @@ struct CommonMarkHTMLRenderer {
             // Only strip trailing spaces (not newlines or other whitespace)
             while rendered.hasSuffix(" ") { rendered = String(rendered.dropLast()) }
             if rendered.isEmpty { return "" }
+            // CommonMark §5.4 tight-list rule: paragraphs inside a tight
+            // list item render their inline content unwrapped (no <p>).
+            // Spec #300: the trailing `baz` after a setext heading inside
+            // a tight item renders as `\nbaz` not `\n<p>baz</p>`.
+            if inTightList {
+                return rendered
+            }
             return "<p>\(rendered)</p>\n"
 
         case .codeBlock(_, let content, let fence):
@@ -273,10 +280,13 @@ struct CommonMarkHTMLRenderer {
             }
         }
 
-        // Render continuation blocks (multi-block items).
+        // Render continuation blocks (multi-block items). Tight items
+        // pass `inTightList: tight` so paragraphs in continuation blocks
+        // render their inline content unwrapped (CommonMark §5.4); other
+        // block kinds (HR, fence, blockquote, heading) ignore the flag.
         for block in item.continuationBlocks {
             if case .blankLine = block { continue }
-            content += renderBlock(block, inTightList: false)
+            content += renderBlock(block, inTightList: tight)
         }
 
         // Render children (nested list items)

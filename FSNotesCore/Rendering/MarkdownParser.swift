@@ -147,12 +147,15 @@ public enum MarkdownParser {
                // that happens to contain "14. ..." as its second line must
                // remain a single paragraph, not paragraph + list.
                !(rawBuffer.count > 0 && ListReader.isOrderedListMarkerWithNonOneStart(firstParsed.marker)),
-               // CommonMark §4.4 / §5.2: a list marker indented 4+ spaces
-               // does NOT open a list when continuing a paragraph — the
-               // indent makes it lazy continuation, not a new block.
-               // Spec #238: `> foo\n    - bar` is a single blockquote
-               // paragraph, not paragraph + nested list.
-               !(rawBuffer.count > 0 && leadingSpaceCount(firstParsed.indent) >= 4) {
+               // CommonMark §5.2 rule 1: K (preceding indent) must be in
+               // [0, 3] for a list marker to open a list item. K ≥ 4 is
+               // outside the rule, so the line is treated as either
+               // paragraph lazy continuation (if rawBuffer is non-empty,
+               // spec #238: `> foo\n    - bar`) or as the start of an
+               // indented code block (if rawBuffer is empty, spec #289:
+               // `    1.  A paragraph` opens an indented code block,
+               // not a list).
+               !(leadingSpaceCount(firstParsed.indent) >= 4) {
                 flushRawBuffer()
 
                 // Determine the list type from the first item's marker.
@@ -1198,12 +1201,30 @@ public enum MarkdownParser {
                 .map { cur.content.distance(from: cur.content.startIndex, to: $0) }
                 ?? cur.content.count
             let firstLine = String(cur.content.prefix(firstLineEnd))
+            // Spec #300: when the first continuation line is a setext
+            // underline (`===` / `---`) and cur.content is a paragraph,
+            // the item's content is a setext heading whose text spans
+            // cur.content. Detecting this case routes through the
+            // combined-reparse path so the inner parse sees the
+            // paragraph + underline as one input — otherwise the
+            // standalone underline becomes an HR (or stray paragraph)
+            // because rawBuffer is empty when the inner parse starts.
+            let firstContIsSetext: Bool = {
+                guard !cur.content.isEmpty,
+                      let firstCont = cur.continuationLines.first,
+                      ATXHeadingReader.detectSetextUnderline(firstCont) != nil,
+                      !isEmphasisOnlyParagraph([cur.content]) else {
+                    return false
+                }
+                return true
+            }()
             let firstLineIsBlockStarter =
                 FencedCodeBlockReader.detectOpen(firstLine) != nil
                 || ATXHeadingReader.detect(firstLine) != nil
                 || HorizontalRuleReader.detect(firstLine) != nil
                 || BlockquoteReader.detect(firstLine) != nil
                 || HtmlBlockReader.detect(firstLine) != nil
+                || firstContIsSetext
 
             let inline: [Inline]
             var continuationBlocks: [Block]
