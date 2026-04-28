@@ -97,6 +97,59 @@ Post-Phase 4.7, **every save routes through `Note.save(markdown: String)`**. The
 5. **One general solution**: Solve recurring patterns once (e.g., typing attributes after Return for ALL transitions).
 6. **Views render data; views never write to data**. The projection → renderer → element → fragment chain is one-way. Views capture user intent (clicks, keystrokes) and call pure `EditingOps` primitives that return a new `Document`; the applier re-renders just the affected element range.
 
+## Per-Block-Kind Editor Dispatch (Phase 12.B)
+
+Every `Block` kind has a dedicated `BlockEditor` conformer under `FSNotesCore/Rendering/BlockEditors/`:
+
+| Block kind | Editor file |
+|---|---|
+| `.paragraph` | `BlockEditors/ParagraphBlockEditor.swift` |
+| `.heading` | `BlockEditors/HeadingBlockEditor.swift` |
+| `.codeBlock` | `BlockEditors/CodeBlockBlockEditor.swift` |
+| `.htmlBlock` | `BlockEditors/HtmlBlockBlockEditor.swift` |
+| `.blankLine`, `.horizontalRule`, `.table` (atomic / read-only kinds) | `BlockEditors/AtomicBlockEditors.swift` (one file, three editors) |
+| `.list` | `BlockEditors/ListBlockEditor.swift` (wraps `EditingOps.{insertIntoList,deleteInList,replaceInList}`) |
+| `.blockquote` | `BlockEditors/BlockquoteBlockEditor.swift` (wraps `EditingOps.{insertIntoBlockquote,deleteInBlockquote,replaceInBlockquote}`) |
+
+The protocol (`FSNotesCore/Rendering/EditingOperations.swift:173`):
+```
+public protocol BlockEditor {
+    static func insert(into block: Block, offsetInBlock: Int, string: String) throws -> Block
+    static func delete(in block: Block, from: Int, to: Int) throws -> Block
+    static func replace(in block: Block, from: Int, to: Int, with: String) throws -> Block
+}
+```
+
+`EditingOps.{insertIntoBlock, deleteInBlock, replaceInBlock}` — formerly 23 block-kind switches with ~100-150 LoC bodies each — now collapse to one polymorphic call per kind. Each switch is exhaustive over the 9 block kinds: no `default: throw .notSupported` patterns. The compiler enforces that any new block kind must add an explicit branch.
+
+The retired `EditableBlock` / `BlockAction` / `BlockActionResult` scaffold (172 LoC at `EditingOperations.swift` lines 173-244 prior to commit `ebfc764`) was deleted as part of Phase 12.B.1; the new `BlockEditor` protocol takes its place with a tighter shape that matches the existing primitive contracts (pure functions on `Block`, not `mutating` methods on a protocol existential).
+
+## Parser Combinator Infrastructure (Phase 12.C)
+
+`FSNotesCore/Rendering/Combinators/Parser.swift` provides the bespoke parser combinator library used by the bucket-by-bucket port of `MarkdownParser` (Phase 12.C.2 → 12.C.6). ~250 LoC. The infrastructure ships independently from any production parser changes.
+
+API surface:
+- Value type `Parser<A>` carrying `parse: (Substring) -> ParseResult<A>`.
+- Result enum `ParseResult<A>` with `.success(value, remainder)` and `.failure(message, remainder)` plus `.isSuccess` / `.value` / `.remainder` accessors.
+- Primitives: `pure`, `fail`, `satisfy`, `char`, `oneOf`, `noneOf`, `string`, `eof`.
+- Combinators: `map`, `flatMap`, `<|>` (alternative), `seq2`, `seq3`, `then`, `thenSkip`, `between`, `many`, `many1`, `optional`, `sepBy`, `sepBy1`, `lookahead`, `notFollowedBy`.
+- `parseAll` for full-input matching (returns failure on partial consumption).
+
+Why bespoke and not a Pod: existing Swift combinator libraries (PointFree's swift-parsing, SwiftParsec) lean on existential / protocol-witness machinery that's heavy in Swift. ~250 LoC of bespoke value types + closures is faster to compile, easier to debug, and removes the dependency surface. The library is also tuned to CommonMark — backtracking is non-mutating by construction (a failed alternative leaves the input intact because no input was consumed), `many`'s zero-consumption infinite-loop guard is explicit, all primitives are non-throwing.
+
+**Ported parsers so far:**
+- `Combinators/HardLineBreakParser.swift` (Phase 12.C.2) — replaces 20 LoC of imperative `if`-branches in `MarkdownParser.parseInlines` (steps 2 + 3 of the tokenizer chain) with a 5-line drop-in helper. Combinator form:
+  ```
+  backslashBreak = seq2(char("\\"), char("\n")).map { _ in "\\\n" }
+  spacesBreak = seq2(many1(char(" ")), char("\n")).flatMap { spaces, _ in
+      spaces.count >= 2 ? pure(...) : fail(...)
+  }
+  hardBreak = backslashBreak <|> spacesBreak
+  ```
+  CommonMark "Hard line breaks" bucket: 15/15 (100%) — held flat after the port.
+
+The bridge between `MarkdownParser`'s `[Character] + Int` cursor convention and the combinator API's `Substring` shape lives in each ported parser's `match(_ chars:from:)` static method, mirroring the surface that `tryMatchAutolink`, `tryMatchRawHTML`, etc. expose.
+
 ## Editing FSMs by Block Type
 
 Each table shows what happens for every editing action on that block type. "Unsupported" means the operation throws or is a no-op. CommonMark spec references are noted where they constrain behavior.

@@ -1815,6 +1815,33 @@ After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.
 
 ## Phase 12 — Structural decomposition of editor / parser / view-glue
 
+### Status snapshot (2026-04-28)
+
+| Slice | Status | Commit | Lines |
+|---|---|---|---|
+| 12.A — toggle ladder collapse | ✅ SHIPPED | `cd371ae` | -28 net |
+| 12.B.1 — ParagraphBlockEditor + retire dead `EditableBlock` scaffold | ✅ SHIPPED | `ebfc764` | -110 net (172 dead-scaffold LoC deleted; +170 in new editor file) |
+| 12.B.2 — HeadingBlockEditor | ✅ SHIPPED | `9e06f12` | per-kind extraction |
+| 12.B.3 — CodeBlock + HtmlBlock + assertion-crash cleanup | ✅ SHIPPED | `11c8441` | per-kind extraction + cleanup |
+| 12.B.4 — BlankLine + HorizontalRule + Table atomics | ✅ SHIPPED | `b25b65a` | per-kind extraction |
+| 12.B.5 + 12.B.6 — List + Blockquote + closes exhaustive switch | ✅ SHIPPED | `c7f1999` | per-kind extraction; `default:` arm in `replaceInBlock` retired |
+| **Phase 12.B aggregate** | **✅ COMPLETE** | (5 commits, ebfc764..c7f1999) | All 9 block kinds extracted. 51 new pure-function tests. Dead `EditableBlock` / `BlockAction` / `BlockActionResult` scaffold gone. |
+| 12.C.1 — Combinator infrastructure (`Parser.swift` + 26 primitive tests) | ✅ SHIPPED | `e1d4ead` | +492 (250 lib + 190 tests + 50 helper) |
+| 12.C.2 — Hard-line-break combinator port (reference / 100% bucket) | ✅ SHIPPED | `9584384` | -17 in MarkdownParser, +80 new combinator file, +140 tests; CommonMark "Hard line breaks" bucket holds at **15/15 (100%)** |
+| 12.C.3 — Inline tokenizer chain port (10 `tryMatch*` functions) | ⏳ NEXT | — | Strikethrough, autolink, raw HTML, entities, wikilinks, links, images, code spans, inline math, display math. Each is its own ~50-100 LoC combinator file with bridge into `parseInlines`. Per-bucket spec test as the regression gate. |
+| 12.C.4 — Emphasis algorithm port (250-LoC delimiter stack) | ⏳ PENDING | — | The CommonMark §6.2 algorithm. Largest single port in 12.C; the canonical "stateful, ambiguous, hard to debug" parser case. |
+| 12.C.5 — Block parsing port (paragraph, heading, code, blockquote, list item, HR, table, HTML block) | ⏳ PENDING | — | Parallels 12.B's per-block decomposition. Each block parser as its own combinator. |
+| 12.C.6 — Push CommonMark from 95.1% to 100% (32 residual failures) | ⏳ PENDING | — | With combinator architecture in place, residuals become small grammar edits, not surgery on imperative state. |
+
+**File layout established:**
+- `FSNotesCore/Rendering/BlockEditors/` — 7 files, one per block kind (Paragraph, Heading, CodeBlock, HtmlBlock, AtomicBlockEditors [BlankLine + HorizontalRule + Table], List, Blockquote)
+- `FSNotesCore/Rendering/Combinators/` — `Parser.swift` (lib) + `HardLineBreakParser.swift` (first port). 12.C.3+ adds one file per ported parser.
+
+**Architectural invariants now enforced by the compiler:**
+- All 9 `Block` kinds have a dedicated `BlockEditor` conformer.
+- The 23 block-kind switches in `EditingOps` collapsed to ~5 (one per top-level public primitive); each is exhaustive — no `default: throw .notSupported` patterns.
+- The unused `EditableBlock` / `BlockAction` / `BlockActionResult` scaffold (172 LoC) is retired.
+
 ### Origin
 
 Audit (2026-04-28, by a separate session) of the three largest files in the codebase identified them as carrying disproportionate boilerplate / dead scaffolding. After verification this session (gitnexus impact + code reads), the audit's three claims hold up:
