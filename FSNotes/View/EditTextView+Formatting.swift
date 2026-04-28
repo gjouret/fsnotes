@@ -12,7 +12,7 @@ extension EditTextView {
     @IBAction func boldMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if toggleBoldViaBlockModel() {
+        if toggleInlineTraitViaBlockModel(.bold) {
             updateToolbarAfterFormatting()
             return
         }
@@ -26,7 +26,7 @@ extension EditTextView {
     @IBAction func italicMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if toggleItalicViaBlockModel() {
+        if toggleInlineTraitViaBlockModel(.italic) {
             updateToolbarAfterFormatting()
             return
         }
@@ -121,7 +121,7 @@ extension EditTextView {
     @IBAction func underlineMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if toggleUnderlineViaBlockModel() {
+        if toggleInlineTraitViaBlockModel(.underline) {
             updateToolbarAfterFormatting()
             return
         }
@@ -135,7 +135,7 @@ extension EditTextView {
     @IBAction func strikeMenu(_ sender: Any) {
         guard let note = self.note, isEditable else { return }
 
-        if toggleStrikethroughViaBlockModel() {
+        if toggleInlineTraitViaBlockModel(.strikethrough) {
             updateToolbarAfterFormatting()
             return
         }
@@ -149,7 +149,7 @@ extension EditTextView {
     @IBAction func highlightMenu(_ sender: Any) {
         guard let note = self.note, isEditable, note.isMarkdown() else { return }
 
-        if toggleHighlightViaBlockModel() {
+        if toggleInlineTraitViaBlockModel(.highlight) {
             updateToolbarAfterFormatting()
             return
         }

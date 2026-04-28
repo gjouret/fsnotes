@@ -1813,6 +1813,133 @@ After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.
 
 ---
 
+## Phase 12 — Structural decomposition of editor / parser / view-glue
+
+### Origin
+
+Audit (2026-04-28, by a separate session) of the three largest files in the codebase identified them as carrying disproportionate boilerplate / dead scaffolding. After verification this session (gitnexus impact + code reads), the audit's three claims hold up:
+
+| File | LoC | What's bloated |
+|---|---:|---|
+| `FSNotesCore/Rendering/EditingOperations.swift` | 8,661 | 23 block-kind switches; unused `EditableBlock`/`BlockAction`/`BlockCapabilities` protocol scaffold at lines 173-244 (gitnexus impact: `BlockAction` has 0 incoming refs; `BlockCapabilities` has 1 from the file's own extension and nothing else) |
+| `FSNotesCore/Rendering/MarkdownParser.swift` | 3,974 | 11 `tryMatch*` inline-tokenizer functions chained imperatively, all sharing the same backtracking pattern; emphasis algorithm is 250 lines of manual delimiter-stack management |
+| `FSNotes/View/EditTextView+BlockModel.swift` | 3,395 | 6-clone toggle ladder (`toggleBoldViaBlockModel` … `toggleHighlightViaBlockModel` at lines 2162-2189) all forwarding to `toggleInlineTraitViaBlockModel(.trait)` |
+
+### Honest scope correction vs. original audit
+
+The audit's headline claim — "~8,500 LoC eliminated, ~10% of codebase" — is overstated. Per-block domain logic (list FSM, blockquote multi-line handling, table read-only semantics, HR cross-block-merge edge case) is real algorithm, not boilerplate; protocol dispatch moves it from one file to N files but does NOT delete it. Realistic reduction:
+
+| Slice | Audit claim | Realistic | Why the gap |
+|---|---:|---:|---|
+| 12.A — toggle-ladder collapse | ~1,000 LoC | ~30 LoC | 6 × 5-line clones is 30 lines, not 1000. The bigger win is conceptual: the IBActions become trait-parameterised. |
+| 12.B — `EditableBlock` per-kind extraction | ~5,000 LoC | ~2,000–3,000 LoC | Switch dispatch boilerplate is real (~3,000 LoC across 23 switches × ~100-150 LoC each), but each switch case still has to live somewhere. Extraction shrinks the *file* and isolates per-kind code, but only ~30-40% of those lines vanish (the dispatch frame + `default` cases). |
+| 12.C — parser combinators | ~2,500 LoC | ~1,500-2,000 LoC | Counter-intuitively, this is the *prerequisite* for pushing CommonMark to 100%, not the reverse. The residual 32 spec failures (delimiter-stack interactions, multi-block list items, container-aware ref-defs) are exactly the bug class that imperative recursive-descent makes hardest to fix and that combinators express naturally. The 652-example spec corpus is already a per-step gate, so a bucket-by-bucket port is detectable, not silent. |
+
+Net realistic reduction: **~2,000-3,000 LoC** (~2-3% of codebase, not 10%). The architectural value is bigger than the LoC delta — the missing-case bug class is eliminated by compiler exhaustiveness, and each block kind becomes independently testable.
+
+### Slice 12.A — Inline-trait toggle ladder collapse (low risk, low LoC, fast warmup)
+
+**Goal:** Replace the 6 clone wrappers in `EditTextView+BlockModel.swift` (lines 2162-2189) with a single trait-parameterised method, and update the IBActions in `EditTextView+Formatting.swift` to call it directly.
+
+**Work:**
+1. Make `toggleInlineTraitViaBlockModel(_:)` `internal` (currently `private`).
+2. Delete `toggleBoldViaBlockModel`, `toggleItalicViaBlockModel`, `toggleCodeViaBlockModel`, `toggleStrikethroughViaBlockModel`, `toggleUnderlineViaBlockModel`, `toggleHighlightViaBlockModel` (six 4-line wrappers).
+3. Update `EditTextView+Formatting.swift` IBActions (`boldMenu`, `italicMenu`, `underlineMenu`, `strikeMenu`, `highlightMenu`, plus the `pressBold`/`pressItalic` keystroke handlers) to call `toggleInlineTraitViaBlockModel(.bold)` etc. directly.
+4. `toggleCode` IBAction: not present as a top-level menu; the 6th clone (`toggleCodeViaBlockModel`) is called from `EditTextView+Formatting.swift:insertCodeSpan`. Update accordingly.
+
+**Exit criteria:**
+- `git diff --stat` shows net LoC reduction.
+- All `BlockModelFormattingTests` (1,181 LoC of pinning tests) still pass.
+- Toolbar bold/italic/underline/strike/highlight/code menu items still toggle (manual smoke test).
+- No new Swift warnings.
+
+**Estimate:** 1 hr. Mechanical.
+
+**Rollback:** trivial revert.
+
+### Slice 12.B — `EditableBlock` per-kind extraction (incremental, vertical-slice-first)
+
+**Goal:** Wire the existing `EditableBlock` / `BlockAction` / `BlockCapabilities` scaffold (lines 173-244 of `EditingOperations.swift`) into one block kind end-to-end as a vertical slice. If the slice succeeds and no regressions emerge, repeat for the remaining 8 kinds.
+
+**Constraints / what we will NOT do:**
+- Do NOT delete the existing `EditingOps.insert`/`replace`/`delete` switches before the new dispatch is fully wired and green. Run the new path in parallel for at least one slice.
+- Do NOT attempt to extract list (uses `ListEditingFSM`), blockquote (uses its own FSM), or table (uses `replaceTableCellInline`) until the simpler kinds are proven. They have orthogonal helpers that the protocol dispatch must respect.
+- Do NOT change the public `EditingOps.insert(_:at:in:)` signature. Its callers (test suites, view glue, undo journal) treat it as the contract; the dispatch can change underneath.
+
+**Slice 12.B.1 — Wire `.paragraph` only.**
+1. Define a `ParagraphBlockEditor` struct conforming to a refined `EditableBlock` protocol (return type: `BlockActionResult` carrying `EditResult`-shaped fields).
+2. Move `.paragraph`-specific logic out of `EditingOps.insertIntoBlock` / `EditingOps.deleteInBlock` / `EditingOps.replaceInBlock` / etc. into the editor struct's methods.
+3. The top-level switches in `EditingOps` keep their `.paragraph` case but delegate to `ParagraphBlockEditor`. The other cases stay as today.
+4. Add `Tests/BlockEditorParagraphTests.swift` exercising the editor as a pure function on `Document` (no view).
+5. Verify: `EditingOperationsTests` + `EditContractTests` still green.
+
+**Slice 12.B.2 — `.heading` (similar shape to paragraph).**
+**Slice 12.B.3 — `.codeBlock` + `.htmlBlock` (atomic-ish; mostly typing into the raw content).**
+**Slice 12.B.4 — `.blankLine` + `.horizontalRule` (atomic; mostly cross-block-merge cases).**
+**Slice 12.B.5 — `.table` (delegates to `replaceTableCellInline` and `insertTableRow`/`insertTableColumn`).**
+**Slice 12.B.6 — `.list` (delegates to `ListEditingFSM`).**
+**Slice 12.B.7 — `.blockquote` (delegates to its own multi-line handling).**
+
+After 12.B.7, all 23 dispatch switches can collapse to one polymorphic call per primitive. The unused protocol scaffold at lines 173-244 becomes the single source of truth for per-kind capabilities; the `default: throw .notSupported` cases are replaced by `editor.canHandle(action:) -> Bool` checks.
+
+**Exit criteria (per slice):**
+- The previous slice's tests stay green.
+- Net LoC delta for the slice is non-positive (no slice should grow the file).
+- Rule-7 gate clean.
+
+**Exit criteria (phase-wide):**
+- `EditingOperations.swift` shrinks below 6,000 LoC.
+- The 23 block-kind switches reduce to ≤ 5 (one per top-level public primitive: insert, delete, replace, replaceBlockRange, insertFragment).
+- Compiler exhaustiveness covers all 9 block kinds — no new `default: throw .notSupported` patterns.
+- Per-kind editor files live under `FSNotesCore/Rendering/BlockEditors/*.swift`; each is independently testable.
+
+**Estimate:** ~3-5 days, one slice per session. The order is intentional — paragraph + heading first (safe, well-tested) → atomic kinds → kinds that delegate to existing FSMs (low new risk because the FSM is already isolated).
+
+**Rollback:** per slice revertible. The dispatch keeps the old switch case alongside the new editor call until the slice exits, so a failing slice reverts cleanly.
+
+### Slice 12.C — Parser combinators (gateway to CommonMark 100%)
+
+**Order correction (2026-04-28):** an earlier draft of this phase deferred 12.C until compliance hit 100%. That had the dependency backwards. The residual 32 spec failures live in the buckets where imperative parsing hurts most (links delimiter stack, list items containing fenced code/blockquote/HTML blocks, container-aware ref-def collection) — they're the bug class combinators were *invented* to express cleanly. Implementing combinators *first* is the path to 100%, not a victory lap after.
+
+**Risk gate:** the existing 652-example CommonMark spec corpus (`Tests/CommonMark/`, dump in `~/unit-tests/commonmark-compliance.txt`) is already a per-bucket regression signal. A bucket-by-bucket port that holds the per-bucket pass count flat or up at every commit is safe by construction.
+
+**Slice 12.C.1 — Combinator infrastructure (no parser changes yet).**
+1. Build a small Swift combinator library (`FSNotesCore/Rendering/Combinators/Parser.swift` + helpers): `Parser<A>` value type with `parse(_ input: Substring) -> ParseResult<A>`; primitives `char`, `string`, `oneOf`, `between`, `many`, `many1`, `optional`, `sepBy`, `lookahead`, `notFollowedBy`; combinators `<*>`, `<|>`, `map`, `flatMap`. Target ~200-300 LoC.
+2. Add `Tests/CombinatorPrimitivesTests.swift` exercising every primitive against tiny inputs.
+3. No production code changes; gate is "infrastructure compiles + tests pass".
+
+**Slice 12.C.2 — Port one perfect bucket as a reference (Hard line breaks).**
+The "Hard line breaks" bucket is at 100%. Porting it first means the per-step gate is "still 100%" — pure regression test, no compliance climb to muddy the water. Demonstrates the architecture end-to-end on a small, finished surface.
+
+**Slice 12.C.3 — Port the inline tokenizer chain (`tryMatchCodeSpan` → `tryMatchAutolink` → … → `tryMatchImage`).**
+Replace the 11 `tryMatch*` functions (collectively ~600 LoC of duplicated position-tracking) with combinator compositions. Per-step gate: each commit holds inline-related buckets (Code spans, Autolinks, Raw HTML, Entities, Wikilinks, Links, Images) at or above current pass counts.
+
+**Slice 12.C.4 — Port the emphasis algorithm (~250 LoC delimiter stack).**
+The CommonMark §6.2 emphasis algorithm is the canonical "stateful, ambiguous, hard to debug" parser case. Reimplemented as combinators with explicit precedence, the algorithm becomes auditable against the spec text. Per-step gate: Emphasis bucket stays at 132/132.
+
+**Slice 12.C.5 — Port block parsing.** Parallel structure to 12.B's per-block decomposition: paragraph, heading, code block, blockquote, list item, HR, table, HTML block. Each as its own combinator. Per-step gate: per-bucket pass counts flat or up.
+
+**Slice 12.C.6 — Push to 100%.** With the combinator architecture in place, the 32 residual failures become combinator tweaks (delimiter precedence, container-aware ref-def collection, multi-block list-item children). Each fix is a small grammar edit, not surgery on imperative state.
+
+**Exit criteria (phase-wide for 12.C):**
+- `MarkdownParser.swift` shrinks below 2,000 LoC (combinator library lives separately).
+- CommonMark compliance reaches 100% (652/652).
+- No regression in any bucket at any intermediate commit (CI would catch this if we had CI; here it's per-commit `xcodebuild test -only-testing:FSNotesTests/CommonMarkSpecTests`).
+
+**Estimate:** ~5-8 days, distributed across 6 slices. The infrastructure slice (12.C.1) is fast; the per-bucket ports are 1-2 each; the 100% push (12.C.6) is the longest-tail.
+
+### Phase 12 dependencies
+
+- 12.A: none — can ship today.
+- 12.B: blocks on 12.A only because they touch overlapping files; in practice 12.A is so small they could ship same-day.
+- 12.C: independent of 12.A and 12.B. **12.C is the prerequisite for CommonMark 100%, not the reverse.**
+
+### Phase 12 checkpoints
+
+User reviews after 12.A (small, fast) and after each 12.B slice. The vertical-slice approach means a failed slice doesn't sink the phase — revert that one slice and re-plan.
+
+---
+
 ## Reuse of existing functions / utilities
 
 - `makeFullPipelineEditor()` — currently in Tests/; absorbed into `EditorHarness.init`

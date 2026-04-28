@@ -260,11 +260,11 @@ class EditorHTMLParityTests: XCTestCase {
                 }
 
             case .toggleBold:
-                _ = editor.toggleBoldViaBlockModel()
+                _ = editor.toggleInlineTraitViaBlockModel(.bold)
             case .toggleItalic:
-                _ = editor.toggleItalicViaBlockModel()
+                _ = editor.toggleInlineTraitViaBlockModel(.italic)
             case .toggleStrikethrough:
-                _ = editor.toggleStrikethroughViaBlockModel()
+                _ = editor.toggleInlineTraitViaBlockModel(.strikethrough)
             case .setHeading(let level):
                 _ = editor.changeHeadingLevelViaBlockModel(level)
             case .toggleList(let marker):

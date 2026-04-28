@@ -2157,38 +2157,16 @@ extension EditTextView {
         }
     }
 
-    /// Toggle bold on the current selection via the block model.
-    /// Returns true if handled, false if block model is not active.
-    func toggleBoldViaBlockModel() -> Bool {
-        return toggleInlineTraitViaBlockModel(.bold)
-    }
-
-    /// Toggle italic on the current selection via the block model.
-    func toggleItalicViaBlockModel() -> Bool {
-        return toggleInlineTraitViaBlockModel(.italic)
-    }
-
-    /// Toggle inline code on the current selection via the block model.
-    func toggleCodeViaBlockModel() -> Bool {
-        return toggleInlineTraitViaBlockModel(.code)
-    }
-
-    /// Toggle strikethrough on the current selection via the block model.
-    func toggleStrikethroughViaBlockModel() -> Bool {
-        return toggleInlineTraitViaBlockModel(.strikethrough)
-    }
-
-    /// Toggle underline on the current selection via the block model.
-    func toggleUnderlineViaBlockModel() -> Bool {
-        return toggleInlineTraitViaBlockModel(.underline)
-    }
-
-    /// Toggle highlight on the current selection via the block model.
-    func toggleHighlightViaBlockModel() -> Bool {
-        return toggleInlineTraitViaBlockModel(.highlight)
-    }
-
-    private func toggleInlineTraitViaBlockModel(_ trait: EditingOps.InlineTrait) -> Bool {
+    /// Toggle the given inline trait on the current selection via the
+    /// block model. Returns true if handled, false if the block model
+    /// is not active and the caller should fall back to the legacy
+    /// `TextFormatter` path.
+    ///
+    /// Replaces the prior 6-clone ladder (`toggleBoldViaBlockModel` →
+    /// `toggleHighlightViaBlockModel`); IBActions in
+    /// `EditTextView+Formatting.swift` now call this directly with
+    /// the appropriate trait case. Phase 12.A (2026-04-28).
+    func toggleInlineTraitViaBlockModel(_ trait: EditingOps.InlineTrait) -> Bool {
         guard let _ = documentProjection else { return false }
         let sel = selectedRange()
 
