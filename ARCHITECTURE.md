@@ -749,7 +749,27 @@ Obsidian-style `</>` hover button that swaps a code block between its rendered f
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **620 / 652 passing (95.1%)** as of Phase 10 Slice A (shipped 2026-04-24, commits `f9aa284 → 3018ff0`, +19 examples). The refactor's 90% target is met. Live breakdown per spec section is in `CLAUDE.md`; remaining 32 failures cluster in Links (14 — delimiter-stack rewrite territory, Phase 12 candidate), List items + Lists (13 — multi-block list-item content where the continuation is fenced code / blockquote / HTML block, requires `ListItem.children: [ListItem]` → `[Block]` redesign with ~107 call-site updates, Phase 11 Slice B candidate), plus 5 long-tail edge cases (HR-vs-list precedence, lazy continuation in blockquote, image-vs-wikilink ambiguity, etc.).
+Serializer compliance against CommonMark 0.31.2 spec: **631 / 652 passing (96.8%)** as of Phase 12.C.6.g (shipped 2026-04-28, commits `2d05378 → 07a55c9`, +11 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is met with margin.
+
+Per-bucket state:
+- **100%**: Tabs (after #9 caveat), Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content.
+- **Near-perfect (90%+)**: Tabs 10/11, HTML blocks 43/44, Images 21/22, Links 85/90 (94%, after 12.C.6.b/c/d/e/g).
+- **Moderate (70–89%)**: List items 42/48, Lists 19/26.
+
+Phase 12.C.6 ladder so far (against 620 baseline):
+- 12.C.6.a (`2d05378`): nested-blockquote ref-def discovery (#218) → 621/652.
+- 12.C.6.b (`495c121`): Unicode case fold for ref labels (#540) → 622/652.
+- 12.C.6.c (`ecbba98`): newline-aware ref label normalization (#541) → 623/652.
+- 12.C.6.d (`7d6fc44`): wikilink yields to brackets / ref-defs (#548, #559) → 625/652.
+- 12.C.6.e (`a2b4ef7`): shortcut ref-link works after failed inline link (#568) → 626/652.
+- 12.C.6.f (`6264bc5`): 4-space indented marker can't interrupt a paragraph (#238) → 627/652.
+- 12.C.6.g (`07a55c9`): link bracket scan respects HTML / autolink boundaries (#524, #526, #536, #538) → 631/652.
+
+Remaining 21 failures cluster in:
+- **Links (5)**: link-in-link bracket literalization (`[foo [bar](/uri)](/uri)`-style) — needs the §6.4 inactive-link delimiter-stack pass, larger surgery than the small grammar edits 12.C.6.a–g have been delivering.
+- **List items + Lists (13)**: multi-block item content where the continuation is fenced code / blockquote / HTML block / setext heading. Needs `ListItem.children: [ListItem]` → `[Block]` redesign with ~107 call-site updates. Tracked as a candidate for Phase 11 / Slice B in the refactor plan.
+- **Tabs (1)** + **HTML blocks (1)**: also tied to the multi-block list-item family.
+- **Images (1, #590)**: documented FSNotes++ wikilink-extension non-conformance.
 
 The full conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
 
