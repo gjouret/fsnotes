@@ -1178,4 +1178,134 @@ class BlockModelFormattingTests: XCTestCase {
         let result = try EditingOps.toggleInlineTrait(.strikethrough, range: sel, in: proj)
         XCTAssertEqual(result.newSelectionLength, 5, "Selection length should be preserved after strikethrough")
     }
+
+    // MARK: - wrapInLink (Phase 5a IBAction retirement)
+
+    func test_wrapInLink_overSelection_paragraph() throws {
+        let proj = project("Click here please\n")
+        // Select "here" — offset 6, length 4.
+        let sel = NSRange(location: 6, length: 4)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com",
+            displayText: "here", in: proj
+        )
+        assertRoundTrip(result, expected: "Click [here](https://example.com) please\n")
+        assertSpliceInvariant(old: proj, result: result)
+        // Cursor lands at end of the wrapped span.
+        XCTAssertEqual(result.newCursorPosition, 6 + 4)
+    }
+
+    func test_wrapInLink_overSelection_preservesInnerFormatting() throws {
+        let proj = project("Visit **the docs** now\n")
+        // Rendered: "Visit the docs now" (18 chars). Select "the docs" at offset 6, length 8.
+        let sel = NSRange(location: 6, length: 8)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com/docs",
+            displayText: "ignored", in: proj
+        )
+        assertRoundTrip(result, expected: "Visit [**the docs**](https://example.com/docs) now\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_wrapInLink_atCursor_blankLineDoc() throws {
+        // Doc that is exactly one blank line → single blankLine block;
+        // cursor at 0 lands inside the blankLine block.
+        let proj = project("\n")
+        let sel = NSRange(location: 0, length: 0)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com",
+            displayText: "https://example.com", in: proj
+        )
+        let serialized = MarkdownSerializer.serialize(result.newProjection.document)
+        XCTAssertTrue(
+            serialized.contains("[https://example.com](https://example.com)"),
+            "Serialized output missing link: \(serialized)"
+        )
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_wrapInLink_atCursor_paragraphMiddle() throws {
+        let proj = project("Hello world\n")
+        // Cursor between "Hello " and "world" → offset 6.
+        let sel = NSRange(location: 6, length: 0)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com",
+            displayText: "X", in: proj
+        )
+        assertRoundTrip(result, expected: "Hello [X](https://example.com)world\n")
+        assertSpliceInvariant(old: proj, result: result)
+        XCTAssertEqual(result.newCursorPosition, 6 + 1)
+    }
+
+    func test_wrapInLink_overSelection_heading() throws {
+        let proj = project("# Section title\n")
+        // Heading span renders as "Section title" (13 chars). Select "title" at offset 8, length 5.
+        let sel = NSRange(location: 8, length: 5)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com",
+            displayText: "ignored", in: proj
+        )
+        assertRoundTrip(result, expected: "# Section [title](https://example.com)\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_wrapInLink_overSelection_listItem() throws {
+        let proj = project("- alpha bravo\n")
+        // List item rendered text "alpha bravo". Bullet attachment occupies offset 0.
+        // Pure-test plain-text projection: offset 1 = "a" of alpha. Select "bravo" → offset 7, length 5.
+        let sel = NSRange(location: 7, length: 5)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com",
+            displayText: "ignored", in: proj
+        )
+        assertRoundTrip(result, expected: "- alpha [bravo](https://example.com)\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_wrapInLink_overSelection_blockquote() throws {
+        let proj = project("> alpha bravo\n")
+        // Quote line plain text "alpha bravo". Select "alpha" at offset 0, length 5.
+        let sel = NSRange(location: 0, length: 5)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com",
+            displayText: "ignored", in: proj
+        )
+        assertRoundTrip(result, expected: "> [alpha](https://example.com) bravo\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_wrapInLink_crossBlockSelection_throws() {
+        let proj = project("First paragraph\n\nSecond paragraph\n")
+        // Span both paragraphs — should throw .crossBlockRange.
+        let firstLen = proj.blockSpans[0].length
+        let totalLen = proj.attributed.length
+        let sel = NSRange(location: 0, length: totalLen)
+        XCTAssertGreaterThan(totalLen, firstLen)
+        XCTAssertThrowsError(
+            try EditingOps.wrapInLink(
+                range: sel, url: "https://example.com",
+                displayText: "x", in: proj
+            )
+        )
+    }
+
+    func test_wrapInLink_blankLineCursor_promotesToParagraph() throws {
+        let proj = project("Hello\n\n")
+        // After "Hello" + blank line, blank-line block span starts at 5+1=6 with length 0.
+        let blankSpan = proj.blockSpans[1]
+        XCTAssertEqual(blankSpan.length, 0)
+        let sel = NSRange(location: blankSpan.location, length: 0)
+        let result = try EditingOps.wrapInLink(
+            range: sel, url: "https://example.com",
+            displayText: "site", in: proj
+        )
+        assertSpliceInvariant(old: proj, result: result)
+        // Document should now have the original paragraph followed by a
+        // paragraph containing the link.
+        let serialized = MarkdownSerializer.serialize(result.newProjection.document)
+        XCTAssertTrue(
+            serialized.contains("[site](https://example.com)"),
+            "Serialized output missing link: \(serialized)"
+        )
+    }
 }

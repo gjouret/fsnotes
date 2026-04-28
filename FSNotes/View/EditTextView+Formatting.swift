@@ -44,24 +44,52 @@ extension EditTextView {
             let normalized = clipboardString.normalizedAsURL()
             if let url = URL(string: normalized),
                let scheme = url.scheme, ["http", "https", "ftp", "ftps", "mailto"].contains(scheme.lowercased()) {
-                let selectedText = attributedSubstring(forProposedRange: selectedRange(), actualRange: nil)?.string ?? ""
-                let displayText = selectedText.isEmpty ? normalized : selectedText
-                let markdown = "[\(displayText)](\(normalized))"
                 let range = selectedRange()
-                // Phase 5a bypass: `insertText(_:replacementRange:)` from
-                // an IBAction goes through AppKit's `_insertText:` which
-                // skips `shouldChangeText`, so the block-model gatekeeper
-                // never runs. Wrap in `performingLegacyStorageWrite` to
-                // authorize the mutation. A follow-up slice should route
-                // this through a proper `EditingOps.wrapInLink` primitive.
-                StorageWriteGuard.performingLegacyStorageWrite {
-                    insertText(markdown, replacementRange: range)
+                let selectedText = attributedSubstring(forProposedRange: range, actualRange: nil)?.string ?? ""
+                let displayText = selectedText.isEmpty ? normalized : selectedText
+
+                if insertLinkViaBlockModel(range: range, url: normalized, displayText: displayText) {
+                    return
                 }
+
+                // Source-mode fallback: insert raw markdown directly.
+                // Reached when `documentProjection == nil` (source
+                // mode or non-markdown note); the 5a assertion is
+                // gated on `blockModelActive && !sourceRendererActive`,
+                // both false here, so no `performingLegacyStorageWrite`
+                // wrapper is needed.
+                let markdown = "[\(displayText)](\(normalized))"
+                insertText(markdown, replacementRange: range)
                 return
             }
         }
 
         showLinkDialog()
+    }
+
+    /// Insert a link via the block-model `EditingOps.wrapInLink`
+    /// primitive when a `documentProjection` is available. Returns
+    /// `true` when the edit was applied (caller should not also run
+    /// the source-mode fallback); `false` when block-model is inactive
+    /// or the primitive threw — caller should fall through to the
+    /// `insertText` path. Phase 5a follow-up: replaces the WYSIWYG
+    /// `performingLegacyStorageWrite { insertText("[..](..)") }`
+    /// shape that injected literal markdown into rendered storage.
+    private func insertLinkViaBlockModel(
+        range: NSRange, url: String, displayText: String
+    ) -> Bool {
+        guard let projection = documentProjection else { return false }
+        do {
+            let result = try EditingOps.wrapInLink(
+                range: range, url: url, displayText: displayText,
+                in: projection
+            )
+            applyBlockModelResult(result, actionName: "Link")
+            return true
+        } catch {
+            bmLog("⚠️ wrapInLink failed: \(error)")
+            return false
+        }
     }
 
     private func showLinkDialog() {
@@ -85,14 +113,17 @@ extension EditTextView {
                 guard !rawInput.isEmpty else { return }
                 let urlString = rawInput.normalizedAsURL()
 
-                let selectedText = self.attributedSubstring(forProposedRange: self.selectedRange(), actualRange: nil)?.string ?? ""
-                let displayText = selectedText.isEmpty ? urlString : selectedText
-                let markdown = "[\(displayText)](\(urlString))"
                 let range = self.selectedRange()
-                // Phase 5a bypass — see linkMenu() above.
-                StorageWriteGuard.performingLegacyStorageWrite {
-                    self.insertText(markdown, replacementRange: range)
+                let selectedText = self.attributedSubstring(forProposedRange: range, actualRange: nil)?.string ?? ""
+                let displayText = selectedText.isEmpty ? urlString : selectedText
+
+                if self.insertLinkViaBlockModel(range: range, url: urlString, displayText: displayText) {
+                    return
                 }
+
+                // Source-mode fallback (see linkMenu).
+                let markdown = "[\(displayText)](\(urlString))"
+                self.insertText(markdown, replacementRange: range)
             } else if response == .alertThirdButtonReturn {
                 let range = self.selectedRange()
                 guard let storage = self.textStorage else { return }

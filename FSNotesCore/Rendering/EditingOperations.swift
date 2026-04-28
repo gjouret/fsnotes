@@ -6367,6 +6367,256 @@ public enum EditingOps {
         return result
     }
 
+    /// Wrap the inline content covered by `range` in a link with `url`.
+    ///
+    /// Two shapes:
+    /// 1. Cursor-only (`range.length == 0`): insert a new
+    ///    `Inline.link(text: [.text(displayText)], rawDestination: url)`
+    ///    at the cursor. `displayText` is whatever the caller decided
+    ///    to show as the rendered link text (the URL itself is the
+    ///    common fallback when no selection text exists).
+    /// 2. Selection within a single block: extract the inline sub-tree
+    ///    covered by `range` (preserving inner formatting like
+    ///    bold/italic/code) and wrap it in
+    ///    `Inline.link(text: extracted, rawDestination: url)` in
+    ///    place. Cross-block selections throw `.crossBlockRange`.
+    ///
+    /// Supported block kinds: paragraph, heading, blankLine (empty
+    /// selection only — converted to paragraph), list, blockquote.
+    /// Other block kinds (code block, table, HR, html block) throw
+    /// `.unsupported` — the caller is expected to fall through to the
+    /// source-mode handler.
+    public static func wrapInLink(
+        range: NSRange,
+        url: String,
+        displayText: String,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        if range.length == 0 {
+            return try wrapInLinkAtCursor(
+                storageIndex: range.location,
+                url: url,
+                displayText: displayText,
+                in: projection
+            )
+        }
+        return try wrapInLinkOverSelection(
+            range: range, url: url, in: projection
+        )
+    }
+
+    private static func wrapInLinkAtCursor(
+        storageIndex: Int,
+        url: String,
+        displayText: String,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(
+            storageIndex: storageIndex
+        ) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+        let block = projection.document.blocks[blockIndex]
+        let linkNode: Inline = .link(
+            text: [.text(displayText)], rawDestination: url
+        )
+        let newBlock: Block
+        var kindChanged = false
+        switch block {
+        case .paragraph(let inline):
+            let (before, after) = splitInlines(inline, at: offsetInBlock)
+            newBlock = .paragraph(
+                inline: cleanInlines(before + [linkNode] + after)
+            )
+        case .heading(let level, let suffix):
+            // Heading.suffix is a String, not [Inline]. Serialize the
+            // wrapped inlines as markdown so the link survives the
+            // round-trip; the live renderer treats the suffix as plain
+            // text (Bug #52 territory) but the document model is
+            // correct.
+            let leading = leadingWhitespaceCount(in: suffix)
+            let inlines = parseInlinesFromText(
+                String(suffix.dropFirst(leading))
+            )
+            let (before, after) = splitInlines(inlines, at: offsetInBlock)
+            let newText = MarkdownSerializer.serializeInlines(
+                cleanInlines(before + [linkNode] + after)
+            )
+            let leadingWS = String(suffix.prefix(leading))
+            newBlock = .heading(level: level, suffix: leadingWS + newText)
+        case .list(let items, _):
+            let entries = flattenList(items)
+            guard let (entryIdx, inlineOffset) = listEntryContaining(
+                entries: entries, offset: offsetInBlock, forInsertion: true
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "wrapInLink: offset not in list item"
+                )
+            }
+            let entry = entries[entryIdx]
+            let item = entry.item
+            let (before, after) = splitInlines(item.inline, at: inlineOffset)
+            let newInline = cleanInlines(before + [linkNode] + after)
+            let newItem = ListItem(
+                indent: item.indent, marker: item.marker,
+                afterMarker: item.afterMarker, checkbox: item.checkbox,
+                inline: newInline, children: item.children
+            )
+            let newItems = replaceItemAtPath(
+                items, path: entry.path, with: newItem
+            )
+            newBlock = .list(items: newItems)
+        case .blockquote(let lines):
+            let flattened = flattenBlockquote(lines)
+            guard let (lineIdx, inlineOffset) = quoteEntryContaining(
+                entries: flattened, offset: offsetInBlock, forInsertion: true
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "wrapInLink: offset not in blockquote line"
+                )
+            }
+            let line = lines[lineIdx]
+            let (before, after) = splitInlines(line.inline, at: inlineOffset)
+            let newInline = cleanInlines(before + [linkNode] + after)
+            var newLines = lines
+            newLines[lineIdx] = BlockquoteLine(
+                prefix: line.prefix, inline: newInline
+            )
+            newBlock = .blockquote(lines: newLines)
+        case .blankLine:
+            newBlock = .paragraph(inline: [linkNode])
+            kindChanged = true
+        default:
+            throw EditingError.unsupported(
+                reason: "wrapInLink: unsupported block type at cursor"
+            )
+        }
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.newCursorPosition = storageIndex + displayText.count
+        result.contract = EditContract(
+            declaredActions: kindChanged
+                ? [.changeBlockKind(at: blockIndex)]
+                : [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    private static func wrapInLinkOverSelection(
+        range: NSRange,
+        url: String,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        let startIdx = range.location
+        let endIdx = range.location + range.length - 1
+        guard let (blockStart, offsetStart) = projection.blockContaining(
+                storageIndex: startIdx),
+              let (blockEnd, _) = projection.blockContaining(
+                storageIndex: endIdx),
+              blockStart == blockEnd else {
+            throw EditingError.crossBlockRange
+        }
+        let blockIndex = blockStart
+        let block = projection.document.blocks[blockIndex]
+        let offsetEnd = offsetStart + range.length
+        let newBlock: Block
+        switch block {
+        case .paragraph(let inline):
+            newBlock = .paragraph(
+                inline: wrapInlineSliceInLink(
+                    inline, from: offsetStart, to: offsetEnd, url: url
+                )
+            )
+        case .heading(let level, let suffix):
+            // See wrapInLinkAtCursor's heading case for the
+            // serialize-vs-flatten reasoning.
+            let leading = leadingWhitespaceCount(in: suffix)
+            let inlines = parseInlinesFromText(
+                String(suffix.dropFirst(leading))
+            )
+            let wrapped = wrapInlineSliceInLink(
+                inlines, from: offsetStart, to: offsetEnd, url: url
+            )
+            let newText = MarkdownSerializer.serializeInlines(wrapped)
+            let leadingWS = String(suffix.prefix(leading))
+            newBlock = .heading(level: level, suffix: leadingWS + newText)
+        case .list(let items, _):
+            let entries = flattenList(items)
+            guard let (entryIdx, inlineOffset) = listEntryContaining(
+                entries: entries, offset: offsetStart, forInsertion: false
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "wrapInLink: offset not in list item inline"
+                )
+            }
+            let entry = entries[entryIdx]
+            let item = entry.item
+            let localEnd = inlineOffset + range.length
+            let newInline = wrapInlineSliceInLink(
+                item.inline, from: inlineOffset, to: localEnd, url: url
+            )
+            let newItem = ListItem(
+                indent: item.indent, marker: item.marker,
+                afterMarker: item.afterMarker, checkbox: item.checkbox,
+                inline: newInline, children: item.children
+            )
+            let newItems = replaceItemAtPath(
+                items, path: entry.path, with: newItem
+            )
+            newBlock = .list(items: newItems)
+        case .blockquote(let lines):
+            let flattened = flattenBlockquote(lines)
+            guard let (lineIdx, inlineOffset) = quoteEntryContaining(
+                entries: flattened, offset: offsetStart, forInsertion: false
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "wrapInLink: offset not in blockquote line"
+                )
+            }
+            let line = lines[lineIdx]
+            let localEnd = inlineOffset + range.length
+            let newInline = wrapInlineSliceInLink(
+                line.inline, from: inlineOffset, to: localEnd, url: url
+            )
+            var newLines = lines
+            newLines[lineIdx] = BlockquoteLine(
+                prefix: line.prefix, inline: newInline
+            )
+            newBlock = .blockquote(lines: newLines)
+        default:
+            throw EditingError.unsupported(
+                reason: "wrapInLink: not supported for \(describe(block))"
+            )
+        }
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.newCursorPosition = range.location + range.length
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Split `inlines` at `from` and `to`, wrap the middle slice in
+    /// `Inline.link(rawDestination: url)`, and return the reassembled
+    /// list. Helper for `wrapInLink`.
+    private static func wrapInlineSliceInLink(
+        _ inlines: [Inline], from: Int, to: Int, url: String
+    ) -> [Inline] {
+        let (before, rest) = splitInlines(inlines, at: from)
+        let (middle, after) = splitInlines(rest, at: to - from)
+        let linkNode: Inline = .link(text: middle, rawDestination: url)
+        return cleanInlines(before + [linkNode] + after)
+    }
+
     /// Whitelisted diagram / math language identifiers. These are languages
     /// that are (a) never useful to type as literal code content on their
     /// own line, and (b) only render correctly in FSNotes++ via a specific
