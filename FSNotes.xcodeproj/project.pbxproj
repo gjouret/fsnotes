@@ -117,6 +117,8 @@
 		AUTT12C30000000000B1 /* AutolinkParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AUTT12C30000000000F1 /* AutolinkParserTests.swift */; };
 		RHTP12C30000000000B1 /* RawHTMLParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = RHTP12C30000000000F1 /* RawHTMLParser.swift */; };
 		RHTT12C30000000000B1 /* RawHTMLParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RHTT12C30000000000F1 /* RawHTMLParserTests.swift */; };
+		LNKP12C30000000000B1 /* LinkParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNKP12C30000000000F1 /* LinkParser.swift */; };
+		LNKT12C30000000000B1 /* LinkParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNKT12C30000000000F1 /* LinkParserTests.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
 		SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCR20260427F1 /* SubviewTableClickResponderTests.swift */; };
@@ -1377,6 +1379,8 @@
 		AUTT12C30000000000F1 /* AutolinkParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutolinkParserTests.swift; sourceTree = "<group>"; };
 		RHTP12C30000000000F1 /* RawHTMLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/RawHTMLParser.swift; sourceTree = "<group>"; };
 		RHTT12C30000000000F1 /* RawHTMLParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawHTMLParserTests.swift; sourceTree = "<group>"; };
+		LNKP12C30000000000F1 /* LinkParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/LinkParser.swift; sourceTree = "<group>"; };
+		LNKT12C30000000000F1 /* LinkParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkParserTests.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
 		SVCR20260427F1 /* SubviewTableClickResponderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableClickResponderTests.swift; sourceTree = "<group>"; };
@@ -2070,6 +2074,7 @@
 				ENTP12C30000000000F1 /* EntityParser.swift */,
 				AUTP12C30000000000F1 /* AutolinkParser.swift */,
 				RHTP12C30000000000F1 /* RawHTMLParser.swift */,
+				LNKP12C30000000000F1 /* LinkParser.swift */,
 				P41S000000000000000000F1 /* SourceRenderer.swift */,
 				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
@@ -3017,6 +3022,7 @@
 				ENTT12C30000000000F1 /* EntityParserTests.swift */,
 				AUTT12C30000000000F1 /* AutolinkParserTests.swift */,
 				RHTT12C30000000000F1 /* RawHTMLParserTests.swift */,
+				LNKT12C30000000000F1 /* LinkParserTests.swift */,
 				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
 				SVCR20260427F1 /* SubviewTableClickResponderTests.swift */,
 				SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */,
@@ -4035,6 +4041,7 @@
 				ENTP12C30000000000B1 /* EntityParser.swift in Sources */,
 				AUTP12C30000000000B1 /* AutolinkParser.swift in Sources */,
 				RHTP12C30000000000B1 /* RawHTMLParser.swift in Sources */,
+				LNKP12C30000000000B1 /* LinkParser.swift in Sources */,
 				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
 				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
@@ -4728,6 +4735,7 @@
 				ENTT12C30000000000B1 /* EntityParserTests.swift in Sources */,
 				AUTT12C30000000000B1 /* AutolinkParserTests.swift in Sources */,
 				RHTT12C30000000000B1 /* RawHTMLParserTests.swift in Sources */,
+				LNKT12C30000000000B1 /* LinkParserTests.swift in Sources */,
 				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
 				SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */,
 				SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */,

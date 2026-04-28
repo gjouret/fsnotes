@@ -1409,13 +1409,13 @@ public enum MarkdownParser {
             }
             // 8. Images
             if chars[i] == "!" && i + 1 < chars.count && chars[i + 1] == "[" {
-                if let match = tryMatchImage(chars, from: i, codeSpanRanges: codeSpanRanges) {
+                if let match = ImageParser.match(chars, from: i, codeSpanRanges: codeSpanRanges) {
                     if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
                         flushPlain()
                         let (_, imgTitle) = extractURLAndTitle(from: match.dest)
                         let imgWidth = imgTitle.flatMap { ImageSizeTitle.parse($0).width }
                         tokens.append(.inline(.image(
-                            alt: parseInlines(match.alt, refDefs: refDefs),
+                            alt: parseInlines(match.text, refDefs: refDefs),
                             rawDestination: match.dest,
                             width: imgWidth
                         )))
@@ -1456,7 +1456,7 @@ public enum MarkdownParser {
             }
             // 9. Links
             if chars[i] == "[" {
-                if let match = tryMatchLink(chars, from: i, codeSpanRanges: codeSpanRanges) {
+                if let match = LinkParser.match(chars, from: i, codeSpanRanges: codeSpanRanges) {
                     if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
                         flushPlain()
                         tokens.append(.inline(.link(text: parseInlines(match.text, refDefs: refDefs), rawDestination: match.dest)))
@@ -1776,130 +1776,6 @@ public enum MarkdownParser {
             "`", "{", "|", "}", "~"
         ]
         return punctuation.contains(ch)
-    }
-
-    // MARK: - Link and image detection
-
-    /// Try to match an inline link `[text](destination)` starting at `start`.
-    ///
-    /// CommonMark-compliant destination parsing:
-    /// - Angle-bracketed: `<url with spaces>` — allows spaces, disallows
-    ///   unescaped `<` and newlines
-    /// - Bare: no spaces, no newlines, balanced unescaped parentheses
-    /// - Optional title in quotes after whitespace
-    /// - Empty destination `()` is valid
-    ///
-    /// The returned `dest` is the raw content between `(` and `)` for
-    /// round-trip serialization (includes angle brackets, whitespace, title).
-    private static func tryMatchLink(
-        _ chars: [Character], from start: Int,
-        codeSpanRanges: [(start: Int, end: Int)] = []
-    ) -> (text: String, dest: String, endIndex: Int)? {
-        guard start < chars.count, chars[start] == "[" else { return nil }
-
-        // Find the matching ] — handle nesting, escapes, and code spans.
-        // Positions inside a code span don't count as bracket delimiters.
-        var bracketDepth = 1
-        var j = start + 1
-        while j < chars.count && bracketDepth > 0 {
-            if chars[j] == "\\" && j + 1 < chars.count { j += 2; continue }
-            // Skip past code spans — brackets inside them don't count
-            var inCodeSpan = false
-            for cs in codeSpanRanges {
-                if j >= cs.start && j < cs.end {
-                    j = cs.end
-                    inCodeSpan = true
-                    break
-                }
-            }
-            if inCodeSpan { continue }
-            if chars[j] == "[" { bracketDepth += 1 }
-            else if chars[j] == "]" { bracketDepth -= 1 }
-            j += 1
-        }
-        guard bracketDepth == 0 else { return nil }
-        // j is now past the ]
-        let textEnd = j - 1
-
-        // Must be immediately followed by (
-        guard j < chars.count && chars[j] == "(" else { return nil }
-        let parenOpen = j
-        var k = j + 1
-
-        // Skip optional whitespace (spaces, tabs, up to one newline per spec)
-        while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
-
-        // Empty destination: just )
-        if k < chars.count && chars[k] == ")" {
-            let text = String(chars[(start + 1)..<textEnd])
-            let dest = String(chars[(parenOpen + 1)..<k])
-            return (text, dest, k + 1)
-        }
-
-        // Parse destination
-        if k < chars.count && chars[k] == "<" {
-            // Angle-bracketed destination: scan for matching >
-            k += 1
-            while k < chars.count {
-                if chars[k] == "\\" && k + 1 < chars.count { k += 2; continue }
-                if chars[k] == ">" { break }
-                if chars[k] == "<" || chars[k] == "\n" { return nil }
-                k += 1
-            }
-            guard k < chars.count && chars[k] == ">" else { return nil }
-            k += 1 // skip past >
-        } else {
-            // Bare destination: no spaces, no newlines, balanced parens
-            var parenDepth = 0
-            while k < chars.count {
-                if chars[k] == "\\" && k + 1 < chars.count { k += 2; continue }
-                if chars[k] == " " || chars[k] == "\t" || chars[k] == "\n" { break }
-                if chars[k] == "(" { parenDepth += 1 }
-                else if chars[k] == ")" {
-                    if parenDepth == 0 { break }
-                    parenDepth -= 1
-                }
-                k += 1
-            }
-            // Unbalanced inner parens means invalid destination
-            if parenDepth != 0 { return nil }
-        }
-
-        // Skip optional whitespace before title or closing paren
-        while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
-
-        // Optional title (double-quoted, single-quoted, or parenthesized)
-        if k < chars.count && (chars[k] == "\"" || chars[k] == "'" || chars[k] == "(") {
-            let openQuote = chars[k]
-            let closeQuote: Character = openQuote == "(" ? ")" : openQuote
-            k += 1
-            while k < chars.count {
-                if chars[k] == "\\" && k + 1 < chars.count { k += 2; continue }
-                if chars[k] == closeQuote { k += 1; break }
-                k += 1
-            }
-            // Skip whitespace after title
-            while k < chars.count && (chars[k] == " " || chars[k] == "\t" || chars[k] == "\n") { k += 1 }
-        }
-
-        // Must end with )
-        guard k < chars.count && chars[k] == ")" else { return nil }
-
-        let text = String(chars[(start + 1)..<textEnd])
-        // rawDestination: everything between ( and ) for round-trip fidelity
-        let dest = String(chars[(parenOpen + 1)..<k])
-        return (text, dest, k + 1)
-    }
-
-    /// Try to match an inline image `![alt](destination)` starting at `start`.
-    private static func tryMatchImage(
-        _ chars: [Character], from start: Int,
-        codeSpanRanges: [(start: Int, end: Int)] = []
-    ) -> (alt: String, dest: String, endIndex: Int)? {
-        guard start + 1 < chars.count, chars[start] == "!", chars[start + 1] == "[" else { return nil }
-        // Reuse link matching starting from the [
-        guard let linkMatch = tryMatchLink(chars, from: start + 1, codeSpanRanges: codeSpanRanges) else { return nil }
-        return (linkMatch.text, linkMatch.dest, linkMatch.endIndex)
     }
 
     // MARK: - Unicode character classification helpers
