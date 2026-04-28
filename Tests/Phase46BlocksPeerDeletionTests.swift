@@ -323,6 +323,72 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         XCTAssertEqual(proc.collapsedBlockIndices, Set(headings))
     }
 
+    // MARK: - Phase 6 Tier B′ Sub-slice 7.B.1 — `.renderMode` ban
+
+    func test_phase6Bprime_subslice7B1_noMarkdownBlockRenderMode_reads() throws {
+        // Sub-slice 7.B.1 retired `MarkdownBlock.renderMode` entirely.
+        // The canonical render-mode state lives on
+        // `TextStorageProcessor.renderedStorageOffsets` (offset-keyed
+        // side-table); public reads through `isRendered(blockIndex:)
+        // / isRendered(storageOffset:) / renderedBlockOffsets`.
+        //
+        // This grep-discipline test enforces the strict invariant:
+        // zero production code may read or write `.renderMode` as a
+        // property access on a `MarkdownBlock` value, because the
+        // field doesn't exist any more. Doc-comments referencing the
+        // historical name are stripped before scanning.
+        let repoRoot = findRepoRoot()
+        guard let repoRoot = repoRoot else {
+            XCTFail("Unable to locate repo root for source scan")
+            return
+        }
+        let prodDirs = [
+            repoRoot.appendingPathComponent("FSNotes"),
+            repoRoot.appendingPathComponent("FSNotesCore")
+        ]
+
+        // Word-boundary regex: `.renderMode` not followed by an
+        // identifier character. Matches `block.renderMode == .source`
+        // and `mb.renderMode = .rendered` but NOT (hypothetical)
+        // `.renderModeOffsets`.
+        let regex = try NSRegularExpression(
+            pattern: #"\.renderMode\b(?![A-Za-z0-9_])"#
+        )
+        let lineCommentRegex = try NSRegularExpression(pattern: #"//.*"#)
+
+        var violations: [String] = []
+        for dir in prodDirs {
+            guard FileManager.default.fileExists(atPath: dir.path) else {
+                continue
+            }
+            let enumerator = FileManager.default.enumerator(
+                at: dir, includingPropertiesForKeys: nil
+            )
+            while let fileURL = enumerator?.nextObject() as? URL {
+                guard fileURL.pathExtension == "swift" else { continue }
+                let fileName = fileURL.lastPathComponent
+                guard let content = try? String(contentsOf: fileURL)
+                else { continue }
+                let stripped = lineCommentRegex.stringByReplacingMatches(
+                    in: content,
+                    range: NSRange(content.startIndex..., in: content),
+                    withTemplate: ""
+                )
+                let range = NSRange(stripped.startIndex..., in: stripped)
+                if regex.firstMatch(in: stripped, range: range) != nil {
+                    violations.append(fileName)
+                }
+            }
+        }
+        XCTAssertTrue(
+            violations.isEmpty,
+            "Production code reads or writes `.renderMode` on a " +
+            "MarkdownBlock; Sub-slice 7.B.1 retired this field. " +
+            "Route through `processor.isRendered(blockIndex:)` or " +
+            "the offset-keyed query API. Offending files: \(violations)."
+        )
+    }
+
     // MARK: - Phase 6 Tier B′ Sub-slice 6 — click-to-edit by storage offset
 
     /// `setRenderMode(_:forBlockAtOffset:)` is the public mutator that
@@ -360,10 +426,10 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         // Flip the first via the offset-keyed API.
         proc.setRenderMode(.source, forBlockAtOffset: firstOffset)
         XCTAssertFalse(proc.isRendered(storageOffset: firstOffset))
-        XCTAssertEqual(proc.blocks[codeBlocks[0]].renderMode, .source)
+        XCTAssertFalse(proc.renderedBlockOffsets.contains(firstOffset))
         // Second block untouched.
         XCTAssertTrue(proc.isRendered(storageOffset: secondOffset))
-        XCTAssertEqual(proc.blocks[codeBlocks[1]].renderMode, .rendered)
+        XCTAssertTrue(proc.renderedBlockOffsets.contains(secondOffset))
     }
 
     /// `setRenderMode(_:forBlockAtOffset:)` is idempotent for offsets
@@ -488,17 +554,19 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
                 proc.isRendered(blockIndex: idx), expectRendered,
                 "Block lang=\(lang ?? "nil") expected rendered=\(expectRendered)"
             )
-            // Side-table and legacy field stay in sync via dual-write.
+            let offset = proc.blocks[idx].range.location
             XCTAssertEqual(
-                proc.blocks[idx].renderMode == .rendered, expectRendered,
-                "Legacy field for lang=\(lang ?? "nil") must match side-table"
+                proc.renderedBlockOffsets.contains(offset), expectRendered,
+                "Side-table membership for lang=\(lang ?? "nil") " +
+                "must match the per-block query"
             )
         }
     }
 
-    /// `setRenderMode(.source, forBlockAt:)` flips the side-table and
-    /// the dual-written legacy field. This is the path the click-to-edit
-    /// rendered-image handler uses.
+    /// `setRenderMode(.source, forBlockAt:)` flips the side-table.
+    /// This is the path the click-to-edit rendered-image handler uses.
+    /// Sub-slice 7.B.1 retired the per-block `renderMode` field; the
+    /// side-table is the sole source of truth.
     func test_phase6Bprime_subslice4_setRenderMode_flipsSideTable() {
         let md = """
         ```mermaid
@@ -519,20 +587,21 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("No code block found")
             return
         }
+        let offset = proc.blocks[idx].range.location
 
         // Mermaid block starts as .rendered (language-based).
         XCTAssertTrue(proc.isRendered(blockIndex: idx))
-        XCTAssertEqual(proc.blocks[idx].renderMode, .rendered)
+        XCTAssertTrue(proc.renderedBlockOffsets.contains(offset))
 
-        // Flip to .source — both side-table and field update.
+        // Flip to .source.
         proc.setRenderMode(.source, forBlockAt: idx)
         XCTAssertFalse(proc.isRendered(blockIndex: idx))
-        XCTAssertEqual(proc.blocks[idx].renderMode, .source)
+        XCTAssertFalse(proc.renderedBlockOffsets.contains(offset))
 
         // Flip back.
         proc.setRenderMode(.rendered, forBlockAt: idx)
         XCTAssertTrue(proc.isRendered(blockIndex: idx))
-        XCTAssertEqual(proc.blocks[idx].renderMode, .rendered)
+        XCTAssertTrue(proc.renderedBlockOffsets.contains(offset))
     }
 
     /// `renderedBlockOffsets` is the read-only accessor mirroring

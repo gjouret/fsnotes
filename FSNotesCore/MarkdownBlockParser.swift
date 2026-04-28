@@ -46,11 +46,12 @@ public struct MarkdownBlock {
     public var range: NSRange               // Full range in textStorage (includes syntax)
     public var contentRange: NSRange        // Range of visible content (excludes syntax delimiters)
     public var syntaxRanges: [NSRange]      // Ranges of syntax chars to hide in WYSIWYG
-    // Phase 6 Tier B′ Sub-slice 7: `collapsed` field retired. Fold
-    // state lives canonically on `TextStorageProcessor.collapsedStorageOffsets`
-    // (offset-keyed side-table); query via `isCollapsed(blockIndex:) /
-    // isCollapsed(storageOffset:)`.
-    public var renderMode: BlockRenderMode = .source  // Current display mode
+    // Phase 6 Tier B′ Sub-slice 7: per-block `collapsed` and
+    // `renderMode` fields both retired. Fold state lives canonically
+    // on `TextStorageProcessor.collapsedStorageOffsets`; render-mode
+    // state lives on `TextStorageProcessor.renderedStorageOffsets`.
+    // Both side-tables are offset-keyed (block.range.location); query
+    // via the public `isCollapsed(...)` / `isRendered(...)` APIs.
     /// Original markdown source for blocks whose rendered output differs
     /// from the source (e.g. tables in block-model mode). Used by
     /// renderTables() to parse the table without reading storage.
@@ -116,8 +117,20 @@ public class MarkdownBlockParser {
     /// Full reparse preserving rendered blocks. Rendered blocks contain attachment
     /// characters that the parser can't handle — they're extracted before parsing
     /// and re-inserted at their correct positions afterward.
-    public static func parsePreservingRendered(_ blocks: inout [MarkdownBlock], string: NSString) {
-        let rendered = blocks.filter { $0.renderMode == .rendered }
+    ///
+    /// Phase 6 Tier B′ Sub-slice 7.B.1: `renderedOffsets` is the set
+    /// of `block.range.location` values that the caller's offset-keyed
+    /// side-table marks as `.rendered`. The parser uses this in lieu
+    /// of the retired `MarkdownBlock.renderMode` field to identify
+    /// blocks that must be skipped + re-injected.
+    public static func parsePreservingRendered(
+        _ blocks: inout [MarkdownBlock],
+        string: NSString,
+        renderedOffsets: Set<Int>
+    ) {
+        let rendered = blocks.filter {
+            renderedOffsets.contains($0.range.location)
+        }
         blocks = parse(string: string)
         for r in rendered {
             let insertIdx = blocks.firstIndex(where: { $0.range.location > r.range.location }) ?? blocks.endIndex
@@ -136,7 +149,18 @@ public class MarkdownBlockParser {
 
     /// Adjust existing block ranges after a text edit.
     /// Returns the indices of blocks that need re-parsing.
-    public static func adjustBlocks(_ blocks: inout [MarkdownBlock], forEditAt editLocation: Int, delta: Int) -> IndexSet {
+    ///
+    /// Phase 6 Tier B′ Sub-slice 7.B.1: `renderedOffsets` is the
+    /// set of `block.range.location` values for blocks the caller
+    /// considers `.rendered` (no longer carried on the per-block
+    /// field). The lookup happens against each block's pre-shift
+    /// offset, which is what the side-table is keyed on.
+    public static func adjustBlocks(
+        _ blocks: inout [MarkdownBlock],
+        forEditAt editLocation: Int,
+        delta: Int,
+        renderedOffsets: Set<Int>
+    ) -> IndexSet {
         var dirtyIndices = IndexSet()
 
         for i in 0..<blocks.count {
@@ -156,7 +180,7 @@ public class MarkdownBlockParser {
                 // Block contains the edit — dirty (unless rendered: frozen blocks
                 // must not be re-parsed since their text is an attachment character)
                 blocks[i].range.length = max(0, blocks[i].range.length + delta)
-                if block.renderMode == .source {
+                if !renderedOffsets.contains(block.range.location) {
                     dirtyIndices.insert(i)
                 }
             }
@@ -168,22 +192,38 @@ public class MarkdownBlockParser {
     /// Re-parse dirty blocks and their source-mode neighbors, splicing results in.
     /// Rendered blocks are never included in the reparse range (their text is an
     /// attachment character that the parser can't handle).
-    public static func reparseBlocks(_ blocks: inout [MarkdownBlock], dirtyIndices: IndexSet, string: NSString) {
+    ///
+    /// Phase 6 Tier B′ Sub-slice 7.B.1: `renderedOffsets` replaces
+    /// the retired `MarkdownBlock.renderMode` field for the
+    /// neighbour-source-mode test that decides how far to extend the
+    /// splice range.
+    public static func reparseBlocks(
+        _ blocks: inout [MarkdownBlock],
+        dirtyIndices: IndexSet,
+        string: NSString,
+        renderedOffsets: Set<Int>
+    ) {
         guard !dirtyIndices.isEmpty else { return }
 
         // Find the splice range: dirty blocks + one source-mode neighbor on each side.
         guard let firstDirty = dirtyIndices.first, let lastDirty = dirtyIndices.last else { return }
 
         // Expand to neighbors, but only if they're source-mode blocks
-        let prevIdx = firstDirty > 0 && blocks[firstDirty - 1].renderMode == .source ? firstDirty - 1 : firstDirty
-        let nextIdx = lastDirty < blocks.count - 1 && blocks[lastDirty + 1].renderMode == .source ? lastDirty + 1 : lastDirty
+        let prevIsSource = firstDirty > 0
+            && !renderedOffsets.contains(blocks[firstDirty - 1].range.location)
+        let nextIsSource = lastDirty < blocks.count - 1
+            && !renderedOffsets.contains(blocks[lastDirty + 1].range.location)
+        let prevIdx = prevIsSource ? firstDirty - 1 : firstDirty
+        let nextIdx = nextIsSource ? lastDirty + 1 : lastDirty
         let minIdx = prevIdx
         let maxIdx = nextIdx
 
         let startLoc = blocks[minIdx].range.location
         let endLoc = min(NSMaxRange(blocks[maxIdx].range), string.length)
         guard startLoc < endLoc else {
-            parsePreservingRendered(&blocks, string: string)
+            parsePreservingRendered(
+                &blocks, string: string, renderedOffsets: renderedOffsets
+            )
             return
         }
 

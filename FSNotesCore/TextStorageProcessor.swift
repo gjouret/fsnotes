@@ -183,8 +183,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// source mode; mermaid/math/latex blocks in WYSIWYG which are
     /// classified by language but rendered via fragment dispatch).
     /// Mirrors the Sub-slice 1 fold-state pattern: offset-keyed for
-    /// stability across edits above, dual-written to the legacy
-    /// `MarkdownBlock.renderMode` field for external readers.
+    /// stability across edits above. Sub-slice 7.B.1 retired the
+    /// per-block `MarkdownBlock.renderMode` field; this set is the
+    /// sole source of truth.
     private var renderedStorageOffsets: Set<Int> = []
 
     /// Is the block at this storage offset currently `.rendered`?
@@ -205,75 +206,43 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return renderedStorageOffsets
     }
 
-    /// Set the render mode for the block at the given index. Internally
-    /// routes through the side-table mutator so the legacy
-    /// `MarkdownBlock.renderMode` field stays in sync.
+    /// Set the render mode for the block at the given index. Updates
+    /// only the offset-keyed side-table (sub-slice 7.B.1 retired the
+    /// dual-write to the per-block field).
     public func setRenderMode(
         _ mode: BlockRenderMode, forBlockAt blockIndex: Int
     ) {
         guard blockIndex >= 0, blockIndex < blocks.count else { return }
         let offset = blocks[blockIndex].range.location
-        setRendered(
-            mode == .rendered,
-            storageOffset: offset,
-            blockIndex: blockIndex
-        )
+        setRendered(mode == .rendered, storageOffset: offset)
     }
 
     /// Set the render mode for the block at the given storage offset.
     /// Public entry for callers that have a storage location but no
     /// `processor.blocks` index (Phase 6 Tier B′ Sub-slice 6 — the
     /// click-to-edit rendered-image handler in
-    /// `EditTextView+Interaction`). Internally walks `blocks` once to
-    /// find the matching index for dual-write to the legacy
-    /// `MarkdownBlock.renderMode` field; the per-block-array read is
-    /// hidden from external callers so Sub-slice 7 can retire it
-    /// without touching this site.
+    /// `EditTextView+Interaction`).
     public func setRenderMode(
         _ mode: BlockRenderMode, forBlockAtOffset storageOffset: Int
     ) {
-        let idx = blocks.firstIndex(where: {
-            $0.range.location == storageOffset
-        })
-        setRendered(
-            mode == .rendered,
-            storageOffset: storageOffset,
-            blockIndex: idx
-        )
+        setRendered(mode == .rendered, storageOffset: storageOffset)
     }
 
-    /// Set the rendered flag for a block at a given storage offset
-    /// (canonical) AND keep the dual-written `MarkdownBlock.renderMode`
-    /// field in sync. Called by `rebuildBlocksFromProjection` (WYSIWYG
-    /// language-based classification), the async mermaid/math render
-    /// callback, and `setRenderMode` (external entry point). External
-    /// callers should not invoke this directly.
+    /// Set the rendered flag for a block at a given storage offset.
+    /// Called by `rebuildBlocksFromProjection` (WYSIWYG language-based
+    /// classification), the async mermaid/math render callback, and
+    /// `setRenderMode` (external entry points). External callers
+    /// should not invoke this directly. Sub-slice 7.B.1 retired the
+    /// dual-write to `MarkdownBlock.renderMode`; the side-table is
+    /// the sole source of truth.
     fileprivate func setRendered(
-        _ rendered: Bool, storageOffset: Int, blockIndex: Int? = nil
+        _ rendered: Bool, storageOffset: Int
     ) {
         if rendered {
             renderedStorageOffsets.insert(storageOffset)
         } else {
             renderedStorageOffsets.remove(storageOffset)
         }
-        if let idx = blockIndex, idx >= 0, idx < blocks.count {
-            blocks[idx].renderMode = rendered ? .rendered : .source
-        }
-    }
-
-    /// Re-derive the render-mode side-table from the per-block field.
-    /// Called by the source-mode `updateBlockModel` path after the
-    /// parser repopulates `blocks` (parser doesn't know about the side
-    /// table — until Sub-slice 7 retires the field, the parser's
-    /// per-block flag is the canonical state for newly-parsed blocks).
-    fileprivate func syncRenderedSideTableFromBlocks() {
-        var rendered: Set<Int> = []
-        for block in blocks {
-            if block.renderMode == .rendered {
-                rendered.insert(block.range.location)
-            }
-        }
-        renderedStorageOffsets = rendered
     }
 
     /// Set the collapsed flag for a block at a given storage offset.
@@ -340,10 +309,15 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     /// Code block ranges in source mode (excludes rendered mermaid/math images).
     /// Used by LayoutManager for gray background and by triggerCodeBlockRenderingIfNeeded.
+    /// Sub-slice 7.B.1 routes the rendered-mode test through the
+    /// offset-keyed side-table; the per-block field is gone.
     public var codeBlockRanges: [NSRange] {
         return blocks.compactMap { block in
-            if case .codeBlock = block.type, block.renderMode == .source { return block.range }
-            return nil
+            guard case .codeBlock = block.type else { return nil }
+            if renderedStorageOffsets.contains(block.range.location) {
+                return nil
+            }
+            return block.range
         }
     }
 
@@ -417,24 +391,16 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         var newBlocks: [MarkdownBlock] = []
         newBlocks.reserveCapacity(doc.blocks.count)
         for (i, block) in doc.blocks.enumerated() {
-            var mb = makeBlockEntry(block: block, span: spans[i], projection: projection)
-            // Sub-slice 7 retired `MarkdownBlock.collapsed` — fold
-            // state lives entirely on `collapsedStorageOffsets`.
-            // WYSIWYG language-based render classification: mermaid /
-            // math / latex are kept off the gray-background gate via
-            // `codeBlockRanges`, which filters on
-            // `renderMode == .source`. Side-table is the canonical
-            // store; legacy field is dual-written through `setRendered`.
+            let mb = makeBlockEntry(block: block, span: spans[i], projection: projection)
+            // Sub-slice 7 retired `MarkdownBlock.collapsed` and
+            // `MarkdownBlock.renderMode`; both states live entirely
+            // on the offset-keyed side-tables. WYSIWYG language-based
+            // render classification only needs to update the
+            // side-table — `codeBlockRanges` filters on it directly.
             if case .codeBlock(let lang, _, _) = block,
                let l = lang?.lowercased(),
                l == "mermaid" || l == "math" || l == "latex" {
                 renderedStorageOffsets.insert(spans[i].location)
-                mb.renderMode = .rendered
-            } else if renderedStorageOffsets.contains(spans[i].location) {
-                // Side-table entry that survived intersection (e.g. a
-                // source-mode rendered block whose offset persists in
-                // a hybrid scenario). Keep the field aligned.
-                mb.renderMode = .rendered
             }
             newBlocks.append(mb)
         }
@@ -1086,12 +1052,35 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             return
         }
 
+        // Phase 6 Tier B′ Sub-slice 7.B.1: pass the offset-keyed
+        // side-table to the parser in lieu of the retired
+        // `MarkdownBlock.renderMode` field. The parser uses these
+        // offsets to identify rendered blocks for skip/preserve
+        // decisions during incremental parsing. Snapshot the
+        // *block IDs* of currently-rendered blocks first, so that
+        // after the parser shifts block ranges (via `adjustBlocks`)
+        // we can re-derive the side-table against the new offsets
+        // without needing a per-block field.
+        let renderedOffsets = renderedStorageOffsets
+        let renderedIDsBefore: Set<UUID> = Set(
+            blocks.compactMap { block in
+                renderedOffsets.contains(block.range.location) ? block.id : nil
+            }
+        )
+
         if editedRange.length == textStorage.length || blocks.isEmpty {
             // Full parse (initial load or first time).
-            MarkdownBlockParser.parsePreservingRendered(&blocks, string: string)
+            MarkdownBlockParser.parsePreservingRendered(
+                &blocks, string: string, renderedOffsets: renderedOffsets
+            )
         } else {
             // Incremental: adjust existing blocks, re-parse dirty ones
-            var dirtyIndices = MarkdownBlockParser.adjustBlocks(&blocks, forEditAt: editedRange.location, delta: delta)
+            var dirtyIndices = MarkdownBlockParser.adjustBlocks(
+                &blocks,
+                forEditAt: editedRange.location,
+                delta: delta,
+                renderedOffsets: renderedOffsets
+            )
 
             // Also mark the block at the edit location as dirty
             if let editIdx = MarkdownBlockParser.blockIndex(in: blocks, containing: min(editedRange.location, string.length - 1)) {
@@ -1099,16 +1088,25 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
 
             if !dirtyIndices.isEmpty {
-                MarkdownBlockParser.reparseBlocks(&blocks, dirtyIndices: dirtyIndices, string: string)
+                MarkdownBlockParser.reparseBlocks(
+                    &blocks,
+                    dirtyIndices: dirtyIndices,
+                    string: string,
+                    renderedOffsets: renderedOffsets
+                )
             }
         }
 
-        // Phase 6 Tier B′ Sub-slice 4: re-derive the offset-keyed
-        // render-mode side-table from the parser's per-block field.
-        // The parser is the canonical source of truth for newly-parsed
-        // blocks (until Sub-slice 7 retires the field); this sync
-        // keeps the side-table aligned for source-mode reads.
-        syncRenderedSideTableFromBlocks()
+        // Re-derive the side-table from the post-parse block IDs:
+        // each rendered block's offset may have shifted via
+        // `adjustBlocks`, but its UUID is stable. Blocks that the
+        // reparse splice replaced (always source-mode by design)
+        // simply drop out of the new set.
+        renderedStorageOffsets = Set(
+            blocks.compactMap { block in
+                renderedIDsBefore.contains(block.id) ? block.range.location : nil
+            }
+        )
     }
 
     private func processingRanges(
@@ -1163,10 +1161,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     private func codeRanges(in blocks: [MarkdownBlock]) -> [NSRange] {
         return blocks.compactMap { block in
-            if case .codeBlock = block.type, block.renderMode == .source {
-                return block.range
+            guard case .codeBlock = block.type else { return nil }
+            if renderedStorageOffsets.contains(block.range.location) {
+                return nil
             }
-            return nil
+            return block.range
         }
     }
 
@@ -1474,7 +1473,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             let blockID = blocks[blockIdx].id
 
             // Skip blocks that are already rendered or already scheduled.
-            if blocks[blockIdx].renderMode == .rendered || pendingRenderedBlockIDs.contains(blockID) {
+            if isRendered(blockIndex: blockIdx)
+               || pendingRenderedBlockIDs.contains(blockID) {
                 continue
             }
             pendingRenderedBlockIDs.insert(blockID)
@@ -1536,18 +1536,15 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     // Mark the block as rendered (not removed). The block stays in the
                     // model with updated range. codeBlockRanges filters it out so
                     // LayoutManager won't draw a gray background behind the image.
-                    // Phase 6 Tier B′ Sub-slice 4: route through
-                    // `setRendered` so the canonical offset side-table
-                    // reflects this transition; the legacy
-                    // `MarkdownBlock.renderMode` field is dual-written
-                    // by the mutator.
+                    // Phase 6 Tier B′ Sub-slice 7.B.1: side-table is the
+                    // sole source of truth — the per-block `renderMode`
+                    // field is gone.
                     self.blocks[updatedIdx].range = replacedRange
                     self.blocks[updatedIdx].contentRange = replacedRange
                     self.blocks[updatedIdx].syntaxRanges = []
                     self.setRendered(
                         true,
-                        storageOffset: replacedRange.location,
-                        blockIndex: updatedIdx
+                        storageOffset: replacedRange.location
                     )
                 }
             }
