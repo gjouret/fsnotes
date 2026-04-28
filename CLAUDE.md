@@ -295,20 +295,19 @@ Single source of truth for every presentation literal. See `ARCHITECTURE.md` →
 
 ### CommonMark Spec Compliance (v0.31.2)
 
-Serializer compliance: **623 / 652 passing (95.6%)** — Phase 10 Slice A baseline (620) advanced by Phase 12.C.6.a + 12.C.6.b (+3, container-aware ref-def discovery for #218 plus Unicode case fold for ref label normalization for #540 + one bonus).
+Serializer compliance: **631 / 652 passing (96.8%)** — Phase 10 Slice A baseline (620) advanced by Phase 12.C.6.a–g (+11, seven slices closing spec examples #218, #540, #541, #548, #559, #568, #238, #524, #526, #536, #538). Two additional buckets reached 100% in 12.C.6: Block quotes (25/25 via #238) and Link reference definitions (27/27 via #218).
 
-- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Setext headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks, Indented code blocks, Emphasis, Raw HTML, Thematic breaks, **Link reference definitions** (12.C.6.a)
-- Near-perfect (90%+): Images, Block quotes, HTML blocks, Tabs
-- Moderate (70–89%): Links, List items, Lists
+- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Setext headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks, Indented code blocks, Emphasis, Raw HTML, Thematic breaks, **Link reference definitions** (12.C.6.a), **Block quotes** (12.C.6.f).
+- Near-perfect (90%+): Tabs (10/11, 91%), HTML blocks (43/44, 98%), Links (85/90, 94%), Images (21/22, 95%).
+- Moderate (70–89%): List items (42/48, 88%), Lists (19/26, 73%).
 - All failing buckets above 70%.
 
-Remaining 29 failing examples by bucket:
-- **Links (12)**: delimiter-stack rewrite territory — bracket / link / image precedence (link-in-link literalization, autolink inside link text, wikilink edge cases). Pre-existing TODO; tracked for potential Phase 12.
-- **List items (6)** + **Lists (7)**: multi-block list items where the continuation is a *fenced* code block, blockquote, or HTML block inside the item body. The current `ListItem.children: [ListItem]` shape only nests sub-lists; arbitrary per-item block children require redesigning `ListItem.children` to `[Block]` with ~107 call-site updates across EditingOps / SourceRenderer / ListEditingFSM. Tracked for potential Phase 11 (Slice B).
-- **Tabs (1)**: mixed space-tab list-nesting indent case (#9).
+Remaining 21 failing examples by bucket:
+- **Links (5)**: delimiter-stack rewrite for link-in-link literalization (#518, #519, #520, #532, #533). Pre-existing TODO; tracked for potential follow-up.
+- **List items (6)** + **Lists (7)**: multi-block list items where the continuation is a *fenced* code block, blockquote, or HTML block inside the item body (#278, #289, #290, #292, #293, #300, #312, #313, #318, #320, #321, #324, #325). The current `ListItem.children: [ListItem]` shape only nests sub-lists; arbitrary per-item block children require redesigning `ListItem.children` to `[Block]` with ~107 call-site updates across EditingOps / SourceRenderer / ListEditingFSM. Tracked for potential Phase 11 (Slice B).
+- **Tabs (1)**: mixed space-tab list-nesting indent case (#9, tied to multi-block list family).
 - **HTML blocks (1)**: `<div>` as list-item first-line content (#175 — same Slice B family).
-- **Block quotes (1)**: lazy continuation picking up indented list marker instead of paragraph text (#238).
-- **Images (1)**: wikilink-extension bleed through image ref-def pattern (#590).
+- **Images (1)**: wikilink-extension bleed through image ref-def pattern (#590, accepted FSNotes++ extension non-conformance).
 
 Phase 10 Slice A trajectory: **601 → 620 / 652 (+19)** in 12 commits (`f9aa284 → 3018ff0`, 2026-04-24). Each commit locks in one or more bucket fixes: short HTML comment forms, ref-def URL/title separator, multi-line ref-def labels, tight-list heuristic refinement, HR-beats-list-item precedence, setext-underline-on-lazy guard, Unicode S-category as punctuation, indented-code trailing-whitespace preservation, blockquote tab partial-consumption, list-item first-line indented-code detection, `stripLeadingSpaces` virtual-column preservation, HTML-block 3-space indent cap, first-item-blankLineBefore exclusion, empty-content item lazy continuation.
 
