@@ -119,6 +119,8 @@
 		RHTT12C30000000000B1 /* RawHTMLParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RHTT12C30000000000F1 /* RawHTMLParserTests.swift */; };
 		LNKP12C30000000000B1 /* LinkParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNKP12C30000000000F1 /* LinkParser.swift */; };
 		LNKT12C30000000000B1 /* LinkParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNKT12C30000000000F1 /* LinkParserTests.swift */; };
+		LNRP12C6H000000000B1 /* LinkResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNRP12C6H000000000F1 /* LinkResolver.swift */; };
+		LNRT12C6H000000000B1 /* LinkResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LNRT12C6H000000000F1 /* LinkResolverTests.swift */; };
 		EMRP12C40000000000B1 /* EmphasisResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMRP12C40000000000F1 /* EmphasisResolver.swift */; };
 		EMRT12C40000000000B1 /* EmphasisResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMRT12C40000000000F1 /* EmphasisResolverTests.swift */; };
 		FCBP12C50000000000B1 /* FencedCodeBlockReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCBP12C50000000000F1 /* FencedCodeBlockReader.swift */; };
@@ -1397,6 +1399,8 @@
 		RHTT12C30000000000F1 /* RawHTMLParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawHTMLParserTests.swift; sourceTree = "<group>"; };
 		LNKP12C30000000000F1 /* LinkParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/LinkParser.swift; sourceTree = "<group>"; };
 		LNKT12C30000000000F1 /* LinkParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkParserTests.swift; sourceTree = "<group>"; };
+		LNRP12C6H000000000F1 /* LinkResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/LinkResolver.swift; sourceTree = "<group>"; };
+		LNRT12C6H000000000F1 /* LinkResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkResolverTests.swift; sourceTree = "<group>"; };
 		EMRP12C40000000000F1 /* EmphasisResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/EmphasisResolver.swift; sourceTree = "<group>"; };
 		EMRT12C40000000000F1 /* EmphasisResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmphasisResolverTests.swift; sourceTree = "<group>"; };
 		FCBP12C50000000000F1 /* FencedCodeBlockReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/FencedCodeBlockReader.swift; sourceTree = "<group>"; };
@@ -2107,6 +2111,7 @@
 				AUTP12C30000000000F1 /* AutolinkParser.swift */,
 				RHTP12C30000000000F1 /* RawHTMLParser.swift */,
 				LNKP12C30000000000F1 /* LinkParser.swift */,
+				LNRP12C6H000000000F1 /* LinkResolver.swift */,
 				EMRP12C40000000000F1 /* EmphasisResolver.swift */,
 				FCBP12C50000000000F1 /* FencedCodeBlockReader.swift */,
 				HRRP12C50000000000F1 /* HorizontalRuleReader.swift */,
@@ -3063,6 +3068,7 @@
 				AUTT12C30000000000F1 /* AutolinkParserTests.swift */,
 				RHTT12C30000000000F1 /* RawHTMLParserTests.swift */,
 				LNKT12C30000000000F1 /* LinkParserTests.swift */,
+				LNRT12C6H000000000F1 /* LinkResolverTests.swift */,
 				EMRT12C40000000000F1 /* EmphasisResolverTests.swift */,
 				FCBT12C50000000000F1 /* FencedCodeBlockReaderTests.swift */,
 				HRRT12C50000000000F1 /* HorizontalRuleReaderTests.swift */,
@@ -4090,6 +4096,7 @@
 				AUTP12C30000000000B1 /* AutolinkParser.swift in Sources */,
 				RHTP12C30000000000B1 /* RawHTMLParser.swift in Sources */,
 				LNKP12C30000000000B1 /* LinkParser.swift in Sources */,
+				LNRP12C6H000000000B1 /* LinkResolver.swift in Sources */,
 				EMRP12C40000000000B1 /* EmphasisResolver.swift in Sources */,
 				FCBP12C50000000000B1 /* FencedCodeBlockReader.swift in Sources */,
 				HRRP12C50000000000B1 /* HorizontalRuleReader.swift in Sources */,
@@ -4792,6 +4799,7 @@
 				AUTT12C30000000000B1 /* AutolinkParserTests.swift in Sources */,
 				RHTT12C30000000000B1 /* RawHTMLParserTests.swift in Sources */,
 				LNKT12C30000000000B1 /* LinkParserTests.swift in Sources */,
+				LNRT12C6H000000000B1 /* LinkResolverTests.swift in Sources */,
 				EMRT12C40000000000B1 /* EmphasisResolverTests.swift in Sources */,
 				FCBT12C50000000000B1 /* FencedCodeBlockReaderTests.swift in Sources */,
 				HRRT12C50000000000B1 /* HorizontalRuleReaderTests.swift in Sources */,

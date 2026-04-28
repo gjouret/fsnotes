@@ -452,15 +452,13 @@ class CommonMarkSpecTests: XCTestCase {
     // Inline links with titles, angle-bracketed destinations, backslash
     // escapes in URLs, reference links (full, collapsed, shortcut).
     //
-    // Known compliance: 75/90. Down from an earlier 77/90 baseline — the
-    // 2-example drop tracks to recent reference-link / wikilink work and
-    // is currently ACCEPTED pending a focused investigation pass. The
-    // bulk of the remaining 15 fails are long-standing precedence issues
-    // (link-in-link bracket literalization, autolink/rawHTML precedence
-    // inside link text) that would require a delimiter-stack rewrite —
-    // out of scope for the TK2 migration work.
+    // 90/90 (100%) as of Phase 12.C.6.h (link-in-link literalization
+    // via the §6.4 delimiter-stack algorithm in `LinkResolver.swift`).
+    // The five preceding holdouts (#518, #519, #520, #532, #533) all
+    // turned green when greedy-left-to-right link matching gave way
+    // to opener-stack inactivation.
     func test_links() {
-        assertSection("Links", passesAtLeast: 85)
+        assertSection("Links", passesAtLeast: 90)
     }
 
     // --- Images (22 examples) ---

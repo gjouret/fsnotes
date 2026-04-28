@@ -188,7 +188,7 @@ Setext heading promotion stays in `MarkdownParser.parse` because it depends on t
 
 **ListReader scope deliberately conservative.** The per-line classifier surface ports cleanly. The ~320-line block-loop multi-line list collection code, `buildItemTree` (recursive item-tree builder that calls back into `MarkdownParser.parse` for item-content re-parsing), `deepestOwner`, `leadingSpaceCount`, and `stripLeadingSpaces` STAY in `MarkdownParser`. They weave through container-block continuation rules, blank-line semantics, and recursive parser entry; porting them cleanly is its own slice (potentially 12.C.5.g, optional follow-up — the gain is structure, not LoC).
 
-Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped seven slices on top of the decomposition, advancing compliance to **631/652 (96.8%)** — see the per-slice write-up below.
+Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped eight slices on top of the decomposition, advancing compliance to **636/652 (97.5%)** — see the per-slice write-up below.
 
 ### Container-aware ref-def discovery (Phase 12.C.6.a)
 
@@ -240,6 +240,22 @@ CommonMark §6.4: brackets inside an HTML attribute value or an autolink URL are
 Both scans now, when they see `<`, first try `AutolinkParser.match` then `RawHTMLParser.match`. A success advances the cursor to the construct's end and the bracket count is unaffected. If neither matches, the `<` falls through as ordinary text.
 
 Closes spec examples #524, #526, #536, #538. Bucket: Links 81/90 → 85/90 (94%). Overall 627/652 → 631/652 (96.8%).
+
+### Link-in-link literalization via the §6.4 delimiter stack (Phase 12.C.6.h)
+
+CommonMark §6.4 specifies an "inactive link" pass on the inline delimiter stack: when a `[` opener resolves into a link, every earlier `[` opener still on the stack becomes inactive so the surrounding bracket pair can't re-activate as a nested link. The greedy left-to-right `LinkParser.match` previously embedded in `tokenizeNonEmphasis` had no notion of this — it would happily match the OUTER bracket pair of `[a [b](u1)](u2)` as a link with the inner link as its text content, producing spurious nested `<a>` tags.
+
+The fix lands as `Combinators/LinkResolver.swift`:
+
+- A pre-pass walks the inline character stream once, tracking `[` and `![` openers on a stack. Code spans, autolinks, raw HTML, and backslash escapes are skipped exactly as the tokenizer would skip them, so brackets inside those constructs don't participate.
+- At each `]`, the resolver tries to match a link/image body in `chars[j..]`: inline `(...)` first (via `LinkParser.parseInlineBody`, factored out for sharing), then full / collapsed `[label]`, then shortcut. On success, a `ResolvedLink` is appended and — if the opener was a `[` (not `![`) — every `[` opener still on the stack flips to `active = false`. `![` openers stay active because spec §6.4 only inactivates link openers; `[![alt](img)](url)` is intentional.
+- An inactive opener on the stack causes its `]` to fall through as literal text: no resolution attempted.
+
+The tokenizer materialises resolved spans by indexing into `linksByOpenIdx[i]` instead of greedy-matching. Image alt text is recursively re-parsed; the alt-as-string rendering in `CommonMarkHTMLRenderer` already flattens nested `<a>` to text content, so `![[[foo](uri1)](uri2)](uri3)` correctly renders alt as `[foo](uri2)` (the inner `[`/`]` survive as literals because of inactivation, the inner link's anchor is dropped at alt-rendering time).
+
+The retired `tryMatchReferenceLink` (~70 LoC) was the imperative twin of the new resolver's `matchAfterCloser`; the three forms (full / collapsed / shortcut) plus the spec #568 fall-through-to-shortcut semantic now live in one place.
+
+Closes spec examples #518, #519, #520, #532, #533. Bucket: Links 85/90 → 90/90 (100%). Overall 631/652 → 636/652 (97.5%).
 
 ## Editing FSMs by Block Type
 
@@ -781,14 +797,14 @@ Obsidian-style `</>` hover button that swaps a code block between its rendered f
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **631 / 652 passing (96.8%)** as of Phase 12.C.6.g (shipped 2026-04-28, commits `2d05378 → 07a55c9`, +11 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is met with margin.
+Serializer compliance against CommonMark 0.31.2 spec: **636 / 652 passing (97.5%)** as of Phase 12.C.6.h (shipped 2026-04-28, commits `2d05378 → (12.C.6.h)`, +16 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is met with comfortable margin.
 
 Per-bucket state:
-- **100%**: Tabs (after #9 caveat), Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content.
-- **Near-perfect (90%+)**: Tabs 10/11, HTML blocks 43/44, Images 21/22, Links 85/90 (94%, after 12.C.6.b/c/d/e/g).
+- **100%**: Tabs (after #9 caveat), Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, **Links (90/90, fixed in 12.C.6.h)**, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content.
+- **Near-perfect (90%+)**: Tabs 10/11, HTML blocks 43/44, Images 21/22.
 - **Moderate (70–89%)**: List items 42/48, Lists 19/26.
 
-Phase 12.C.6 ladder so far (against 620 baseline):
+Phase 12.C.6 ladder (against 620 baseline):
 - 12.C.6.a (`2d05378`): nested-blockquote ref-def discovery (#218) → 621/652.
 - 12.C.6.b (`495c121`): Unicode case fold for ref labels (#540) → 622/652.
 - 12.C.6.c (`ecbba98`): newline-aware ref label normalization (#541) → 623/652.
@@ -796,9 +812,9 @@ Phase 12.C.6 ladder so far (against 620 baseline):
 - 12.C.6.e (`a2b4ef7`): shortcut ref-link works after failed inline link (#568) → 626/652.
 - 12.C.6.f (`6264bc5`): 4-space indented marker can't interrupt a paragraph (#238) → 627/652.
 - 12.C.6.g (`07a55c9`): link bracket scan respects HTML / autolink boundaries (#524, #526, #536, #538) → 631/652.
+- 12.C.6.h (this slice): link-in-link literalization via §6.4 delimiter stack (#518, #519, #520, #532, #533) → 636/652.
 
-Remaining 21 failures cluster in:
-- **Links (5)**: link-in-link bracket literalization (`[foo [bar](/uri)](/uri)`-style) — needs the §6.4 inactive-link delimiter-stack pass, larger surgery than the small grammar edits 12.C.6.a–g have been delivering.
+Remaining 16 failures cluster in:
 - **List items + Lists (13)**: multi-block item content where the continuation is fenced code / blockquote / HTML block / setext heading. Needs `ListItem.children: [ListItem]` → `[Block]` redesign with ~107 call-site updates. Tracked as a candidate for Phase 11 / Slice B in the refactor plan.
 - **Tabs (1)** + **HTML blocks (1)**: also tied to the multi-block list-item family.
 - **Images (1, #590)**: documented FSNotes++ wikilink-extension non-conformance.

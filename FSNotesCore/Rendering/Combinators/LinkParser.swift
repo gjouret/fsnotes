@@ -88,7 +88,27 @@ public enum LinkParser {
         guard bracketDepth == 0 else { return nil }
         let textEnd = j - 1
 
-        // 2. `(` must follow immediately.
+        // 2-8. Inline body `(dest title?)` parser.
+        guard let body = parseInlineBody(chars, from: j) else { return nil }
+
+        return Match(
+            text: String(chars[(start + 1)..<textEnd]),
+            dest: body.dest,
+            endIndex: body.endIndex
+        )
+    }
+
+    /// Parse an inline link body `(dest title?)` starting at `chars[j] == '('`.
+    /// Returns the raw destination string (everything between the opening
+    /// `(` and the closing `)`, exactly as it appears in source — including
+    /// optional title text) and the position after the closing `)`.
+    ///
+    /// Used by both the standalone `LinkParser.match` path and the
+    /// `LinkResolver` delimiter-stack scan; factored out so the two callers
+    /// share identical body-parse semantics.
+    public static func parseInlineBody(
+        _ chars: [Character], from j: Int
+    ) -> (dest: String, endIndex: Int)? {
         guard j < chars.count, chars[j] == "(" else { return nil }
         let parenOpen = j
         var k = j + 1
@@ -98,11 +118,7 @@ public enum LinkParser {
 
         // 4. Empty destination: closing `)` immediately.
         if k < chars.count && chars[k] == ")" {
-            return Match(
-                text: String(chars[(start + 1)..<textEnd]),
-                dest: String(chars[(parenOpen + 1)..<k]),
-                endIndex: k + 1
-            )
+            return (dest: String(chars[(parenOpen + 1)..<k]), endIndex: k + 1)
         }
 
         // 5. Parse destination — angle-bracketed or bare with balanced
@@ -154,11 +170,7 @@ public enum LinkParser {
         // 8. Closing `)` must follow.
         guard k < chars.count, chars[k] == ")" else { return nil }
 
-        return Match(
-            text: String(chars[(start + 1)..<textEnd]),
-            dest: String(chars[(parenOpen + 1)..<k]),
-            endIndex: k + 1
-        )
+        return (dest: String(chars[(parenOpen + 1)..<k]), endIndex: k + 1)
     }
 
     private static func skipWhitespace(_ chars: [Character], _ k: inout Int) {

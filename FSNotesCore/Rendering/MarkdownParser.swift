@@ -836,6 +836,18 @@ public enum MarkdownParser {
         // over emphasis, links, and other constructs (CommonMark spec).
         let codeSpanRanges = findCodeSpanRanges(chars)
 
+        // Phase 12.C.6.h: pre-resolve link / image spans via the
+        // §6.4 delimiter-stack algorithm. The resolver decides which
+        // `[` / `![` openers materialise as links/images and which
+        // fall through as literal brackets — including the
+        // link-in-link literalization rule that the prior greedy
+        // scan got wrong (specs #518 / #519 / #520 / #532 / #533).
+        let resolvedLinks = LinkResolver.resolve(
+            chars: chars, codeSpanRanges: codeSpanRanges, refDefs: refDefs
+        )
+        var linksByOpenIdx: [Int: LinkResolver.ResolvedLink] = [:]
+        for r in resolvedLinks { linksByOpenIdx[r.openCharIdx] = r }
+
         func flushPlain() {
             if !plain.isEmpty {
                 tokens.append(.text(plain))
@@ -908,49 +920,49 @@ public enum MarkdownParser {
                 i = match.endIndex
                 continue
             }
-            // 8. Images
-            if chars[i] == "!" && i + 1 < chars.count && chars[i + 1] == "[" {
-                if let match = ImageParser.match(chars, from: i, codeSpanRanges: codeSpanRanges) {
-                    if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
-                        flushPlain()
-                        let (_, imgTitle) = extractURLAndTitle(from: match.dest)
-                        let imgWidth = imgTitle.flatMap { ImageSizeTitle.parse($0).width }
-                        tokens.append(.inline(.image(
-                            alt: parseInlines(match.text, refDefs: refDefs),
-                            rawDestination: match.dest,
-                            width: imgWidth
-                        )))
-                        i = match.endIndex
-                        continue
-                    }
+            // 8/9. Images and links — resolved in a single pre-pass via
+            // `LinkResolver` (Phase 12.C.6.h). `linksByOpenIdx[i]` is
+            // populated only when position `i` is the start of a `[`
+            // (or `![`) that the §6.4 delimiter-stack algorithm
+            // resolved as a real link/image. Any `[` not in the map
+            // falls through to the wikilink check below or to literal
+            // text — the resolver already accounted for inactivation
+            // (link-in-link literalization), code-span-crossing, and
+            // ref-def lookup.
+            if let link = linksByOpenIdx[i] {
+                flushPlain()
+                let textStr = String(chars[link.textStart..<link.textEnd])
+                if link.isImage {
+                    let (_, imgTitle) = extractURLAndTitle(from: link.dest)
+                    let imgWidth = imgTitle.flatMap { ImageSizeTitle.parse($0).width }
+                    tokens.append(.inline(.image(
+                        alt: parseInlines(textStr, refDefs: refDefs),
+                        rawDestination: link.dest,
+                        width: imgWidth
+                    )))
+                } else {
+                    tokens.append(.inline(.link(
+                        text: parseInlines(textStr, refDefs: refDefs),
+                        rawDestination: link.dest
+                    )))
                 }
-                if !refDefs.isEmpty {
-                    if let match = tryMatchReferenceLink(chars, from: i + 1, refDefs: refDefs) {
-                        if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
-                            flushPlain()
-                            let (_, imgTitle) = extractURLAndTitle(from: match.dest)
-                            let imgWidth = imgTitle.flatMap { ImageSizeTitle.parse($0).width }
-                            tokens.append(.inline(.image(
-                                alt: parseInlines(match.text, refDefs: refDefs),
-                                rawDestination: match.dest,
-                                width: imgWidth
-                            )))
-                            i = match.endIndex
-                            continue
-                        }
-                    }
-                }
+                i = link.endCharIdx
+                continue
             }
             // 9a. Wikilinks: [[target]] or [[target|display]]. Handled
-            // BEFORE the regular link path so that `[[foo]]` doesn't
-            // match as a ref-link `[foo]`. The target must not contain
-            // `]`, `|`, or newline.
+            // here (rather than inside `LinkResolver`) so that `[[foo]]`
+            // doesn't match as a ref-link `[foo]`. The target must not
+            // contain `]`, `|`, or newline.
             //
             // CommonMark spec #559: when the inner content matches a
             // link-reference-definition label, the standard reference
             // link wins — the outer `[` becomes a literal bracket and
-            // the inner `[target]` resolves through the ref-def. The
-            // wikilink extension is a fallback for unmatched inners.
+            // the inner `[target]` resolves through the ref-def. In
+            // that case the resolver already pushed the inner `[` as
+            // an opener and emitted the ref-link span, so `linksByOpenIdx`
+            // catches it above. Wikilinks fall through here only when
+            // the resolver also chose the wikilink path (target not in
+            // refDefs).
             if chars[i] == "[" && i + 1 < chars.count && chars[i + 1] == "[" {
                 if let match = WikilinkParser.match(chars, from: i) {
                     let labelKey = normalizeLabel(match.target)
@@ -962,27 +974,6 @@ public enum MarkdownParser {
                         tokens.append(.inline(.wikilink(target: match.target, display: match.display)))
                         i = match.endIndex
                         continue
-                    }
-                }
-            }
-            // 9. Links
-            if chars[i] == "[" {
-                if let match = LinkParser.match(chars, from: i, codeSpanRanges: codeSpanRanges) {
-                    if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
-                        flushPlain()
-                        tokens.append(.inline(.link(text: parseInlines(match.text, refDefs: refDefs), rawDestination: match.dest)))
-                        i = match.endIndex
-                        continue
-                    }
-                }
-                if !refDefs.isEmpty {
-                    if let match = tryMatchReferenceLink(chars, from: i, refDefs: refDefs) {
-                        if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
-                            flushPlain()
-                            tokens.append(.inline(.link(text: parseInlines(match.text, refDefs: refDefs), rawDestination: match.dest)))
-                            i = match.endIndex
-                            continue
-                        }
                     }
                 }
             }
@@ -1440,7 +1431,7 @@ public enum MarkdownParser {
     /// and `[ﬀ]`/`[ff]` equivalent — `lowercased()` only handles
     /// single-codepoint case mappings. Newline-spanning labels (spec
     /// #541) need the line-end collapse too.
-    private static func normalizeLabel(_ label: String) -> String {
+    static func normalizeLabel(_ label: String) -> String {
         label.folding(options: .caseInsensitive, locale: nil)
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
@@ -1983,84 +1974,6 @@ public enum MarkdownParser {
         }
 
         // Case 3: Non-whitespace, non-title content after URL — not a valid link ref def.
-        return nil
-    }
-
-    // MARK: - Reference link matching
-
-    /// Try to match a reference link at position `start` in the character
-    /// array. Handles three forms:
-    /// - Full reference: `[text][label]`
-    /// - Collapsed reference: `[text][]`
-    /// - Shortcut reference: `[text]` (not followed by `(`)
-    ///
-    /// Returns the link text, resolved destination, and the index past
-    /// the match, or nil if no reference link was found.
-    private static func tryMatchReferenceLink(
-        _ chars: [Character], from start: Int,
-        refDefs: [String: (url: String, title: String?)]
-    ) -> (text: String, dest: String, endIndex: Int)? {
-        guard start < chars.count && chars[start] == "[" else { return nil }
-
-        // Find closing ] for the text part. Skip over autolinks and
-        // raw HTML tags (CommonMark §6.4 spec #536, #538: brackets
-        // inside an HTML attribute value or autolink URL are
-        // protected from link-text scanning).
-        var j = start + 1
-        var depth = 1
-        while j < chars.count && depth > 0 {
-            if chars[j] == "\\" && j + 1 < chars.count { j += 2; continue }
-            if chars[j] == "<" {
-                if let auto = AutolinkParser.match(chars, from: j) {
-                    j = auto.endIndex
-                    continue
-                }
-                if let html = RawHTMLParser.match(chars, from: j) {
-                    j = html.endIndex
-                    continue
-                }
-            }
-            if chars[j] == "[" { depth += 1 }
-            if chars[j] == "]" { depth -= 1 }
-            j += 1
-        }
-        guard depth == 0 else { return nil }
-        let textEnd = j - 1
-        let text = String(chars[(start + 1)..<textEnd])
-
-        // Check what follows the closing ].
-        if j < chars.count && chars[j] == "[" {
-            // Full or collapsed reference: [text][label] or [text][].
-            let labelStart = j + 1
-            var k = labelStart
-            while k < chars.count && chars[k] != "]" {
-                if chars[k] == "\\" && k + 1 < chars.count { k += 1 }
-                k += 1
-            }
-            guard k < chars.count else { return nil }
-            let label = String(chars[labelStart..<k])
-            let normalizedLabel = label.isEmpty ? text : label
-            let key = normalizeLabel(normalizedLabel)
-            if let def = refDefs[key] {
-                let rawDest = buildRawDest(url: def.url, title: def.title)
-                return (text, rawDest, k + 1)
-            }
-            return nil
-        }
-
-        // Shortcut reference: [text] not followed by `[`.
-        //
-        // CommonMark spec #568: even when a `(` follows `]`, the
-        // shortcut interpretation is still valid IF the `(...)` does
-        // not parse as a valid inline-link destination. Because this
-        // function is only consulted after `LinkParser.match` has
-        // already failed, reaching this point means the `(...)` is
-        // NOT a valid inline link — so we let the shortcut through.
-        let key = normalizeLabel(text)
-        if let def = refDefs[key] {
-            let rawDest = buildRawDest(url: def.url, title: def.title)
-            return (text, rawDest, j)
-        }
         return nil
     }
 
