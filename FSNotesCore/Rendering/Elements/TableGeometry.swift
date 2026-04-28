@@ -112,9 +112,13 @@ public enum TableGeometry {
         font: NSFont,
         alignment: NSTextAlignment
     ) -> NSAttributedString {
+        // Body-text foreground mirrors `DocumentRenderer` /
+        // `ParagraphRenderer` (both use `PlatformColor.label`) so table
+        // cells render at the same color as surrounding paragraphs and
+        // honour the system dynamic appearance. DEEP1 §2.4 / item B3.
         var attrs: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor.textColor
+            .foregroundColor: PlatformColor.label
         ]
         let para = NSMutableParagraphStyle()
         para.alignment = alignment
