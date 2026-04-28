@@ -167,9 +167,9 @@ How "combinator" the port is varies with grammar shape. Hard-line-break, code-sp
 
 Not a literal `Parser<…>` port — the algorithm is a stateful linked-list rewrite over tokens, not a backtracking parse over characters. A `Parser<…>` shape would obscure the spec text. The port's value is structural: 240 LoC of stateful logic now lives in a dedicated file with its own per-bucket regression tests (`Tests/EmphasisResolverTests.swift`, 15 tests). `MarkdownParser.parseInlines` is now a thin three-phase orchestrator: `tokenizeNonEmphasis` → `EmphasisResolver.resolve` → `resolveHTMLTagPairs`. CommonMark "Emphasis and strong emphasis" bucket: 132/132 (100%).
 
-### Block readers (Phase 12.C.5, in progress)
+### Block readers (Phase 12.C.5)
 
-`MarkdownParser.parse` walks the input line-by-line, dispatching to per-block-kind branches. Block readers are being extracted from the monolithic `parse` into dedicated files in `Combinators/`, mirroring the inline-tokenizer port pattern. Each reader exposes:
+`MarkdownParser.parse` walks the input line-by-line, dispatching to per-block-kind branches. Block readers are extracted from the monolithic `parse` into dedicated files in `Combinators/`, mirroring the inline-tokenizer port pattern. Each reader exposes:
 
 - `detect(_ line: String) -> …?` — single-line detection helper, public so cross-cutting callers (list continuation, ref-def collection, lazy-continuation interrupt, blockquote inner-content scan) can call it directly without re-implementing the rules.
 - `read(lines: [String], from: Int, …) -> ReadResult?` — multi-line read (when applicable) returning the parsed `Block` and the next line index.
@@ -179,10 +179,16 @@ Not a literal `Parser<…>` port — the algorithm is a stateful linked-list rew
 | 12.C.5.a | `FencedCodeBlockReader.swift` | `detectFenceOpen` + `isFenceClose` + `Fence` struct + the fenced-code branch of `parse` | Fenced code blocks 29/29 (100%) |
 | 12.C.5.b | `HorizontalRuleReader.swift` | `detectHorizontalRule` + the HR branch of `parse` | Thematic breaks 19/19 (100%) |
 | 12.C.5.b | `ATXHeadingReader.swift` (carries ATX `detect`/`read` + `detectSetextUnderline`) | `detectHeading` + `detectSetextUnderline` + the ATX branch of `parse` | ATX headings 18/18 (100%), Setext headings 27/27 (100%) |
+| 12.C.5.c | `HtmlBlockReader.swift` | `detectHTMLBlock` + `htmlBlockEndsOnLine` + `htmlBlockTags` + `extractHTMLTagName` + `isCompleteHTMLTag` + the HTML-block branch of `parse` (7 sub-types: pre/script/style/textarea, comment, processing instruction, declaration, CDATA, block-level tag, type-7 complete tag) | HTML blocks 43/44 (98%) |
+| 12.C.5.d | `BlockquoteReader.swift` | `detectBlockquoteLine` + `blockquoteInnerAllowsLazyContinuation` + the blockquote branch of `parse`. The `read` method takes `parseInlines` and `interruptsLazyContinuation` as injected closures (both depend on parser state — refDef table, list-marker rules — the reader doesn't own). | Block quotes 24/25 (96%) |
+| 12.C.5.e | `TableReader.swift` | `detectTable` + `TableDetection` struct + `isTableRow` + `isTableSeparator` + `parseAlignments` + `parseTableRow` + the GFM-pipe-table branch of `parse`. Covers both detection modes (a: header on current line, b: header buffered as paragraph). | GFM extension; not part of base CommonMark |
+| 12.C.5.f | `ListReader.swift` (per-line classifier only — see below) | `parseListLine` + `listMarkerType` + `isOrderedListMarkerWithNonOneStart` + `ParsedListLine` struct (now `public`, lives on the reader). Cross-cutting callers in MarkdownParser qualified as `ListReader.X`. | List items 42/48 (88%), Lists 19/26 (73%) |
 
 Setext heading promotion stays in `MarkdownParser.parse` because it depends on the paragraph buffer state (`rawBuffer`) — not a self-contained line read. Only the underline detector moved.
 
-Pending sub-slices (12.C.5.c → 12.C.5.f): HTML block reader (7 sub-grammars), blockquote reader (lazy continuation), table reader (multi-line header + separator + body), list reader (200+ LoC, the most complex remaining surface).
+**ListReader scope deliberately conservative.** The per-line classifier surface ports cleanly. The ~320-line block-loop multi-line list collection code, `buildItemTree` (recursive item-tree builder that calls back into `MarkdownParser.parse` for item-content re-parsing), `deepestOwner`, `leadingSpaceCount`, and `stripLeadingSpaces` STAY in `MarkdownParser`. They weave through container-block continuation rules, blank-line semantics, and recursive parser entry; porting them cleanly is its own slice (potentially 12.C.5.g, optional follow-up — the gain is structure, not LoC).
+
+Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). The next phase (12.C.6) tackles the residual 32 spec failures via small grammar edits on the now-decomposed combinator surface.
 
 ## Editing FSMs by Block Type
 
