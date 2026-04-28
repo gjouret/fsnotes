@@ -288,21 +288,81 @@ public struct ListItem: Equatable {
     public let afterMarker: String   // whitespace between marker and content/checkbox
     public let checkbox: Checkbox?   // nil for regular items, non-nil for todo items
     public let inline: [Inline]      // parsed inline content (no markers)
-    public let children: [ListItem]  // nested items at deeper indentation
     /// True if one or more blank lines preceded this item in the source.
     /// Used for tight/loose detection and round-trip serialization.
     public let blankLineBefore: Bool
 
-    /// Blocks that appear *inside* this list item after the initial
-    /// inline paragraph — e.g. continuation paragraphs, fenced code
-    /// blocks, blockquotes — separated from the first line by a blank
-    /// line and indented to the item's content column. Empty for
-    /// simple one-line items. When non-empty, the containing list is
-    /// automatically "loose". Included in HTML rendering and markdown
-    /// serialization; opaque to editor FSMs, which operate on the
-    /// first inline line.
-    public let continuationBlocks: [Block]
+    /// All blocks that follow this item's first-line inline content,
+    /// in source order. Sublists appear as `Block.list(...)` entries
+    /// interleaved with continuation paragraphs, code blocks, blockquotes,
+    /// HTML blocks, headings, HRs, and `.blankLine` markers (the latter
+    /// preserved so the renderer's looseness detector can see a blank gap
+    /// between blocks within an item).
+    ///
+    /// CommonMark §5.2 example #325: `* foo\n  * bar\n\n  baz\n` produces
+    /// a top-level item whose `body` is
+    /// `[.list([bar]), .blankLine, .paragraph("baz")]` — sublist before
+    /// the trailing paragraph, matching the source order. Pre-redesign
+    /// the data model split this into separate `children: [ListItem]` and
+    /// `continuationBlocks: [Block]` arrays which lost the ordering.
+    /// The legacy reads `children` and `continuationBlocks` are retained
+    /// as filtered views for callers that still treat sublists and
+    /// non-list blocks separately.
+    public let body: [Block]
 
+    /// Legacy view: nested sublist items only, flattened across the body.
+    /// Multiple consecutive `.list` blocks contribute their items in
+    /// source order. Computed; not part of the structural identity.
+    public var children: [ListItem] {
+        var result: [ListItem] = []
+        for block in body {
+            if case .list(let items, _) = block {
+                result.append(contentsOf: items)
+            }
+        }
+        return result
+    }
+
+    /// Legacy view: every body block that is NOT a sublist. Sublists are
+    /// dropped; their position is forgotten — callers that need source
+    /// order should iterate `body` directly. Computed.
+    public var continuationBlocks: [Block] {
+        body.filter {
+            if case .list = $0 { return false }
+            return true
+        }
+    }
+
+    /// Canonical initializer. Takes the unified `body` directly so
+    /// callers (the parser, the editor's restructuring primitives) can
+    /// place sublists, blank-line markers, and continuation blocks in
+    /// the exact source order.
+    public init(
+        indent: String,
+        marker: String,
+        afterMarker: String,
+        checkbox: Checkbox? = nil,
+        inline: [Inline],
+        body: [Block],
+        blankLineBefore: Bool = false
+    ) {
+        self.indent = indent
+        self.marker = marker
+        self.afterMarker = afterMarker
+        self.checkbox = checkbox
+        self.inline = inline
+        self.body = body
+        self.blankLineBefore = blankLineBefore
+    }
+
+    /// Legacy initializer mirroring the pre-#325 data shape: separate
+    /// `children: [ListItem]` and `continuationBlocks: [Block]`.
+    /// Preserved so existing call sites and test fixtures continue to
+    /// compile. Concatenates `continuationBlocks` first, then a single
+    /// `Block.list(items: children, loose: false)` at the end —
+    /// matching the order the renderer used before the redesign. New
+    /// code that needs sublists interleaved with other blocks should
+    /// use the canonical `body:` initializer.
     public init(
         indent: String,
         marker: String,
@@ -313,14 +373,15 @@ public struct ListItem: Equatable {
         blankLineBefore: Bool = false,
         continuationBlocks: [Block] = []
     ) {
-        self.indent = indent
-        self.marker = marker
-        self.afterMarker = afterMarker
-        self.checkbox = checkbox
-        self.inline = inline
-        self.children = children
-        self.blankLineBefore = blankLineBefore
-        self.continuationBlocks = continuationBlocks
+        var body: [Block] = continuationBlocks
+        if !children.isEmpty {
+            body.append(.list(items: children, loose: false))
+        }
+        self.init(
+            indent: indent, marker: marker, afterMarker: afterMarker,
+            checkbox: checkbox, inline: inline, body: body,
+            blankLineBefore: blankLineBefore
+        )
     }
 
     /// Whether this item is a todo (has a checkbox).

@@ -201,4 +201,45 @@ class ListRoundTripTests: XCTestCase {
             XCTFail("`---` must NOT parse as a list")
         }
     }
+
+    /// Spec #325 (`* foo\n  * bar\n\n  baz\n`): a paragraph that follows
+    /// a sublist inside the same outer item must appear AFTER the
+    /// sublist in the item's body, not before. Pre-redesign the data
+    /// model split sublists (`children: [ListItem]`) and continuation
+    /// (`continuationBlocks: [Block]`) into two separate arrays which
+    /// lost the source order. The unified `ListItem.body: [Block]`
+    /// preserves the interleaving.
+    func test_parse_paragraphAfterSublist_preservesOrder() {
+        let doc = MarkdownParser.parse("* foo\n  * bar\n\n  baz\n")
+        guard case .list(let items, _) = doc.blocks[0] else {
+            XCTFail("expected outer list, got \(doc.blocks)"); return
+        }
+        XCTAssertEqual(items.count, 1)
+        let foo = items[0]
+        XCTAssertEqual(foo.inline, [.text("foo")])
+        // Body order: sublist FIRST, then paragraph. The legacy reads
+        // `foo.children` and `foo.continuationBlocks` lose the
+        // interleaving but `foo.body` preserves it.
+        guard foo.body.count >= 2 else {
+            XCTFail("expected at least 2 body blocks, got \(foo.body)"); return
+        }
+        guard case .list(let bars, _) = foo.body[0] else {
+            XCTFail("expected first body block to be the sublist, got \(foo.body[0])"); return
+        }
+        XCTAssertEqual(bars.count, 1)
+        XCTAssertEqual(bars[0].inline, [.text("bar")])
+        // Find the paragraph "baz" after the sublist (skip blank-line
+        // markers — they're the looseness signal, not visible content).
+        let postSublist = foo.body.dropFirst().first {
+            if case .blankLine = $0 { return false }
+            return true
+        }
+        guard let postSublist else {
+            XCTFail("expected a non-blank block after the sublist"); return
+        }
+        guard case .paragraph(let inline) = postSublist else {
+            XCTFail("expected paragraph after sublist, got \(postSublist)"); return
+        }
+        XCTAssertEqual(inline, [.text("baz")])
+    }
 }

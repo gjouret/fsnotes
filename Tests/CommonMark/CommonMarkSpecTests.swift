@@ -421,7 +421,7 @@ class CommonMarkSpecTests: XCTestCase {
     // deepest open paragraph) and #313 (terminate the list when an
     // invalid-marker line follows a blank).
     func test_lists() {
-        assertSection("Lists", passesAtLeast: 25)
+        assertSection("Lists", passesAtLeast: 26)
     }
 
     // --- HTML Blocks (44 examples) ---

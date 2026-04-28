@@ -183,13 +183,23 @@ struct CommonMarkHTMLRenderer {
         // CommonMark's looseness rule requires either blank lines
         // between items or blank lines between blocks within an item.
         let itemHasLoosenessSignal: (ListItem) -> Bool = { item in
-            guard !item.continuationBlocks.isEmpty else { return false }
+            // Look at the item's continuation blocks (body minus
+            // sublists). Sublists themselves don't make the OUTER list
+            // loose — their own looseness is computed when they
+            // render. Pre-#325 this filtering happened naturally
+            // because `continuationBlocks` was a separate array; with
+            // the unified `body`, we filter explicitly.
+            let nonSublist = item.body.filter {
+                if case .list = $0 { return false }
+                return true
+            }
+            guard !nonSublist.isEmpty else { return false }
             // CommonMark §5.4: a list is loose if any item's blocks
             // are separated by a blank line. The parser preserves
-            // those blanks as `.blankLine` entries inside
-            // `continuationBlocks`; the renderer skips them when
-            // iterating but uses them here as the looseness signal.
-            if item.continuationBlocks.contains(where: {
+            // those blanks as `.blankLine` entries; the renderer
+            // skips them when iterating but uses them here as the
+            // looseness signal.
+            if nonSublist.contains(where: {
                 if case .blankLine = $0 { return true }
                 return false
             }) { return true }
@@ -199,7 +209,7 @@ struct CommonMarkHTMLRenderer {
             // single paragraph with no preceding `.blankLine`
             // because the inner re-parse trims leading blanks; this
             // covers that case explicitly.
-            let nonBlank = item.continuationBlocks.filter {
+            let nonBlank = nonSublist.filter {
                 if case .blankLine = $0 { return false }
                 return true
             }
@@ -245,8 +255,23 @@ struct CommonMarkHTMLRenderer {
 
         // Render the item's own inline content
         let inlineHTML = Self.renderInlines(item.inline)
-        let hasContinuation = !item.continuationBlocks.isEmpty
-        let isEmpty = inlineHTML.isEmpty && item.children.isEmpty && !hasContinuation
+        // CommonMark source-order body iteration (post-#325 redesign):
+        // sublists and continuation blocks are interleaved in
+        // `item.body`. The legacy `hasContinuation` signal — used to
+        // decide tight `<li>` wrapping and the inline→first-block
+        // separator — is "is there any non-list, non-blank-line block"
+        // in the body. Sublist-only items (no continuation paragraphs)
+        // still render with the existing newline-before-sublist rule.
+        let hasContinuation = item.body.contains {
+            if case .list = $0 { return false }
+            if case .blankLine = $0 { return false }
+            return true
+        }
+        let hasAnySublist = item.body.contains {
+            if case .list = $0 { return true }
+            return false
+        }
+        let isEmpty = inlineHTML.isEmpty && !hasAnySublist && !hasContinuation
 
         if item.isTodo {
             let checkbox = item.isChecked
@@ -280,23 +305,27 @@ struct CommonMarkHTMLRenderer {
             }
         }
 
-        // Render continuation blocks (multi-block items). Tight items
-        // pass `inTightList: tight` so paragraphs in continuation blocks
-        // render their inline content unwrapped (CommonMark §5.4); other
-        // block kinds (HR, fence, blockquote, heading) ignore the flag.
-        for block in item.continuationBlocks {
+        // Walk the body in source order, rendering each block in turn.
+        // Sublists go through `renderList` (their loose flag is
+        // self-determined); other blocks go through `renderBlock` with
+        // the outer-list tightness flag (so paragraphs unwrap when the
+        // outer list is tight, per CommonMark §5.4); blank-line markers
+        // are skipped (their role was the looseness signal upstream).
+        // Sublists in tight items need a leading newline so the
+        // `<li>foo\n<ul>...` formatting matches the legacy output for
+        // pre-#325 cases.
+        var firstBodyBlock = true
+        for block in item.body {
             if case .blankLine = block { continue }
-            content += renderBlock(block, inTightList: tight)
-        }
-
-        // Render children (nested list items)
-        if !item.children.isEmpty {
-            // For loose items the <li> is already multi-line; for tight
-            // we need an explicit newline before the nested <ul>/<ol>.
-            if tight && !hasContinuation {
-                content += "\n"
+            if case .list(let subItems, _) = block {
+                if tight && firstBodyBlock && !hasContinuation {
+                    content += "\n"
+                }
+                content += renderList(subItems)
+            } else {
+                content += renderBlock(block, inTightList: tight)
             }
-            content += renderList(item.children)
+            firstBodyBlock = false
         }
 
         content += "</li>\n"

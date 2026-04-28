@@ -40,11 +40,20 @@ public enum ListReader {
         public let checkbox: Checkbox?   // "[ ]", "[x]", "[X]" for todo items
         public let content: String       // remainder of the line after checkbox/afterMarker
         public var blankLineBefore: Bool // true if blank line(s) preceded this item
-        /// Raw continuation lines attached to this item after a blank
-        /// line — already dedented by the item's content column, with
+        /// Raw continuation lines attached to this item BEFORE any of
+        /// the item's children appeared in the parsedLines stream —
+        /// already dedented by the item's content column, with
         /// blank-line separators preserved as empty strings. Parsed at
-        /// buildItemTree time into `ListItem.continuationBlocks`.
+        /// buildItemTree time into the leading entries of the item's
+        /// `body`. For most items children come AFTER continuation, so
+        /// the post slot stays empty; the split exists for spec #325
+        /// (`* foo\n  * bar\n\n  baz\n`) where a paragraph follows the
+        /// sublist and must render between the sublist and the item end.
         public var continuationLines: [String]
+        /// Continuation lines collected AFTER at least one child of this
+        /// item has been appended to parsedLines. Re-parsed at
+        /// buildItemTree time and appended to `body` after the sublist.
+        public var continuationLinesPost: [String]
 
         public init(
             indent: String,
@@ -53,7 +62,8 @@ public enum ListReader {
             checkbox: Checkbox?,
             content: String,
             blankLineBefore: Bool = false,
-            continuationLines: [String] = []
+            continuationLines: [String] = [],
+            continuationLinesPost: [String] = []
         ) {
             self.indent = indent
             self.marker = marker
@@ -62,6 +72,7 @@ public enum ListReader {
             self.content = content
             self.blankLineBefore = blankLineBefore
             self.continuationLines = continuationLines
+            self.continuationLinesPost = continuationLinesPost
         }
     }
 

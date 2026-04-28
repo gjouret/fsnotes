@@ -250,11 +250,23 @@ public enum MarkdownParser {
                         // terminating the list instead.
                         if ownerItem.content.isEmpty
                             && ownerItem.afterMarker.isEmpty
-                            && ownerItem.continuationLines.isEmpty {
+                            && ownerItem.continuationLines.isEmpty
+                            && ownerItem.continuationLinesPost.isEmpty {
                             break
                         }
                         let contentCol = ownerItem.indent.count
                             + ownerItem.marker.count + ownerItem.afterMarker.count
+                        // CommonMark §5.2 source-order preservation
+                        // (spec #325): if any child of `ownerItem` has
+                        // already been appended to parsedLines, this
+                        // continuation segment fills the POST slot —
+                        // re-parsed at buildItemTree time and emitted
+                        // after the sublist in the item's body. With no
+                        // children seen yet, fill the standard
+                        // (pre-sublist) continuationLines.
+                        let collectingPost = parsedLines
+                            .indices[(ownerIdx! + 1)...]
+                            .contains { parsedLines[$0].indent.count >= contentCol }
                         // Record the blank-line gap, then consume indented
                         // (or blank) lines. Stop at the first line whose
                         // indent is less than contentCol AND is non-blank
@@ -262,7 +274,9 @@ public enum MarkdownParser {
                         // markers are handled by the outer loop).
                         // Preserve the blanks between the item and the
                         // continuation to distinguish tight vs loose.
-                        var continuation = parsedLines[ownerIdx!].continuationLines
+                        var continuation = collectingPost
+                            ? parsedLines[ownerIdx!].continuationLinesPost
+                            : parsedLines[ownerIdx!].continuationLines
                         // Prepend blank gap
                         for _ in j..<k { continuation.append("") }
                         var m = k
@@ -313,7 +327,11 @@ public enum MarkdownParser {
                             continuation.removeLast()
                             trimmedTrailingBlank = true
                         }
-                        parsedLines[ownerIdx!].continuationLines = continuation
+                        if collectingPost {
+                            parsedLines[ownerIdx!].continuationLinesPost = continuation
+                        } else {
+                            parsedLines[ownerIdx!].continuationLines = continuation
+                        }
                         // Looseness signal at the list level only fires
                         // when the next item actually follows a blank
                         // line (trimmed-trailing-blank).  Per-item
@@ -1364,15 +1382,39 @@ public enum MarkdownParser {
                 outerInline = []
             }
 
+            // Compose the item's body in CommonMark source order
+            // (spec #325): pre-children continuation blocks, then the
+            // sublist of recursed children, then any post-children
+            // continuation blocks. Pre-redesign these were stored as
+            // separate `children: [ListItem]` and
+            // `continuationBlocks: [Block]` fields, with the renderer
+            // emitting continuation FIRST and children LAST regardless
+            // of source order — wrong for `* foo\n  * bar\n\n  baz`,
+            // where `baz` follows the sublist.
+            var body: [Block] = continuationBlocks
+            if !children.isEmpty {
+                // Sublist looseness is a property of the rendered
+                // output (CommonMark §5.4 — inter-item blanks at the
+                // sublist's level), so the parser leaves it false here
+                // and lets the renderer compute it from `blankLineBefore`
+                // and per-item signals.
+                body.append(.list(items: children, loose: false))
+            }
+            if !cur.continuationLinesPost.isEmpty {
+                let postInner = cur.continuationLinesPost
+                    .joined(separator: "\n") + "\n"
+                let postDoc = MarkdownParser.parse(postInner)
+                body.append(contentsOf: postDoc.blocks)
+            }
+
             items.append(ListItem(
                 indent: cur.indent,
                 marker: cur.marker,
                 afterMarker: cur.afterMarker,
                 checkbox: cur.checkbox,
                 inline: outerInline,
-                children: children,
-                blankLineBefore: cur.blankLineBefore,
-                continuationBlocks: continuationBlocks
+                body: body,
+                blankLineBefore: cur.blankLineBefore
             ))
             i = nextI
         }

@@ -151,31 +151,88 @@ public enum MarkdownSerializer {
         let firstLine = item.indent + normalizedMarker + item.afterMarker
             + cbPart + serializeInlines(item.inline)
 
-        // Continuation blocks (multi-block items). Re-indent by the
-        // item's content column so the re-parsed form matches.
+        // Walk the unified body in source order (post-#325 redesign).
+        // Sublists emit via `serializeItem` recursion separated by
+        // single "\n"; runs of non-list blocks (paragraphs, fenced
+        // code, blockquotes, HRs, HTML, blank-line markers) are
+        // serialized as a single re-indented Document fragment so
+        // inter-block blank lines round-trip correctly. Pre-redesign
+        // the order was hardcoded: continuation FIRST, sublist LAST —
+        // wrong for spec #325 where the sublist sits between two
+        // paragraphs in the same item.
         var result = firstLine
-        if !item.continuationBlocks.isEmpty {
-            let contentCol = item.indent.count + normalizedMarker.count
-                + item.afterMarker.count
-            let indent = String(repeating: " ", count: contentCol)
-            let innerDoc = Document(blocks: item.continuationBlocks,
-                                    trailingNewline: false, refDefs: [:])
-            // Round-trip individual blocks; blockquote separators etc.
-            // are preserved via block boundaries.
-            let innerMD = MarkdownSerializer.serialize(innerDoc)
-            // Prepend blank line (multi-block items are always loose).
-            result += "\n\n"
-            let innerLines = innerMD.split(separator: "\n", omittingEmptySubsequences: false)
-            let indented = innerLines.map { line -> String in
-                line.isEmpty ? "" : indent + String(line)
-            }
-            result += indented.joined(separator: "\n")
+        if item.body.isEmpty { return result }
+        let contentCol = item.indent.count + normalizedMarker.count
+            + item.afterMarker.count
+        let bodyIndent = String(repeating: " ", count: contentCol)
+        // Slice body into runs: each run is either a single sublist
+        // block or a contiguous span of non-list blocks. The sublist
+        // run keeps its `Block.list` shape; the non-list run is fed
+        // to MarkdownSerializer.serialize as a Document so blockquote
+        // separators, code-fence pairs, and embedded blank-line
+        // blocks all round-trip via the standard joiner.
+        enum Run {
+            case sublist(items: [ListItem])
+            case continuation(blocks: [Block])
         }
-
-        if item.children.isEmpty { return result }
-        let childLines = item.children.map { serializeItem($0) }
-            .joined(separator: "\n")
-        return result + "\n" + childLines
+        var runs: [Run] = []
+        for block in item.body {
+            if case .list(let subItems, _) = block {
+                runs.append(.sublist(items: subItems))
+            } else {
+                if case .continuation(var blocks) = runs.last {
+                    blocks.append(block)
+                    runs[runs.count - 1] = .continuation(blocks: blocks)
+                } else {
+                    runs.append(.continuation(blocks: [block]))
+                }
+            }
+        }
+        var emittedAnyContinuation = false
+        for run in runs {
+            switch run {
+            case .sublist(let subItems):
+                let childLines = subItems
+                    .map { serializeItem($0) }
+                    .joined(separator: "\n")
+                // Sublists attach to preceding content with a single
+                // "\n" — matches the legacy serializer's
+                // children-after-content separator.
+                result += "\n"
+                result += childLines
+            case .continuation(let blocks):
+                // Drop trailing blank-line blocks — they belong to
+                // the run boundary and are recreated by the next
+                // run's leading "\n\n" separator.
+                var trimmed = blocks
+                while case .blankLine? = trimmed.last { trimmed.removeLast() }
+                guard !trimmed.isEmpty else { continue }
+                let innerDoc = Document(
+                    blocks: trimmed, trailingNewline: false, refDefs: [:]
+                )
+                let innerMD = MarkdownSerializer.serialize(innerDoc)
+                let innerLines = innerMD
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                let indented = innerLines.map { line -> String in
+                    line.isEmpty ? "" : bodyIndent + String(line)
+                }
+                // First continuation run: prepend "\n\n" so the item
+                // becomes loose for round-trip. Subsequent runs (after
+                // a sublist) prepend "\n\n" too — sublists terminate
+                // the prior list-item-paragraph context, so the next
+                // continuation needs a blank to keep the parser
+                // re-recognizing it as a fresh paragraph rather than
+                // lazy continuation of the sublist.
+                if !emittedAnyContinuation {
+                    result += "\n\n"
+                } else {
+                    result += "\n\n"
+                }
+                result += indented.joined(separator: "\n")
+                emittedAnyContinuation = true
+            }
+        }
+        return result
     }
     
     /// Whether a marker is an ordered list marker (e.g. "1.", "2)").

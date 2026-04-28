@@ -325,7 +325,23 @@ Test threshold bumped: Lists 23 → 25.
 
 Closes spec examples #312, #313. Buckets: Lists 23/26 → 25/26 (96%). Overall 645/652 → 647/652 (99.2%).
 
-The remaining 5 failures cluster into: 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
+### `ListItem.body: [Block]` redesign (Phase 12.C.6.n)
+
+Pre-redesign, a list item's content area was split into two segregated arrays: `children: [ListItem]` (sublists) and `continuationBlocks: [Block]` (continuation paragraphs, fenced code, blockquotes, etc.). The renderer concatenated them in a fixed order — continuation FIRST, sublists LAST — regardless of the source order. CommonMark §5.2 example #325 (`* foo\n  * bar\n\n  baz\n`) needs the sublist to appear BETWEEN two paragraphs in the same item: `<li><p>foo</p><ul><li>bar</li></ul><p>baz</p></li>`. The flat fields can't express that ordering.
+
+**Data-model change.** `ListItem.body: [Block]` is now the single ordered storage. Sublists appear as `Block.list(...)` entries interleaved with continuation blocks and `.blankLine` markers (the latter retained as the renderer's looseness signal — they're skipped during HTML emission but used to determine tight-vs-loose). The legacy reads `children` and `continuationBlocks` survive as filtered computed views derived from `body`; the legacy `ListItem(... children: continuationBlocks:)` initializer survives as a convenience that concatenates `continuationBlocks` first then `.list(items: children)` last (matching the pre-redesign join). All ~150 existing call sites and test fixtures compile unchanged via the legacy paths.
+
+**Parser change.** `ParsedListLine` gains `continuationLinesPost: [String]`. The inner-while-loop's deepest-owner branch now routes a continuation-collection segment into `continuationLinesPost` whenever any child of the owner has already been appended to `parsedLines` (i.e., a sublist precedes this continuation in source order). `MarkdownParser.buildItemTree` composes `body` as `continuationBlocks_pre + (.list(children) if any) + continuationBlocks_post`. The vast majority of items (no children, or no post-children continuation) produce identical body to the pre-redesign legacy join; only #325-style cases differ.
+
+**Renderer change.** `CommonMarkHTMLRenderer.renderListItem` walks `body` in source order, dispatching `.list` blocks to `renderList` (sublist render) and other blocks to `renderBlock(_, inTightList:)` so paragraph unwrapping in tight lists still works for continuation paragraphs. `itemHasLoosenessSignal` reads `body.filter(non-list)` rather than the legacy `continuationBlocks` — semantically identical for non-#325 cases.
+
+**Serializer change.** `MarkdownSerializer.serializeItem` slices `body` into runs of contiguous non-list blocks vs. single sublists; non-list runs serialize as a single Document fragment (re-indented to the item's content column) so embedded blank-line blocks round-trip naturally; sublist runs recurse via `serializeItem`. The first non-list run prepends `\n\n` (multi-block items are loose for round-trip), and sublist runs prepend `\n` (matching the legacy children-after-content separator). For #325 the output is `* foo\n  * bar\n\n  baz` — sublist between two paragraphs, byte-equal to the input.
+
+Test threshold bumped: Lists 25 → 26. New regression test `test_parse_paragraphAfterSublist_preservesOrder` in `ListRoundTripTests` pins the body order — sublist as `body[0]`, paragraph "baz" later in `body` after a `.blankLine` marker.
+
+Closes spec example #325. Buckets: Lists 25/26 → 26/26 (100%). Overall 647/652 → 648/652 (99.4%).
+
+The remaining 4 failures cluster into: 0-space-indented lazy continuation through item content column (#290 — needs serializer+parser coordination because the editor's `[list, paragraph]` documents serialize to `- foo\nBar` which strict CommonMark would re-merge), nested-blockquote lazy continuation through stripped prefixes (#292, #293 — needs multi-level lazy continuation context to thread through the blockquote→list→blockquote container stack so the renderer's re-parse preserves it), and the documented wikilink-extension non-conformance (#590, accepted).
 
 ## Editing FSMs by Block Type
 
@@ -885,11 +901,13 @@ Phase 12.C.6 ladder (against 620 baseline):
 - 12.C.6.h (`14e38f6`): link-in-link literalization via §6.4 delimiter stack (#518, #519, #520, #532, #533) → 636/652.
 - 12.C.6.i (`6e93688`): multi-block list items via continuationLines + tight-mode rendering (#175, #318, #320, #321, #324) → 641/652.
 - 12.C.6.j (`575431b`): top-level 4-space-indented marker → indented code + setext-underline-as-first-continuation (#289, #300) → 643/652.
-- 12.C.6.k (this slice): empty-marker items owning indented code (#278) → 644/652.
+- 12.C.6.k (`6904e2b`): empty-marker items owning indented code (#278) → 644/652.
+- 12.C.6.l (`957b9be`): tab expansion in list-item indent + afterMarker (#9) → 645/652.
+- 12.C.6.m (`3b7d1f9`): invalid-marker rejection (#312, #313) → 647/652.
+- 12.C.6.n (this slice): `ListItem.body: [Block]` redesign for paragraph-after-sublist source-order preservation (#325) → 648/652.
 
-Remaining 8 failures cluster in:
-- **List items + Lists (6)**: residual multi-block items needing fixes for 0-space lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), and the `[ListItem]`-vs-`[Block]` ordering issue (#325 — needs `ListItem.children: [Block]` redesign).
-- **Tabs (1, #9)**: tab-as-indent in a triple-nested list, family-adjacent to the multi-block list-item issues.
+Remaining 4 failures cluster in:
+- **List items (3)**: residual multi-block items needing fixes for 0-space lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293).
 - **Images (1, #590)**: documented FSNotes++ wikilink-extension non-conformance.
 
 The full conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
