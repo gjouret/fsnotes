@@ -1477,7 +1477,7 @@ public enum MarkdownParser {
             }
             // 10. Strikethrough
             if chars[i] == "~" {
-                if let match = tryMatchStrikethrough(chars, from: i) {
+                if let match = StrikethroughParser.match(chars, from: i) {
                     if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
                         flushPlain()
                         tokens.append(.inline(.strikethrough(parseInlines(match.inner, refDefs: refDefs))))
@@ -1765,43 +1765,6 @@ public enum MarkdownParser {
     /// Note: multi-backtick code spans (e.g. `` `` ` `` ``) will
     /// normalize to single-backtick on round-trip serialization since
     /// we store only the inner content in Inline.code.
-    /// Try to match a strikethrough span `~~…~~` starting at `start`.
-    private static func tryMatchStrikethrough(
-        _ chars: [Character], from start: Int
-    ) -> (inner: String, endIndex: Int)? {
-        // Need at least `~~X~~` = 5 characters.
-        guard start + 4 < chars.count,
-              chars[start] == "~", chars[start + 1] == "~" else { return nil }
-        // Reject triple-tilde (not strikethrough).
-        if start + 2 < chars.count, chars[start + 2] == "~" { return nil }
-        // Flanking: char after `~~` must not be whitespace.
-        let afterOpen = chars[start + 2]
-        if afterOpen == " " || afterOpen == "\t" || afterOpen == "\n" {
-            return nil
-        }
-        // Scan for closing `~~`.
-        var j = start + 2
-        while j + 1 < chars.count {
-            if chars[j] == "~" && chars[j + 1] == "~" {
-                // Not part of a longer tilde run.
-                if j + 2 < chars.count, chars[j + 2] == "~" {
-                    j += 1
-                    continue
-                }
-                // Char before close must not be whitespace.
-                let beforeClose = chars[j - 1]
-                if beforeClose == " " || beforeClose == "\t" || beforeClose == "\n" {
-                    j += 1
-                    continue
-                }
-                let inner = String(chars[(start + 2)..<j])
-                return (inner, j + 2)
-            }
-            j += 1
-        }
-        return nil
-    }
-
     // MARK: - Backslash escape helper
 
     /// Returns true if `ch` is an ASCII punctuation character that can
