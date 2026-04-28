@@ -518,22 +518,67 @@ public enum MarkdownParser {
                                 let cc = last.indent.count
                                     + last.marker.count + last.afterMarker.count
                                 let lineIndent = leadingSpaceCount(l)
-                                // Narrow lazy continuation: merge only
-                                // when the incoming line is indented
-                                // MORE than the list item's opening
-                                // column. Strict CommonMark would
-                                // merge unindented lines too (#290),
-                                // but the editor layer produces
-                                // `[list, paragraph]` Documents
-                                // without explicit `.blankLine`
-                                // separators. A `line.indent >
-                                // last.indent` threshold covers the
-                                // well-formed spec cases where the
-                                // continuation is at least partially
-                                // indented (#254, #286-#289, #291)
-                                // without pulling unindented content
-                                // into the list at re-parse time.
-                                if lineIndent > last.indent.count
+                                // Narrow lazy continuation: merge when
+                                // the incoming line is indented MORE
+                                // than the list item's opening column.
+                                // Covers the well-formed spec cases
+                                // where the continuation is at least
+                                // partially indented (#254, #286-#289,
+                                // #291).
+                                let narrowMerge =
+                                    lineIndent > last.indent.count
+                                    && !interruptsLazyContinuation(l)
+                                // Multi-block evidence (spec #290):
+                                // strict CommonMark §5.1 lazy
+                                // continuation merges unindented text
+                                // too, but the editor layer produces
+                                // `[list, paragraph]` Documents that
+                                // serialize without an explicit
+                                // `.blankLine` separator — making the
+                                // parser fully strict would re-merge
+                                // those at load time. Compromise: also
+                                // merge when a subsequent line proves
+                                // this item has multi-block content
+                                // (a line indented to ≥ cc after
+                                // skipping consecutive lazy candidates
+                                // and any blank gap). Spec #290's
+                                // `1.  A paragraph\nwith two lines.\n
+                                // \n          indented code` matches
+                                // this — the deeply-indented code line
+                                // is the multi-block evidence that
+                                // licenses lazy-continuing
+                                // `with two lines.`. Editor-produced
+                                // `- foo\nbar` (no deep follower)
+                                // continues to parse as
+                                // `[list, paragraph]`.
+                                let multiBlockEvidence: Bool = {
+                                    if narrowMerge { return false }
+                                    if interruptsLazyContinuation(l) { return false }
+                                    var k = j
+                                    while k < lines.count {
+                                        let lk = lines[k]
+                                        if lk.isEmpty || isBlankLine(lk) { break }
+                                        if interruptsLazyContinuation(lk) { break }
+                                        if ListReader.parseListLine(lk) != nil { break }
+                                        k += 1
+                                    }
+                                    while k < lines.count {
+                                        let lk = lines[k]
+                                        if k == lines.count - 1
+                                            && lk.isEmpty
+                                            && markdown.hasSuffix("\n")
+                                        {
+                                            return false
+                                        }
+                                        if lk.isEmpty || isBlankLine(lk) {
+                                            k += 1
+                                            continue
+                                        }
+                                        return leadingSpaceCount(lk) >= cc
+                                    }
+                                    return false
+                                }()
+                                if (narrowMerge || multiBlockEvidence)
                                     && !interruptsLazyContinuation(l)
                                 {
                                     let stripped = stripLeadingSpaces(l, count: cc)
