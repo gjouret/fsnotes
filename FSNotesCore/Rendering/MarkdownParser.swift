@@ -1418,15 +1418,17 @@ public enum MarkdownParser {
 
     /// Normalize a link reference label for case-insensitive matching.
     /// Per CommonMark §4.7: trim leading/trailing whitespace, collapse
-    /// internal whitespace runs to a single space, and apply Unicode
-    /// case fold. The case fold (vs. plain `lowercased()`) is what
-    /// makes pairs like `[ẞ]`/`[SS]` and `[ﬀ]`/`[ff]` equivalent —
-    /// `lowercased()` only handles single-codepoint case mappings.
+    /// internal whitespace runs (spaces, tabs, AND line ends) to a
+    /// single space, and apply Unicode case fold. The case fold (vs.
+    /// plain `lowercased()`) is what makes pairs like `[ẞ]`/`[SS]`
+    /// and `[ﬀ]`/`[ff]` equivalent — `lowercased()` only handles
+    /// single-codepoint case mappings. Newline-spanning labels (spec
+    /// #541) need the line-end collapse too.
     private static func normalizeLabel(_ label: String) -> String {
         label.folding(options: .caseInsensitive, locale: nil)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(separator: " ").joined(separator: " ")
-            .split(separator: "\t").joined(separator: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     /// Check if a string is only whitespace (spaces/tabs).
