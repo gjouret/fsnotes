@@ -1828,14 +1828,22 @@ After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.
 | **Phase 12.B aggregate** | **✅ COMPLETE** | (5 commits, ebfc764..c7f1999) | All 9 block kinds extracted. 51 new pure-function tests. Dead `EditableBlock` / `BlockAction` / `BlockActionResult` scaffold gone. |
 | 12.C.1 — Combinator infrastructure (`Parser.swift` + 26 primitive tests) | ✅ SHIPPED | `e1d4ead` | +492 (250 lib + 190 tests + 50 helper) |
 | 12.C.2 — Hard-line-break combinator port (reference / 100% bucket) | ✅ SHIPPED | `9584384` | -17 in MarkdownParser, +80 new combinator file, +140 tests; CommonMark "Hard line breaks" bucket holds at **15/15 (100%)** |
-| 12.C.3 — Inline tokenizer chain port (10 `tryMatch*` functions) | ⏳ NEXT | — | Strikethrough, autolink, raw HTML, entities, wikilinks, links, images, code spans, inline math, display math. Each is its own ~50-100 LoC combinator file with bridge into `parseInlines`. Per-bucket spec test as the regression gate. |
-| 12.C.4 — Emphasis algorithm port (250-LoC delimiter stack) | ⏳ PENDING | — | The CommonMark §6.2 algorithm. Largest single port in 12.C; the canonical "stateful, ambiguous, hard to debug" parser case. |
+| 12.C.3.a — Code-span port | ✅ SHIPPED | `5af16d5` | +120 combinator + 155 tests; "Code spans" 22/22 (100%) held |
+| 12.C.3.b — Inline + display math port | ✅ SHIPPED | `c236808` | +120 combinator + 135 tests; FSNotes++ extension, no spec bucket |
+| 12.C.3.c — Strikethrough port | ✅ SHIPPED | (post-c236808) | +85 combinator + 75 tests; GFM extension |
+| 12.C.3.d — Wikilink port | ✅ SHIPPED | — | +70 combinator + 85 tests; FSNotes++ extension |
+| 12.C.3.e — Entity port (incl. 50-entry HTML5 table) | ✅ SHIPPED | — | +200 combinator + 110 tests; "Entity refs" 17/17 (100%) held |
+| 12.C.3.f — Autolink port | ✅ SHIPPED | — | +95 combinator + 85 tests; "Autolinks" 19/19 (100%) held |
+| 12.C.3.g — Raw HTML port (5 sub-grammars) | ✅ SHIPPED | — | +240 combinator + 150 tests; "Raw HTML" 20/20 (100%) held |
+| 12.C.3.h — Inline link + image port | ✅ SHIPPED | — | +165 combinator + 180 tests; "Links" 76/90 + "Images" 21/22 floor held |
+| **Phase 12.C.3 aggregate** | **✅ COMPLETE** | (8 commits, 5af16d5..HEAD) | All 11 inline-tokenizer `tryMatch*` functions removed from MarkdownParser. 8 dedicated combinator files. 187/187 tests across all 12.C suites + CommonMark spec — green. Overall compliance unchanged at 620/652 (95.1%). |
+| 12.C.4 — Emphasis algorithm port (250-LoC delimiter stack) | ⏳ NEXT | — | The CommonMark §6.2 algorithm. Largest single port in 12.C; the canonical "stateful, ambiguous, hard to debug" parser case. |
 | 12.C.5 — Block parsing port (paragraph, heading, code, blockquote, list item, HR, table, HTML block) | ⏳ PENDING | — | Parallels 12.B's per-block decomposition. Each block parser as its own combinator. |
 | 12.C.6 — Push CommonMark from 95.1% to 100% (32 residual failures) | ⏳ PENDING | — | With combinator architecture in place, residuals become small grammar edits, not surgery on imperative state. |
 
 **File layout established:**
 - `FSNotesCore/Rendering/BlockEditors/` — 7 files, one per block kind (Paragraph, Heading, CodeBlock, HtmlBlock, AtomicBlockEditors [BlankLine + HorizontalRule + Table], List, Blockquote)
-- `FSNotesCore/Rendering/Combinators/` — `Parser.swift` (lib) + `HardLineBreakParser.swift` (first port). 12.C.3+ adds one file per ported parser.
+- `FSNotesCore/Rendering/Combinators/` — `Parser.swift` (lib) + 9 ported parsers: HardLineBreakParser (12.C.2), CodeSpanParser, MathParser (Inline + Display), StrikethroughParser, WikilinkParser, EntityParser, AutolinkParser, RawHTMLParser, LinkParser (incl. ImageParser) (all 12.C.3). 12.C.4+ adds one file per remaining parser.
 
 **Architectural invariants now enforced by the compiler:**
 - All 9 `Block` kinds have a dedicated `BlockEditor` conformer.
