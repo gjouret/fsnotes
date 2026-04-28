@@ -127,15 +127,67 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// to the sync path; stays).
     private var pendingRenderedBlockIDs = Set<UUID>()
 
+    /// Phase 6 Tier B′ — canonical fold state. Set of storage offsets
+    /// (`block.range.location`) for blocks that are currently
+    /// collapsed. Storage offset is more stable than block index across
+    /// edits above the folded block (inserting a paragraph above a
+    /// folded heading shifts indices but not offsets) and matches the
+    /// preservation logic that `rebuildBlocksFromProjection` already
+    /// uses to carry collapsed state across projection rebuilds.
+    ///
+    /// `MarkdownBlock.collapsed` is now a dual-written cache that
+    /// reflects this set. Internal reads should prefer the offset-keyed
+    /// queries below; external readers (`GutterController`, tests)
+    /// still read `block.collapsed` until Sub-slice 2 migrates them
+    /// to public APIs on this processor.
+    private var collapsedStorageOffsets: Set<Int> = []
+
+    /// Is the block at this storage offset currently collapsed?
+    public func isCollapsed(storageOffset: Int) -> Bool {
+        return collapsedStorageOffsets.contains(storageOffset)
+    }
+
+    /// Is the block at this index in `blocks` currently collapsed?
+    public func isCollapsed(blockIndex idx: Int) -> Bool {
+        guard idx >= 0, idx < blocks.count else { return false }
+        return collapsedStorageOffsets.contains(blocks[idx].range.location)
+    }
+
     /// Return the set of block indices that are currently collapsed.
     ///
-    /// Reads from `blocks[*].collapsed` when populated; in WYSIWYG mode
-    /// the setter-driven sync preserves collapsed state across projection
-    /// rebuilds. Canonical persistence happens via `Note.cachedFoldState`
-    /// (`toggleFold` writes it on every flip; fill paths read it back via
-    /// `restoreCollapsedState`).
+    /// Computed from the canonical `collapsedStorageOffsets` side-table
+    /// + the current `blocks` array. Used by the cachedFoldState
+    /// persistence path (which still operates in index space —
+    /// converting in/out at the persistence boundary keeps the
+    /// in-memory invariant on offset).
     public var collapsedBlockIndices: Set<Int> {
-        Set(blocks.enumerated().compactMap { $0.element.collapsed ? $0.offset : nil })
+        var indices: Set<Int> = []
+        for (i, block) in blocks.enumerated() {
+            if collapsedStorageOffsets.contains(block.range.location) {
+                indices.insert(i)
+            }
+        }
+        return indices
+    }
+
+    /// Set the collapsed flag for a block at a given storage offset
+    /// (canonical) AND keep the dual-written `MarkdownBlock.collapsed`
+    /// cache in sync. Called by `toggleFold` / `restoreCollapsedState`
+    /// / `rebuildBlocksFromProjection`. External callers should not
+    /// call this directly — go through `toggleFold` /
+    /// `foldHeader` / `unfoldHeader`.
+    fileprivate func setCollapsed(
+        _ collapsed: Bool, storageOffset: Int, blockIndex: Int? = nil
+    ) {
+        if collapsed {
+            collapsedStorageOffsets.insert(storageOffset)
+        } else {
+            collapsedStorageOffsets.remove(storageOffset)
+        }
+        // Keep the legacy field in sync for external readers.
+        if let idx = blockIndex, idx >= 0, idx < blocks.count {
+            blocks[idx].collapsed = collapsed
+        }
     }
 
     /// Restore fold state from a saved set of collapsed block indices.
@@ -143,7 +195,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         for idx in indices {
             guard idx < blocks.count else { continue }
             let block = blocks[idx]
-            guard !block.collapsed else { continue }
+            guard !isCollapsed(blockIndex: idx) else { continue }
             // Only fold headings.
             let headerLevel: Int
             switch block.type {
@@ -153,7 +205,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
             let foldRange = foldRangeForHeader(at: idx, level: headerLevel, in: textStorage)
             guard foldRange.length > 0 else { continue }
-            blocks[idx].collapsed = true
+            setCollapsed(true, storageOffset: block.range.location, blockIndex: idx)
             isRendering = true
             textStorage.addAttribute(.foldedContent, value: true, range: foldRange)
             textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
@@ -222,21 +274,25 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         let spans = projection.blockSpans
         guard doc.blocks.count == spans.count else {
             blocks = []
+            // Side-table is offset-keyed; surviving offsets stay valid
+            // across rebuild even when blocks is empty during a guard
+            // failure. Don't clear it here — toggleFold writes it.
             return
         }
 
-        // Snapshot previous collapsed states keyed by storage offset.
-        let previousCollapsedByLocation = Dictionary(
-            uniqueKeysWithValues: blocks
-                .filter { $0.collapsed }
-                .map { ($0.range.location, true) }
-        )
+        // The canonical fold state lives in `collapsedStorageOffsets`
+        // (offset-keyed), so it survives projection rebuilds without
+        // needing a per-rebuild snapshot. Drop offsets that no longer
+        // correspond to any block in the new projection (i.e. the user
+        // edited away the folded heading).
+        let liveOffsets = Set(spans.map { $0.location })
+        collapsedStorageOffsets.formIntersection(liveOffsets)
 
         var newBlocks: [MarkdownBlock] = []
         newBlocks.reserveCapacity(doc.blocks.count)
         for (i, block) in doc.blocks.enumerated() {
             var mb = makeBlockEntry(block: block, span: spans[i], projection: projection)
-            if previousCollapsedByLocation[spans[i].location] == true {
+            if collapsedStorageOffsets.contains(spans[i].location) {
                 mb.collapsed = true
             }
             newBlocks.append(mb)
@@ -352,11 +408,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         isRendering = true
         textStorage.beginEditing()
 
-        if header.collapsed {
+        if isCollapsed(blockIndex: idx) {
             // Unfold: remove fold marker. Rendering gate in LayoutManager handles the rest.
             textStorage.removeAttribute(.foldedContent, range: foldRange)
             textStorage.removeAttribute(.foregroundColor, range: foldRange)
-            blocks[idx].collapsed = false
+            setCollapsed(false, storageOffset: header.range.location, blockIndex: idx)
             textStorage.endEditing()
             isRendering = false
 
@@ -423,7 +479,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
             editor?.needsDisplay = true
         } else {
-            blocks[idx].collapsed = true
+            setCollapsed(true, storageOffset: header.range.location, blockIndex: idx)
             textStorage.endEditing()
             // Set fold attributes AFTER endEditing so process()/highlightMarkdown
             // doesn't strip them during the editing session's processEditing callback.
@@ -568,14 +624,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Fold the header block at `idx` if it is currently expanded. No-op if
     /// already collapsed.
     public func foldHeader(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
-        guard idx < blocks.count, !blocks[idx].collapsed else { return }
+        guard idx < blocks.count, !isCollapsed(blockIndex: idx) else { return }
         toggleFold(headerBlockIndex: idx, textStorage: textStorage)
     }
 
     /// Unfold the header block at `idx` if it is currently collapsed. No-op if
     /// already expanded.
     public func unfoldHeader(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
-        guard idx < blocks.count, blocks[idx].collapsed else { return }
+        guard idx < blocks.count, isCollapsed(blockIndex: idx) else { return }
         toggleFold(headerBlockIndex: idx, textStorage: textStorage)
     }
 
@@ -595,7 +651,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // Sort by level descending (deepest first), then by position descending
         headers.sort { ($0.level, -$0.index) > ($1.level, -$1.index) }
         for h in headers {
-            if !blocks[h.index].collapsed {
+            if !isCollapsed(blockIndex: h.index) {
                 toggleFold(headerBlockIndex: h.index, textStorage: textStorage)
             }
         }
@@ -606,7 +662,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         for i in 0..<blocks.count {
             switch blocks[i].type {
             case .heading, .headingSetext:
-                if blocks[i].collapsed {
+                if isCollapsed(blockIndex: i) {
                     toggleFold(headerBlockIndex: i, textStorage: textStorage)
                 }
             default: break

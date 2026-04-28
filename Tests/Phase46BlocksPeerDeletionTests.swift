@@ -230,6 +230,92 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         XCTAssertLessThan(span.location, proj.attributed.length)
     }
 
+    // MARK: - Phase 6 Tier B′ — fold-state side-table
+
+    /// `isCollapsed(blockIndex:)` returns false for an unfolded note.
+    func test_phase6Bprime_isCollapsed_emptyByDefault() {
+        let md = "# H1\n\nBody.\n\n# H2\n"
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        for i in 0..<proc.blocks.count {
+            XCTAssertFalse(
+                proc.isCollapsed(blockIndex: i),
+                "Fresh note should have no collapsed blocks (idx \(i))"
+            )
+        }
+    }
+
+    /// Toggling fold flips the side-table; the legacy `.collapsed`
+    /// field stays in sync.
+    func test_phase6Bprime_toggleFold_updatesSideTableAndLegacyField() {
+        let md = "# H1\n\nBody.\n\n# H2\n"
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor,
+              let storage = harness.editor.textStorage else {
+            XCTFail("Editor missing processor / storage")
+            return
+        }
+        let h1Idx = proc.blocks.firstIndex { block in
+            if case .heading = block.type { return true }
+            return false
+        }
+        guard let h1Idx = h1Idx else {
+            XCTFail("No heading found")
+            return
+        }
+        let h1Offset = proc.blocks[h1Idx].range.location
+
+        // Fold.
+        proc.toggleFold(headerBlockIndex: h1Idx, textStorage: storage)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: h1Idx))
+        XCTAssertTrue(proc.isCollapsed(storageOffset: h1Offset))
+        XCTAssertTrue(
+            proc.blocks[h1Idx].collapsed,
+            "Legacy field must stay in sync with side-table"
+        )
+
+        // Unfold.
+        proc.toggleFold(headerBlockIndex: h1Idx, textStorage: storage)
+        XCTAssertFalse(proc.isCollapsed(blockIndex: h1Idx))
+        XCTAssertFalse(proc.isCollapsed(storageOffset: h1Offset))
+        XCTAssertFalse(proc.blocks[h1Idx].collapsed)
+    }
+
+    /// `collapsedBlockIndices` derives the index set from the
+    /// offset-keyed side-table + the current `blocks` array.
+    func test_phase6Bprime_collapsedBlockIndices_derivedFromSideTable() {
+        let md = "# H1\n\nBody.\n\n# H2\n\nMore.\n"
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor,
+              let storage = harness.editor.textStorage else {
+            XCTFail("Editor missing processor / storage")
+            return
+        }
+        let headings = proc.blocks.enumerated().compactMap { i, b -> Int? in
+            if case .heading = b.type { return i }
+            return nil
+        }
+        guard headings.count == 2 else {
+            XCTFail("Expected 2 headings")
+            return
+        }
+
+        XCTAssertTrue(proc.collapsedBlockIndices.isEmpty)
+        proc.toggleFold(headerBlockIndex: headings[0], textStorage: storage)
+        XCTAssertEqual(proc.collapsedBlockIndices, Set([headings[0]]))
+        proc.toggleFold(headerBlockIndex: headings[1], textStorage: storage)
+        XCTAssertEqual(proc.collapsedBlockIndices, Set(headings))
+    }
+
     // MARK: - Helpers
 
     /// Walk up from the current file path to find the repository root

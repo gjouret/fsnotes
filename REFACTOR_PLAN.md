@@ -80,14 +80,15 @@ Live readers: 11 sites in `TextStorageProcessor`, plus `GutterController` (fold 
 
 Persistence coupling: `Note.cachedFoldState: Set<Int>` stores **indices into `processor.blocks`**, persisted per-URL in `UserDefaults` — so retirement requires a UserDefaults migration for fold-state entries.
 
-Retirement path (own slice):
+Retirement path (sliced):
 
-1. `FoldState` value type keyed by `Block.id` or storage offset (not index).
-2. UserDefaults migration for existing fold-state entries.
-3. Move `renderMode` lifecycle to a side-table on `TextStorageProcessor` or attribute-tagged storage on `MermaidElement` / `MathElement`.
-4. Rewrite `GutterController.drawIconsTK2` + `visibleCodeBlocksTK2`.
-5. Rewrite `EditTextView+Interaction.swift`'s click-to-edit rendered-image path.
-6. Update ~5 test files.
+1. **✅ Sub-slice 1 (this slice)** — introduce `TextStorageProcessor.collapsedStorageOffsets: Set<Int>` (storage-offset-keyed) as the canonical fold-state side-table. Add public `isCollapsed(blockIndex:)` / `isCollapsed(storageOffset:)` query API + private `setCollapsed` mutator. Internal writers (`toggleFold`, `restoreCollapsedState`, `rebuildBlocksFromProjection`) all route through the mutator. `MarkdownBlock.collapsed` field becomes a dual-written cache so external readers (`GutterController`, tests) keep working untouched. The rebuild path drops dead offsets when blocks shift below them. 3 new tests in `Phase46BlocksPeerDeletionTests`.
+2. **Sub-slice 2** — migrate external readers (`GutterController.swift:250`, fold-related test files) from `block.collapsed` to `proc.isCollapsed(blockIndex:)`. Tighten the Phase 4.6 grep gate's `permitted` set to just `TextStorageProcessor.swift`.
+3. **Sub-slice 3** — migrate persistence: convert `Note.cachedFoldState` from index-Set to offset-Set in-memory, with UserDefaults migration that detects the legacy index-list format and converts it on first load.
+4. **Sub-slice 4** — move `renderMode` lifecycle to a side-table on `TextStorageProcessor` or attribute-tagged storage on `MermaidElement` / `MathElement`.
+5. **Sub-slice 5** — rewrite `GutterController.drawIconsTK2` + `visibleCodeBlocksTK2` to read from `Document.blocks` + `blockSpans` instead of `processor.blocks`.
+6. **Sub-slice 6** — rewrite `EditTextView+Interaction.swift`'s click-to-edit rendered-image path.
+7. **Sub-slice 7** — drop `MarkdownBlock.collapsed` field entirely, retire `processor.blocks` once all readers are gone.
 
 ### Phase 8 Slice 5 — ✅ shipped
 
