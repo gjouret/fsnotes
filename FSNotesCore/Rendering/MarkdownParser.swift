@@ -76,42 +76,16 @@ public enum MarkdownParser {
                 continue
             }
 
-            if detectBlockquoteLine(line) != nil {
+            if let result = BlockquoteReader.read(
+                lines: lines,
+                from: i,
+                trailingNewline: markdown.hasSuffix("\n"),
+                parseInlines: { parseInlines($0, refDefs: refDefs) },
+                interruptsLazyContinuation: interruptsLazyContinuation
+            ) {
                 flushRawBuffer()
-                var qLines: [BlockquoteLine] = []
-                // Track inner content lines (after stripping > prefix)
-                // for lazy continuation analysis.
-                var innerContentLines: [String] = []
-                var j = i
-                while j < lines.count {
-                    let l = lines[j]
-                    if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") {
-                        break
-                    }
-                    if let parts = detectBlockquoteLine(l) {
-                        // Normal blockquote line with > prefix
-                        qLines.append(BlockquoteLine(
-                            prefix: parts.prefix,
-                            inline: parseInlines(parts.content, refDefs: refDefs)
-                        ))
-                        innerContentLines.append(parts.content)
-                        j += 1
-                    } else if !interruptsLazyContinuation(l)
-                                && blockquoteInnerAllowsLazyContinuation(innerContentLines) {
-                        // Lazy continuation: line without > that continues
-                        // the last paragraph inside the blockquote.
-                        qLines.append(BlockquoteLine(
-                            prefix: "",
-                            inline: parseInlines(l, refDefs: refDefs)
-                        ))
-                        innerContentLines.append(l)
-                        j += 1
-                    } else {
-                        break
-                    }
-                }
-                blocks.append(.blockquote(lines: qLines))
-                i = j
+                blocks.append(result.block)
+                i = result.nextIndex
                 continue
             }
 
@@ -387,7 +361,7 @@ public enum MarkdownParser {
                                     || ATXHeadingReader.detect(dedented) != nil
                                     || HorizontalRuleReader.detect(dedented) != nil
                                     || parseListLine(dedented) != nil
-                                    || detectBlockquoteLine(dedented) != nil
+                                    || BlockquoteReader.detect(dedented) != nil
                                     || leadingSpaceCount(dedented) >= 4
                                 if lineIndent >= cc && !isBlockStarter {
                                     parsedLines[parsedLines.count - 1] = ParsedListLine(
@@ -1048,96 +1022,6 @@ public enum MarkdownParser {
             "`", "{", "|", "}", "~"
         ]
         return punctuation.contains(ch)
-    }
-
-    // MARK: - Blockquote detection
-
-    /// Detect whether `line` starts with a blockquote marker. The
-    /// prefix is captured VERBATIM (needed for byte-equal round-trip)
-    /// and the content is the remainder of the line.
-    ///
-    /// Rule: the prefix is a run of one or more `>`,
-    /// each optionally followed by a single space or tab (to permit
-    /// styles like "> ", ">> ", "> > ", ">"). Leading whitespace
-    /// before the first `>` is NOT allowed.
-    ///
-    ///   "> hello"     → prefix="> ",   content="hello"
-    ///   ">> hello"    → prefix=">> ",  content="hello"
-    ///   "> > hello"   → prefix="> > ", content="hello"
-    ///   ">no space"   → prefix=">",    content="no space"
-    ///   ">"           → prefix=">",    content=""
-    ///   ">  two"      → prefix="> ",   content=" two"
-    static func detectBlockquoteLine(_ line: String) -> (prefix: String, content: String)? {
-        let chars = Array(line)
-        var i = 0
-        // Allow up to 3 leading spaces before >
-        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
-        guard i < chars.count, chars[i] == ">" else { return nil }
-        // CommonMark §5.1: for a blockquote prefix, a tab immediately
-        // after `>` is only partially consumed — exactly one virtual
-        // column of the tab serves as the optional post-marker space;
-        // the remaining columns of the tab must appear as leading
-        // whitespace in the content so that tab-based indented code
-        // blocks inside the blockquote see the right column count.
-        // Spec #6: `>\t\tfoo` → `<blockquote><pre><code>  foo</code></pre></blockquote>`.
-        // Because subsequent tabs in the content would re-expand
-        // relative to their new column position (not the original
-        // line's), we also expand ANY leading-whitespace tabs in the
-        // content into their original-column space count.
-        var col = 0
-        var prefixBuilder: [Character] = []
-        var leftoverCols = 0  // cols from prefix tab(s) that belong to content
-        while i < chars.count, chars[i] == ">" {
-            prefixBuilder.append(">")
-            col += 1
-            i += 1
-            if i < chars.count, chars[i] == " " {
-                prefixBuilder.append(" ")
-                col += 1
-                i += 1
-            } else if i < chars.count, chars[i] == "\t" {
-                let tabWidth = 4 - (col % 4)
-                prefixBuilder.append("\t")
-                col += tabWidth
-                i += 1
-                // 1 of the tab's cols was consumed as the optional
-                // post-marker space; the rest belongs to content.
-                leftoverCols += (tabWidth - 1)
-            }
-        }
-        let prefix = String(prefixBuilder)
-
-        // If the prefix consumed a tab (leftoverCols > 0), expand the
-        // tab-shifted column layout into explicit spaces so that a
-        // downstream inner-parse (which re-expands tabs from column
-        // 0) sees the correct indent width. Any tabs in the content's
-        // leading whitespace are also expanded relative to the
-        // original column position.
-        if leftoverCols > 0 {
-            var expanded: [Character] = []
-            var vcol = col
-            while i < chars.count {
-                let ch = chars[i]
-                if ch == " " {
-                    expanded.append(" ")
-                    vcol += 1
-                    i += 1
-                } else if ch == "\t" {
-                    let w = 4 - (vcol % 4)
-                    for _ in 0..<w { expanded.append(" ") }
-                    vcol += w
-                    i += 1
-                } else {
-                    break
-                }
-            }
-            let leftoverSpaces = String(repeating: " ", count: leftoverCols)
-            let restOfLine = String(chars[i..<chars.count])
-            let content = leftoverSpaces + String(expanded) + restOfLine
-            return (prefix, content)
-        }
-        let content = String(chars[i..<chars.count])
-        return (prefix, content)
     }
 
     /// Check if the raw buffer (paragraph lines) is entirely wrapped in
@@ -2097,7 +1981,7 @@ public enum MarkdownParser {
         // Blank line
         if isBlankLine(line) || line.isEmpty { return true }
         // Blockquote marker
-        if detectBlockquoteLine(line) != nil { return true }
+        if BlockquoteReader.detect(line) != nil { return true }
         // ATX heading
         if ATXHeadingReader.detect(line) != nil { return true }
         // Fenced code opening
@@ -2120,42 +2004,6 @@ public enum MarkdownParser {
         return false
     }
 
-    /// Check whether the inner content of collected blockquote lines
-    /// ends in a paragraph context (as opposed to a code block or
-    /// open code fence), which is required for lazy continuation.
-    private static func blockquoteInnerAllowsLazyContinuation(_ contentLines: [String]) -> Bool {
-        guard !contentLines.isEmpty else { return false }
-
-        // Check for an open (unclosed) code fence
-        var openFence: FencedCodeBlockReader.Fence? = nil
-        for inner in contentLines {
-            if let fence = openFence {
-                if FencedCodeBlockReader.isClose(inner, matching: fence) {
-                    openFence = nil
-                }
-            } else if let fence = FencedCodeBlockReader.detectOpen(inner) {
-                openFence = fence
-            }
-        }
-        // If there's an unclosed code fence, lazy continuation is not allowed
-        if openFence != nil { return false }
-
-        // Check if the last non-blank inner line is an indented code block
-        // (4+ spaces of leading indent). Indented code blocks don't support
-        // lazy continuation.
-        if let lastNonBlank = contentLines.last(where: { !isBlankLine($0) && !$0.isEmpty }) {
-            let leadingSpaces = lastNonBlank.prefix(while: { $0 == " " }).count
-            if leadingSpaces >= 4 { return false }
-        }
-
-        // Check if the last line is blank (empty blockquote line ">")
-        // — a blank line inside a blockquote ends the paragraph.
-        if let lastInner = contentLines.last, isBlankLine(lastInner) || lastInner.isEmpty {
-            return false
-        }
-
-        return true
-    }
 
     /// Try to parse a multi-line link reference definition starting at `startIndex`.
     /// Returns the parsed label, url, optional title, and how many lines were consumed.
