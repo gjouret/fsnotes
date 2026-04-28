@@ -1836,14 +1836,14 @@ After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.
 | 12.C.3.f — Autolink port | ✅ SHIPPED | — | +95 combinator + 85 tests; "Autolinks" 19/19 (100%) held |
 | 12.C.3.g — Raw HTML port (5 sub-grammars) | ✅ SHIPPED | — | +240 combinator + 150 tests; "Raw HTML" 20/20 (100%) held |
 | 12.C.3.h — Inline link + image port | ✅ SHIPPED | — | +165 combinator + 180 tests; "Links" 76/90 + "Images" 21/22 floor held |
-| **Phase 12.C.3 aggregate** | **✅ COMPLETE** | (8 commits, 5af16d5..HEAD) | All 11 inline-tokenizer `tryMatch*` functions removed from MarkdownParser. 8 dedicated combinator files. 187/187 tests across all 12.C suites + CommonMark spec — green. Overall compliance unchanged at 620/652 (95.1%). |
-| 12.C.4 — Emphasis algorithm port (250-LoC delimiter stack) | ⏳ NEXT | — | The CommonMark §6.2 algorithm. Largest single port in 12.C; the canonical "stateful, ambiguous, hard to debug" parser case. |
-| 12.C.5 — Block parsing port (paragraph, heading, code, blockquote, list item, HR, table, HTML block) | ⏳ PENDING | — | Parallels 12.B's per-block decomposition. Each block parser as its own combinator. |
+| **Phase 12.C.3 aggregate** | **✅ COMPLETE** | (8 commits, 5af16d5..676ac93) | All 11 inline-tokenizer `tryMatch*` functions removed from MarkdownParser. 8 dedicated combinator files. 187/187 tests across all 12.C suites + CommonMark spec — green. Overall compliance unchanged at 620/652 (95.1%). |
+| 12.C.4 — Emphasis algorithm port (CommonMark §6.2 delimiter stack) | ✅ SHIPPED | (HEAD) | New `EmphasisResolver.swift` (370 LoC) carries the data types (`InlineToken`, `DelimiterRun`), flanking helper, and the resolve walk. MarkdownParser net -352 LoC. 15 new tests. "Emphasis and strong emphasis" 132/132 (100%) held. Overall 620/652 (95.1%) held. |
+| 12.C.5 — Block parsing port (paragraph, heading, code, blockquote, list item, HR, table, HTML block) | ⏳ NEXT | — | Parallels 12.B's per-block decomposition. Each block parser as its own combinator. |
 | 12.C.6 — Push CommonMark from 95.1% to 100% (32 residual failures) | ⏳ PENDING | — | With combinator architecture in place, residuals become small grammar edits, not surgery on imperative state. |
 
 **File layout established:**
 - `FSNotesCore/Rendering/BlockEditors/` — 7 files, one per block kind (Paragraph, Heading, CodeBlock, HtmlBlock, AtomicBlockEditors [BlankLine + HorizontalRule + Table], List, Blockquote)
-- `FSNotesCore/Rendering/Combinators/` — `Parser.swift` (lib) + 9 ported parsers: HardLineBreakParser (12.C.2), CodeSpanParser, MathParser (Inline + Display), StrikethroughParser, WikilinkParser, EntityParser, AutolinkParser, RawHTMLParser, LinkParser (incl. ImageParser) (all 12.C.3). 12.C.4+ adds one file per remaining parser.
+- `FSNotesCore/Rendering/Combinators/` — `Parser.swift` (lib) + 10 ported parsers/resolvers: HardLineBreakParser (12.C.2), CodeSpanParser, MathParser (Inline + Display), StrikethroughParser, WikilinkParser, EntityParser, AutolinkParser, RawHTMLParser, LinkParser (incl. ImageParser) (all 12.C.3), EmphasisResolver (12.C.4). 12.C.5 adds one file per ported block parser.
 
 **Architectural invariants now enforced by the compiler:**
 - All 9 `Block` kinds have a dedicated `BlockEditor` conformer.
