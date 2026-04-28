@@ -315,6 +315,67 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         XCTAssertEqual(proc.collapsedBlockIndices, Set(headings))
     }
 
+    // MARK: - Phase 6 Tier B′ Sub-slice 5 — gutter reads from Document.blocks
+
+    /// In WYSIWYG mode, `GutterController.visibleCodeBlocksTK2()` must
+    /// resolve code blocks via `Document.blocks + blockSpans`, not via
+    /// `processor.blocks`. We verify by emptying `processor.blocks` and
+    /// confirming the gutter still finds the same set of code blocks.
+    func test_phase6Bprime_subslice5_gutterFindsCodeBlocks_withoutProcessorBlocks() {
+        let md = """
+        # H
+
+        ```swift
+        let x = 1
+        ```
+
+        para
+
+        ```python
+        y = 2
+        ```
+        """
+        let harness = EditorHarness(
+            markdown: md, windowActivation: .keyWindow
+        )
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        let gutter = GutterController(textView: harness.editor)
+
+        // Baseline: with both projection and processor.blocks populated,
+        // the gutter sees both code blocks.
+        let baseline = gutter.visibleCodeBlocksTK2()
+        XCTAssertEqual(
+            baseline.count, 2,
+            "Expected 2 visible code blocks; got \(baseline.count)"
+        )
+
+        // Wipe processor.blocks. In WYSIWYG, the gutter's code-block
+        // resolution should still work via Document.blocks + blockSpans.
+        proc.blocks = []
+
+        let afterWipe = gutter.visibleCodeBlocksTK2()
+        XCTAssertEqual(
+            afterWipe.count, 2,
+            "Sub-slice 5: visibleCodeBlocksTK2() must resolve via " +
+            "Document.blocks in WYSIWYG; got \(afterWipe.count) blocks " +
+            "after clearing processor.blocks"
+        )
+
+        // The two record sets should describe the same storage ranges.
+        let baselineRanges = Set(baseline.map { NSStringFromRange($0.range) })
+        let afterRanges = Set(afterWipe.map { NSStringFromRange($0.range) })
+        XCTAssertEqual(
+            baselineRanges, afterRanges,
+            "Code block ranges must match before and after clearing " +
+            "processor.blocks (sub-slice 5 invariant)"
+        )
+    }
+
     // MARK: - Phase 6 Tier B′ Sub-slice 4 — render-mode side-table
 
     /// Mermaid / math / latex code blocks are auto-classified as

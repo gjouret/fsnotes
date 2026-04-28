@@ -246,7 +246,6 @@ class GutterController {
             guard let blockIdx = processor.headerBlockIndex(at: heading.charIndex) else {
                 continue
             }
-            let block = processor.blocks[blockIdx]
             // Phase 6 Tier B′ Sub-slice 2: route fold-state read
             // through the public side-table query instead of the
             // dual-written per-block legacy cache. The cache stays
@@ -274,20 +273,34 @@ class GutterController {
             // H-level badge on hover or when the cursor is parked on
             // this heading. Level read off the `.headingLevel`
             // attribute stamped by `DocumentRenderer` (same attribute
-            // `HeadingLayoutFragment` reads for its hairline decision),
-            // with fallback to `processor.blocks[blockIdx].type` —
-            // the block array always carries the level.
+            // `HeadingLayoutFragment` reads for its hairline decision).
+            // Phase 6 Tier B′ Sub-slice 5: fallback prefers
+            // `Document.blocks` via the projection (WYSIWYG path) and
+            // only falls back to `processor.blocks` for source mode
+            // where no projection exists. Once Sub-slice 7 retires
+            // `processor.blocks`, the source-mode arm collapses to
+            // attribute-only reads.
             let level: Int = {
                 if let v = storage.attribute(
                     .headingLevel, at: heading.charIndex, effectiveRange: nil
                 ) as? Int, v >= 1, v <= 6 {
                     return v
                 }
-                switch block.type {
-                case .heading(let l): return l
-                case .headingSetext(let l): return l
-                default: return 0
+                if let projection = textView.documentProjection,
+                   let (docIdx, _) = projection.blockContaining(
+                       storageIndex: heading.charIndex
+                   ),
+                   case .heading(let l, _) = projection.document.blocks[docIdx] {
+                    return l
                 }
+                if blockIdx < processor.blocks.count {
+                    switch processor.blocks[blockIdx].type {
+                    case .heading(let l): return l
+                    case .headingSetext(let l): return l
+                    default: return 0
+                    }
+                }
+                return 0
             }()
             let cursorOnThisLine = cursorParagraphRange.map {
                 heading.charIndex >= $0.location &&
@@ -371,20 +384,23 @@ class GutterController {
         let firstLineMinY: CGFloat
         /// First fragment's maximum y in view coords.
         let firstLineMaxY: CGFloat
-        /// `processor.blocks`-style `range` (covers the entire block,
-        /// fences included). Used as the stable identity for "copied"
-        /// feedback.
+        /// Storage range covering the entire block (fences included
+        /// in source mode; rendered range with no fences in WYSIWYG).
+        /// Used as the stable identity for "copied" feedback.
         let range: NSRange
-        /// `processor.blocks`-style `contentRange` — the text between
-        /// the fences. This is what the copy button puts on the
-        /// pasteboard.
+        /// Range to copy to the pasteboard. In source mode this is
+        /// the text between the fences; in WYSIWYG it equals `range`
+        /// (no fences in storage).
         let contentRange: NSRange
     }
 
     /// Enumerate `CodeBlockLayoutFragment`s and return one record per
     /// logical code block. Adjacent fragments belonging to the same
-    /// `processor.blocks` entry collapse into a single record — that
-    /// record's y values anchor at the first fragment.
+    /// logical block collapse into a single record — that record's y
+    /// values anchor at the first fragment. WYSIWYG resolution goes
+    /// through `Document.blocks + blockSpans` (Sub-slice 5); source
+    /// mode keeps the legacy `processor.blocks` lookup until
+    /// Sub-slice 7 retires the per-block array.
     func visibleCodeBlocksTK2() -> [VisibleCodeBlockTK2] {
         guard let textView = textView,
               let tlm = textView.textLayoutManager,
@@ -429,30 +445,53 @@ class GutterController {
                 return true
             }
 
-            // Look up the processor block whose range contains this
-            // fragment's first character. Multi-paragraph code blocks
-            // produce multiple fragments that all map to the SAME
-            // `processor.blocks` entry — dedupe on `block.range.location`.
-            guard let block = processor.blocks.first(where: {
-                if case .codeBlock = $0.type {
-                    return NSLocationInRange(charIndex, $0.range)
+            // Look up the code block containing this fragment's first
+            // character. Multi-paragraph code blocks produce multiple
+            // fragments that all map to the SAME logical block —
+            // dedupe on the block's storage start. Phase 6 Tier B′
+            // Sub-slice 5: in WYSIWYG (`documentProjection != nil`),
+            // resolve via `Document.blocks + blockSpans` so this draw
+            // path no longer depends on `processor.blocks`. Source
+            // mode keeps the legacy lookup until Sub-slice 7 retires
+            // the per-block array entirely.
+            let blockRange: NSRange
+            let blockContentRange: NSRange
+            if let projection = textView.documentProjection {
+                guard let (docIdx, _) = projection.blockContaining(
+                    storageIndex: charIndex
+                ) else { return true }
+                guard case .codeBlock = projection.document.blocks[docIdx] else {
+                    return true
                 }
-                return false
-            }) else { return true }
+                let span = projection.blockSpans[docIdx]
+                blockRange = span
+                // WYSIWYG storage carries no fence chars (the renderer
+                // strips them); rendered range == content range.
+                blockContentRange = span
+            } else {
+                guard let block = processor.blocks.first(where: {
+                    if case .codeBlock = $0.type {
+                        return NSLocationInRange(charIndex, $0.range)
+                    }
+                    return false
+                }) else { return true }
+                blockRange = block.range
+                blockContentRange = block.contentRange
+            }
 
-            if block.range.location == lastSeenBlockStart {
+            if blockRange.location == lastSeenBlockStart {
                 // Already recorded this block from its first fragment.
                 return true
             }
-            lastSeenBlockStart = block.range.location
+            lastSeenBlockStart = blockRange.location
 
             let frame = fragment.layoutFragmentFrame
             result.append(VisibleCodeBlockTK2(
                 firstLineMidY: frame.midY + originY,
                 firstLineMinY: frame.minY + originY,
                 firstLineMaxY: frame.maxY + originY,
-                range: block.range,
-                contentRange: block.contentRange
+                range: blockRange,
+                contentRange: blockContentRange
             ))
             return true
         }
