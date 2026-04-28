@@ -315,6 +315,140 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         XCTAssertEqual(proc.collapsedBlockIndices, Set(headings))
     }
 
+    // MARK: - Phase 6 Tier B′ Sub-slice 4 — render-mode side-table
+
+    /// Mermaid / math / latex code blocks are auto-classified as
+    /// `.rendered` by `rebuildBlocksFromProjection` and land in the
+    /// canonical offset-keyed side-table.
+    func test_phase6Bprime_subslice4_languageBasedClassification() {
+        let md = """
+        # H
+
+        ```mermaid
+        graph TD; A-->B
+        ```
+
+        ```math
+        x^2 + y^2
+        ```
+
+        ```swift
+        let x = 1
+        ```
+        """
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+
+        // Find the three code blocks.
+        let codeBlocks = proc.blocks.enumerated().compactMap { i, b -> (Int, String?)? in
+            if case .codeBlock(let lang) = b.type { return (i, lang) }
+            return nil
+        }
+        XCTAssertEqual(codeBlocks.count, 3, "Expected 3 code blocks")
+
+        for (idx, lang) in codeBlocks {
+            let lower = lang?.lowercased()
+            let expectRendered = lower == "mermaid" || lower == "math" || lower == "latex"
+            XCTAssertEqual(
+                proc.isRendered(blockIndex: idx), expectRendered,
+                "Block lang=\(lang ?? "nil") expected rendered=\(expectRendered)"
+            )
+            // Side-table and legacy field stay in sync via dual-write.
+            XCTAssertEqual(
+                proc.blocks[idx].renderMode == .rendered, expectRendered,
+                "Legacy field for lang=\(lang ?? "nil") must match side-table"
+            )
+        }
+    }
+
+    /// `setRenderMode(.source, forBlockAt:)` flips the side-table and
+    /// the dual-written legacy field. This is the path the click-to-edit
+    /// rendered-image handler uses.
+    func test_phase6Bprime_subslice4_setRenderMode_flipsSideTable() {
+        let md = """
+        ```mermaid
+        graph TD; A-->B
+        ```
+        """
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        guard let idx = proc.blocks.firstIndex(where: {
+            if case .codeBlock = $0.type { return true }
+            return false
+        }) else {
+            XCTFail("No code block found")
+            return
+        }
+
+        // Mermaid block starts as .rendered (language-based).
+        XCTAssertTrue(proc.isRendered(blockIndex: idx))
+        XCTAssertEqual(proc.blocks[idx].renderMode, .rendered)
+
+        // Flip to .source — both side-table and field update.
+        proc.setRenderMode(.source, forBlockAt: idx)
+        XCTAssertFalse(proc.isRendered(blockIndex: idx))
+        XCTAssertEqual(proc.blocks[idx].renderMode, .source)
+
+        // Flip back.
+        proc.setRenderMode(.rendered, forBlockAt: idx)
+        XCTAssertTrue(proc.isRendered(blockIndex: idx))
+        XCTAssertEqual(proc.blocks[idx].renderMode, .rendered)
+    }
+
+    /// `renderedBlockOffsets` is the read-only accessor mirroring
+    /// `collapsedBlockOffsets`, returning the canonical side-table.
+    func test_phase6Bprime_subslice4_renderedBlockOffsets_accessor() {
+        let md = """
+        ```mermaid
+        a-->b
+        ```
+
+        para
+        """
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        guard let mermaidIdx = proc.blocks.firstIndex(where: {
+            if case .codeBlock = $0.type { return true }
+            return false
+        }) else {
+            XCTFail("No code block found")
+            return
+        }
+        let mermaidOffset = proc.blocks[mermaidIdx].range.location
+        XCTAssertEqual(proc.renderedBlockOffsets, Set([mermaidOffset]))
+    }
+
+    /// Fresh notes with no rendered blocks have an empty side-table.
+    func test_phase6Bprime_subslice4_emptyByDefault() {
+        let md = "# H1\n\nBody.\n"
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        XCTAssertTrue(proc.renderedBlockOffsets.isEmpty)
+        for i in 0..<proc.blocks.count {
+            XCTAssertFalse(proc.isRendered(blockIndex: i))
+        }
+    }
+
     // MARK: - Phase 6 Tier B′ Sub-slice 3 — fold-state persistence migration
 
     /// Helper: build a fresh Note bound to a unique tmp URL so its

@@ -550,8 +550,11 @@ extension EditTextView {
         guard NSMaxRange(attachmentRange) <= storage.length else { return false }
 
         if let processor = self.textStorageProcessor,
-           let idx = processor.blocks.firstIndex(where: { $0.renderMode == .rendered && $0.range.location == index }) {
-            processor.blocks[idx].renderMode = .source
+           let idx = processor.blocks.firstIndex(where: {
+               processor.isRendered(storageOffset: $0.range.location)
+                   && $0.range.location == index
+           }) {
+            processor.setRenderMode(.source, forBlockAt: idx)
         }
 
         var markdown = originalMarkdown

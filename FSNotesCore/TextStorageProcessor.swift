@@ -178,6 +178,85 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return collapsedStorageOffsets
     }
 
+    /// Canonical render-mode side-table (Phase 6 Tier B′ Sub-slice 4).
+    /// Set of `block.range.location` for code blocks currently in
+    /// `.rendered` mode (mermaid / math / latex bitmap-swap in
+    /// source mode; mermaid/math/latex blocks in WYSIWYG which are
+    /// classified by language but rendered via fragment dispatch).
+    /// Mirrors the Sub-slice 1 fold-state pattern: offset-keyed for
+    /// stability across edits above, dual-written to the legacy
+    /// `MarkdownBlock.renderMode` field for external readers.
+    private var renderedStorageOffsets: Set<Int> = []
+
+    /// Is the block at this storage offset currently `.rendered`?
+    public func isRendered(storageOffset: Int) -> Bool {
+        return renderedStorageOffsets.contains(storageOffset)
+    }
+
+    /// Is the block at this index in `blocks` currently `.rendered`?
+    public func isRendered(blockIndex idx: Int) -> Bool {
+        guard idx >= 0, idx < blocks.count else { return false }
+        return renderedStorageOffsets.contains(blocks[idx].range.location)
+    }
+
+    /// Read-only accessor for the canonical render-mode set, mirroring
+    /// `collapsedBlockOffsets`. Public for tests and any future external
+    /// reader; production code should prefer the per-block queries.
+    public var renderedBlockOffsets: Set<Int> {
+        return renderedStorageOffsets
+    }
+
+    /// Set the render mode for the block at the given index. Public
+    /// entry for external callers (e.g. the click-to-edit rendered-image
+    /// handler in `EditTextView+Interaction`). Internally routes through
+    /// the side-table mutator so the legacy `MarkdownBlock.renderMode`
+    /// field stays in sync.
+    public func setRenderMode(
+        _ mode: BlockRenderMode, forBlockAt blockIndex: Int
+    ) {
+        guard blockIndex >= 0, blockIndex < blocks.count else { return }
+        let offset = blocks[blockIndex].range.location
+        setRendered(
+            mode == .rendered,
+            storageOffset: offset,
+            blockIndex: blockIndex
+        )
+    }
+
+    /// Set the rendered flag for a block at a given storage offset
+    /// (canonical) AND keep the dual-written `MarkdownBlock.renderMode`
+    /// field in sync. Called by `rebuildBlocksFromProjection` (WYSIWYG
+    /// language-based classification), the async mermaid/math render
+    /// callback, and `setRenderMode` (external entry point). External
+    /// callers should not invoke this directly.
+    fileprivate func setRendered(
+        _ rendered: Bool, storageOffset: Int, blockIndex: Int? = nil
+    ) {
+        if rendered {
+            renderedStorageOffsets.insert(storageOffset)
+        } else {
+            renderedStorageOffsets.remove(storageOffset)
+        }
+        if let idx = blockIndex, idx >= 0, idx < blocks.count {
+            blocks[idx].renderMode = rendered ? .rendered : .source
+        }
+    }
+
+    /// Re-derive the render-mode side-table from the per-block field.
+    /// Called by the source-mode `updateBlockModel` path after the
+    /// parser repopulates `blocks` (parser doesn't know about the side
+    /// table — until Sub-slice 7 retires the field, the parser's
+    /// per-block flag is the canonical state for newly-parsed blocks).
+    fileprivate func syncRenderedSideTableFromBlocks() {
+        var rendered: Set<Int> = []
+        for block in blocks {
+            if block.renderMode == .rendered {
+                rendered.insert(block.range.location)
+            }
+        }
+        renderedStorageOffsets = rendered
+    }
+
     /// Set the collapsed flag for a block at a given storage offset
     /// (canonical) AND keep the dual-written `MarkdownBlock.collapsed`
     /// cache in sync. Called by `toggleFold` / `restoreCollapsedState`
@@ -310,9 +389,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // (offset-keyed), so it survives projection rebuilds without
         // needing a per-rebuild snapshot. Drop offsets that no longer
         // correspond to any block in the new projection (i.e. the user
-        // edited away the folded heading).
+        // edited away the folded heading). Phase 6 Tier B′ Sub-slice 4
+        // applies the same intersection to the render-mode side-table
+        // so it survives WYSIWYG-path rebuilds; the language-based
+        // classification below re-establishes the rendered set for any
+        // mermaid/math/latex blocks that survived.
         let liveOffsets = Set(spans.map { $0.location })
         collapsedStorageOffsets.formIntersection(liveOffsets)
+        renderedStorageOffsets.formIntersection(liveOffsets)
 
         var newBlocks: [MarkdownBlock] = []
         newBlocks.reserveCapacity(doc.blocks.count)
@@ -321,16 +405,34 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             if collapsedStorageOffsets.contains(spans[i].location) {
                 mb.collapsed = true
             }
+            // WYSIWYG language-based render classification: mermaid /
+            // math / latex are kept off the gray-background gate via
+            // `codeBlockRanges`, which filters on
+            // `renderMode == .source`. Side-table is the canonical
+            // store; legacy field is dual-written through `setRendered`.
+            if case .codeBlock(let lang, _, _) = block,
+               let l = lang?.lowercased(),
+               l == "mermaid" || l == "math" || l == "latex" {
+                renderedStorageOffsets.insert(spans[i].location)
+                mb.renderMode = .rendered
+            } else if renderedStorageOffsets.contains(spans[i].location) {
+                // Side-table entry that survived intersection (e.g. a
+                // source-mode rendered block whose offset persists in
+                // a hybrid scenario). Keep the field aligned.
+                mb.renderMode = .rendered
+            }
             newBlocks.append(mb)
         }
         blocks = newBlocks
     }
 
     /// Build a single `MarkdownBlock` entry from a `Document.Block` + its
-    /// rendered span.
+    /// rendered span. Phase 6 Tier B′ Sub-slice 4: render-mode
+    /// classification (mermaid/math/latex by language) moved up to
+    /// `rebuildBlocksFromProjection` so the side-table is the
+    /// canonical state. This helper now only emits the structural fields.
     private func makeBlockEntry(block: Block, span: NSRange, projection: DocumentProjection) -> MarkdownBlock {
         let blockType: MarkdownBlockType
-        var isRenderedCodeBlock = false
         switch block {
         case .heading(let level, _):
             blockType = .heading(level: level)
@@ -347,11 +449,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
         case .codeBlock(let lang, _, _):
             blockType = .codeBlock(language: lang)
-            // Mark rendered code blocks (mermaid/math/latex) so
-            // codeBlockRanges excludes them from gray background drawing.
-            if let l = lang?.lowercased(), l == "mermaid" || l == "math" || l == "latex" {
-                isRenderedCodeBlock = true
-            }
         case .list(let items, _):
             // Determine list type from first item
             if items.first?.checkbox != nil {
@@ -379,9 +476,6 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             range: span,
             contentRange: span
         )
-        if isRenderedCodeBlock {
-            mb.renderMode = .rendered
-        }
         // Carry canonical markdown for table blocks. The widget path
         // consuming this has been deleted (T2-h); keeping the field
         // populated for any remaining source-mode MarkdownBlock
@@ -973,6 +1067,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         let string = textStorage.string as NSString
         guard string.length > 0 else {
             blocks = []
+            renderedStorageOffsets = []
             return
         }
 
@@ -992,6 +1087,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 MarkdownBlockParser.reparseBlocks(&blocks, dirtyIndices: dirtyIndices, string: string)
             }
         }
+
+        // Phase 6 Tier B′ Sub-slice 4: re-derive the offset-keyed
+        // render-mode side-table from the parser's per-block field.
+        // The parser is the canonical source of truth for newly-parsed
+        // blocks (until Sub-slice 7 retires the field); this sync
+        // keeps the side-table aligned for source-mode reads.
+        syncRenderedSideTableFromBlocks()
     }
 
     private func processingRanges(
@@ -1419,10 +1521,19 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     // Mark the block as rendered (not removed). The block stays in the
                     // model with updated range. codeBlockRanges filters it out so
                     // LayoutManager won't draw a gray background behind the image.
-                    self.blocks[updatedIdx].renderMode = .rendered
+                    // Phase 6 Tier B′ Sub-slice 4: route through
+                    // `setRendered` so the canonical offset side-table
+                    // reflects this transition; the legacy
+                    // `MarkdownBlock.renderMode` field is dual-written
+                    // by the mutator.
                     self.blocks[updatedIdx].range = replacedRange
                     self.blocks[updatedIdx].contentRange = replacedRange
                     self.blocks[updatedIdx].syntaxRanges = []
+                    self.setRendered(
+                        true,
+                        storageOffset: replacedRange.location,
+                        blockIndex: updatedIdx
+                    )
                 }
             }
         }
