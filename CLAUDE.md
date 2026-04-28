@@ -295,19 +295,18 @@ Single source of truth for every presentation literal. See `ARCHITECTURE.md` →
 
 ### CommonMark Spec Compliance (v0.31.2)
 
-Serializer compliance: **620 / 652 passing (95.1%)** — Phase 10 Slice A target (≥ 620) cleared (2026-04-24).
+Serializer compliance: **623 / 652 passing (95.6%)** — Phase 10 Slice A baseline (620) advanced by Phase 12.C.6.a + 12.C.6.b (+3, container-aware ref-def discovery for #218 plus Unicode case fold for ref label normalization for #540 + one bonus).
 
-- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Setext headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks, Indented code blocks, Emphasis, Raw HTML, Thematic breaks
-- Near-perfect (90%+): Images, Block quotes, Link ref defs, HTML blocks, Tabs
+- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Setext headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks, Indented code blocks, Emphasis, Raw HTML, Thematic breaks, **Link reference definitions** (12.C.6.a)
+- Near-perfect (90%+): Images, Block quotes, HTML blocks, Tabs
 - Moderate (70–89%): Links, List items, Lists
 - All failing buckets above 70%.
 
-Remaining 32 failing examples by bucket:
-- **Links (14)**: delimiter-stack rewrite territory — bracket / link / image precedence (link-in-link literalization, autolink inside link text, wikilink edge cases). Pre-existing TODO; tracked for potential Phase 12.
+Remaining 29 failing examples by bucket:
+- **Links (12)**: delimiter-stack rewrite territory — bracket / link / image precedence (link-in-link literalization, autolink inside link text, wikilink edge cases). Pre-existing TODO; tracked for potential Phase 12.
 - **List items (6)** + **Lists (7)**: multi-block list items where the continuation is a *fenced* code block, blockquote, or HTML block inside the item body. The current `ListItem.children: [ListItem]` shape only nests sub-lists; arbitrary per-item block children require redesigning `ListItem.children` to `[Block]` with ~107 call-site updates across EditingOps / SourceRenderer / ListEditingFSM. Tracked for potential Phase 11 (Slice B).
 - **Tabs (1)**: mixed space-tab list-nesting indent case (#9).
 - **HTML blocks (1)**: `<div>` as list-item first-line content (#175 — same Slice B family).
-- **Link ref defs (1)**: ref def inside blockquote (#218 — requires container-aware collector pass).
 - **Block quotes (1)**: lazy continuation picking up indented list marker instead of paragraph text (#238).
 - **Images (1)**: wikilink-extension bleed through image ref-def pattern (#590).
 
@@ -360,7 +359,7 @@ An earlier iteration tried to preserve markers in WYSIWYG storage and hide them 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **fsnotes** (1122 symbols, 1107 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **fsnotes** (20921 symbols, 385102 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

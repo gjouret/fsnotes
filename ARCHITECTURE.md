@@ -188,7 +188,26 @@ Setext heading promotion stays in `MarkdownParser.parse` because it depends on t
 
 **ListReader scope deliberately conservative.** The per-line classifier surface ports cleanly. The ~320-line block-loop multi-line list collection code, `buildItemTree` (recursive item-tree builder that calls back into `MarkdownParser.parse` for item-content re-parsing), `deepestOwner`, `leadingSpaceCount`, and `stripLeadingSpaces` STAY in `MarkdownParser`. They weave through container-block continuation rules, blank-line semantics, and recursive parser entry; porting them cleanly is its own slice (potentially 12.C.5.g, optional follow-up — the gain is structure, not LoC).
 
-Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). The next phase (12.C.6) tackles the residual 32 spec failures via small grammar edits on the now-decomposed combinator surface.
+Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) is now in progress and benefits from the decomposition.
+
+### Container-aware ref-def discovery (Phase 12.C.6.a)
+
+CommonMark §4.7 allows link reference definitions to live inside any container block, including blockquotes. The pre-decomposition parser collected ref-defs by scanning raw lines, which missed `> [foo]: /url` (the `>` prefix prevented the ref-def regex from matching). Phase 12.C.6.a closes this without re-architecting the collector:
+
+- `collectLinkRefDefs` builds a `strippedLines: [String]` view alongside the source — every line carrying a blockquote prefix has its prefix stripped to expose the inner content for ref-def matching.
+- When the line at position `i` carries a `>` prefix AND `tryParseLinkRefDef(strippedLines, startIndex: i, ...)` succeeds AND every line consumed by the parse also carries a `>` prefix (a multi-line nested ref-def must stay inside the same container), the def is registered in `refDefs` and its source-line indices are accumulated into a new `blockquoteRefDefLines: Set<Int>` return value.
+- The top-level block-parse loop unpacks the three-tuple `(refDefs, consumed, blockquoteRefDefLines)` and threads `blockquoteRefDefLines` to `BlockquoteReader.read(..., skipLines: …)`. The reader walks past those line indices without emitting `BlockquoteLine`s, preserving the (now empty) blockquote container while the ref-def is hoisted to document scope.
+- `BlockquoteReader.read(...)` gains a `skipLines: Set<Int> = []` parameter (default-empty for back-compat with all other callers).
+
+Closes spec example #218. Bucket: Link reference definitions 26/27 → 27/27 (100%). Overall CommonMark 620/652 → 621/652 (95.2%).
+
+### Unicode case fold for ref label normalization (Phase 12.C.6.b)
+
+CommonMark §4.7 specifies that link reference labels are normalized by Unicode case folding before matching. The previous implementation used Swift's `String.lowercased()`, which performs only single-codepoint case mapping. Multi-codepoint folds — most notably ẞ (U+1E9E, capital sharp S) folding to "ss" (two codepoints) — fall outside `lowercased()`'s capability and produce label mismatches when a definition uses one form and a reference uses the other.
+
+`normalizeLabel(_:)` now uses `.folding(options: .caseInsensitive, locale: nil)` instead. Both definition-registration and reference-lookup pass through the same helper, so the change is symmetric.
+
+Closes spec example #540. Bucket: Links 76/90 → 78/90 (87%) — the targeted fix plus one bonus example that fell out of the same change. Overall CommonMark 621/652 → 623/652 (95.6%).
 
 ## Editing FSMs by Block Type
 
