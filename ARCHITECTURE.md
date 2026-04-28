@@ -137,18 +137,52 @@ API surface:
 
 Why bespoke and not a Pod: existing Swift combinator libraries (PointFree's swift-parsing, SwiftParsec) lean on existential / protocol-witness machinery that's heavy in Swift. ~250 LoC of bespoke value types + closures is faster to compile, easier to debug, and removes the dependency surface. The library is also tuned to CommonMark — backtracking is non-mutating by construction (a failed alternative leaves the input intact because no input was consumed), `many`'s zero-consumption infinite-loop guard is explicit, all primitives are non-throwing.
 
-**Ported parsers so far:**
-- `Combinators/HardLineBreakParser.swift` (Phase 12.C.2) — replaces 20 LoC of imperative `if`-branches in `MarkdownParser.parseInlines` (steps 2 + 3 of the tokenizer chain) with a 5-line drop-in helper. Combinator form:
-  ```
-  backslashBreak = seq2(char("\\"), char("\n")).map { _ in "\\\n" }
-  spacesBreak = seq2(many1(char(" ")), char("\n")).flatMap { spaces, _ in
-      spaces.count >= 2 ? pure(...) : fail(...)
-  }
-  hardBreak = backslashBreak <|> spacesBreak
-  ```
-  CommonMark "Hard line breaks" bucket: 15/15 (100%) — held flat after the port.
+The bridge between `MarkdownParser`'s `[Character] + Int` cursor convention and the combinator API's `Substring` shape lives in each ported file as a `match(_ chars:from:)` (or `read(lines:from:…)` for block readers) static method.
 
-The bridge between `MarkdownParser`'s `[Character] + Int` cursor convention and the combinator API's `Substring` shape lives in each ported parser's `match(_ chars:from:)` static method, mirroring the surface that `tryMatchAutolink`, `tryMatchRawHTML`, etc. expose.
+### Inline tokenizer chain (Phases 12.C.2 + 12.C.3)
+
+`MarkdownParser.tokenizeNonEmphasis` walks each character of paragraph text once, dispatching to a series of detectors. All 11 `tryMatch*` functions that previously lived in MarkdownParser have been moved out to dedicated files in `Combinators/`. Each detector exposes a `match(_ chars: [Character], from: Int) -> Match?` API; the bridge converts the slice to `Substring`, runs the combinator, and returns the consumed range.
+
+| Slice | File | Replaces | Spec bucket |
+|---|---|---|---|
+| 12.C.2 | `HardLineBreakParser.swift` | `\\\n` + ≥2-space-newline `if`-branches | Hard line breaks 15/15 (100%) |
+| 12.C.3.a | `CodeSpanParser.swift` | `tryMatchCodeSpan` | Code spans 22/22 (100%) |
+| 12.C.3.b | `MathParser.swift` | `tryMatchInlineMath` + `tryMatchDisplayMath` | FSNotes++ extension |
+| 12.C.3.c | `StrikethroughParser.swift` | `tryMatchStrikethrough` | GFM extension |
+| 12.C.3.d | `WikilinkParser.swift` | `tryMatchWikilink` | FSNotes++ extension |
+| 12.C.3.e | `EntityParser.swift` | `tryMatchEntity` + 50-entry HTML5 named-entity table | Entity refs 17/17 (100%) |
+| 12.C.3.f | `AutolinkParser.swift` | `tryMatchAutolink` | Autolinks 19/19 (100%) |
+| 12.C.3.g | `RawHTMLParser.swift` (5 sub-grammars) | `tryMatchRawHTML` | Raw HTML 20/20 (100%) |
+| 12.C.3.h | `LinkParser.swift` (carries `LinkParser` + `ImageParser`) | `tryMatchLink` + `tryMatchImage` | Links 76/90, Images 21/22 (floor held) |
+
+How "combinator" the port is varies with grammar shape. Hard-line-break, code-span, math, strikethrough, wikilink, autolink — all use real combinator chains (`seq2`, `<|>`, `between`, `many1`, `flatMap`). Entity is a lookahead dispatch into three sub-`Parser<String>`s. Raw HTML is the same shape but with five sub-grammars. Link / image are a deliberate exception: the bracket-match-with-code-span-skipping requires `codeSpanRanges` from the caller, which is more naturally expressed as an imperative `Int` walk than as a state-monad threading through `Parser<…>`. The structure is still per-block-kind file isolation, just not literal combinators inside that file. Each file ships its own per-bucket regression test under `Tests/<Kind>ParserTests.swift`.
+
+### Inline emphasis (Phase 12.C.4)
+
+`Combinators/EmphasisResolver.swift` carries the CommonMark §6.2 delimiter-stack algorithm. Three responsibilities live in this file:
+
+- `InlineToken` enum and `DelimiterRun` final class — the data types that flow between Phase A (`MarkdownParser.tokenizeNonEmphasis`) and Phase B (resolve). Both are public so Phase A can construct them.
+- `EmphasisResolver.flanking(delimChar:before:after:)` — left/right-flanking rules with `*` permissive vs `_` intra-word strict, and the v0.31.2 punctuation broadening that includes Sc/Sk/Sm/So categories so currency symbols (£, €) are treated as punctuation for flanking. Called from Phase A at delimiter-run construction time.
+- `EmphasisResolver.resolve(tokens:refDefs:)` — the doubly-walked token rewrite. For each closer, scans backwards for a matching opener obeying Rule of 3 (skip if `(canOpen || canClose) && sum % 3 == 0 && opener.originalCount % 3 != 0 && closer.originalCount % 3 != 0`); collects content between them as the emphasis container's children; replaces the opener slot with the new `.bold` / `.italic`; rebuilds the delimiter-index list and continues.
+
+Not a literal `Parser<…>` port — the algorithm is a stateful linked-list rewrite over tokens, not a backtracking parse over characters. A `Parser<…>` shape would obscure the spec text. The port's value is structural: 240 LoC of stateful logic now lives in a dedicated file with its own per-bucket regression tests (`Tests/EmphasisResolverTests.swift`, 15 tests). `MarkdownParser.parseInlines` is now a thin three-phase orchestrator: `tokenizeNonEmphasis` → `EmphasisResolver.resolve` → `resolveHTMLTagPairs`. CommonMark "Emphasis and strong emphasis" bucket: 132/132 (100%).
+
+### Block readers (Phase 12.C.5, in progress)
+
+`MarkdownParser.parse` walks the input line-by-line, dispatching to per-block-kind branches. Block readers are being extracted from the monolithic `parse` into dedicated files in `Combinators/`, mirroring the inline-tokenizer port pattern. Each reader exposes:
+
+- `detect(_ line: String) -> …?` — single-line detection helper, public so cross-cutting callers (list continuation, ref-def collection, lazy-continuation interrupt, blockquote inner-content scan) can call it directly without re-implementing the rules.
+- `read(lines: [String], from: Int, …) -> ReadResult?` — multi-line read (when applicable) returning the parsed `Block` and the next line index.
+
+| Slice | File | Replaces | Spec bucket |
+|---|---|---|---|
+| 12.C.5.a | `FencedCodeBlockReader.swift` | `detectFenceOpen` + `isFenceClose` + `Fence` struct + the fenced-code branch of `parse` | Fenced code blocks 29/29 (100%) |
+| 12.C.5.b | `HorizontalRuleReader.swift` | `detectHorizontalRule` + the HR branch of `parse` | Thematic breaks 19/19 (100%) |
+| 12.C.5.b | `ATXHeadingReader.swift` (carries ATX `detect`/`read` + `detectSetextUnderline`) | `detectHeading` + `detectSetextUnderline` + the ATX branch of `parse` | ATX headings 18/18 (100%), Setext headings 27/27 (100%) |
+
+Setext heading promotion stays in `MarkdownParser.parse` because it depends on the paragraph buffer state (`rawBuffer`) — not a self-contained line read. Only the underline detector moved.
+
+Pending sub-slices (12.C.5.c → 12.C.5.f): HTML block reader (7 sub-grammars), blockquote reader (lazy continuation), table reader (multi-line header + separator + body), list reader (200+ LoC, the most complex remaining surface).
 
 ## Editing FSMs by Block Type
 
@@ -721,7 +755,7 @@ xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes \
 - **Phantom-typed storage indices** — `StorageIndex<OldStorage>` vs. `StorageIndex<NewStorage>` prevents mixing pre-edit and post-edit offsets at compile time.
 - **`EditorError` enum** — structured error context (invalid block index, read-only block, cross-block selection, etc.) instead of stringly-typed errors.
 - **`TextBuffer` protocol** — abstraction over `NSTextStorage` so primitive-layer tests can run against an `InMemoryTextBuffer` without instantiating AppKit.
-- **`BlockCapabilities` OptionSet + `EditableBlock` protocol** — capability-based dispatch replaces the giant switch over block kinds in several primitives.
+- **Per-block-kind editor dispatch** — see "Per-Block-Kind Editor Dispatch (Phase 12.B)" above. Each `Block` enum case has a dedicated `BlockEditor` conformer in `FSNotesCore/Rendering/BlockEditors/`; the public `EditingOps.insert/replace/delete` switches are exhaustive (no `default: throw .notSupported` patterns). Replaced the unused `EditableBlock` / `BlockAction` / `BlockCapabilities` scaffold that was retired in Phase 12.B.1.
 
 The Redux-style `EditorStore` / `EditorAction` / `EditorReducer` / `EditorEffect` types that briefly lived in `EditingOperations.swift` were deleted in Phase 6 Tier C (commit `f72ee0d`) — the scaffold predated Phase 5a's `StorageWriteGuard` + Phase 5f's `UndoJournal` and never had a production caller. The actual editor-side unidirectional flow is `EditingOps` (pure primitives) → `applyEditResultWithUndo` → `DocumentEditApplier.applyDocumentEdit` (single write path, `StorageWriteGuard`-gated) → `UndoJournal` (per-editor coalescing FSM, single `registerUndo` site).
 

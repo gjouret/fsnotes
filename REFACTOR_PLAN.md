@@ -1830,16 +1830,16 @@ After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.
 | 12.C.2 — Hard-line-break combinator port (reference / 100% bucket) | ✅ SHIPPED | `9584384` | -17 in MarkdownParser, +80 new combinator file, +140 tests; CommonMark "Hard line breaks" bucket holds at **15/15 (100%)** |
 | 12.C.3.a — Code-span port | ✅ SHIPPED | `5af16d5` | +120 combinator + 155 tests; "Code spans" 22/22 (100%) held |
 | 12.C.3.b — Inline + display math port | ✅ SHIPPED | `c236808` | +120 combinator + 135 tests; FSNotes++ extension, no spec bucket |
-| 12.C.3.c — Strikethrough port | ✅ SHIPPED | (post-c236808) | +85 combinator + 75 tests; GFM extension |
-| 12.C.3.d — Wikilink port | ✅ SHIPPED | — | +70 combinator + 85 tests; FSNotes++ extension |
-| 12.C.3.e — Entity port (incl. 50-entry HTML5 table) | ✅ SHIPPED | — | +200 combinator + 110 tests; "Entity refs" 17/17 (100%) held |
-| 12.C.3.f — Autolink port | ✅ SHIPPED | — | +95 combinator + 85 tests; "Autolinks" 19/19 (100%) held |
-| 12.C.3.g — Raw HTML port (5 sub-grammars) | ✅ SHIPPED | — | +240 combinator + 150 tests; "Raw HTML" 20/20 (100%) held |
-| 12.C.3.h — Inline link + image port | ✅ SHIPPED | — | +165 combinator + 180 tests; "Links" 76/90 + "Images" 21/22 floor held |
+| 12.C.3.c — Strikethrough port | ✅ SHIPPED | `c5c6045` | +85 combinator + 75 tests; GFM extension |
+| 12.C.3.d — Wikilink port | ✅ SHIPPED | `c54a9bd` | +70 combinator + 85 tests; FSNotes++ extension |
+| 12.C.3.e — Entity port (incl. 50-entry HTML5 table) | ✅ SHIPPED | `08b65b6` | +200 combinator + 110 tests; "Entity refs" 17/17 (100%) held |
+| 12.C.3.f — Autolink port | ✅ SHIPPED | `5f9eecd` | +95 combinator + 85 tests; "Autolinks" 19/19 (100%) held |
+| 12.C.3.g — Raw HTML port (5 sub-grammars) | ✅ SHIPPED | `d3af099` | +240 combinator + 150 tests; "Raw HTML" 20/20 (100%) held |
+| 12.C.3.h — Inline link + image port | ✅ SHIPPED | `676ac93` | +165 combinator + 180 tests; "Links" 76/90 + "Images" 21/22 floor held |
 | **Phase 12.C.3 aggregate** | **✅ COMPLETE** | (8 commits, 5af16d5..676ac93) | All 11 inline-tokenizer `tryMatch*` functions removed from MarkdownParser. 8 dedicated combinator files. 187/187 tests across all 12.C suites + CommonMark spec — green. Overall compliance unchanged at 620/652 (95.1%). |
-| 12.C.4 — Emphasis algorithm port (CommonMark §6.2 delimiter stack) | ✅ SHIPPED | `EMP4` | New `EmphasisResolver.swift` (370 LoC) carries the data types (`InlineToken`, `DelimiterRun`), flanking helper, and the resolve walk. MarkdownParser net -352 LoC. 15 new tests. "Emphasis and strong emphasis" 132/132 (100%) held. Overall 620/652 (95.1%) held. |
-| 12.C.5.a — Fenced code block reader port | ✅ SHIPPED | (12.C.5 commit 1) | `FencedCodeBlockReader.swift` (155 LoC). Public `Fence` struct + `detectOpen` + `isClose` + `read(lines:from:trailingNewline:)`. 4 cross-cutting callers in MarkdownParser rewired. 10 new tests. "Fenced code blocks" 29/29 (100%) held. |
-| 12.C.5.b — HR + ATX heading + setext underline detectors port | ✅ SHIPPED | (12.C.5 commit 2) | `HorizontalRuleReader.swift` (55 LoC) + `ATXHeadingReader.swift` (100 LoC, includes `detectSetextUnderline`). 5 cross-cutting callers rewired. 24 new tests. "Thematic breaks" 19/19, "ATX headings" 18/18, "Setext headings" 27/27 — all 100% held. |
+| 12.C.4 — Emphasis algorithm port (CommonMark §6.2 delimiter stack) | ✅ SHIPPED | `e684830` | New `EmphasisResolver.swift` (370 LoC) carries the data types (`InlineToken`, `DelimiterRun`), flanking helper, and the resolve walk. MarkdownParser net -352 LoC. 15 new tests. "Emphasis and strong emphasis" 132/132 (100%) held. Overall 620/652 (95.1%) held. |
+| 12.C.5.a — Fenced code block reader port | ✅ SHIPPED | `e1c6168` | `FencedCodeBlockReader.swift` (155 LoC). Public `Fence` struct + `detectOpen` + `isClose` + `read(lines:from:trailingNewline:)`. 4 cross-cutting callers in MarkdownParser rewired. 10 new tests. "Fenced code blocks" 29/29 (100%) held. |
+| 12.C.5.b — HR + ATX heading + setext underline detectors port | ✅ SHIPPED | `04e498a` | `HorizontalRuleReader.swift` (55 LoC) + `ATXHeadingReader.swift` (100 LoC, includes `detectSetextUnderline`). 5 cross-cutting callers rewired. 24 new tests. "Thematic breaks" 19/19, "ATX headings" 18/18, "Setext headings" 27/27 — all 100% held. |
 | 12.C.5.c — HTML block reader port | ⏳ NEXT | — | Multi-line block reader for the 7 HTML block sub-types (CommonMark §4.6) with distinct close conditions. Largest remaining single-block reader. Bucket: HTML blocks 43/44 (98%). |
 | 12.C.5.d — Blockquote reader port | ⏳ PENDING | — | Multi-line block reader with lazy continuation logic. Bucket: Block quotes 24/25 (96%). |
 | 12.C.5.e — Table reader port | ⏳ PENDING | — | Multi-line reader with header + separator + body row detection. Already mostly factored as `detectTable`. |
