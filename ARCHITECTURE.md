@@ -188,7 +188,7 @@ Setext heading promotion stays in `MarkdownParser.parse` because it depends on t
 
 **ListReader scope deliberately conservative.** The per-line classifier surface ports cleanly. The ~320-line block-loop multi-line list collection code, `buildItemTree` (recursive item-tree builder that calls back into `MarkdownParser.parse` for item-content re-parsing), `deepestOwner`, `leadingSpaceCount`, and `stripLeadingSpaces` STAY in `MarkdownParser`. They weave through container-block continuation rules, blank-line semantics, and recursive parser entry; porting them cleanly is its own slice (potentially 12.C.5.g, optional follow-up — the gain is structure, not LoC).
 
-Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped ten slices on top of the decomposition, advancing compliance to **643/652 (98.6%)** — see the per-slice write-up below.
+Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped eleven slices on top of the decomposition, advancing compliance to **644/652 (98.8%)** — see the per-slice write-up below.
 
 ### Container-aware ref-def discovery (Phase 12.C.6.a)
 
@@ -285,7 +285,17 @@ Test threshold bumped: List items 12 → 44.
 
 Closes spec examples #289, #300. Buckets: List items 42/48 → 44/48 (92%). Overall 641/652 → 643/652 (98.6%).
 
-The remaining 9 failures cluster into: 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), empty-marker items containing indented code (#278), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), tab-as-indent in nested list (#9), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
+### Empty-marker items owning indented code (Phase 12.C.6.k)
+
+CommonMark §5.2: a list item that begins with `-\n` (empty marker, content on subsequent lines) accepts indented code at column ≥ markerCol + markerLen + 1 + 4. The previous parser had an empty-marker-content-fill branch that detected this case ("dedented has 4+ leading spaces → it's a block starter") but only used the detection to *skip* filling cur.content with the line — it then fell through to the normal control flow, which broke out of the list and emitted the line as a top-level indented code block.
+
+The fix routes the line(s) into the empty-marker item's `continuationLines` instead. A new branch sits right after the cur.content-fill check inside the same `last.content.isEmpty && last.continuationLines.isEmpty && !interruptsLazyContinuation(l)` guard: when `lineIndent >= cc && dedentedIs4Indent`, walk forward collecting all indented-enough lines (mirroring the block-starter-as-continuation walk's stop conditions) into the item's `continuationLines`. `buildItemTree`'s else branch then re-parses `parse("    baz\n") → [.codeBlock("baz")]` and the renderer emits `<li>\n<pre><code>baz\n</code></pre>\n</li>`.
+
+Test threshold bumped: List items 44 → 45.
+
+Closes spec example #278. Buckets: List items 44/48 → 45/48 (94%). Overall 643/652 → 644/652 (98.8%).
+
+The remaining 8 failures cluster into: 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), tab-as-indent in nested list (#9), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
 
 ## Editing FSMs by Block Type
 
@@ -827,11 +837,11 @@ Obsidian-style `</>` hover button that swaps a code block between its rendered f
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **643 / 652 passing (98.6%)** as of Phase 12.C.6.j (shipped 2026-04-28, commits `2d05378 → (12.C.6.j)`, +23 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is exceeded.
+Serializer compliance against CommonMark 0.31.2 spec: **644 / 652 passing (98.8%)** as of Phase 12.C.6.k (shipped 2026-04-28, commits `2d05378 → (12.C.6.k)`, +24 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is exceeded.
 
 Per-bucket state:
 - **100%**: Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, **HTML blocks (44/44, fixed in 12.C.6.i)**, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, **Links (90/90, fixed in 12.C.6.h)**, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content.
-- **Near-perfect (90%+)**: Tabs 10/11, List items 44/48 (after 12.C.6.j), Images 21/22.
+- **Near-perfect (90%+)**: Tabs 10/11, List items 45/48 (after 12.C.6.k), Images 21/22.
 - **Moderate (88%)**: Lists 23/26.
 
 Phase 12.C.6 ladder (against 620 baseline):
@@ -844,10 +854,11 @@ Phase 12.C.6 ladder (against 620 baseline):
 - 12.C.6.g (`07a55c9`): link bracket scan respects HTML / autolink boundaries (#524, #526, #536, #538) → 631/652.
 - 12.C.6.h (`14e38f6`): link-in-link literalization via §6.4 delimiter stack (#518, #519, #520, #532, #533) → 636/652.
 - 12.C.6.i (`6e93688`): multi-block list items via continuationLines + tight-mode rendering (#175, #318, #320, #321, #324) → 641/652.
-- 12.C.6.j (this slice): top-level 4-space-indented marker → indented code + setext-underline-as-first-continuation (#289, #300) → 643/652.
+- 12.C.6.j (`575431b`): top-level 4-space-indented marker → indented code + setext-underline-as-first-continuation (#289, #300) → 643/652.
+- 12.C.6.k (this slice): empty-marker items owning indented code (#278) → 644/652.
 
-Remaining 9 failures cluster in:
-- **List items + Lists (7)**: residual multi-block items needing fixes for 0-space lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), empty-marker items containing indented code (#278), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), and the `[ListItem]`-vs-`[Block]` ordering issue (#325 — needs `ListItem.children: [Block]` redesign).
+Remaining 8 failures cluster in:
+- **List items + Lists (6)**: residual multi-block items needing fixes for 0-space lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), and the `[ListItem]`-vs-`[Block]` ordering issue (#325 — needs `ListItem.children: [Block]` redesign).
 - **Tabs (1, #9)**: tab-as-indent in a triple-nested list, family-adjacent to the multi-block list-item issues.
 - **Images (1, #590)**: documented FSNotes++ wikilink-extension non-conformance.
 

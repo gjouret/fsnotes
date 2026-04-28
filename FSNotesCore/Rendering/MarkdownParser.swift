@@ -383,13 +383,14 @@ public enum MarkdownParser {
                                     + last.marker.count + max(1, last.afterMarker.count)
                                 let lineIndent = leadingSpaceCount(l)
                                 let dedented = stripLeadingSpaces(l, count: cc)
+                                let dedentedIs4Indent = leadingSpaceCount(dedented) >= 4
                                 let isBlockStarter =
                                     FencedCodeBlockReader.detectOpen(dedented) != nil
                                     || ATXHeadingReader.detect(dedented) != nil
                                     || HorizontalRuleReader.detect(dedented) != nil
                                     || ListReader.parseListLine(dedented) != nil
                                     || BlockquoteReader.detect(dedented) != nil
-                                    || leadingSpaceCount(dedented) >= 4
+                                    || dedentedIs4Indent
                                 if lineIndent >= cc && !isBlockStarter {
                                     parsedLines[parsedLines.count - 1] = ListReader.ParsedListLine(
                                         indent: last.indent,
@@ -401,6 +402,54 @@ public enum MarkdownParser {
                                         continuationLines: last.continuationLines
                                     )
                                     j += 1
+                                    continue
+                                }
+                                // Spec #278: empty-marker item followed by a
+                                // 4-space-indented line (relative to cc)
+                                // owns that line as an indented code block
+                                // in its continuationBlocks. The line
+                                // doesn't trigger interruptsLazyContinuation
+                                // (it's just text), so the block-starter-as-
+                                // continuation branch below won't fire; we
+                                // route it ourselves. Walk forward and
+                                // collect every indented-enough line into
+                                // the item's continuationLines, mirroring
+                                // the block-starter walk's stop conditions.
+                                if lineIndent >= cc && dedentedIs4Indent {
+                                    var continuation: [String] = [dedented]
+                                    var m = j + 1
+                                    while m < lines.count {
+                                        let line2 = lines[m]
+                                        if m == lines.count - 1
+                                            && line2.isEmpty
+                                            && markdown.hasSuffix("\n")
+                                        {
+                                            break
+                                        }
+                                        if line2.isEmpty {
+                                            continuation.append("")
+                                            m += 1
+                                            continue
+                                        }
+                                        let lineIndentCount = leadingSpaceCount(line2)
+                                        if let maybeMarker = ListReader.parseListLine(line2) {
+                                            if maybeMarker.indent.count < cc {
+                                                break
+                                            }
+                                        }
+                                        if lineIndentCount < cc {
+                                            break
+                                        }
+                                        continuation.append(stripLeadingSpaces(line2, count: cc))
+                                        m += 1
+                                    }
+                                    while let trailLast = continuation.last,
+                                          trailLast.isEmpty
+                                    {
+                                        continuation.removeLast()
+                                    }
+                                    parsedLines[parsedLines.count - 1].continuationLines = continuation
+                                    j = m
                                     continue
                                 }
                             }
