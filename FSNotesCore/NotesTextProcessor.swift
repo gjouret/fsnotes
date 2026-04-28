@@ -300,43 +300,6 @@ public class NotesTextProcessor {
     
     public static let codeSpanRegex = MarklightRegex(pattern: codeSpanPattern, options: [.allowCommentsAndWhitespace, .dotMatchesLineSeparators])
 
-    // MARK: - Shared Syntax Hiding
-
-    /// Hide syntax characters by making them invisible (clear color) and
-    /// collapsing their width via per-character negative kern.
-    ///
-    /// Used by `TextStorageProcessor.hideSyntaxRange` and the inline-tag
-    /// pipeline in `InlineTagRegistry`.
-    public static func applySyntaxHiding(in attributedString: NSMutableAttributedString, range: NSRange) {
-        guard range.length > 0 else { return }
-        let nsString = attributedString.string as NSString
-        guard range.location + range.length <= nsString.length else { return }
-
-        attributedString.addAttribute(.foregroundColor, value: Color.clear, range: range)
-
-        // Apply per-character negative kern to zero out each glyph's advance width.
-        // This ensures intermediate hidden characters don't shift visible text rightward.
-        // Single-kern-on-last-char was tried (O(1)) but broke header indentation because
-        // intermediate glyphs kept their advance widths, causing progressive indent.
-        // Per-char kern is O(N) but N is always small (2-6 chars for syntax markers).
-        for i in 0..<range.length {
-            let charIndex = range.location + i
-            guard charIndex < nsString.length else { break }
-            let charFont = attributedString.attribute(.font, at: charIndex, effectiveRange: nil) as? PlatformFont
-                ?? UserDefaultsManagement.noteFont
-            let charStr = nsString.substring(with: NSRange(location: charIndex, length: 1))
-            let charWidth = (charStr as NSString).size(withAttributes: [.font: charFont]).width
-            let singleCharRange = NSRange(location: charIndex, length: 1)
-            // Lock font+kern together: kern is sized against `charFont`, so the font
-            // must stay `charFont` for the collapse to work. If another stage later
-            // changes the font, the kern becomes mismatched and the glyph re-appears
-            // (as observed for code-fence backticks: one char was getting a larger
-            // font set elsewhere, widening its advance past the -kern value).
-            attributedString.addAttribute(.font, value: charFont, range: singleCharRange)
-            attributedString.addAttribute(.kern, value: -charWidth, range: singleCharRange)
-        }
-    }
-    
     // MARK: App url
     
     fileprivate static let appUrlPattern = "(\\[\\[)(.+?[\\[\\]]*)(\\]\\])"
