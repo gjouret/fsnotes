@@ -20,7 +20,7 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 | 2 — TextKit 2 migration | ✅ shipped | TK2 baseline + per-block elements/fragments; native table cells (Bug #60 fixed by construction); fold display; gutter; link hover; scroll position; image drag-resize |
 | 3 — Element-level edit application | ✅ shipped | `DocumentEditApplier` with LCS block-diff + post-LCS coalescence pass; stale-projection guard via `priorRenderedOverride` |
 | 4 — Source-mode pipeline retirement | ✅ shipped | `SourceRenderer` + `SourceLayoutFragment`; legacy `NotesTextProcessor.highlightMarkdown` and save-path widget walker deleted; canonical save through `Note.save(markdown:)` |
-| 5a — Single write path | ✅ shipped | `StorageWriteGuard` + DEBUG assertion in `TextStorageProcessor.didProcessEditing` |
+| 5a — Single write path | ✅ shipped + bypass retirement complete | `StorageWriteGuard` + DEBUG assertion in `TextStorageProcessor.didProcessEditing`. Zero `performingLegacyStorageWrite` call sites; the only non-canonical writes happen under sanctioned-exemption scopes (`attachmentHydrationInFlight`, IME composition predicate) |
 | 5b — Cursor canonicalization | ✅ shipped | `DocumentCursor` ↔ `NSTextLocation` translation; selection round-trips through `DocumentRange` |
 | 5c — Find | ⛔ skipped | Unnecessary — all text-bearing block types already live in storage; `NSTextFinder` walks natively |
 | 5d — Copy / paste | ✅ shipped | `Document.slice(in:)`, `EditingOps.replaceFragment` (fused delete+insert, one undo step); `documentFromAttributedString` for cross-app paste |
@@ -40,27 +40,30 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 
 ## Remaining work
 
-### Phase 5a bypass retirement
+### Phase 5a bypass retirement — ✅ COMPLETE
 
-2 production call sites remain wrapped in `StorageWriteGuard.performingLegacyStorageWrite` with TODOs (down from 14). Audit live: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'`.
+`performingLegacyStorageWrite` has zero production call sites (down from 14). All bypasses either retired by routing through proper primitives, dropped as defensive dead code, or reclassified as sanctioned permanent exemptions with their own dedicated `StorageWriteGuard` scope. Audit: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'` returns 0.
 
-| Bucket | Sites | Clean fix |
+| Bucket | Sites | Outcome |
 |---|---:|---|
-| Fold re-splice in `TextStorageProcessor` | 0 (was 1) | **Bucket fully retired** |
-| Async attachment hydration (inline math ×1, display math / mermaid ×1) | 2 (was 5) | Each callback changes character count (source text → U+FFFC attachment); requires renderer to emit U+FFFC up front so hydration is attribute-only — non-trivial architectural change |
-| Formatting-IBAction `insertText` | 0 (was 8) | **Bucket fully retired** |
+| Fold re-splice in `TextStorageProcessor` | 0 (was 1) | Retired via attribute-only `setAttributes` walk |
+| Async attachment hydration (display math, mermaid) | 0 in `legacy`; 2 in new `attachmentHydration` scope | Reclassified as sanctioned permanent exemption |
+| Formatting-IBAction `insertText` | 0 (was 8) | Retired via `wrapInLink` / `unwrapLink` primitives + source-mode wrapper drops |
 
-Each bucket is independently revertible. Pairs naturally with Phase 5f's `UndoJournal` Tier-A inverses for the async-hydration cases.
+**Sanctioned permanent exemptions** (architecturally necessary, not "legacy"):
 
-**Slice landed (link IBAction retirement, commit `0444769`)**: `linkMenu` + `showLinkDialog` insert paths now route through `EditingOps.wrapInLink(range:url:displayText:in:)` for WYSIWYG. Two former WYSIWYG bypasses retired (the previous code injected literal `[text](url)` markdown into rendered storage — a real bug, not a stylistic violation). The source-mode fallback no longer needs the `performingLegacyStorageWrite` wrapper because the 5a assertion is gated on `blockModelActive && !sourceRendererActive` — both false in source mode. `wrapInLink` supports paragraph / heading / list / blockquote / blankLine; cross-block selections throw `crossBlockRange`. Heading body uses `MarkdownSerializer.serializeInlines` to round-trip the link through `Heading.suffix` (a `String`, not `[Inline]`); the renderer-side flatten is bug #52 territory and out of scope for this slice. 9 unit tests in `BlockModelFormattingTests`.
+1. **IME composition** (Phase 5e) — gated by `compositionAllowsEdit(editedRange:session:)` predicate, not a `StorageWriteGuard` scope. AppKit's input client writes during marked-text composition; commit folds the result into `Document` via one `applyEditResultWithUndo`.
+2. **Async attachment hydration** (Phase 5a, this slice) — gated by `StorageWriteGuard.attachmentHydrationInFlight`. Display math + mermaid renderer callbacks swap source text for a rendered NSTextAttachment after `BlockRenderer`'s WebView render completes. Document doesn't change (presentation state only) so it can't route through `applyDocumentEdit`. Can't be made attribute-only because source character count differs from the post-hydration U+FFFC count. For mermaid specifically, an attribute-only refactor would actively hurt UX (user wants to see the source diagram syntax during the potentially-slow render, not a blank box of guessed size).
 
-**Slice landed (code-span / code-block / table source-mode wrapper drop, commit `35be87f`)**: `insertCodeSpan` now routes through the existing `toggleInlineTraitViaBlockModel(.code)` for WYSIWYG (which already supports `.code` — wraps the selection in `Inline.code(text)` for non-empty selections, or sets the pending `.code` typing trait for empty selections). The `EditTextView.toggleInlineTrait(.code, ...)` primitive already had wrap/unwrap test coverage. Source-mode bypass wrappers dropped from `insertCodeSpan` ×2, `insertCodeBlock` ×2, and `insertTableMenu` ×1 — same gating-via-`sourceRendererActive` reasoning as the link slice. Five further bypasses retired in this slice.
+**Sliced retirement history**:
+- `0444769` Phase 5a: link IBAction retirement via `EditingOps.wrapInLink`
+- `35be87f` Phase 5a: code-span / code-block / table source-mode wrapper drop
+- `e9ae1ea` Phase 5a: remove-link IBAction retirement via `EditingOps.unwrapLink`
+- `56c8f7a` Phase 5a: fold re-splice as attribute-only update
+- `2a8cd48` Phase 5a: PDF + QuickLook attachment hydration as attribute-only
+- (this slice) Phase 5a: math hydration reclassified as sanctioned exemption
 
-**Slice landed (remove-link IBAction retirement, commit `e9ae1ea`)**: `showLinkDialog`'s "Remove Link" button now routes through `EditingOps.unwrapLink(at:in:)` for WYSIWYG. The primitive walks the cursor's containing block (paragraph / list item / blockquote line — heading suffixes are stored as `String` so they fall through to the regex), recurses through container traits (`.bold` / `.italic` / etc.), finds the `Inline.link` enclosing the cursor, and replaces it with its `text` contents. Source-mode regex fallback retained without the bypass wrapper — heading suffixes need it because the link markers stay in heading storage as literal text. 8 unit tests covering paragraph / list / blockquote / nested-in-bold / multiple-links / no-link-at-cursor / heading-falls-through. **Formatting-IBAction bucket fully retired (8 → 0).**
-
-**Slice landed (fold re-splice attribute-only update, commit `56c8f7a`)**: `TextStorageProcessor.toggleFold`'s unfold path used `replaceCharacters(in:with:)` to re-apply the projection's attributes after removing the `.foldedContent` / `.foregroundColor=clear` overrides. Even though the replacement characters were identical to what was already in storage (the Document hadn't changed — only presentation state), the `.editedCharacters` flag fired and the 5a assertion required a `performingLegacyStorageWrite` wrapper. Replaced with a per-run `setAttributes` walk over `originalAttrs` that triggers only `.editedAttributes` — no character change, no 5a trip, no wrapper. **Fold re-splice bucket fully retired (1 → 0).** All four FoldRange / FoldSnapshot / FoldedHeaderIndicator / HeaderFolding suites pass.
-
-**Slice landed (PDF + QuickLook attachment hydration as attribute-only)**: `PDFAttachmentProcessor` site 1 (the U+FFFC → U+FFFC attachment-class upgrade) and `QuickLookAttachmentProcessor`'s equivalent now use `addAttribute(.attachment, ...)` to swap the NSTextAttachment instance in place rather than `replaceCharacters` with a freshly-built attributed string. Same character count → no `.editedCharacters` event → no 5a assertion trip → no wrapper. Metadata attributes (`.attachmentUrl` / `.attachmentPath` / `.attachmentTitle`) stay intact since they're never touched. PDF site 2 (regex-based source-mode markdown→attachment swap) lost its defensive wrapper — source mode is excluded from the 5a assertion already (`blockModelActive && !sourceRendererActive` is false). **Three more bypasses retired; only the math hydration (2 sites) remains.** The math sites genuinely change character count (source text → 1-char attachment); retirement requires the renderer to emit the U+FFFC attachment placeholder up front so hydration is attribute-only. That's an architectural change deferred — the existing wrappers are correct as written.
+The `performingLegacyStorageWrite` function and `legacyStorageWriteInFlight` flag are retained as a future escape hatch — but the architecturally correct response to "I need to write to storage outside `applyDocumentEdit`" is now "introduce a dedicated sanctioned scope," not "use the legacy escape hatch."
 
 **Latent risk class**: any new menu/toolbar IBAction calling `insertText(_:replacementRange:)` will hit the same `_insertText:replacementRange:` private bypass that Phase 5a's assertion catches. Rule-7 gate doesn't catch this (the grep pattern only flags `performEditingTransaction`); protection is discipline + the DEBUG assertion during dogfood.
 

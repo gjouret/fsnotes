@@ -106,9 +106,27 @@ final class Phase5aSingleWritePathTests: XCTestCase {
             XCTAssertTrue(StorageWriteGuard.isAnyAuthorized)
         }
         XCTAssertFalse(StorageWriteGuard.isAnyAuthorized)
+        StorageWriteGuard.performingAttachmentHydration {
+            XCTAssertTrue(StorageWriteGuard.isAnyAuthorized)
+        }
+        XCTAssertFalse(StorageWriteGuard.isAnyAuthorized)
         StorageWriteGuard.performingLegacyStorageWrite {
             XCTAssertTrue(StorageWriteGuard.isAnyAuthorized)
         }
+        XCTAssertFalse(StorageWriteGuard.isAnyAuthorized)
+    }
+
+    func test_phase5a_performingAttachmentHydration_setsAndClears() {
+        XCTAssertFalse(StorageWriteGuard.attachmentHydrationInFlight)
+        StorageWriteGuard.performingAttachmentHydration {
+            XCTAssertTrue(StorageWriteGuard.attachmentHydrationInFlight)
+            XCTAssertTrue(StorageWriteGuard.isAnyAuthorized)
+            // Other scope flags remain off.
+            XCTAssertFalse(StorageWriteGuard.applyDocumentEditInFlight)
+            XCTAssertFalse(StorageWriteGuard.fillInFlight)
+            XCTAssertFalse(StorageWriteGuard.legacyStorageWriteInFlight)
+        }
+        XCTAssertFalse(StorageWriteGuard.attachmentHydrationInFlight)
         XCTAssertFalse(StorageWriteGuard.isAnyAuthorized)
     }
 }

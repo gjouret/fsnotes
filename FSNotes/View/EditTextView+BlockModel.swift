@@ -2818,18 +2818,19 @@ extension EditTextView {
                     ], range: NSRange(location: 0, length: attachmentString.length))
 
                     self.textStorageProcessor?.isRendering = true
-                    // Phase 5a: async inline-math attachment hydration
-                    // swaps source characters for a rendered image
-                    // attachment. This runs post-render on the main
-                    // thread, outside any `EditingOps` call, so it
-                    // can't route through `applyDocumentEdit`
-                    // (the `Document` projection already reflects the
-                    // source markdown). Flag as legacy.
-                    // TODO: make the attachment hydration a pure
-                    // attribute-only pass (the U+FFFC character is
-                    // already in storage from the initial render)
-                    // so storage characters never change.
-                    StorageWriteGuard.performingLegacyStorageWrite {
+                    // Phase 5a sanctioned exemption: async inline-math
+                    // attachment hydration. Runs post-render on the main
+                    // thread, outside any `EditingOps` call. The
+                    // `Document` doesn't change — only presentation
+                    // state (source text → rendered MathJax image
+                    // attachment). Can't route through
+                    // `applyDocumentEdit` (Document is unchanged) and
+                    // can't be made attribute-only (source character
+                    // count differs from the U+FFFC attachment count).
+                    // Functionally analogous to the IME composition
+                    // exemption: a documented architectural necessity.
+                    // See ARCHITECTURE.md "Async attachment hydration".
+                    StorageWriteGuard.performingAttachmentHydration {
                         storage.beginEditing()
                         storage.replaceCharacters(in: range, with: attachmentString)
                         storage.endEditing()
@@ -3031,15 +3032,15 @@ extension EditTextView {
                     ], range: NSRange(location: 0, length: attachmentString.length))
 
                     self.textStorageProcessor?.isRendering = true
-                    // Phase 5a: async display-math / mermaid attachment
-                    // hydration — same story as inline math above.
-                    // Post-render swap of source characters for an
-                    // image attachment; not routable through
-                    // `applyDocumentEdit`.
-                    // TODO: collapse into an attribute-only pass when
-                    // the renderer emits the attachment character up
-                    // front.
-                    StorageWriteGuard.performingLegacyStorageWrite {
+                    // Phase 5a sanctioned exemption: async display-math
+                    // / mermaid attachment hydration — see the inline-
+                    // math hydration site above for full reasoning.
+                    // For mermaid specifically, an attribute-only
+                    // refactor would actively hurt UX: the user wants
+                    // to see the source diagram syntax while the
+                    // (potentially slow) WebView render is in flight,
+                    // not a blank box of guessed size.
+                    StorageWriteGuard.performingAttachmentHydration {
                         storage.beginEditing()
                         storage.replaceCharacters(in: range, with: attachmentString)
                         storage.endEditing()

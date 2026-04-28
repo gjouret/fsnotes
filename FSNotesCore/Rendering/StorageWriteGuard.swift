@@ -32,12 +32,22 @@
 //    • `fillInFlight` — the initial-fill `setAttributedString` paths
 //      (`fillViaBlockModel`, `fillViaSourceRenderer`). Whole-document
 //      replacement on note switch or reload.
-//    • `legacyStorageWriteInFlight` — escape hatch for call sites that
-//      haven't yet been routed through `applyDocumentEdit` (fold
-//      re-splice, restore-from-undo, async attachment hydration
-//      post-render). Each wrapper should carry a TODO comment
-//      explaining why the call site can't route cleanly and what
-//      would be needed to retire the escape hatch.
+//    • `attachmentHydrationInFlight` — sanctioned permanent exemption
+//      for async post-render attachment hydration (display math,
+//      mermaid diagrams). The hydrator replaces source text with a
+//      rendered-image attachment after `BlockRenderer` finishes the
+//      WebView render. This is NOT an editor edit (the `Document`
+//      model doesn't change), so it can't route through
+//      `applyDocumentEdit`. It also can't be made attribute-only
+//      because the source character count differs from the post-
+//      hydration U+FFFC character count. Functionally analogous to
+//      the IME composition exemption: a documented architectural
+//      necessity, not "legacy code waiting to be retired." See
+//      ARCHITECTURE.md "Async attachment hydration".
+//    • `legacyStorageWriteInFlight` — escape hatch retained for any
+//      future bypass-grade write that doesn't yet have a sanctioned
+//      scope. Currently has zero production call sites. Tests still
+//      reference the flag to verify scope semantics.
 //
 
 import Foundation
@@ -45,6 +55,7 @@ import Foundation
 public enum StorageWriteGuard {
     public private(set) static var applyDocumentEditInFlight = false
     public private(set) static var fillInFlight = false
+    public private(set) static var attachmentHydrationInFlight = false
     public private(set) static var legacyStorageWriteInFlight = false
 
     /// Run `body` with `applyDocumentEditInFlight = true`. Called from
@@ -66,11 +77,23 @@ public enum StorageWriteGuard {
         return try body()
     }
 
-    /// Escape hatch for call sites that haven't yet been routed through
-    /// `applyDocumentEdit` (fold re-splice, restore-from-undo, async
-    /// attachment hydration post-render). Each wrapper should carry a
-    /// TODO comment explaining why the call site can't route cleanly
-    /// and what would be needed to retire the escape hatch.
+    /// Run `body` with `attachmentHydrationInFlight = true`. Sanctioned
+    /// permanent exemption for async post-render attachment hydration
+    /// (display math, mermaid diagrams) — see the file header for why
+    /// this can't route through `applyDocumentEdit`.
+    public static func performingAttachmentHydration<T>(_ body: () throws -> T) rethrows -> T {
+        let prior = attachmentHydrationInFlight
+        attachmentHydrationInFlight = true
+        defer { attachmentHydrationInFlight = prior }
+        return try body()
+    }
+
+    /// Escape hatch retained for any future bypass-grade write that
+    /// doesn't yet have a sanctioned scope. Zero production call sites
+    /// today. If a new use case appears, prefer adding a dedicated
+    /// scope (like `performingAttachmentHydration`) rather than
+    /// resurrecting this one — the sanctioned-scope pattern is the
+    /// architecturally correct way to authorize a non-canonical write.
     public static func performingLegacyStorageWrite<T>(_ body: () throws -> T) rethrows -> T {
         let prior = legacyStorageWriteInFlight
         legacyStorageWriteInFlight = true
@@ -80,6 +103,7 @@ public enum StorageWriteGuard {
 
     /// True when any authorized scope is active.
     public static var isAnyAuthorized: Bool {
-        applyDocumentEditInFlight || fillInFlight || legacyStorageWriteInFlight
+        applyDocumentEditInFlight || fillInFlight ||
+        attachmentHydrationInFlight || legacyStorageWriteInFlight
     }
 }
