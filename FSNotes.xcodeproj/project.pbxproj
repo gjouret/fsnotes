@@ -123,6 +123,10 @@
 		EMRT12C40000000000B1 /* EmphasisResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EMRT12C40000000000F1 /* EmphasisResolverTests.swift */; };
 		FCBP12C50000000000B1 /* FencedCodeBlockReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCBP12C50000000000F1 /* FencedCodeBlockReader.swift */; };
 		FCBT12C50000000000B1 /* FencedCodeBlockReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCBT12C50000000000F1 /* FencedCodeBlockReaderTests.swift */; };
+		HRRP12C50000000000B1 /* HorizontalRuleReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRRP12C50000000000F1 /* HorizontalRuleReader.swift */; };
+		HRRT12C50000000000B1 /* HorizontalRuleReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = HRRT12C50000000000F1 /* HorizontalRuleReaderTests.swift */; };
+		ATXP12C50000000000B1 /* ATXHeadingReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = ATXP12C50000000000F1 /* ATXHeadingReader.swift */; };
+		ATXT12C50000000000B1 /* ATXHeadingReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ATXT12C50000000000F1 /* ATXHeadingReaderTests.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
 		SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCR20260427F1 /* SubviewTableClickResponderTests.swift */; };
@@ -1389,6 +1393,10 @@
 		EMRT12C40000000000F1 /* EmphasisResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmphasisResolverTests.swift; sourceTree = "<group>"; };
 		FCBP12C50000000000F1 /* FencedCodeBlockReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/FencedCodeBlockReader.swift; sourceTree = "<group>"; };
 		FCBT12C50000000000F1 /* FencedCodeBlockReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FencedCodeBlockReaderTests.swift; sourceTree = "<group>"; };
+		HRRP12C50000000000F1 /* HorizontalRuleReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/HorizontalRuleReader.swift; sourceTree = "<group>"; };
+		HRRT12C50000000000F1 /* HorizontalRuleReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalRuleReaderTests.swift; sourceTree = "<group>"; };
+		ATXP12C50000000000F1 /* ATXHeadingReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/ATXHeadingReader.swift; sourceTree = "<group>"; };
+		ATXT12C50000000000F1 /* ATXHeadingReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ATXHeadingReaderTests.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
 		SVCR20260427F1 /* SubviewTableClickResponderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableClickResponderTests.swift; sourceTree = "<group>"; };
@@ -2085,6 +2093,8 @@
 				LNKP12C30000000000F1 /* LinkParser.swift */,
 				EMRP12C40000000000F1 /* EmphasisResolver.swift */,
 				FCBP12C50000000000F1 /* FencedCodeBlockReader.swift */,
+				HRRP12C50000000000F1 /* HorizontalRuleReader.swift */,
+				ATXP12C50000000000F1 /* ATXHeadingReader.swift */,
 				P41S000000000000000000F1 /* SourceRenderer.swift */,
 				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
@@ -3035,6 +3045,8 @@
 				LNKT12C30000000000F1 /* LinkParserTests.swift */,
 				EMRT12C40000000000F1 /* EmphasisResolverTests.swift */,
 				FCBT12C50000000000F1 /* FencedCodeBlockReaderTests.swift */,
+				HRRT12C50000000000F1 /* HorizontalRuleReaderTests.swift */,
+				ATXT12C50000000000F1 /* ATXHeadingReaderTests.swift */,
 				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
 				SVCR20260427F1 /* SubviewTableClickResponderTests.swift */,
 				SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */,
@@ -4056,6 +4068,8 @@
 				LNKP12C30000000000B1 /* LinkParser.swift in Sources */,
 				EMRP12C40000000000B1 /* EmphasisResolver.swift in Sources */,
 				FCBP12C50000000000B1 /* FencedCodeBlockReader.swift in Sources */,
+				HRRP12C50000000000B1 /* HorizontalRuleReader.swift in Sources */,
+				ATXP12C50000000000B1 /* ATXHeadingReader.swift in Sources */,
 				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
 				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
@@ -4752,6 +4766,8 @@
 				LNKT12C30000000000B1 /* LinkParserTests.swift in Sources */,
 				EMRT12C40000000000B1 /* EmphasisResolverTests.swift in Sources */,
 				FCBT12C50000000000B1 /* FencedCodeBlockReaderTests.swift in Sources */,
+				HRRT12C50000000000B1 /* HorizontalRuleReaderTests.swift in Sources */,
+				ATXT12C50000000000B1 /* ATXHeadingReaderTests.swift in Sources */,
 				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
 				SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */,
 				SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */,

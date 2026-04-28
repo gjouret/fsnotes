@@ -120,7 +120,7 @@ public enum MarkdownParser {
             // setext underline and an HR — context determines which.
             // Exception: if the paragraph is entirely wrapped in emphasis
             // markers (**...**), it's a bold paragraph + HR, not a heading.
-            if !rawBuffer.isEmpty, let setextLevel = detectSetextUnderline(line),
+            if !rawBuffer.isEmpty, let setextLevel = ATXHeadingReader.detectSetextUnderline(line),
                !isEmphasisOnlyParagraph(rawBuffer) {
                 // Combine rawBuffer into the heading text.
                 let headingText = rawBuffer.joined(separator: "\n")
@@ -132,10 +132,10 @@ public enum MarkdownParser {
                 continue
             }
 
-            if let hr = detectHorizontalRule(line) {
+            if let result = HorizontalRuleReader.read(lines: lines, from: i) {
                 flushRawBuffer()
-                blocks.append(.horizontalRule(character: hr.character, length: hr.length))
-                i += 1
+                blocks.append(result.block)
+                i = result.nextIndex
                 continue
             }
 
@@ -330,7 +330,7 @@ public enum MarkdownParser {
                     // spec #61, where `* * *` indents to col 2 and
                     // becomes the second item's HR content).
                     if leadingSpaceCount(l) == topIndent,
-                       detectHorizontalRule(l) != nil {
+                       HorizontalRuleReader.detect(l) != nil {
                         break
                     }
                     guard var parsed = parseListLine(l) else {
@@ -384,8 +384,8 @@ public enum MarkdownParser {
                                 let dedented = stripLeadingSpaces(l, count: cc)
                                 let isBlockStarter =
                                     FencedCodeBlockReader.detectOpen(dedented) != nil
-                                    || detectHeading(dedented) != nil
-                                    || detectHorizontalRule(dedented) != nil
+                                    || ATXHeadingReader.detect(dedented) != nil
+                                    || HorizontalRuleReader.detect(dedented) != nil
                                     || parseListLine(dedented) != nil
                                     || detectBlockquoteLine(dedented) != nil
                                     || leadingSpaceCount(dedented) >= 4
@@ -476,10 +476,10 @@ public enum MarkdownParser {
                 continue
             }
 
-            if let heading = detectHeading(line) {
+            if let result = ATXHeadingReader.read(lines: lines, from: i) {
                 flushRawBuffer()
-                blocks.append(.heading(level: heading.level, suffix: heading.suffix))
-                i += 1
+                blocks.append(result.block)
+                i = result.nextIndex
                 continue
             }
 
@@ -694,51 +694,6 @@ public enum MarkdownParser {
             widths.append(CGFloat(d))
         }
         return widths
-    }
-
-    // MARK: - Heading detection
-
-    /// Detect an ATX heading on `line`. CommonMark rule: 1–6 leading `#`
-    /// characters followed by either a space/tab OR end of line. The
-    /// opening sequence cannot be indented (we do not yet support the
-    /// up-to-3-space indentation allowance). Returns the level and the
-    /// verbatim suffix (everything after the `#` markers) if matched.
-    ///
-    /// Examples (preserving exact whitespace for byte-equal round-trip):
-    ///   "# Hello"     → level 1, suffix " Hello"
-    ///   "##  Spaced"  → level 2, suffix "  Spaced"
-    ///   "###"         → level 3, suffix ""
-    ///   "#### "       → level 4, suffix " "
-    ///   "#Hello"      → nil  (missing required space after markers)
-    ///   "####### too" → nil  (7 markers exceeds max of 6)
-    private static func detectHeading(_ line: String) -> (level: Int, suffix: String)? {
-        // CommonMark 4.2: up to 3 leading spaces before the opening `#`
-        // run are allowed. 4+ spaces would be an indented code block
-        // (which we don't support — falls through to paragraph).
-        var chars = Array(line)
-        var i = 0
-        var leading = 0
-        while i < chars.count, chars[i] == " ", leading < 3 {
-            leading += 1
-            i += 1
-        }
-        guard i < chars.count, chars[i] == "#" else { return nil }
-
-        var level = 0
-        while i < chars.count, chars[i] == "#" {
-            level += 1
-            i += 1
-        }
-        guard level >= 1 && level <= 6 else { return nil }
-
-        let suffix = String(chars[i..<chars.count])
-        // Valid heading: either suffix is empty (end of line) or begins
-        // with a space/tab.
-        if suffix.isEmpty { return (level, suffix) }
-        guard let nextCh = suffix.first, nextCh == " " || nextCh == "\t" else {
-            return nil
-        }
-        return (level, suffix)
     }
 
     // MARK: - HTML block detection
@@ -1453,75 +1408,6 @@ public enum MarkdownParser {
         return (prefix, content)
     }
 
-    // MARK: - Horizontal rule detection
-
-    /// Detect whether `line` is a thematic break (horizontal rule).
-    /// CommonMark rule: a line containing 3+ of the same character
-    /// (`-`, `*`, or `_`), optionally interspersed with spaces/tabs,
-    /// with up to 3 leading spaces, and nothing else on the line.
-    /// Returns the character and the count of HR characters (not
-    /// spaces), or nil otherwise. Note: spaced HRs like `- - -`
-    /// will be normalized to `---` on round-trip serialization.
-    private static func detectHorizontalRule(_ line: String) -> (character: Character, length: Int)? {
-        let chars = Array(line)
-        var i = 0
-        // Allow up to 3 leading spaces
-        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
-        guard i < chars.count else { return nil }
-        let hrChar = chars[i]
-        guard hrChar == "-" || hrChar == "*" || hrChar == "_" else { return nil }
-        var count = 0
-        while i < chars.count {
-            if chars[i] == hrChar {
-                count += 1
-            } else if chars[i] == " " || chars[i] == "\t" {
-                // spaces/tabs allowed between HR characters
-            } else {
-                return nil // non-HR, non-whitespace character
-            }
-            i += 1
-        }
-        guard count >= 3 else { return nil }
-        return (hrChar, count)
-    }
-
-    /// Detect a setext heading underline: a line of `===` (H1) or `---` (H2).
-    /// Returns the heading level (1 or 2) if the line is a valid underline.
-    private static func detectSetextUnderline(_ line: String) -> Int? {
-        // CommonMark 4.3: up to 3 leading spaces before the underline,
-        // followed by one-or-more `=` (H1) or `-` (H2) characters, then
-        // optional trailing whitespace.
-        var chars = Array(line)
-        var i = 0
-        var leading = 0
-        while i < chars.count, chars[i] == " ", leading < 3 {
-            leading += 1
-            i += 1
-        }
-        guard i < chars.count else { return nil }
-        let marker = chars[i]
-        guard marker == "=" || marker == "-" else { return nil }
-        let runStart = i
-        while i < chars.count, chars[i] == marker { i += 1 }
-        let runLen = i - runStart
-        // Allow trailing spaces/tabs.
-        while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-        guard i == chars.count else { return nil }
-        if marker == "=" {
-            guard runLen >= 1 else { return nil }
-            return 1
-        } else {
-            // `-` underline: CommonMark technically allows 1+ chars, but
-            // a single `-` on a line is reliably a list-marker start in
-            // all observed spec examples. Keep the pre-existing 3-char
-            // disambiguation: `foo\n-` is a paragraph + (inert) list
-            // marker, not a setext H2. Three chars (`---`) is the
-            // minimum used by every passing spec example.
-            guard runLen >= 3 else { return nil }
-            return 2
-        }
-    }
-
     /// Check if the raw buffer (paragraph lines) is entirely wrapped in
     /// emphasis markers (e.g., `**Bold text**`, `*italic*`, `__bold__`,
     /// `_italic_`). Such paragraphs should NOT be promoted to setext
@@ -2208,11 +2094,11 @@ public enum MarkdownParser {
                 if prev.isEmpty || isBlankLine(prev) { return true }
                 if consumed.contains(i - 1) { return true }
                 // ATX heading line on the previous line? Check detect.
-                if detectHeading(prev) != nil { return true }
+                if ATXHeadingReader.detect(prev) != nil { return true }
                 // Fence open/close on the previous line?
                 if FencedCodeBlockReader.detectOpen(prev) != nil { return true }
                 // Horizontal rule on the previous line?
-                if detectHorizontalRule(prev) != nil { return true }
+                if HorizontalRuleReader.detect(prev) != nil { return true }
                 return false
             }()
             if canStartBlock,
@@ -2481,11 +2367,11 @@ public enum MarkdownParser {
         // Blockquote marker
         if detectBlockquoteLine(line) != nil { return true }
         // ATX heading
-        if detectHeading(line) != nil { return true }
+        if ATXHeadingReader.detect(line) != nil { return true }
         // Fenced code opening
         if FencedCodeBlockReader.detectOpen(line) != nil { return true }
         // Thematic break / HR
-        if detectHorizontalRule(line) != nil { return true }
+        if HorizontalRuleReader.detect(line) != nil { return true }
         // List item with <= 3 spaces of indent (4+ spaces = indented code
         // block context, which cannot interrupt a paragraph)
         if let parsed = parseListLine(line) {
