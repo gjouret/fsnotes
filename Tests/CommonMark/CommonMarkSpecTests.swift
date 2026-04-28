@@ -399,16 +399,18 @@ class CommonMarkSpecTests: XCTestCase {
     }
 
     // --- List Items (48 examples) ---
-    // 46/48 (96%) as of Phase 12.C.6.o. We support flat lists with
+    // 48/48 (100%) as of Phase 12.C.6.p. We support flat lists with
     // simple inline content, tight/loose detection, empty items, marker
     // type splitting, multi-block list-item children (12.C.6.i),
     // top-level 4-space-indented marker → indented code (#289, 12.C.6.j),
     // setext-underline-as-first-continuation (#300, 12.C.6.j),
-    // empty-marker items containing indented code (#278, 12.C.6.k), and
-    // multi-block-evidence lazy continuation (#290, 12.C.6.o).
-    // Remaining failures: #292, #293 (nested-blockquote lazy continuation).
+    // empty-marker items containing indented code (#278, 12.C.6.k),
+    // multi-block-evidence lazy continuation (#290, 12.C.6.o), and
+    // nested-blockquote lazy continuation through list-with-inner-
+    // blockquote container chain via renderer-side prefix injection
+    // (#292, #293, 12.C.6.p).
     func test_listItems() {
-        assertSection("List items", passesAtLeast: 46)
+        assertSection("List items", passesAtLeast: 48)
     }
 
     // --- Lists (26 examples) ---

@@ -373,8 +373,27 @@ struct CommonMarkHTMLRenderer {
         // matches a setext-underline pattern — the backslash prevents
         // the inner parse from recognizing the underline without
         // affecting the rendered output.
+        // Multi-level lazy continuation through stripped container
+        // prefixes (specs #292, #293). When the previous inner-content
+        // line opens a list item whose own content starts with an
+        // inner blockquote, the next paragraph-continuation line —
+        // whether the outer source was lazy (#292: no `>` prefix) or
+        // explicit (#293: `>` prefix consumed by the outer blockquote
+        // reader) — needs to lazy-continue the INNERMOST paragraph,
+        // not become a top-level block at the outer blockquote's
+        // level. Our line-oriented parser doesn't model the multi-
+        // level container stack, but we can synthesize the equivalent
+        // by injecting the missing inner container prefix on such
+        // lines — list content-column spaces + the inner blockquote
+        // marker — so the inner re-parse sees a properly-prefixed
+        // continuation. The list parser's block-starter-as-
+        // continuation branch then collects it into the item's
+        // `continuationLines`, and `buildItemTree`'s first-line-is-
+        // block-starter combined re-parse emits the inner blockquote
+        // with both lines as one paragraph.
         var renderedLines: [String] = []
-        for line in lines {
+        var prevBody: String = ""
+        for (idx, line) in lines.enumerated() {
             let innerPrefix = line.level > 1
                 ? String(repeating: "> ", count: line.level - 1)
                 : ""
@@ -384,11 +403,21 @@ struct CommonMarkHTMLRenderer {
             let looksLikeSetextUnderline =
                 !trimmed.isEmpty
                 && (trimmed.allSatisfy { $0 == "=" } || trimmed.allSatisfy { $0 == "-" })
-            if isLazy && looksLikeSetextUnderline {
-                renderedLines.append(innerPrefix + "\\" + body)
-            } else {
-                renderedLines.append(innerPrefix + body)
+            // Lazy / paragraph-continuation line + previous line
+            // opens list-with-inner-blockquote: inject the inner
+            // container prefix so the inner re-parse routes the
+            // continuation into the inner blockquote.
+            var inheritedPrefix = ""
+            if idx > 0,
+               let lazyChain = lazyContainerPrefix(forLine: body, previousLine: prevBody) {
+                inheritedPrefix = lazyChain
             }
+            if isLazy && looksLikeSetextUnderline {
+                renderedLines.append(innerPrefix + inheritedPrefix + "\\" + body)
+            } else {
+                renderedLines.append(innerPrefix + inheritedPrefix + body)
+            }
+            prevBody = body
         }
         let innerMarkdown = renderedLines.joined(separator: "\n") + "\n"
 
@@ -401,6 +430,34 @@ struct CommonMarkHTMLRenderer {
         }
 
         return "<blockquote>\n\(innerHTML)</blockquote>\n"
+    }
+
+    /// If `previousLine` opens a list item whose content begins with a
+    /// blockquote marker (`1. > foo`, `- > foo`, etc.) AND `currentLine`
+    /// is paragraph-continuation text (not itself a block-starter),
+    /// return the container prefix needed to lazy-continue the inner
+    /// blockquote's paragraph through the list item: list-content-
+    /// column spaces plus the inner blockquote marker. Returns nil
+    /// when no such chain is detected, or when the current line would
+    /// itself open a new block (heading, HR, fenced code, etc.) — in
+    /// those cases the line is a legitimate top-level interrupt.
+    private func lazyContainerPrefix(forLine currentLine: String, previousLine: String) -> String? {
+        guard let parsed = ListReader.parseListLine(previousLine) else { return nil }
+        let contentCol = parsed.indent.count + parsed.marker.count + parsed.afterMarker.count
+        let postMarker = parsed.content
+        guard BlockquoteReader.detect(postMarker) != nil else { return nil }
+        // Don't inject if current line is itself a block-starter or a
+        // list marker — those should stay as top-level interrupts.
+        if BlockquoteReader.detect(currentLine) != nil { return nil }
+        if ATXHeadingReader.detect(currentLine) != nil { return nil }
+        if FencedCodeBlockReader.detectOpen(currentLine) != nil { return nil }
+        if HorizontalRuleReader.detect(currentLine) != nil { return nil }
+        if let htmlType = HtmlBlockReader.detect(currentLine), htmlType <= 6 { return nil }
+        if ListReader.parseListLine(currentLine) != nil { return nil }
+        if currentLine.isEmpty || currentLine.allSatisfy({ $0 == " " || $0 == "\t" }) {
+            return nil
+        }
+        return String(repeating: " ", count: contentCol) + "> "
     }
 
     // MARK: - Table rendering
