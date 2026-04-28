@@ -1126,7 +1126,7 @@ public enum MarkdownParser {
         var i = 0
         while i < chars.count {
             if chars[i] == "`" {
-                if let match = tryMatchCodeSpan(chars, from: i) {
+                if let match = CodeSpanParser.match(chars, from: i) {
                     ranges.append((i, match.endIndex))
                     i = match.endIndex
                     continue
@@ -1401,7 +1401,7 @@ public enum MarkdownParser {
                 continue
             }
             // 7. Code spans
-            if let match = tryMatchCodeSpan(chars, from: i) {
+            if let match = CodeSpanParser.match(chars, from: i) {
                 flushPlain()
                 tokens.append(.inline(.code(match.inner)))
                 i = match.endIndex
@@ -1765,44 +1765,6 @@ public enum MarkdownParser {
     /// Note: multi-backtick code spans (e.g. `` `` ` `` ``) will
     /// normalize to single-backtick on round-trip serialization since
     /// we store only the inner content in Inline.code.
-    private static func tryMatchCodeSpan(
-        _ chars: [Character], from start: Int
-    ) -> (inner: String, endIndex: Int)? {
-        guard start < chars.count, chars[start] == "`" else { return nil }
-        // CommonMark: a backtick string must not be preceded by a backtick
-        if start > 0 && chars[start - 1] == "`" { return nil }
-        // Count opening backtick run length
-        var openLen = 0
-        var j = start
-        while j < chars.count && chars[j] == "`" { j += 1; openLen += 1 }
-        // Scan for closing run of exactly openLen backticks
-        var k = j
-        while k < chars.count {
-            if chars[k] == "`" {
-                var closeLen = 0
-                let closeStart = k
-                while k < chars.count && chars[k] == "`" { k += 1; closeLen += 1 }
-                if closeLen == openLen {
-                    // Found matching close
-                    var inner = String(chars[j..<closeStart])
-                    // Collapse newlines to spaces (CommonMark rule)
-                    inner = inner.replacingOccurrences(of: "\n", with: " ")
-                    // Strip one leading + trailing space if both present
-                    // and content isn't all spaces
-                    if inner.count >= 2 && inner.first == " " && inner.last == " " &&
-                       !inner.allSatisfy({ $0 == " " }) {
-                        inner = String(inner.dropFirst().dropLast())
-                    }
-                    return (inner, k)
-                }
-                // closeLen != openLen — keep scanning
-            } else {
-                k += 1
-            }
-        }
-        return nil
-    }
-
     /// Try to match inline math `$...$` starting at `start`. Requires
     /// non-empty content and the closing `$` must not be preceded by a
     /// space (to avoid matching currency amounts like `$5`).
