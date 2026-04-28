@@ -6617,6 +6617,237 @@ public enum EditingOps {
         return cleanInlines(before + [linkNode] + after)
     }
 
+    /// Find the `Inline.link` enclosing the cursor at `storageIndex`
+    /// and replace it with its display text. The block kind is
+    /// preserved; only the link wrapping is removed.
+    ///
+    /// Throws `.unsupported` when no link contains the cursor — the
+    /// caller may then fall through to a source-mode regex path that
+    /// finds literal `[text](url)` markdown, but in WYSIWYG that
+    /// markdown doesn't exist so this primitive is the only path.
+    ///
+    /// Supported block kinds: paragraph, heading, list, blockquote.
+    /// Cursor-at-boundary heuristic: a cursor at the exact end of one
+    /// inline node and the start of the next matches the first
+    /// (previous) node — first match wins in the inline walk.
+    public static func unwrapLink(
+        at storageIndex: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard let (blockIndex, offsetInBlock) = projection.blockContaining(
+            storageIndex: storageIndex
+        ) else {
+            throw EditingError.notInsideBlock(storageIndex: storageIndex)
+        }
+        let block = projection.document.blocks[blockIndex]
+        let newBlock: Block
+        let newCursorOffsetInBlock: Int
+        switch block {
+        case .paragraph(let inline):
+            guard let (unwrapped, cursorAfter) = unwrapLinkInInlines(
+                inline, at: offsetInBlock
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "unwrapLink: no link at cursor in paragraph"
+                )
+            }
+            newBlock = .paragraph(inline: cleanInlines(unwrapped))
+            newCursorOffsetInBlock = cursorAfter
+        case .heading(let level, let suffix):
+            let leading = leadingWhitespaceCount(in: suffix)
+            let inlines = parseInlinesFromText(
+                String(suffix.dropFirst(leading))
+            )
+            guard let (unwrapped, cursorAfter) = unwrapLinkInInlines(
+                inlines, at: offsetInBlock
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "unwrapLink: no link at cursor in heading"
+                )
+            }
+            let newText = MarkdownSerializer.serializeInlines(
+                cleanInlines(unwrapped)
+            )
+            let leadingWS = String(suffix.prefix(leading))
+            newBlock = .heading(level: level, suffix: leadingWS + newText)
+            newCursorOffsetInBlock = cursorAfter
+        case .list(let items, _):
+            let entries = flattenList(items)
+            guard let (entryIdx, inlineOffset) = listEntryContaining(
+                entries: entries, offset: offsetInBlock, forInsertion: false
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "unwrapLink: cursor not in list item"
+                )
+            }
+            let entry = entries[entryIdx]
+            let item = entry.item
+            guard let (unwrapped, cursorAfter) = unwrapLinkInInlines(
+                item.inline, at: inlineOffset
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "unwrapLink: no link at cursor in list item"
+                )
+            }
+            let newItem = ListItem(
+                indent: item.indent, marker: item.marker,
+                afterMarker: item.afterMarker, checkbox: item.checkbox,
+                inline: cleanInlines(unwrapped), children: item.children
+            )
+            let newItems = replaceItemAtPath(
+                items, path: entry.path, with: newItem
+            )
+            newBlock = .list(items: newItems)
+            // Approximate: cursor stays where the helper placed it
+            // within the modified item, ignoring offset translation
+            // across other items in the same list block. The IBAction
+            // path is point-cursor-only so multi-item drift can't
+            // happen.
+            newCursorOffsetInBlock = offsetInBlock - inlineOffset + cursorAfter
+        case .blockquote(let lines):
+            let flattened = flattenBlockquote(lines)
+            guard let (lineIdx, inlineOffset) = quoteEntryContaining(
+                entries: flattened, offset: offsetInBlock, forInsertion: false
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "unwrapLink: cursor not in blockquote line"
+                )
+            }
+            let line = lines[lineIdx]
+            guard let (unwrapped, cursorAfter) = unwrapLinkInInlines(
+                line.inline, at: inlineOffset
+            ) else {
+                throw EditingError.unsupported(
+                    reason: "unwrapLink: no link at cursor in blockquote line"
+                )
+            }
+            var newLines = lines
+            newLines[lineIdx] = BlockquoteLine(
+                prefix: line.prefix, inline: cleanInlines(unwrapped)
+            )
+            newBlock = .blockquote(lines: newLines)
+            newCursorOffsetInBlock = offsetInBlock - inlineOffset + cursorAfter
+        default:
+            throw EditingError.unsupported(
+                reason: "unwrapLink: unsupported block type"
+            )
+        }
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        let newSpan = result.newProjection.blockSpans[blockIndex]
+        result.newCursorPosition = min(
+            newSpan.location + newCursorOffsetInBlock,
+            newSpan.location + newSpan.length
+        )
+        result.contract = EditContract(
+            declaredActions: [.modifyInline(blockIndex: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Find the `Inline.link` enclosing `offset` in `inlines` (recursing
+    /// into container traits like `.bold`, `.italic`) and replace it
+    /// with its `text` contents. Returns the new inline list and the
+    /// post-unwrap cursor offset (within the same scope), or nil if no
+    /// link contains the cursor. The cursor lands at the start of the
+    /// unwrapped run — same offset as the cursor's original position
+    /// from the container start — preserving the visual "you're still
+    /// in the same word, just no link" feel.
+    private static func unwrapLinkInInlines(
+        _ inlines: [Inline], at offset: Int
+    ) -> ([Inline], Int)? {
+        var acc = 0
+        for (i, node) in inlines.enumerated() {
+            let nodeLen = inlineLength(node)
+            // Inclusive on both ends: cursor at the boundary between two
+            // nodes matches the first one.
+            let inSpan = offset >= acc && offset <= acc + nodeLen
+            if inSpan {
+                switch node {
+                case .link(let text, _):
+                    var result = Array(inlines.prefix(i))
+                    result.append(contentsOf: text)
+                    result.append(contentsOf: inlines.suffix(from: i + 1))
+                    // Cursor stays at the same offset (inside the
+                    // unwrapped text run).
+                    return (result, offset)
+                case .bold(let children, let marker):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .bold(inner, marker: marker)
+                        return (result, acc + innerCursor)
+                    }
+                case .italic(let children, let marker):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .italic(inner, marker: marker)
+                        return (result, acc + innerCursor)
+                    }
+                case .strikethrough(let children):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .strikethrough(inner)
+                        return (result, acc + innerCursor)
+                    }
+                case .underline(let children):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .underline(inner)
+                        return (result, acc + innerCursor)
+                    }
+                case .highlight(let children):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .highlight(inner)
+                        return (result, acc + innerCursor)
+                    }
+                case .superscript(let children):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .superscript(inner)
+                        return (result, acc + innerCursor)
+                    }
+                case .`subscript`(let children):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .`subscript`(inner)
+                        return (result, acc + innerCursor)
+                    }
+                case .kbd(let children):
+                    if let (inner, innerCursor) = unwrapLinkInInlines(
+                        children, at: offset - acc
+                    ) {
+                        var result = inlines
+                        result[i] = .kbd(inner)
+                        return (result, acc + innerCursor)
+                    }
+                default:
+                    break
+                }
+            }
+            acc += nodeLen
+        }
+        return nil
+    }
+
     /// Whitelisted diagram / math language identifiers. These are languages
     /// that are (a) never useful to type as literal code content on their
     /// own line, and (b) only render correctly in FSNotes++ via a specific

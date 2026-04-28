@@ -92,6 +92,26 @@ extension EditTextView {
         }
     }
 
+    /// Unwrap the link enclosing the cursor via the block-model
+    /// `EditingOps.unwrapLink` primitive. Returns `true` when the
+    /// edit was applied, `false` when block-model is inactive or the
+    /// primitive threw (no link at cursor — caller should fall through
+    /// to the source-mode regex path). Companion of
+    /// `insertLinkViaBlockModel`.
+    private func unwrapLinkViaBlockModel(at storageIndex: Int) -> Bool {
+        guard let projection = documentProjection else { return false }
+        do {
+            let result = try EditingOps.unwrapLink(
+                at: storageIndex, in: projection
+            )
+            applyBlockModelResult(result, actionName: "Remove Link")
+            return true
+        } catch {
+            bmLog("⚠️ unwrapLink failed: \(error)")
+            return false
+        }
+    }
+
     private func showLinkDialog() {
         guard let window = self.window else { return }
 
@@ -126,6 +146,20 @@ extension EditTextView {
                 self.insertText(markdown, replacementRange: range)
             } else if response == .alertThirdButtonReturn {
                 let range = self.selectedRange()
+
+                // WYSIWYG path: ask EditingOps to find the link
+                // enclosing the cursor and replace it with its display
+                // text. Markers don't exist in WYSIWYG storage so the
+                // regex fallback below can't match.
+                if self.unwrapLinkViaBlockModel(at: range.location) {
+                    return
+                }
+
+                // Source-mode fallback: regex over the surrounding
+                // paragraph text. No `performingLegacyStorageWrite`
+                // wrapper needed — the 5a assertion is gated on
+                // `blockModelActive && !sourceRendererActive`, both
+                // false in source mode.
                 guard let storage = self.textStorage else { return }
                 let nsString = storage.string as NSString
                 let paraRange = nsString.paragraphRange(for: range)
@@ -139,10 +173,7 @@ extension EditTextView {
                         let textRange = match.range(at: 1)
                         let displayText = (paraString as NSString).substring(with: textRange)
                         let fullRange = NSRange(location: paraRange.location + match.range.location, length: match.range.length)
-                        // Phase 5a bypass — see linkMenu() above.
-                        StorageWriteGuard.performingLegacyStorageWrite {
-                            self.insertText(displayText, replacementRange: fullRange)
-                        }
+                        self.insertText(displayText, replacementRange: fullRange)
                     }
                 }
             }

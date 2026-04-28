@@ -1308,4 +1308,83 @@ class BlockModelFormattingTests: XCTestCase {
             "Serialized output missing link: \(serialized)"
         )
     }
+
+    // MARK: - unwrapLink (Phase 5a remove-link IBAction retirement)
+
+    func test_unwrapLink_paragraph_cursorInsideLinkText() throws {
+        // Pre: "Click [here](https://example.com) please" — rendered
+        // text is "Click here please" (17 chars). "here" runs from
+        // offset 6 to 10. Cursor at 8 = inside the link text.
+        let proj = project("Click [here](https://example.com) please\n")
+        let result = try EditingOps.unwrapLink(at: 8, in: proj)
+        assertRoundTrip(result, expected: "Click here please\n")
+        assertSpliceInvariant(old: proj, result: result)
+        // Cursor should still be at offset 8 ("h-e-|r-e" in "here").
+        XCTAssertEqual(result.newCursorPosition, 8)
+    }
+
+    func test_unwrapLink_paragraph_cursorAtLinkStart() throws {
+        let proj = project("Click [here](https://example.com) please\n")
+        let result = try EditingOps.unwrapLink(at: 6, in: proj)
+        assertRoundTrip(result, expected: "Click here please\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_unwrapLink_paragraph_noLinkAtCursor_throws() {
+        let proj = project("No links here\n")
+        XCTAssertThrowsError(try EditingOps.unwrapLink(at: 5, in: proj))
+    }
+
+    func test_unwrapLink_heading_throws_becauseSuffixIsPlainString() {
+        // Headings store `suffix: String` rather than `[Inline]`, so
+        // `parseInlinesFromText` (used by EditingOps) returns the
+        // suffix as a single `.text` node — there is no `Inline.link`
+        // for unwrapLink to find. The IBAction relies on the
+        // source-mode regex fallback for headings, which works because
+        // heading suffixes render as literal text in storage (markers
+        // included), unlike paragraphs / list items / blockquotes.
+        let proj = project("# [Title](https://example.com) tail\n")
+        XCTAssertThrowsError(try EditingOps.unwrapLink(at: 2, in: proj))
+    }
+
+    func test_unwrapLink_listItem_cursorInsideLink() throws {
+        // "- alpha [bravo](https://example.com) gamma" — list-item
+        // rendered text "alpha bravo gamma" (17 chars), with bullet
+        // attachment glyph at offset 0. Plain-text projection: bullet
+        // at 0, "a" of alpha at 1. "bravo" runs from offset 7 to 11.
+        let proj = project("- alpha [bravo](https://example.com) gamma\n")
+        let result = try EditingOps.unwrapLink(at: 9, in: proj)
+        assertRoundTrip(result, expected: "- alpha bravo gamma\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_unwrapLink_blockquote_cursorInsideLink() throws {
+        // "> alpha [bravo](https://example.com)\n" — blockquote line
+        // plain text "alpha bravo". "bravo" runs from offset 6.
+        let proj = project("> alpha [bravo](https://example.com)\n")
+        let result = try EditingOps.unwrapLink(at: 8, in: proj)
+        assertRoundTrip(result, expected: "> alpha bravo\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_unwrapLink_nestedInBold_cursorInsideLink() throws {
+        // "Visit **[the docs](https://example.com)** today" — rendered
+        // "Visit the docs today" (20 chars). Bold span "the docs" at
+        // 6-14 contains a link of the same span. Cursor at 9 is
+        // inside both.
+        let proj = project("Visit **[the docs](https://example.com)** today\n")
+        let result = try EditingOps.unwrapLink(at: 9, in: proj)
+        assertRoundTrip(result, expected: "Visit **the docs** today\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
+
+    func test_unwrapLink_paragraph_multipleLinks_picksFirstMatch() throws {
+        // Two links; cursor in the second one.
+        let proj = project("[a](https://a.com) and [b](https://b.com) end\n")
+        // Rendered: "a and b end" — "a" at 0, " and " at 1-5, "b" at 6.
+        let result = try EditingOps.unwrapLink(at: 6, in: proj)
+        // First link untouched, second unwrapped.
+        assertRoundTrip(result, expected: "[a](https://a.com) and b end\n")
+        assertSpliceInvariant(old: proj, result: result)
+    }
 }

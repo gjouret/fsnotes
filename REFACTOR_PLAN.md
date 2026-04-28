@@ -42,19 +42,21 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 
 ### Phase 5a bypass retirement
 
-7 production call sites remain wrapped in `StorageWriteGuard.performingLegacyStorageWrite` with TODOs (down from 14). Audit live: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'`.
+6 production call sites remain wrapped in `StorageWriteGuard.performingLegacyStorageWrite` with TODOs (down from 14). Audit live: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'`.
 
 | Bucket | Sites | Clean fix |
 |---|---:|---|
 | Fold re-splice in `TextStorageProcessor` | 1 | Route through `applyDocumentEdit` proper |
 | Async attachment hydration (inline math ×2, PDF ×2, QuickLook ×1) | 5 | Each callback needs an `EditContract` inverse so the swap can route through `applyEditResultWithUndo` |
-| Formatting-IBAction `insertText` — `showLinkDialog` "Remove Link" regex path only | 1 (was 8) | Future `EditingOps.unwrapLink(at:in:)` primitive |
+| Formatting-IBAction `insertText` | 0 (was 8) | **Bucket fully retired** |
 
 Each bucket is independently revertible. Pairs naturally with Phase 5f's `UndoJournal` Tier-A inverses for the async-hydration cases.
 
 **Slice landed (link IBAction retirement, commit `0444769`)**: `linkMenu` + `showLinkDialog` insert paths now route through `EditingOps.wrapInLink(range:url:displayText:in:)` for WYSIWYG. Two former WYSIWYG bypasses retired (the previous code injected literal `[text](url)` markdown into rendered storage — a real bug, not a stylistic violation). The source-mode fallback no longer needs the `performingLegacyStorageWrite` wrapper because the 5a assertion is gated on `blockModelActive && !sourceRendererActive` — both false in source mode. `wrapInLink` supports paragraph / heading / list / blockquote / blankLine; cross-block selections throw `crossBlockRange`. Heading body uses `MarkdownSerializer.serializeInlines` to round-trip the link through `Heading.suffix` (a `String`, not `[Inline]`); the renderer-side flatten is bug #52 territory and out of scope for this slice. 9 unit tests in `BlockModelFormattingTests`.
 
-**Slice landed (code-span / code-block / table source-mode wrapper drop)**: `insertCodeSpan` now routes through the existing `toggleInlineTraitViaBlockModel(.code)` for WYSIWYG (which already supports `.code` — wraps the selection in `Inline.code(text)` for non-empty selections, or sets the pending `.code` typing trait for empty selections). The `EditTextView.toggleInlineTrait(.code, ...)` primitive already had wrap/unwrap test coverage. Source-mode bypass wrappers dropped from `insertCodeSpan` ×2, `insertCodeBlock` ×2, and `insertTableMenu` ×1 — same gating-via-`sourceRendererActive` reasoning as the link slice. Five further bypasses retired in this slice. The `showLinkDialog` "Remove Link" button is the single remaining formatting bypass — a regex-on-source-mode-text path that doesn't fire in WYSIWYG; future `EditingOps.unwrapLink` primitive will close it.
+**Slice landed (code-span / code-block / table source-mode wrapper drop, commit `35be87f`)**: `insertCodeSpan` now routes through the existing `toggleInlineTraitViaBlockModel(.code)` for WYSIWYG (which already supports `.code` — wraps the selection in `Inline.code(text)` for non-empty selections, or sets the pending `.code` typing trait for empty selections). The `EditTextView.toggleInlineTrait(.code, ...)` primitive already had wrap/unwrap test coverage. Source-mode bypass wrappers dropped from `insertCodeSpan` ×2, `insertCodeBlock` ×2, and `insertTableMenu` ×1 — same gating-via-`sourceRendererActive` reasoning as the link slice. Five further bypasses retired in this slice.
+
+**Slice landed (remove-link IBAction retirement)**: `showLinkDialog`'s "Remove Link" button now routes through `EditingOps.unwrapLink(at:in:)` for WYSIWYG. The primitive walks the cursor's containing block (paragraph / list item / blockquote line — heading suffixes are stored as `String` so they fall through to the regex), recurses through container traits (`.bold` / `.italic` / etc.), finds the `Inline.link` enclosing the cursor, and replaces it with its `text` contents. Source-mode regex fallback retained without the bypass wrapper — heading suffixes need it because the link markers stay in heading storage as literal text. 8 unit tests covering paragraph / list / blockquote / nested-in-bold / multiple-links / no-link-at-cursor / heading-falls-through. **Formatting-IBAction bucket fully retired (8 → 0).**
 
 **Latent risk class**: any new menu/toolbar IBAction calling `insertText(_:replacementRange:)` will hit the same `_insertText:replacementRange:` private bypass that Phase 5a's assertion catches. Rule-7 gate doesn't catch this (the grep pattern only flags `performEditingTransaction`); protection is discipline + the DEBUG assertion during dogfood.
 
