@@ -652,26 +652,17 @@ enum QuickLookAttachmentProcessor {
 
         bmLog("📎 QuickLookProcessor: \(attachmentCount) attachments found, \(replacements.count) to replace")
 
-        // Apply replacements in reverse order
+        // Apply replacements in reverse order. Each `range` covers
+        // exactly one U+FFFC attachment character; the swap is
+        // attribute-only (NSTextAttachment instance + class).
+        // Metadata attributes (.attachmentUrl / .attachmentPath /
+        // .attachmentTitle) stay intact. No character change → no
+        // `.editedCharacters` event → no Phase 5a assertion trip → no
+        // `performingLegacyStorageWrite` wrapper needed.
         for (range, attachment) in replacements.reversed() {
-            let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil)
-            let path = textStorage.attribute(.attachmentPath, at: range.location, effectiveRange: nil)
-            let title = textStorage.attribute(.attachmentTitle, at: range.location, effectiveRange: nil)
-
-            let replacement = NSMutableAttributedString(attachment: attachment)
-            let repRange = NSRange(location: 0, length: replacement.length)
-            if let url = url { replacement.addAttribute(.attachmentUrl, value: url, range: repRange) }
-            if let path = path { replacement.addAttribute(.attachmentPath, value: path, range: repRange) }
-            if let title = title { replacement.addAttribute(.attachmentTitle, value: title, range: repRange) }
-
-            // Phase 5a: async QuickLook attachment hydration — same
-            // U+FFFC-for-U+FFFC class-upgrade swap as the PDF /
-            // inline-math paths.
-            // TODO: move to an attribute-only swap so storage chars
-            // stay put.
-            StorageWriteGuard.performingLegacyStorageWrite {
-                textStorage.replaceCharacters(in: range, with: replacement)
-            }
+            textStorage.beginEditing()
+            textStorage.addAttribute(.attachment, value: attachment, range: range)
+            textStorage.endEditing()
         }
     }
 }

@@ -603,29 +603,20 @@ enum PDFAttachmentProcessor {
 
         bmLog("📄 PDFAttachmentProcessor: \(attachmentCount) attachments found, \(replacements.count) to replace")
 
-        // Apply replacements in reverse order
+        // Apply replacements in reverse order. Each `range` came from
+        // `enumerateAttribute(.attachment)` so it covers exactly one
+        // U+FFFC character — the same character that survives after
+        // the swap. The metadata attributes (.attachmentUrl,
+        // .attachmentPath, .attachmentTitle) stay intact across the
+        // attribute-only update; only the `.attachment` value
+        // (the NSTextAttachment instance) changes class. No character
+        // change → no `.editedCharacters` event → no Phase 5a
+        // assertion trip → no `performingLegacyStorageWrite` wrapper
+        // needed.
         for (range, attachment) in replacements.reversed() {
-            // Preserve metadata attributes
-            let url = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil)
-            let path = textStorage.attribute(.attachmentPath, at: range.location, effectiveRange: nil)
-            let title = textStorage.attribute(.attachmentTitle, at: range.location, effectiveRange: nil)
-
-            let replacement = NSMutableAttributedString(attachment: attachment)
-            let repRange = NSRange(location: 0, length: replacement.length)
-            if let url = url { replacement.addAttribute(.attachmentUrl, value: url, range: repRange) }
-            if let path = path { replacement.addAttribute(.attachmentPath, value: path, range: repRange) }
-            if let title = title { replacement.addAttribute(.attachmentTitle, value: title, range: repRange) }
-
-            // Phase 5a: async PDF attachment hydration — same U+FFFC-
-            // for-U+FFFC swap pattern as inline-math / mermaid. Post-
-            // render, `Document` is already correct; this is purely
-            // the storage-side attachment-class upgrade.
-            // TODO: reshape to an attribute-only pass (set the
-            // `.attachment` attribute on the existing character) so
-            // no character replacement is needed.
-            StorageWriteGuard.performingLegacyStorageWrite {
-                textStorage.replaceCharacters(in: range, with: replacement)
-            }
+            textStorage.beginEditing()
+            textStorage.addAttribute(.attachment, value: attachment, range: range)
+            textStorage.endEditing()
         }
     }
 
@@ -673,15 +664,12 @@ enum PDFAttachmentProcessor {
             replacement.addAttribute(.renderedBlockOriginalMarkdown, value: originalMarkdown, range: repRange)
             replacement.addAttribute(.renderedBlockType, value: RenderedBlockType.pdf, range: repRange)
 
-            // Phase 5a: markdown-form PDF reference → attachment
-            // replacement, runs in block-model-off paths (source-mode
-            // fallback). Source mode is excluded from the 5a assertion
-            // already, but wrapping keeps the audit consistent.
-            // TODO: drive from the Document model so the attachment
-            // character is present from the first render.
-            StorageWriteGuard.performingLegacyStorageWrite {
-                textStorage.replaceCharacters(in: fullMatchRange, with: replacement)
-            }
+            // Markdown-form PDF reference → attachment replacement.
+            // Runs in block-model-off paths (source-mode fallback).
+            // Source mode is excluded from the 5a assertion already
+            // (`blockModelActive && !sourceRendererActive` is false),
+            // so no `performingLegacyStorageWrite` wrapper needed.
+            textStorage.replaceCharacters(in: fullMatchRange, with: replacement)
         }
     }
 }
