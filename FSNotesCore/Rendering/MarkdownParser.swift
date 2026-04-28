@@ -116,17 +116,22 @@ public enum MarkdownParser {
             // Table detection: a line containing "|" followed by a
             // separator line ("|", "-", ":", spaces). The raw buffer
             // might already contain the header line if the parser
-            // buffered it as a paragraph line. Check both cases:
+            // buffered it as a paragraph line. Check both modes:
             // (a) current line is header + next line is separator
             // (b) rawBuffer has one line (header) + current line is separator
-            if let tableBlock = detectTable(lines: lines, at: i, rawBuffer: rawBuffer, markdown: markdown) {
-                // If the header was in the rawBuffer, remove it.
-                if tableBlock.headerFromBuffer {
+            if let result = TableReader.read(
+                lines: lines,
+                at: i,
+                rawBuffer: rawBuffer,
+                trailingNewline: markdown.hasSuffix("\n"),
+                parseInlines: { parseInlines($0, refDefs: [:]) }
+            ) {
+                if result.headerFromBuffer {
                     rawBuffer.removeLast()
                 }
                 flushRawBuffer()
-                blocks.append(tableBlock.block)
-                i = tableBlock.nextIndex
+                blocks.append(result.block)
+                i = result.nextIndex
                 continue
             }
 
@@ -1042,164 +1047,6 @@ public enum MarkdownParser {
             return true
         }
         return false
-    }
-
-    // MARK: - Table detection
-
-    /// Result of table detection: the block, the next line index to
-    /// continue parsing from, and whether the header was taken from
-    /// the rawBuffer (so the caller can remove it before flushing).
-    private struct TableDetection {
-        let block: Block
-        let nextIndex: Int
-        let headerFromBuffer: Bool
-    }
-
-    /// Try to detect a pipe-delimited table starting at line index `at`.
-    /// Two detection modes:
-    ///  (a) lines[at] is the header, lines[at+1] is the separator.
-    ///  (b) rawBuffer.last is the header, lines[at] is the separator.
-    /// Returns nil if no table is found.
-    ///
-    /// Each cell's raw string is parsed via `parseInlines` so the
-    /// table carries `TableCell` values (inline trees) rather than
-    /// opaque strings — this is the Option C unification, cells are
-    /// paragraphs.
-    private static func detectTable(
-        lines: [String],
-        at i: Int,
-        rawBuffer: [String],
-        markdown: String
-    ) -> TableDetection? {
-        // Mode (a): current line is header, next line is separator.
-        if i + 1 < lines.count {
-            let headerLine = lines[i]
-            let sepLine = lines[i + 1]
-            if !(i + 1 == lines.count - 1 && sepLine.isEmpty && markdown.hasSuffix("\n")),
-               isTableRow(headerLine),
-               isTableSeparator(sepLine) {
-                let headerStrings = parseTableRow(headerLine)
-                let alignments = parseAlignments(sepLine)
-                let colCount = headerStrings.count
-                let headerCells = headerStrings.map {
-                    TableCell(parseInlines($0, refDefs: [:]))
-                }
-                var dataRows: [[TableCell]] = []
-                var j = i + 2
-                while j < lines.count {
-                    let l = lines[j]
-                    if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") { break }
-                    guard isTableRow(l) else { break }
-                    var rowStrings = parseTableRow(l)
-                    // Pad or truncate to match header column count.
-                    while rowStrings.count < colCount { rowStrings.append("") }
-                    if rowStrings.count > colCount {
-                        rowStrings = Array(rowStrings.prefix(colCount))
-                    }
-                    let rowCells = rowStrings.map {
-                        TableCell(parseInlines($0, refDefs: [:]))
-                    }
-                    dataRows.append(rowCells)
-                    j += 1
-                }
-                return TableDetection(
-                    block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil),
-                    nextIndex: j,
-                    headerFromBuffer: false
-                )
-            }
-        }
-
-        // Mode (b): rawBuffer.last is the header, current line is separator.
-        if !rawBuffer.isEmpty, isTableSeparator(lines[i]) {
-            let headerLine = rawBuffer.last!
-            let sepLine = lines[i]
-            guard isTableRow(headerLine) else { return nil }
-            let headerStrings = parseTableRow(headerLine)
-            let alignments = parseAlignments(sepLine)
-            let colCount = headerStrings.count
-            let headerCells = headerStrings.map {
-                TableCell(parseInlines($0, refDefs: [:]))
-            }
-            var dataRows: [[TableCell]] = []
-            var j = i + 1
-            while j < lines.count {
-                let l = lines[j]
-                if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") { break }
-                guard isTableRow(l) else { break }
-                var rowStrings = parseTableRow(l)
-                while rowStrings.count < colCount { rowStrings.append("") }
-                if rowStrings.count > colCount {
-                    rowStrings = Array(rowStrings.prefix(colCount))
-                }
-                let rowCells = rowStrings.map {
-                    TableCell(parseInlines($0, refDefs: [:]))
-                }
-                dataRows.append(rowCells)
-                j += 1
-            }
-            return TableDetection(
-                block: .table(header: headerCells, alignments: alignments, rows: dataRows, columnWidths: nil),
-                nextIndex: j,
-                headerFromBuffer: true
-            )
-        }
-
-        return nil
-    }
-
-    /// Check if a line looks like a table row (contains at least one `|`).
-    private static func isTableRow(_ line: String) -> Bool {
-        return line.contains("|")
-    }
-
-    /// Check if a line is a table separator row: all cells contain only
-    /// `-`, `:`, and spaces (with at least one `-` per cell).
-    private static func isTableSeparator(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.contains("|") && trimmed.contains("-") else { return false }
-        let cells = parseTableRow(line)
-        guard !cells.isEmpty else { return false }
-        for cell in cells {
-            let c = cell.trimmingCharacters(in: .whitespaces)
-            if c.isEmpty { return false }
-            for ch in c {
-                guard ch == "-" || ch == ":" || ch == " " else { return false }
-            }
-            // Must have at least one dash.
-            guard c.contains("-") else { return false }
-        }
-        return true
-    }
-
-    /// Parse column alignments from a separator row.
-    private static func parseAlignments(_ line: String) -> [TableAlignment] {
-        let cells = parseTableRow(line)
-        return cells.map { cell -> TableAlignment in
-            let c = cell.trimmingCharacters(in: .whitespaces)
-            let left = c.hasPrefix(":")
-            let right = c.hasSuffix(":")
-            if left && right { return .center }
-            if right { return .right }
-            if left { return .left }
-            return .none
-        }
-    }
-
-    /// Split a pipe-delimited row into cell strings, trimming whitespace
-    /// from each cell. Handles leading and trailing `|`.
-    private static func parseTableRow(_ line: String) -> [String] {
-        var work = line
-        // Strip leading/trailing pipes if present.
-        let trimmed = work.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("|") {
-            work = String(trimmed.dropFirst())
-        }
-        if work.hasSuffix("|") {
-            work = String(work.dropLast())
-        }
-        let parts = work.split(separator: "|", omittingEmptySubsequences: false)
-        return parts.map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     // MARK: - List detection
