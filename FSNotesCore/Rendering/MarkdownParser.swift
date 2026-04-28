@@ -2029,9 +2029,14 @@ public enum MarkdownParser {
             return nil
         }
 
-        // Shortcut reference: [text] not followed by ( or [.
-        // Don't match if followed by ( — that's an inline link.
-        if j < chars.count && chars[j] == "(" { return nil }
+        // Shortcut reference: [text] not followed by `[`.
+        //
+        // CommonMark spec #568: even when a `(` follows `]`, the
+        // shortcut interpretation is still valid IF the `(...)` does
+        // not parse as a valid inline-link destination. Because this
+        // function is only consulted after `LinkParser.match` has
+        // already failed, reaching this point means the `(...)` is
+        // NOT a valid inline link — so we let the shortcut through.
         let key = normalizeLabel(text)
         if let def = refDefs[key] {
             let rawDest = buildRawDest(url: def.url, title: def.title)
