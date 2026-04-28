@@ -188,7 +188,7 @@ Setext heading promotion stays in `MarkdownParser.parse` because it depends on t
 
 **ListReader scope deliberately conservative.** The per-line classifier surface ports cleanly. The ~320-line block-loop multi-line list collection code, `buildItemTree` (recursive item-tree builder that calls back into `MarkdownParser.parse` for item-content re-parsing), `deepestOwner`, `leadingSpaceCount`, and `stripLeadingSpaces` STAY in `MarkdownParser`. They weave through container-block continuation rules, blank-line semantics, and recursive parser entry; porting them cleanly is its own slice (potentially 12.C.5.g, optional follow-up — the gain is structure, not LoC).
 
-Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped fourteen slices on top of the decomposition, advancing compliance to **648/652 (99.4%)** — see the per-slice write-up below.
+Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped sixteen slices on top of the decomposition, advancing compliance to **651/652 (99.8%)** — see the per-slice write-up below.
 
 ### Container-aware ref-def discovery (Phase 12.C.6.a)
 
@@ -341,7 +341,35 @@ Test threshold bumped: Lists 25 → 26. New regression test `test_parse_paragrap
 
 Closes spec example #325. Buckets: Lists 25/26 → 26/26 (100%). Overall 647/652 → 648/652 (99.4%).
 
-The remaining 4 failures cluster into: 0-space-indented lazy continuation through item content column (#290 — needs serializer+parser coordination because the editor's `[list, paragraph]` documents serialize to `- foo\nBar` which strict CommonMark would re-merge), nested-blockquote lazy continuation through stripped prefixes (#292, #293 — needs multi-level lazy continuation context to thread through the blockquote→list→blockquote container stack so the renderer's re-parse preserves it), and the documented wikilink-extension non-conformance (#590, accepted).
+### Multi-block-evidence lazy continuation (Phase 12.C.6.o)
+
+CommonMark §5.1 lazy continuation merges any non-block-starter, non-blank line into an open paragraph regardless of indent. Our list-block parser ran a narrow rule instead — merge only when `lineIndent > last.indent.count` — to preserve the editor layer's `[list, paragraph]` round-trip: those Documents serialize to `- foo\nbar` without an explicit `.blankLine` separator, and a fully-strict parser would re-merge them at load time.
+
+Spec #290 (`  1.  A paragraph\nwith two lines.\n\n          indented code\n\n      > A block quote.`) hits the gap: `with two lines.` at indent 0 should lazy-continue item 1's paragraph, but the narrow rule rejects (`0 > 2` is false). The parser falls through to `break`, terminating the list, and the deeply-indented code line and blockquote become top-level blocks instead of body content of item 1.
+
+**Compromise: multi-block-evidence look-ahead.** When the narrow rule rejects, the parser scans forward through consecutive lazy-continuation candidate lines (non-blank, non-marker, non-block-starter), then any blank gap, and reports `multiBlockEvidence = true` if the next non-blank line is indented to ≥ the item's content column. For #290 the look-ahead from `with two lines.` finds the 10-space-indented code line two lines later — proof the item has multi-block content — and licenses the lazy merge. `buildItemTree`'s existing continuation re-parse then emits the indented code block and blockquote as `body` blocks of item 1, matching the spec's `<ol><li><p>...</p><pre><code>...</code></pre><blockquote>...</blockquote></li></ol>` shape.
+
+Editor-produced `- foo\nbar` (no deep follower) continues to parse as `[list, paragraph]` because the look-ahead finds no qualifying line. The narrow rule's editor-round-trip property is preserved without sacrificing the spec case.
+
+Closes spec example #290. Buckets: List items 45/48 → 46/48 (96%). Overall 648/652 → 649/652 (99.5%).
+
+### Nested-blockquote lazy continuation via renderer prefix injection (Phase 12.C.6.p)
+
+Specs #292 (`> 1. > Blockquote\ncontinued here.`) and #293 (`> 1. > Blockquote\n> continued here.`) need the second line — `continued here.` after the outer blockquote's prefix is stripped — to lazy-continue the inner blockquote's paragraph through three container levels (outer blockquote → ordered list item → inner blockquote). Our line-oriented parser doesn't model the multi-level container stack that strict CommonMark uses for cross-container lazy continuation, and 12.C.6.o's multi-block-evidence look-ahead can't help: there's no follower at ≥ contentCol to license a merge.
+
+Both specs land in the same outer-blockquote internal state. `BlockquoteReader.read` captures `[BlockquoteLine("> ", "1. > Blockquote"), BlockquoteLine(prefix, "continued here.")]` where `prefix` is empty for #292 (lazy) and `"> "` for #293 (explicit). When `CommonMarkHTMLRenderer.renderBlockquote` reconstructs the inner markdown, both produce `1. > Blockquote\ncontinued here.\n`. The inner re-parse then sees:
+- list item with content `> Blockquote`
+- top-level paragraph `continued here.` (because `continued here.` at indent 0 falls outside the list item's content column 3 and below the inner blockquote's prefix detection)
+
+**Synthesise the multi-level continuation at the renderer.** When a continuation line follows an inner-content line that opens a list-item-with-inner-blockquote chain, inject `(contentCol spaces) + "> "` before the line body. The new `lazyContainerPrefix(forLine:previousLine:)` helper detects the chain — `ListReader.parseListLine(previousLine)` succeeds AND `BlockquoteReader.detect(previousLine.content)` matches — and returns the inheritance prefix. It skips injection when the current line would itself open a new block (heading, HR, fenced code, HTML block, list marker, blockquote marker) so legitimate top-level interrupts pass through unchanged.
+
+Apply to BOTH lazy-prefix and explicit-`> `-prefix lines. From the inner re-parse's perspective the two arrive identically as plain `continued here.`, so both need the same fix. The earlier draft's `isLazy`-only gate closed #292 but left #293 failing — dropping the gate and switching to a paragraph-continuation discriminator closes both with one condition.
+
+After injection the inner markdown for both specs becomes `1. > Blockquote\n   > continued here.\n`. The list parser's existing block-starter-as-continuation branch (`lineIndent >= cc && interruptsLazyContinuation(l)`) collects the prefixed line into the item's `continuationLines`, and `buildItemTree`'s `firstLineIsBlockStarter` combined re-parse emits `[blockquote(["Blockquote", "continued here."])]` as the item's body — matching the spec's `<blockquote><ol><li><blockquote><p>Blockquote\ncontinued here.</p></blockquote></li></ol></blockquote>` shape.
+
+Closes spec examples #292, #293. Buckets: List items 46/48 → 48/48 (100%). Overall 649/652 → 651/652 (99.8%).
+
+The sole remaining failure is documented wikilink-extension non-conformance (#590, accepted) — `![[foo]]` resolves to a wiki link by product design rather than literal text. 651/652 (99.8%) is the practical ceiling for FSNotes++ given the wikilink extension; pure-CommonMark conformance would land at 652/652 only by removing the extension, which is out of scope for the refactor.
 
 ## Editing FSMs by Block Type
 
@@ -883,11 +911,11 @@ Obsidian-style `</>` hover button that swaps a code block between its rendered f
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **648 / 652 passing (99.4%)** as of Phase 12.C.6.n (shipped 2026-04-28, commits `2d05378 → 94c211b`, +28 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is exceeded.
+Serializer compliance against CommonMark 0.31.2 spec: **651 / 652 passing (99.8%)** as of Phase 12.C.6.p (shipped 2026-04-28, commits `2d05378 → f998c6c`, +31 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is exceeded; 99.8% is the practical ceiling for FSNotes++ given the wikilink-extension boundary case (#590).
 
 Per-bucket state:
-- **100%**: Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, **HTML blocks (44/44, fixed in 12.C.6.i)**, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, **Links (90/90, fixed in 12.C.6.h)**, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content, **Tabs (11/11, fixed in 12.C.6.l)**, **Lists (26/26, fixed in 12.C.6.n)**.
-- **Near-perfect (90%+)**: List items 45/48 (after 12.C.6.k), Images 21/22.
+- **100%**: Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, **HTML blocks (44/44, fixed in 12.C.6.i)**, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, **Links (90/90, fixed in 12.C.6.h)**, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content, **Tabs (11/11, fixed in 12.C.6.l)**, **Lists (26/26, fixed in 12.C.6.n)**, **List items (48/48, fixed in 12.C.6.o + 12.C.6.p)**.
+- **Near-perfect (90%+)**: Images 21/22.
 
 Phase 12.C.6 ladder (against 620 baseline):
 - 12.C.6.a (`2d05378`): nested-blockquote ref-def discovery (#218) → 621/652.
@@ -904,10 +932,11 @@ Phase 12.C.6 ladder (against 620 baseline):
 - 12.C.6.l (`957b9be`): tab expansion in list-item indent + afterMarker (#9) → 645/652.
 - 12.C.6.m (`3b7d1f9`): invalid-marker rejection (#312, #313) → 647/652.
 - 12.C.6.n (`94c211b`): `ListItem.body: [Block]` redesign for paragraph-after-sublist source-order preservation (#325) → 648/652.
+- 12.C.6.o (`fa437c3`): multi-block-evidence lazy continuation (#290) → 649/652.
+- 12.C.6.p (`f998c6c`): nested-blockquote lazy continuation via renderer prefix injection (#292, #293) → 651/652.
 
-Remaining 4 failures cluster in:
-- **List items (3)**: residual multi-block items needing fixes for 0-space lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293).
-- **Images (1, #590)**: documented FSNotes++ wikilink-extension non-conformance.
+Sole remaining failure:
+- **Images (1, #590)**: documented FSNotes++ wikilink-extension non-conformance — `![[foo]]` resolves to a wiki link by product design rather than literal text.
 
 The full conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
 
