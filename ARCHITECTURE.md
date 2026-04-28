@@ -188,7 +188,7 @@ Setext heading promotion stays in `MarkdownParser.parse` because it depends on t
 
 **ListReader scope deliberately conservative.** The per-line classifier surface ports cleanly. The ~320-line block-loop multi-line list collection code, `buildItemTree` (recursive item-tree builder that calls back into `MarkdownParser.parse` for item-content re-parsing), `deepestOwner`, `leadingSpaceCount`, and `stripLeadingSpaces` STAY in `MarkdownParser`. They weave through container-block continuation rules, blank-line semantics, and recursive parser entry; porting them cleanly is its own slice (potentially 12.C.5.g, optional follow-up — the gain is structure, not LoC).
 
-Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) is now in progress and benefits from the decomposition.
+Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped seven slices on top of the decomposition, advancing compliance to **631/652 (96.8%)** — see the per-slice write-up below.
 
 ### Container-aware ref-def discovery (Phase 12.C.6.a)
 
@@ -201,13 +201,45 @@ CommonMark §4.7 allows link reference definitions to live inside any container 
 
 Closes spec example #218. Bucket: Link reference definitions 26/27 → 27/27 (100%). Overall CommonMark 620/652 → 621/652 (95.2%).
 
-### Unicode case fold for ref label normalization (Phase 12.C.6.b)
+### Ref label normalization (Phase 12.C.6.b + 12.C.6.c)
 
-CommonMark §4.7 specifies that link reference labels are normalized by Unicode case folding before matching. The previous implementation used Swift's `String.lowercased()`, which performs only single-codepoint case mapping. Multi-codepoint folds — most notably ẞ (U+1E9E, capital sharp S) folding to "ss" (two codepoints) — fall outside `lowercased()`'s capability and produce label mismatches when a definition uses one form and a reference uses the other.
+CommonMark §4.7 specifies that link reference labels are normalized in two steps: trim and collapse all whitespace runs (spaces, tabs, AND line ends) to a single space, then apply Unicode case folding. Two single-line edits to `normalizeLabel(_:)` close the two failure modes that were leaking through:
 
-`normalizeLabel(_:)` now uses `.folding(options: .caseInsensitive, locale: nil)` instead. Both definition-registration and reference-lookup pass through the same helper, so the change is symmetric.
+- **12.C.6.b — Unicode case fold (`495c121`).** Previous implementation used Swift's `.lowercased()`, which performs only single-codepoint case mapping. Multi-codepoint folds — most notably ẞ (U+1E9E, capital sharp S) folding to "ss" (two codepoints) — fall outside `lowercased()`'s capability. Switching to `.folding(options: .caseInsensitive, locale: nil)` gives the proper Unicode-aware fold. Closes spec example #540. Bucket: Links 76/90 → 77/90 (85%). Overall 621/652 → 622/652 (95.4%).
+- **12.C.6.c — Line-end-aware whitespace collapse (`ecbba98`).** Previous implementation split on " " and "\t" only, so a multi-line label `[Foo\n  bar]` normalized to `foo\n  bar` and never matched its single-line lookup `[Foo bar]`. Switching to `components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")` collapses every kind of whitespace run uniformly. Closes spec example #541. Bucket: Links 77/90 → 78/90 (87%). Overall 622/652 → 623/652 (95.6%).
 
-Closes spec example #540. Bucket: Links 76/90 → 78/90 (87%) — the targeted fix plus one bonus example that fell out of the same change. Overall CommonMark 621/652 → 623/652 (95.6%).
+Both changes pass through the single `normalizeLabel(_:)` helper, so registration and lookup remain symmetric.
+
+### Wikilink yields to brackets and ref-defs (Phase 12.C.6.d)
+
+The wikilink extension `[[target]]` previously won unconditionally over the standard CommonMark reference link, which produced two CommonMark-conformance failures even though wikilink itself is an accepted FSNotes++ extension. Two narrow rules tighten the wikilink path so it plays nicely with adjacent bracket structure and known ref-defs:
+
+- **Bracket-integrity (`WikilinkParser.match`).** The matcher fails if an extra `[` immediately precedes the opening `[[` or an extra `]` immediately follows the closing `]]`. Spec #548 (`[[[foo]]]`) is plain text — the wikilink must not consume the middle `[[foo]]` and leave stray brackets behind.
+- **Ref-def precedence (call site in `MarkdownParser.tokenizeNonEmphasis`).** When the wikilink target normalizes to a known link-reference-definition label, the regular ref-link parse wins. The outer `[` becomes a literal bracket, the inner `[target]` resolves through the ref-def, and the closing `]` is also literal. Spec #559 (`[[*foo* bar]]` + `[*foo* bar]: /url "title"`).
+
+The wikilink-as-fallback semantics for unmatched targets are preserved — spec #590 (`![[foo]]` with no matching ref-def) is the documented FSNotes++ extension and still emits a wikilink.
+
+Closes spec examples #548 and #559. Bucket: Links 78/90 → 80/90 (89%). Overall 623/652 → 625/652 (95.9%).
+
+### Shortcut ref-link works after failed inline link (Phase 12.C.6.e)
+
+`tryMatchReferenceLink` previously rejected the shortcut path whenever the closing `]` was followed by `(`, on the theory that `(` always indicates an inline link. That heuristic is too eager: the function is only consulted *after* `LinkParser.match` has already failed, so reaching it guarantees the `(...)` is NOT a valid inline-link destination. Removing the guard lets the shortcut activate as the spec intends — `[foo](not a link)` with `[foo]: /url1` defined now renders as ref-link `<a>foo</a>` followed by literal `(not a link)`.
+
+Closes spec example #568. Bucket: Links 80/90 → 81/90 (90%). Overall 625/652 → 626/652 (96.0%).
+
+### 4-space-indented marker can't interrupt a paragraph (Phase 12.C.6.f)
+
+CommonMark §4.4 / §5.2: a list marker indented 4+ spaces is lazy continuation, not a new block. The block-parse loop already had two "don't interrupt a paragraph" guards (bare-marker-at-EOL and ordered-start≠1); the missing third was indent ≥ 4. Adding `!(rawBuffer.count > 0 && leadingSpaceCount(firstParsed.indent) >= 4)` to the list-detection branch means `> foo\n    - bar` keeps `- bar` as paragraph continuation inside the blockquote rather than splitting the blockquote into paragraph + list.
+
+Closes spec example #238. Bucket: Block quotes 24/25 → 25/25 (100%). Overall 626/652 → 627/652 (96.2%).
+
+### Link bracket scan respects HTML / autolink boundaries (Phase 12.C.6.g)
+
+CommonMark §6.4: brackets inside an HTML attribute value or an autolink URL are protected — they're literal text inside another inline construct, not link delimiters. The link-text bracket scan in both `LinkParser.match` (inline-link path) and `tryMatchReferenceLink` (ref-link path) used to count every `[`/`]` on equal footing, so inputs like `[foo <bar attr="](baz)">` and `[foo <bar attr="][ref]">` had their `]` eaten by the link parser.
+
+Both scans now, when they see `<`, first try `AutolinkParser.match` then `RawHTMLParser.match`. A success advances the cursor to the construct's end and the bracket count is unaffected. If neither matches, the `<` falls through as ordinary text.
+
+Closes spec examples #524, #526, #536, #538. Bucket: Links 81/90 → 85/90 (94%). Overall 627/652 → 631/652 (96.8%).
 
 ## Editing FSMs by Block Type
 

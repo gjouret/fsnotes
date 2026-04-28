@@ -1972,6 +1972,16 @@ The CommonMark §6.2 emphasis algorithm is the canonical "stateful, ambiguous, h
 
 **Slice 12.C.6 — Push to 100%.** With the combinator architecture in place, the 32 residual failures become combinator tweaks (delimiter precedence, container-aware ref-def collection, multi-block list-item children). Each fix is a small grammar edit, not surgery on imperative state.
 
+Seven slices have shipped (12.C.6.a–g, commits `2d05378 → 07a55c9`), closing 11 spec examples (#218, #540, #541, #548, #559, #568, #238, #524, #526, #536, #538) and lifting compliance from 620/652 (95.1%) to 631/652 (96.8%). Two buckets reached 100% (Block quotes 25/25, Link reference definitions 27/27). See the status-snapshot table at the top of Phase 12 for per-slice details and the matching ARCHITECTURE.md sections for prose write-ups.
+
+The remaining 21 failures cluster into three structural buckets, each larger than the small grammar edits the .a–.g ladder has been delivering:
+
+- **Link-in-link literalization (5 failures: #518, #519, #520, #532, #533).** CommonMark §6.4 specifies an "inactive link" delimiter-stack pass that marks already-consumed link brackets as inactive so a surrounding bracket pair can't re-activate them. Implementing this requires a delimiter-stack rewrite of the link parser comparable in scope to 12.C.4's emphasis port, not a grammar tweak.
+- **Multi-block list-item children (13 failures: #278, #289, #290, #292, #293, #300, #312, #313, #318, #320, #321, #324, #325 + 2 family-adjacent failures #9 Tabs and #175 HTML blocks).** All driven by `ListItem.children: [ListItem]`; the spec requires `[Block]` so an item can directly own fenced code, blockquote, HTML block, etc. ~107 call sites. Tracked as a candidate Phase 11 / Slice B in this document.
+- **Documented FSNotes++ wikilink-extension non-conformance (1 failure: #590).** `![[foo]]` with no matching ref-def remains a wikilink rather than literal text. Accepted, not fixed — wikilinks are a product feature and #590 is the boundary case where CommonMark and the extension disagree.
+
+Per-bucket gating remains intact: every commit holds existing buckets at or above their pre-commit pass count, and the threshold floors in `CommonMarkSpecTests` were bumped to lock in each slice's gain (Block quotes 17 → 25, Link reference definitions 22 → 27, Links 75 → 85).
+
 **Exit criteria (phase-wide for 12.C):**
 - `MarkdownParser.swift` shrinks below 2,000 LoC (combinator library lives separately).
 - CommonMark compliance reaches 100% (652/652).
