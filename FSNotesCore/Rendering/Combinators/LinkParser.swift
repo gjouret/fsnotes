@@ -47,8 +47,11 @@ public enum LinkParser {
         guard start < chars.count, chars[start] == "[" else { return nil }
 
         // 1. Find matching `]`, handling bracket nesting, backslash
-        //    escapes, and code-span boundaries (brackets inside a
-        //    code span do not count as link delimiters).
+        //    escapes, code-span boundaries (brackets inside a code
+        //    span do not count as link delimiters), and raw HTML
+        //    tag/autolink boundaries (CommonMark §6.4 spec #524, #526:
+        //    brackets inside an HTML attribute value or autolink URL
+        //    are protected from link-text scanning).
         var bracketDepth = 1
         var j = start + 1
         while j < chars.count && bracketDepth > 0 {
@@ -65,6 +68,16 @@ public enum LinkParser {
                 }
             }
             if inCodeSpan { continue }
+            if chars[j] == "<" {
+                if let auto = AutolinkParser.match(chars, from: j) {
+                    j = auto.endIndex
+                    continue
+                }
+                if let html = RawHTMLParser.match(chars, from: j) {
+                    j = html.endIndex
+                    continue
+                }
+            }
             if chars[j] == "[" {
                 bracketDepth += 1
             } else if chars[j] == "]" {

@@ -460,7 +460,7 @@ class CommonMarkSpecTests: XCTestCase {
     // inside link text) that would require a delimiter-stack rewrite —
     // out of scope for the TK2 migration work.
     func test_links() {
-        assertSection("Links", passesAtLeast: 81)
+        assertSection("Links", passesAtLeast: 85)
     }
 
     // --- Images (22 examples) ---

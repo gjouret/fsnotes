@@ -2002,11 +2002,24 @@ public enum MarkdownParser {
     ) -> (text: String, dest: String, endIndex: Int)? {
         guard start < chars.count && chars[start] == "[" else { return nil }
 
-        // Find closing ] for the text part.
+        // Find closing ] for the text part. Skip over autolinks and
+        // raw HTML tags (CommonMark §6.4 spec #536, #538: brackets
+        // inside an HTML attribute value or autolink URL are
+        // protected from link-text scanning).
         var j = start + 1
         var depth = 1
         while j < chars.count && depth > 0 {
             if chars[j] == "\\" && j + 1 < chars.count { j += 2; continue }
+            if chars[j] == "<" {
+                if let auto = AutolinkParser.match(chars, from: j) {
+                    j = auto.endIndex
+                    continue
+                }
+                if let html = RawHTMLParser.match(chars, from: j) {
+                    j = html.endIndex
+                    continue
+                }
+            }
             if chars[j] == "[" { depth += 1 }
             if chars[j] == "]" { depth -= 1 }
             j += 1
