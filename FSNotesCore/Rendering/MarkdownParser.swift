@@ -203,6 +203,27 @@ public enum MarkdownParser {
                                 // Top-level item with different marker type — new list.
                                 break
                             }
+                            // CommonMark §5.2: a marker indent that is
+                            // not a valid top-level sibling AND not
+                            // valid as a nested item under the most
+                            // recently appended item terminates the
+                            // list. After a blank, the line falls
+                            // through to the outer loop where the
+                            // top-level indented-code-block detector
+                            // picks it up. Spec #313:
+                            //     1. a
+                            //
+                            //       2. b
+                            //
+                            //         3. c
+                            // — `3. c` at marker col 4 is past the
+                            // top-level cap [0,3] AND below b's content
+                            // col 5, so it is neither a sibling nor a
+                            // child. The list closes after b; `3. c`
+                            // becomes top-level indented code.
+                            if !canAppendListMarker(nextParsed, parsedLines: parsedLines, topIndent: topIndent) {
+                                break
+                            }
                             // Continue: skip blank line(s), mark as loose.
                             hasBlankLines = true
                             nextItemFollowsBlank = true
@@ -334,7 +355,27 @@ public enum MarkdownParser {
                        HorizontalRuleReader.detect(l) != nil {
                         break
                     }
-                    guard var parsed = ListReader.parseListLine(l) else {
+                    // CommonMark §5.2: a parsed marker is only a real
+                    // marker in this list when its indent satisfies
+                    // [topIndent, topIndent+3] (top-level sibling) OR is
+                    // ≥ the most recently appended item's content
+                    // column (nested under last). Otherwise the line is
+                    // NOT a marker for this list — fall through to the
+                    // lazy-continuation logic below. Spec #312:
+                    //     - a
+                    //      - b
+                    //       - c
+                    //        - d
+                    //         - e
+                    // — `- e` at marker col 4 is past [0,3] AND below
+                    // d's content col 5, so it is neither sibling nor
+                    // child. With no preceding blank, the narrow
+                    // lazy-continuation rule merges it into d's
+                    // paragraph as `d\n- e`.
+                    let validMarker = ListReader.parseListLine(l).flatMap { p -> ListReader.ParsedListLine? in
+                        canAppendListMarker(p, parsedLines: parsedLines, topIndent: topIndent) ? p : nil
+                    }
+                    guard var parsed = validMarker else {
                         // Non-list line without a preceding blank.
                         //
                         // Narrow lazy continuation: if the line is
@@ -1436,6 +1477,34 @@ public enum MarkdownParser {
         }
         tail.append(contentsOf: chars[idx..<chars.count])
         return String(tail)
+    }
+
+    /// Whether `parsed` is a valid list marker to append to an open
+    /// list with `parsedLines` collected so far and outermost marker
+    /// indent `topIndent`. CommonMark §5.2: a marker line opens a new
+    /// item iff
+    ///   • its marker indent satisfies [topIndent, topIndent+3]
+    ///     (sibling at the outermost level), OR
+    ///   • its marker indent ≥ the most recently appended item's
+    ///     content column (nested under the deepest open item).
+    /// A marker that fails both is NOT a marker for this list —
+    /// callers fall through to lazy continuation (no preceding blank,
+    /// spec #312) or terminate the list (preceding blank, spec #313).
+    private static func canAppendListMarker(
+        _ parsed: ListReader.ParsedListLine,
+        parsedLines: [ListReader.ParsedListLine],
+        topIndent: Int
+    ) -> Bool {
+        let markerIndent = parsed.indent.count
+        // Top-level sibling slot: marker indent within K∈[0,3] of the
+        // outermost list edge.
+        if markerIndent <= topIndent + 3 { return true }
+        // Nested under the most recently appended item.
+        if let last = parsedLines.last {
+            let lastCC = last.indent.count + last.marker.count + last.afterMarker.count
+            if markerIndent >= lastCC { return true }
+        }
+        return false
     }
 
     /// Find the deepest existing parsed item whose content column is

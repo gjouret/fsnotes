@@ -416,9 +416,12 @@ class CommonMarkSpecTests: XCTestCase {
     // 12.C.6.i routes indented block-starters at item content column
     // into the current item's continuation, and `buildItemTree`
     // re-parses combined first-line + continuation content when the
-    // first line opens a non-paragraph block).
+    // first line opens a non-paragraph block). Phase 12.C.6.m closes
+    // #312 (lazy continuation of an invalid-marker line into the
+    // deepest open paragraph) and #313 (terminate the list when an
+    // invalid-marker line follows a blank).
     func test_lists() {
-        assertSection("Lists", passesAtLeast: 23)
+        assertSection("Lists", passesAtLeast: 25)
     }
 
     // --- HTML Blocks (44 examples) ---

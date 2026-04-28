@@ -309,7 +309,23 @@ Test threshold bumped: Tabs 2 → 11.
 
 Closes spec example #9. Buckets: Tabs 10/11 → 11/11 (100%). Overall 644/652 → 645/652 (98.9%).
 
-The remaining 7 failures cluster into: 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
+### Invalid-marker rejection (Phase 12.C.6.m)
+
+Two related fixes. The inner list-collection loop was appending every `parseListLine`-successful marker to `parsedLines` without checking whether the marker indent was actually valid for the current open list. CommonMark §5.2 requires a marker to satisfy one of two indent conditions to open a new item:
+
+- **Top-level sibling slot:** marker indent within K∈[0,3] of the outermost list edge (`topListEdge`). For top-level lists this means marker indent ≤ 3.
+- **Nested under deepest open item:** marker indent ≥ the most recently appended item's content column.
+
+A marker that fails both is NOT a marker for the current list. The fix encodes this rule once in a new private helper `canAppendListMarker(_ parsed, parsedLines, topIndent)` and gates two distinct call sites:
+
+- **BLANK-line peek branch.** When the next non-blank line is a marker but its indent is invalid, the list terminates rather than continuing across the blank. Spec #313 `1. a\n\n  2. b\n\n    3. c\n`: after b (content col 5), `3. c` at marker col 4 is past the top-level cap [0,3] AND below b's content col, so it is neither sibling nor child. The list closes after b; the outer block loop then picks up `3. c` as a top-level indented code block (col 4 ≥ 4).
+- **NON-BLANK branch.** When the parsed marker is invalid in this list's context AND there's no preceding blank, the line falls through to the else branch's lazy-continuation logic, where it merges into the deepest open paragraph. Spec #312 `- a\n - b\n  - c\n   - d\n    - e\n`: after d (content col 5), `- e` at marker col 4 is invalid; the narrow lazy-continuation rule (`lineIndent > last.indent.count && !interruptsLazyContinuation(l)`) merges the line into d's paragraph as `d\n- e`. The implementation wraps `parseListLine(l)` in a `flatMap` that returns nil for invalid markers, which converts the success case into the same control flow as the parse-fail case — leaving the existing else-branch logic untouched.
+
+Test threshold bumped: Lists 23 → 25.
+
+Closes spec examples #312, #313. Buckets: Lists 23/26 → 25/26 (96%). Overall 645/652 → 647/652 (99.2%).
+
+The remaining 5 failures cluster into: 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
 
 ## Editing FSMs by Block Type
 
