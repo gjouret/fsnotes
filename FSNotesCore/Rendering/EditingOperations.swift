@@ -1029,13 +1029,27 @@ public enum EditingOps {
                 in: block, from: fromOffset, to: toOffset, with: replacement
             )
 
-        case .list(let items, _):
-            return try replaceInList(items: items, from: fromOffset, to: toOffset, with: replacement)
+        case .list:
+            // Phase 12.B.5: per-kind editor extracted to ListBlockEditor.
+            return try ListBlockEditor.replace(
+                in: block, from: fromOffset, to: toOffset, with: replacement
+            )
 
-        case .blockquote(let lines):
-            return try replaceInBlockquote(lines: lines, from: fromOffset, to: toOffset, with: replacement)
+        case .blockquote:
+            // Phase 12.B.6: per-kind editor extracted to BlockquoteBlockEditor.
+            return try BlockquoteBlockEditor.replace(
+                in: block, from: fromOffset, to: toOffset, with: replacement
+            )
 
-        default:
+        case .blankLine, .horizontalRule, .table, .htmlBlock:
+            // Phase 12.B.6 closes the exhaustive switch — these kinds
+            // historically fell through `default: throw .unsupported`
+            // because callers never hit them on the replace path. To
+            // keep the existing behavior byte-equal while removing the
+            // catch-all, throw the same error explicitly. If a future
+            // caller wants `replace` for these kinds, swap the throw
+            // for `BlankLineBlockEditor.replace(...)` etc. — the
+            // editors already implement the trivial bodies.
             throw EditingError.unsupported(
                 reason: "replaceInBlock: not supported for \(describe(block))"
             )
@@ -1043,7 +1057,7 @@ public enum EditingOps {
     }
 
     /// Replace within a list item's inline content.
-    private static func replaceInList(
+    static func replaceInList(
         items: [ListItem],
         from fromOffset: Int,
         to toOffset: Int,
@@ -1091,7 +1105,7 @@ public enum EditingOps {
     }
 
     /// Replace within a blockquote line's inline content.
-    private static func replaceInBlockquote(
+    static func replaceInBlockquote(
         lines: [BlockquoteLine],
         from fromOffset: Int,
         to toOffset: Int,
@@ -3365,11 +3379,17 @@ public enum EditingOps {
                 into: block, offsetInBlock: offsetInBlock, string: string
             )
 
-        case .list(let items, _):
-            return try insertIntoList(items: items, offsetInBlock: offsetInBlock, string: string)
+        case .list:
+            // Phase 12.B.5: per-kind editor extracted to ListBlockEditor.
+            return try ListBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
+            )
 
-        case .blockquote(let lines):
-            return try insertIntoBlockquote(lines: lines, offsetInBlock: offsetInBlock, string: string)
+        case .blockquote:
+            // Phase 12.B.6: per-kind editor extracted to BlockquoteBlockEditor.
+            return try BlockquoteBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
+            )
 
         case .htmlBlock:
             // Phase 12.B.3: per-kind editor extracted to HtmlBlockBlockEditor.
@@ -3424,11 +3444,17 @@ public enum EditingOps {
                 in: block, from: fromOffset, to: toOffset
             )
 
-        case .list(let items, _):
-            return try deleteInList(items: items, from: fromOffset, to: toOffset)
+        case .list:
+            // Phase 12.B.5: per-kind editor extracted to ListBlockEditor.
+            return try ListBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
-        case .blockquote(let lines):
-            return try deleteInBlockquote(lines: lines, from: fromOffset, to: toOffset)
+        case .blockquote:
+            // Phase 12.B.6: per-kind editor extracted to BlockquoteBlockEditor.
+            return try BlockquoteBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
         case .htmlBlock:
             // Phase 12.B.3: per-kind editor extracted to HtmlBlockBlockEditor.
@@ -3571,7 +3597,7 @@ public enum EditingOps {
 
     /// Insert into a list block's inline content. Finds the target item,
     /// splices its inline tree, reconstructs the full item tree.
-    private static func insertIntoList(
+    static func insertIntoList(
         items: [ListItem],
         offsetInBlock: Int,
         string: String
@@ -3611,7 +3637,7 @@ public enum EditingOps {
     /// Delete within a list block's inline content.
     /// Supports both single-item deletions and multi-item deletions (when
     /// the user selects across multiple list items and presses Delete).
-    private static func deleteInList(
+    static func deleteInList(
         items: [ListItem],
         from fromOffset: Int,
         to toOffset: Int
@@ -3965,7 +3991,7 @@ public enum EditingOps {
         return nil
     }
 
-    private static func insertIntoBlockquote(
+    static func insertIntoBlockquote(
         lines: [BlockquoteLine],
         offsetInBlock: Int,
         string: String
@@ -3998,7 +4024,7 @@ public enum EditingOps {
         return .blockquote(lines: newLines)
     }
 
-    private static func deleteInBlockquote(
+    static func deleteInBlockquote(
         lines: [BlockquoteLine],
         from fromOffset: Int,
         to toOffset: Int
