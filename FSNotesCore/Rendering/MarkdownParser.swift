@@ -485,45 +485,15 @@ public enum MarkdownParser {
 
             // HTML blocks: detect before paragraph buffer but after
             // code fences, headings, HR, blockquotes, lists.
-            if let htmlType = detectHTMLBlock(line),
-               // Type 7 cannot interrupt a paragraph (rawBuffer non-empty).
-               !(htmlType == 7 && !rawBuffer.isEmpty) {
+            if let result = HtmlBlockReader.read(
+                lines: lines,
+                from: i,
+                trailingNewline: markdown.hasSuffix("\n"),
+                rawBufferEmpty: rawBuffer.isEmpty
+            ) {
                 flushRawBuffer()
-                var htmlLines: [String] = [line]
-                i += 1
-
-                // Check if end condition is met on the opening line itself
-                // (types 1-5 have specific end markers that can appear on
-                // the same line as the start).
-                let endedOnOpeningLine = Self.htmlBlockEndsOnLine(line, type: htmlType)
-
-                if !endedOnOpeningLine {
-                    while i < lines.count {
-                        let nextLine = lines[i]
-                        if i == lines.count - 1 && nextLine.isEmpty && markdown.hasSuffix("\n") {
-                            break
-                        }
-                        if htmlType == 6 || htmlType == 7 {
-                            // Type 6/7: end at blank line (exclusive)
-                            if nextLine.trimmingCharacters(in: .whitespaces).isEmpty { break }
-                        }
-                        htmlLines.append(nextLine)
-                        if htmlType == 1 {
-                            let lower = nextLine.lowercased()
-                            if lower.contains("</pre>") || lower.contains("</script>") || lower.contains("</style>") || lower.contains("</textarea>") { i += 1; break }
-                        } else if htmlType == 2 {
-                            if nextLine.contains("-->") { i += 1; break }
-                        } else if htmlType == 3 {
-                            if nextLine.contains("?>") { i += 1; break }
-                        } else if htmlType == 4 {
-                            if nextLine.contains(">") { i += 1; break }
-                        } else if htmlType == 5 {
-                            if nextLine.contains("]]>") { i += 1; break }
-                        }
-                        i += 1
-                    }
-                }
-                blocks.append(.htmlBlock(raw: htmlLines.joined(separator: "\n")))
+                blocks.append(result.block)
+                i = result.nextIndex
                 continue
             }
 
@@ -694,244 +664,6 @@ public enum MarkdownParser {
             widths.append(CGFloat(d))
         }
         return widths
-    }
-
-    // MARK: - HTML block detection
-
-    /// Block-level HTML tag names (CommonMark spec, type 6).
-    private static let htmlBlockTags: Set<String> = [
-        "address", "article", "aside", "base", "basefont", "blockquote", "body",
-        "caption", "center", "col", "colgroup", "dd", "details", "dialog",
-        "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
-        "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6",
-        "head", "header", "hr", "html", "iframe", "legend", "li", "link",
-        "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup",
-        "option", "p", "param", "search", "section", "summary", "table",
-        "tbody", "td", "tfoot", "th", "thead", "title", "tr", "ul"
-    ]
-
-    /// Detect whether a line starts an HTML block and return the type
-    /// (1–7) if so. Returns nil if the line is not an HTML block start.
-    private static func detectHTMLBlock(_ line: String) -> Int? {
-        // CommonMark §4.6: an HTML block may have up to 3 leading
-        // spaces of indentation. A line with 4+ leading columns of
-        // whitespace is an indented code block context (when no
-        // paragraph is open), not an HTML block.
-        var leadingSpaces = 0
-        for ch in line {
-            if ch == " " { leadingSpaces += 1 } else { break }
-        }
-        guard leadingSpaces <= 3 else { return nil }
-        let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
-        guard trimmed.hasPrefix("<") else { return nil }
-        let trimmedStr = String(trimmed)
-
-        // Type 1: <pre, <script, <style, <textarea (case insensitive)
-        let lower = trimmedStr.lowercased()
-        for tag in ["pre", "script", "style", "textarea"] {
-            if lower.hasPrefix("<\(tag)") {
-                let afterTag = lower.dropFirst(tag.count + 1)
-                if afterTag.isEmpty || afterTag.first == " " || afterTag.first == ">"
-                    || afterTag.first == "\t" || afterTag.hasPrefix("\n") {
-                    return 1
-                }
-            }
-        }
-
-        // Type 2: <!--
-        if trimmedStr.hasPrefix("<!--") { return 2 }
-
-        // Type 3: <?
-        if trimmedStr.hasPrefix("<?") { return 3 }
-
-        // Type 4: <!LETTER
-        if trimmedStr.hasPrefix("<!") && trimmedStr.count > 2 {
-            let thirdChar = trimmedStr[trimmedStr.index(trimmedStr.startIndex, offsetBy: 2)]
-            if thirdChar.isLetter && thirdChar.isUppercase { return 4 }
-        }
-
-        // Type 5: <![CDATA[
-        if trimmedStr.hasPrefix("<![CDATA[") { return 5 }
-
-        // Type 6: block-level HTML tag
-        if let tagName = extractHTMLTagName(trimmedStr) {
-            if htmlBlockTags.contains(tagName.lowercased()) {
-                return 6
-            }
-        }
-
-        // Type 7: any other complete open or closing tag on its own line.
-        // The tag must be a complete open tag (with optional attributes,
-        // ending with > or />) or a closing tag (</tagname>), followed
-        // only by optional whitespace. Cannot interrupt a paragraph
-        // (caller must check rawBuffer).
-        if isCompleteHTMLTag(trimmedStr) {
-            return 7
-        }
-
-        return nil
-    }
-
-    /// Check whether a line is a complete HTML open tag or closing tag
-    /// followed only by optional whitespace (type 7 HTML block start).
-    ///
-    /// CommonMark open tag: `< tag_name attribute* /? >`
-    /// - tag_name: ASCII letter followed by (letter|digit|hyphen)*
-    /// - attribute: whitespace+ attr_name (= attr_value)?
-    /// - attr_name: (letter|_|:) (letter|digit|_|.|:|-)*
-    /// - attr_value: unquoted | 'single' | "double"
-    ///
-    /// Closing tag: `</ tag_name whitespace* >`
-    private static func isCompleteHTMLTag(_ line: String) -> Bool {
-        let chars = Array(line)
-        guard chars.count >= 3, chars[0] == "<" else { return false }
-        var i = 1
-
-        let isClosing = chars[i] == "/"
-        if isClosing { i += 1 }
-
-        // Tag name: starts with ASCII letter
-        guard i < chars.count, chars[i].isASCII, chars[i].isLetter else { return false }
-        i += 1
-        while i < chars.count && (chars[i].isASCII && (chars[i].isLetter || chars[i].isNumber) || chars[i] == "-") { i += 1 }
-
-        if isClosing {
-            // Closing tag: optional whitespace then >
-            while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
-            guard i < chars.count, chars[i] == ">" else { return false }
-            i += 1
-        } else {
-            // Open tag: parse zero or more attributes, then optional /, then >
-            // After tag name, must see whitespace, >, or />
-            while i < chars.count {
-                let ch = chars[i]
-                if ch == ">" { i += 1; break }
-                if ch == "/" {
-                    if i + 1 < chars.count && chars[i + 1] == ">" { i += 2; break }
-                    return false // bare / not followed by >
-                }
-                // Must have whitespace before attribute
-                guard ch == " " || ch == "\t" else { return false }
-                // Skip whitespace
-                while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
-                guard i < chars.count else { return false }
-                // Could be > or /> after whitespace
-                if chars[i] == ">" { i += 1; break }
-                if chars[i] == "/" {
-                    if i + 1 < chars.count && chars[i + 1] == ">" { i += 2; break }
-                    return false
-                }
-                // Attribute name: starts with letter, _, or :
-                let ac = chars[i]
-                guard ac.isASCII && ac.isLetter || ac == "_" || ac == ":" else { return false }
-                i += 1
-                while i < chars.count {
-                    let c = chars[i]
-                    if c.isASCII && (c.isLetter || c.isNumber) || c == "_" || c == "." || c == ":" || c == "-" {
-                        i += 1
-                    } else { break }
-                }
-                // Optional whitespace
-                while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
-                guard i < chars.count else { return false }
-                // Optional = value
-                if chars[i] == "=" {
-                    i += 1
-                    // Optional whitespace after =
-                    while i < chars.count && (chars[i] == " " || chars[i] == "\t") { i += 1 }
-                    guard i < chars.count else { return false }
-                    if chars[i] == "\"" {
-                        // Double-quoted value
-                        i += 1
-                        while i < chars.count && chars[i] != "\"" { i += 1 }
-                        guard i < chars.count else { return false }
-                        i += 1 // skip closing "
-                    } else if chars[i] == "'" {
-                        // Single-quoted value
-                        i += 1
-                        while i < chars.count && chars[i] != "'" { i += 1 }
-                        guard i < chars.count else { return false }
-                        i += 1 // skip closing '
-                    } else {
-                        // Unquoted value: non-empty, no spaces/quotes/=/</>
-                        let vStart = i
-                        while i < chars.count && chars[i] != " " && chars[i] != "\t"
-                                && chars[i] != "\"" && chars[i] != "'" && chars[i] != "="
-                                && chars[i] != "<" && chars[i] != ">" && chars[i] != "`" {
-                            i += 1
-                        }
-                        if i == vStart { return false } // empty unquoted value
-                    }
-                }
-            }
-            // Must have ended with >
-            guard i > 0 && chars[i - 1] == ">" else { return false }
-        }
-
-        // Rest of line must be only whitespace
-        while i < chars.count {
-            guard chars[i] == " " || chars[i] == "\t" else { return false }
-            i += 1
-        }
-        return true
-    }
-
-    /// Check whether an HTML block's end condition is met on a given line.
-    /// Used to detect same-line end markers (e.g., `<style>...</style>` on one line).
-    /// Types 6 and 7 end at blank lines, so they never "end on a line" — returns false.
-    private static func htmlBlockEndsOnLine(_ line: String, type: Int) -> Bool {
-        let lower = line.lowercased()
-        switch type {
-        case 1:
-            // End markers for type 1: closing tags for pre/script/style/textarea
-            // anywhere on the line (including the opening line).
-            return lower.contains("</pre>") || lower.contains("</script>")
-                || lower.contains("</style>") || lower.contains("</textarea>")
-        case 2:
-            // End marker: -->  (must appear after the opening <!--)
-            if let range = line.range(of: "<!--") {
-                return line[range.upperBound...].contains("-->")
-            }
-            return false
-        case 3:
-            // End marker: ?>
-            if let range = line.range(of: "<?") {
-                return line[range.upperBound...].contains("?>")
-            }
-            return false
-        case 4:
-            // End marker: >  (after the opening <!)
-            // The opening is <!LETTER, so check from index 2 onward.
-            return line.dropFirst(2).contains(">")
-        case 5:
-            // End marker: ]]>
-            if let range = line.range(of: "<![CDATA[") {
-                return line[range.upperBound...].contains("]]>")
-            }
-            return false
-        default:
-            return false
-        }
-    }
-
-    /// Extract the tag name from a line starting with `<` or `</`.
-    /// Returns the tag name if the character after the tag is a valid
-    /// delimiter (space, tab, >, /, newline, or end of string).
-    private static func extractHTMLTagName(_ line: String) -> String? {
-        let chars = Array(line)
-        guard chars.count >= 2, chars[0] == "<" else { return nil }
-        var i = 1
-        if i < chars.count && chars[i] == "/" { i += 1 }
-        guard i < chars.count, chars[i].isLetter else { return nil }
-        let start = i
-        while i < chars.count && (chars[i].isLetter || chars[i].isNumber || chars[i] == "-") { i += 1 }
-        guard i <= chars.count else { return nil }
-        if i == chars.count { return String(chars[start..<i]) }
-        let next = chars[i]
-        if next == " " || next == "\t" || next == ">" || next == "/" || next == "\n" {
-            return String(chars[start..<i])
-        }
-        return nil
     }
 
     // MARK: - Inline tokenizer
@@ -2384,7 +2116,7 @@ public enum MarkdownParser {
             }
         }
         // HTML block start (types 1-6 can interrupt a paragraph; type 7 cannot)
-        if let htmlType = detectHTMLBlock(line), htmlType <= 6 { return true }
+        if let htmlType = HtmlBlockReader.detect(line), htmlType <= 6 { return true }
         return false
     }
 
