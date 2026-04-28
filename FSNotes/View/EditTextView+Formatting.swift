@@ -407,15 +407,15 @@ extension EditTextView {
             // Source-mode path. Tables only render live in block-model
             // mode; in source mode the raw markdown is inserted and the
             // user sees it as plain text (still round-trips correctly).
+            // No `performingLegacyStorageWrite` wrapper needed — the 5a
+            // assertion gates on `blockModelActive && !sourceRendererActive`,
+            // both false here.
             let insertRange = selectedRange()
             let storageString = textStorage?.string ?? ""
             let prefix = EditTextView.tablePrefixForSourceModeInsertion(
                 at: insertRange.location, in: storageString
             )
-            // Phase 5a bypass — IBAction insertText skips shouldChangeText.
-            StorageWriteGuard.performingLegacyStorageWrite {
-                insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
-            }
+            insertText(prefix + tableMarkdown + "\n", replacementRange: insertRange)
         }
     }
 
@@ -498,7 +498,11 @@ extension EditTextView {
             }
         }
 
-        // Source-mode fallback.
+        // Source-mode fallback. No `performingLegacyStorageWrite`
+        // wrapper needed — the 5a assertion is gated on
+        // `blockModelActive && !sourceRendererActive`, both false in
+        // source mode (the only state where this path is reached when
+        // the WYSIWYG branch above didn't return).
         if currentRange.length > 0 {
             let mutable = NSMutableAttributedString(string: "```\n")
             if let substring = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
@@ -510,26 +514,31 @@ extension EditTextView {
             }
 
             mutable.append(NSAttributedString(string: "```\n"))
-
-            // Phase 5a bypass — IBAction insertText skips shouldChangeText.
-            StorageWriteGuard.performingLegacyStorageWrite {
-                insertText(mutable, replacementRange: currentRange)
-            }
+            insertText(mutable, replacementRange: currentRange)
             setSelectedRange(NSRange(location: currentRange.location + 4, length: 0))
             return
         }
 
-        StorageWriteGuard.performingLegacyStorageWrite {
-            insertText("```\n\n```\n", replacementRange: currentRange)
-        }
+        insertText("```\n\n```\n", replacementRange: currentRange)
         setSelectedRange(NSRange(location: currentRange.location + 3, length: 0))
     }
 
     @IBAction func insertCodeSpan(_ sender: NSMenuItem) {
         guard isEditable else { return }
 
-        let currentRange = selectedRange()
+        // Block-model path: route through the existing inline-trait
+        // toggle, which already supports `.code` (wraps the selection
+        // in `Inline.code(text)` for non-empty selections, or sets the
+        // pending `.code` typing trait so the next-typed character
+        // becomes a code span). Mirrors how `boldMenu` / `italicMenu`
+        // are wired.
+        if toggleInlineTraitViaBlockModel(.code) {
+            return
+        }
 
+        // Source-mode fallback. No `performingLegacyStorageWrite`
+        // wrapper needed (see insertCodeBlock for reasoning).
+        let currentRange = selectedRange()
         if currentRange.length > 0 {
             let mutable = NSMutableAttributedString(string: "`")
             if let substring = attributedSubstring(forProposedRange: currentRange, actualRange: nil) {
@@ -537,16 +546,11 @@ extension EditTextView {
             }
 
             mutable.append(NSAttributedString(string: "`"))
-            // Phase 5a bypass — IBAction insertText skips shouldChangeText.
-            StorageWriteGuard.performingLegacyStorageWrite {
-                insertText(mutable, replacementRange: currentRange)
-            }
+            insertText(mutable, replacementRange: currentRange)
             return
         }
 
-        StorageWriteGuard.performingLegacyStorageWrite {
-            insertText("``", replacementRange: currentRange)
-        }
+        insertText("``", replacementRange: currentRange)
         setSelectedRange(NSRange(location: currentRange.location + 1, length: 0))
     }
 
