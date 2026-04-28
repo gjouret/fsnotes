@@ -1353,25 +1353,17 @@ public enum MarkdownParser {
                     continue
                 }
             }
-            // 2. Hard line break: backslash before newline (\\\n)
-            if chars[i] == "\\" && i + 1 < chars.count && chars[i + 1] == "\n" {
+            // 2+3. Hard line breaks (backslash-before-newline OR
+            // two-or-more-spaces-before-newline). Phase 12.C.2 ported
+            // both shapes to a combinator-based detector — see
+            // `HardLineBreakParser.match`. Same `(raw, endIndex)`
+            // shape the other tryMatch helpers return; behavior
+            // byte-equal to the prior imperative `if` branches.
+            if let match = HardLineBreakParser.match(chars, from: i) {
                 flushPlain()
-                tokens.append(.inline(.lineBreak(raw: "\\\n")))
-                i += 2
+                tokens.append(.inline(.lineBreak(raw: match.raw)))
+                i = match.endIndex
                 continue
-            }
-            // 3. Hard line break: two or more trailing spaces before \n
-            if chars[i] == " " {
-                var spaceCount = 0
-                var k = i
-                while k < chars.count && chars[k] == " " { k += 1; spaceCount += 1 }
-                if k < chars.count && chars[k] == "\n" && spaceCount >= 2 {
-                    flushPlain()
-                    let raw = String(chars[i...k])
-                    tokens.append(.inline(.lineBreak(raw: raw)))
-                    i = k + 1
-                    continue
-                }
             }
             // 4. Autolinks
             if let match = tryMatchAutolink(chars, from: i) {
