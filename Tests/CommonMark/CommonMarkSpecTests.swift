@@ -408,16 +408,23 @@ class CommonMarkSpecTests: XCTestCase {
     }
 
     // --- Lists (26 examples) ---
-    // Basic ordered/unordered lists with tight/loose detection.
-    // Unsupported: multi-paragraph items, nested blocks.
+    // Basic ordered/unordered lists with tight/loose detection plus
+    // multi-block list items via per-item `continuationBlocks` (Phase
+    // 12.C.6.i routes indented block-starters at item content column
+    // into the current item's continuation, and `buildItemTree`
+    // re-parses combined first-line + continuation content when the
+    // first line opens a non-paragraph block).
     func test_lists() {
-        assertSection("Lists", passesAtLeast: 9)
+        assertSection("Lists", passesAtLeast: 23)
     }
 
     // --- HTML Blocks (44 examples) ---
-    // Not supported — HTML blocks are treated as paragraphs.
+    // 44/44 (100%) as of Phase 12.C.6.i — `- <div>` (spec #175) now
+    // routes the first-line block-starter through the combined
+    // re-parse, emitting the HTML block as a continuation block
+    // instead of a paragraph wrapping the literal `<div>`.
     func test_HTMLBlocks() {
-        assertSection("HTML blocks", passesAtLeast: 40)
+        assertSection("HTML blocks", passesAtLeast: 44)
     }
 
     // --- Link Reference Definitions (27 examples) ---

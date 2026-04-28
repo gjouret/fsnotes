@@ -257,6 +257,24 @@ The retired `tryMatchReferenceLink` (~70 LoC) was the imperative twin of the new
 
 Closes spec examples #518, #519, #520, #532, #533. Bucket: Links 85/90 → 90/90 (100%). Overall 631/652 → 636/652 (97.5%).
 
+### Multi-block list items via continuationLines + tight-mode rendering (Phase 12.C.6.i)
+
+CommonMark §5.2 list items can directly contain non-paragraph blocks — fenced code, blockquotes, ATX headings, HTML blocks. The block-model already represents this via `ListItem.continuationBlocks: [Block]`; the gap was that the parser routed those blocks AROUND the item (terminating the list and emitting the block at document scope) instead of THROUGH it (collecting it into the item's continuation), and the renderer had a too-eager looseness heuristic that wrapped tight items in `<p>` whenever they had two continuation blocks.
+
+The fix has three coordinated parts:
+
+- **Block-starter routing in `MarkdownParser.parse`.** A new sibling to the lazy-continuation branch sits inside the list-block loop's "non-list line without preceding blank" handler. When the line is indented to the current item's content column or deeper AND is a block-starter (`interruptsLazyContinuation` returns true), the line — and any further continuation-eligible lines — go into the last item's `continuationLines` instead of breaking out of the list. The collection loop mirrors the existing blank-line-then-content branch (lines 234-300) without the blank prefix; it stops at a list marker indented less than the content column or at a non-blank line whose indent falls below the content column. Spec #320 `* a\n  > b\n  >` now collects the blockquote into *a's continuation; spec #321 (blockquote + fence) does the same for both blocks.
+
+- **Combined re-parse in `buildItemTree`.** When the item's first line opens a non-paragraph block (`FencedCodeBlockReader.detectOpen`, `ATXHeadingReader.detect`, `HorizontalRuleReader.detect`, `BlockquoteReader.detect`, `HtmlBlockReader.detect`), `cur.content + continuationLines` joins to a single string and re-parses as a `Document`. The result becomes `inline = []` + `continuationBlocks = innerDoc.blocks`. This unwinds the lazy-merge contamination where spec #318 `- ```\n  b` had previously merged "b" into the item's inline content as text — once the lazy-merge is recognized as fence body via combined re-parse, "b" lands in the codeBlock body where it belongs. The blank-line filter on continuation blocks (`innerDoc.blocks.filter { case .blankLine = $0; return false }`) was lifted so the renderer's blank-line looseness signal can fire; the renderer already skips `.blankLine` entries when iterating, so removing the filter is rendering-neutral but adds the per-item looseness signal CommonMark §5.4 requires. The existing nested-marker special case (lines 1201-1222 of `MarkdownParser.swift`) is gated on `!firstLineIsBlockStarter` so spec #61 `- * * *` doesn't double-emit an HR (combined re-parse already produces it).
+
+- **Tight-mode rendering + correct looseness in `CommonMarkHTMLRenderer`.** The `count >= 2 → loose` heuristic in `itemHasLoosenessSignal` was dropped — CommonMark §5.4 keys looseness on blank-line-between-blocks, not block count, and the dropped filter (above) makes the `.blankLine` detection authoritative. Tight-mode rendering now inserts a `\n` between inline content and the first continuation block so output reads `<li>a\n<blockquote>...` (spec #320) rather than `<li>a<blockquote>...`. The list-level `hasBlankLines` flag is no longer set unconditionally when continuation collection consumes blanks — only when trailing blanks are trimmed (the actual "next item follows blank" signal). Spec #318's fence body containing blanks no longer false-flags the list as loose.
+
+Test thresholds bumped: HTML blocks 40 → 44, Lists 9 → 23.
+
+Closes spec examples #175, #318, #320, #321, #324. Buckets: HTML blocks 43/44 → 44/44 (100%); Lists 19/26 → 23/26 (88%). Overall 636/652 → 641/652 (98.3%).
+
+The remaining 11 failures cluster into: setext-underline-as-continuation (#300), 4-space-indent → indented code at top level (#289, #290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), empty-marker items containing indented code (#278), 3-space-indented marker as code-fence-context (#313), 5-level indent rule (#312), tab-as-indent in nested list (#9), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
+
 ## Editing FSMs by Block Type
 
 Each table shows what happens for every editing action on that block type. "Unsupported" means the operation throws or is a no-op. CommonMark spec references are noted where they constrain behavior.

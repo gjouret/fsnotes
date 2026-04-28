@@ -279,21 +279,32 @@ public enum MarkdownParser {
                             m += 1
                         }
                         // Trim trailing blanks — they belong outside the
-                        // item.
+                        // item.  Track whether any were trimmed: that
+                        // tells us a blank actually sits BETWEEN this
+                        // item's continuation and whatever comes next,
+                        // versus blanks that sit INSIDE the continuation
+                        // (e.g. spec #318 fence-body blanks).
+                        var trimmedTrailingBlank = false
                         while let last = continuation.last, last.isEmpty {
                             continuation.removeLast()
+                            trimmedTrailingBlank = true
                         }
                         parsedLines[ownerIdx!].continuationLines = continuation
-                        // Looseness propagation: a continuation makes
-                        // the OWNER's list loose (captured via the
-                        // owner's .continuationBlocks in renderList).
-                        // The TOP-level list's looseness and the
-                        // "next-item-follows-blank" marker are only
-                        // set when the owner itself is a top-level
-                        // item; otherwise the blank is structurally
-                        // inside a nested owner and does not loosen
-                        // the outer list.
-                        if ownerItem.indent.count == topIndent {
+                        // Looseness signal at the list level only fires
+                        // when the next item actually follows a blank
+                        // line (trimmed-trailing-blank).  Per-item
+                        // looseness (blank between blocks within the
+                        // item) is detected by the renderer reading
+                        // `.blankLine` markers inside `continuationBlocks`,
+                        // so we don't conflate the two here.  Spec #318:
+                        // a fence body containing blanks is one block —
+                        // the list stays tight.  Spec #324: a fence
+                        // followed by a blank then a paragraph is
+                        // two blocks separated by a blank, but THAT
+                        // is detected per-item.
+                        if ownerItem.indent.count == topIndent
+                            && trimmedTrailingBlank
+                        {
                             hasBlankLines = true
                             nextItemFollowsBlank = true
                         }
@@ -428,6 +439,70 @@ public enum MarkdownParser {
                                     j += 1
                                     continue
                                 }
+                            }
+                            // Block-starter as continuation: when an
+                            // indented line that interrupts a paragraph
+                            // appears at the current item's content column
+                            // or deeper without a preceding blank, it
+                            // becomes the start of a continuation block
+                            // for the current item rather than terminating
+                            // the list.  Spec #320, #321: `* a\n  > b` —
+                            // the blockquote at the item's content column
+                            // is item 1's continuation, not a sibling.
+                            // Mirrors the blank-line-then-content branch
+                            // above (lines 234-300) without the blank gap.
+                            let cc = last.indent.count
+                                + last.marker.count + last.afterMarker.count
+                            let lineIndent = leadingSpaceCount(l)
+                            if lineIndent >= cc && interruptsLazyContinuation(l) {
+                                var continuation = parsedLines[parsedLines.count - 1].continuationLines
+                                var m = j
+                                while m < lines.count {
+                                    let line2 = lines[m]
+                                    if m == lines.count - 1
+                                        && line2.isEmpty
+                                        && markdown.hasSuffix("\n")
+                                    {
+                                        break
+                                    }
+                                    if line2.isEmpty {
+                                        continuation.append("")
+                                        m += 1
+                                        continue
+                                    }
+                                    let lineIndentCount = leadingSpaceCount(line2)
+                                    if let maybeMarker = ListReader.parseListLine(line2) {
+                                        if maybeMarker.indent.count < cc {
+                                            break
+                                        }
+                                    }
+                                    if lineIndentCount < cc {
+                                        break
+                                    }
+                                    continuation.append(stripLeadingSpaces(line2, count: cc))
+                                    m += 1
+                                }
+                                var trimmedTrailingBlank = false
+                                while let trailLast = continuation.last,
+                                      trailLast.isEmpty
+                                {
+                                    continuation.removeLast()
+                                    trimmedTrailingBlank = true
+                                }
+                                parsedLines[parsedLines.count - 1].continuationLines = continuation
+                                // Mirror the blank-prefix path: only flag
+                                // looseness when the continuation actually
+                                // ended with trailing blanks (next item
+                                // follows a blank).  Per-item looseness
+                                // is handled by the renderer.
+                                if last.indent.count == topIndent
+                                    && trimmedTrailingBlank
+                                {
+                                    hasBlankLines = true
+                                    nextItemFollowsBlank = true
+                                }
+                                j = m
+                                continue
                             }
                         }
                         break
@@ -1098,26 +1173,54 @@ public enum MarkdownParser {
             // this is the first line at this level), in which case
             // `curIndent` equals (or drops below) the current sibling
             // indent we're about to set.
-            let inline = parseInlines(cur.content, refDefs: refDefs)
             let curContentColumn = curIndent + cur.marker.count + cur.afterMarker.count
             let (children, nextI) = buildItemTree(
                 lines: lines, from: i + 1,
                 parentContentColumn: curContentColumn,
                 refDefs: refDefs
             )
-            // Parse any continuation lines attached at collection time
-            // into a block sequence. Uses the parser recursively (note:
-            // this is idempotent because continuation text has already
-            // been dedented by the item's content column).
+            // CommonMark §5.2: when the item's first-line content starts
+            // a non-paragraph block (fenced code, blockquote, heading,
+            // HR, HTML block) we MUST re-parse cur.content together with
+            // any continuationLines as a single block sequence — the
+            // first-line lazy-merge that the line-collection phase may
+            // have performed (e.g. spec #318: `- ```\n  b` lazy-merges
+            // "b" into the item's content) would otherwise leave the
+            // fenced block half-open with the body stranded as inline
+            // text. For paragraph-only content the existing path stands
+            // — it preserves doc-level refDef resolution via parseInlines.
+            //
+            // Blank lines emitted by the inner parse are retained on
+            // `continuationBlocks` so the renderer's looseness signal
+            // (CommonMark §5.4: blank line between blocks → loose) can
+            // see them; the renderer skips them when iterating.
+            let firstLineEnd = cur.content.firstIndex(of: "\n")
+                .map { cur.content.distance(from: cur.content.startIndex, to: $0) }
+                ?? cur.content.count
+            let firstLine = String(cur.content.prefix(firstLineEnd))
+            let firstLineIsBlockStarter =
+                FencedCodeBlockReader.detectOpen(firstLine) != nil
+                || ATXHeadingReader.detect(firstLine) != nil
+                || HorizontalRuleReader.detect(firstLine) != nil
+                || BlockquoteReader.detect(firstLine) != nil
+                || HtmlBlockReader.detect(firstLine) != nil
+
+            let inline: [Inline]
             var continuationBlocks: [Block]
-            if cur.continuationLines.isEmpty {
-                continuationBlocks = []
+            if firstLineIsBlockStarter {
+                let combined = ([cur.content] + cur.continuationLines)
+                    .joined(separator: "\n") + "\n"
+                let innerDoc = MarkdownParser.parse(combined)
+                inline = []
+                continuationBlocks = innerDoc.blocks
             } else {
-                let inner = cur.continuationLines.joined(separator: "\n") + "\n"
-                let innerDoc = MarkdownParser.parse(inner)
-                continuationBlocks = innerDoc.blocks.filter {
-                    if case .blankLine = $0 { return false }
-                    return true
+                inline = parseInlines(cur.content, refDefs: refDefs)
+                if cur.continuationLines.isEmpty {
+                    continuationBlocks = []
+                } else {
+                    let inner = cur.continuationLines.joined(separator: "\n") + "\n"
+                    let innerDoc = MarkdownParser.parse(inner)
+                    continuationBlocks = innerDoc.blocks
                 }
             }
 
@@ -1129,8 +1232,14 @@ public enum MarkdownParser {
             // (carried on continuationBlocks) and emit the outer item
             // with empty inline content. This produces the correct
             // `<li><ul><li>...</li></ul></li>` tree.
+            //
+            // Skip when `firstLineIsBlockStarter` — the combined-parse
+            // branch above already handled the content (e.g. spec #61
+            // `- * * *` parses cur.content="* * *" as an HR; running
+            // the nested-marker re-parse on top would double-emit).
             var outerInline = inline
-            if let nested = ListReader.parseListLine(cur.content),
+            if !firstLineIsBlockStarter,
+               let nested = ListReader.parseListLine(cur.content),
                nested.indent.isEmpty || nested.indent.allSatisfy({ $0 == " " }) {
                 // Re-emit the nested content as its own list in the
                 // outer item's continuationBlocks. Keep any pre-existing

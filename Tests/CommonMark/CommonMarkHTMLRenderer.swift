@@ -177,24 +177,25 @@ struct CommonMarkHTMLRenderer {
         // between items or blank lines between blocks within an item.
         let itemHasLoosenessSignal: (ListItem) -> Bool = { item in
             guard !item.continuationBlocks.isEmpty else { return false }
-            // Two or more non-blank continuation blocks, or a blank
-            // line between the item's first-line content and its
-            // continuation, both signal loose. We approximate the
-            // second case by checking for a `.blankLine` in the
-            // continuation stream (parser emits these when there was
-            // a blank line separation between the inline body and
-            // the block).
-            let nonBlank = item.continuationBlocks.filter {
-                if case .blankLine = $0 { return false }
-                return true
-            }
-            if nonBlank.count >= 2 { return true }
+            // CommonMark §5.4: a list is loose if any item's blocks
+            // are separated by a blank line. The parser preserves
+            // those blanks as `.blankLine` entries inside
+            // `continuationBlocks`; the renderer skips them when
+            // iterating but uses them here as the looseness signal.
             if item.continuationBlocks.contains(where: {
                 if case .blankLine = $0 { return true }
                 return false
             }) { return true }
             // Continuation is a single paragraph — traditionally
             // rendered as loose (the item becomes `<li><p>...</p>`).
+            // The blank-line-then-content collection path emits a
+            // single paragraph with no preceding `.blankLine`
+            // because the inner re-parse trims leading blanks; this
+            // covers that case explicitly.
+            let nonBlank = item.continuationBlocks.filter {
+                if case .blankLine = $0 { return false }
+                return true
+            }
             if nonBlank.count == 1, case .paragraph = nonBlank[0] {
                 return true
             }
@@ -259,6 +260,14 @@ struct CommonMarkHTMLRenderer {
         } else {
             if tight {
                 content += "<li>\(inlineHTML)"
+                if hasContinuation {
+                    // Tight items with continuation blocks need a
+                    // newline between the inline content and the first
+                    // continuation block so output reads
+                    // `<li>a\n<blockquote>...` (spec #320, #321) rather
+                    // than `<li>a<blockquote>...`.
+                    content += "\n"
+                }
             } else {
                 content += "<li>\n<p>\(inlineHTML)</p>\n"
             }
