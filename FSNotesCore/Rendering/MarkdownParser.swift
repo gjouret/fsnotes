@@ -1380,7 +1380,7 @@ public enum MarkdownParser {
                 continue
             }
             // 6. Entity references
-            if let match = tryMatchEntity(chars, from: i) {
+            if let match = EntityParser.match(chars, from: i) {
                 flushPlain()
                 tokens.append(.inline(.entity(match.entity)))
                 i = match.endIndex
@@ -1987,117 +1987,6 @@ public enum MarkdownParser {
             }
         }
         return nil
-    }
-
-    // MARK: - Entity reference detection
-
-    /// Known HTML5 named entity names (without & and ;).
-    /// This is a subset covering the most common entities.
-    /// CommonMark requires validation against the full HTML5 entity list.
-    private static let knownHTMLEntities: Set<String> = [
-        // Core XML entities
-        "amp", "lt", "gt", "quot", "apos",
-        // Whitespace and special
-        "nbsp", "ensp", "emsp", "thinsp", "shy", "lrm", "rlm", "zwj", "zwnj",
-        // Typography
-        "copy", "reg", "trade", "mdash", "ndash", "hellip", "bull", "middot",
-        "lsquo", "rsquo", "ldquo", "rdquo", "sbquo", "bdquo",
-        "laquo", "raquo", "lsaquo", "rsaquo",
-        "dagger", "Dagger", "permil",
-        // Arrows
-        "larr", "rarr", "uarr", "darr", "harr", "lArr", "rArr", "uArr", "dArr", "hArr",
-        // Math and symbols
-        "sect", "para", "deg", "plusmn", "times", "divide", "micro",
-        "cent", "pound", "euro", "yen", "curren",
-        "iexcl", "iquest", "ordf", "ordm", "not", "macr", "acute",
-        "cedil", "sup1", "sup2", "sup3",
-        "frac14", "frac12", "frac34",
-        "fnof", "minus", "lowast", "radic", "prop", "infin",
-        "ang", "and", "or", "cap", "cup", "int",
-        "there4", "sim", "cong", "asymp", "ne", "equiv", "le", "ge",
-        "sub", "sup", "nsub", "sube", "supe",
-        "oplus", "otimes", "perp", "sdot",
-        "lceil", "rceil", "lfloor", "rfloor", "lang", "rang",
-        "loz", "sum", "prod", "forall", "part", "exist", "empty",
-        "nabla", "isin", "notin", "ni",
-        // Card suits
-        "hearts", "spades", "clubs", "diams",
-        // Greek
-        "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta",
-        "Iota", "Kappa", "Lambda", "Mu", "Nu", "Xi", "Omicron", "Pi",
-        "Rho", "Sigma", "Tau", "Upsilon", "Phi", "Chi", "Psi", "Omega",
-        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
-        "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi",
-        "rho", "sigmaf", "sigma", "tau", "upsilon", "phi", "chi", "psi", "omega",
-        "thetasym", "upsih", "piv",
-        // Latin extended
-        "AElig", "Aacute", "Acirc", "Agrave", "Aring", "Atilde", "Auml",
-        "Ccedil", "ETH", "Eacute", "Ecirc", "Egrave", "Euml",
-        "Iacute", "Icirc", "Igrave", "Iuml",
-        "Ntilde", "Oacute", "Ocirc", "Ograve", "Oslash", "Otilde", "Ouml",
-        "THORN", "Uacute", "Ucirc", "Ugrave", "Uuml", "Yacute",
-        "aacute", "acirc", "agrave", "aring", "atilde", "auml",
-        "ccedil", "eacute", "ecirc", "egrave", "euml",
-        "eth", "iacute", "icirc", "igrave", "iuml",
-        "ntilde", "oacute", "ocirc", "ograve", "oslash", "otilde", "ouml",
-        "szlig", "thorn", "uacute", "ucirc", "ugrave", "uuml", "yacute", "yuml",
-        // Additional HTML5 entities from CommonMark spec examples
-        "Dcaron", "HilbertSpace", "DifferentialD",
-        "ClockwiseContourIntegral", "ngE",
-    ]
-
-    /// Try to match an HTML entity reference starting at `start`.
-    /// Matches named (&amp;), decimal (&#123;), and hex (&#x1F;) forms.
-    /// Named entities are validated against a known set of HTML5 entity names.
-    private static func tryMatchEntity(
-        _ chars: [Character], from start: Int
-    ) -> (entity: String, endIndex: Int)? {
-        guard start < chars.count, chars[start] == "&" else { return nil }
-        var j = start + 1
-        guard j < chars.count else { return nil }
-
-        if chars[j] == "#" {
-            // Numeric reference: &#digits; or &#xhex;
-            j += 1
-            guard j < chars.count else { return nil }
-            if chars[j] == "x" || chars[j] == "X" {
-                // Hex: &#x[0-9a-fA-F]+;
-                j += 1
-                let digitStart = j
-                while j < chars.count && chars[j].isHexDigit { j += 1 }
-                guard j > digitStart && j < chars.count && chars[j] == ";" else { return nil }
-                guard j - digitStart <= 6 else { return nil } // Max 6 hex digits
-                // Validate code point range
-                let hexStr = String(chars[digitStart..<j])
-                guard let codePoint = UInt32(hexStr, radix: 16),
-                      codePoint <= 0x10FFFF else { return nil }
-                let entity = String(chars[start...j])
-                return (entity, j + 1)
-            } else {
-                // Decimal: &#[0-9]+;
-                let digitStart = j
-                while j < chars.count && chars[j].isNumber { j += 1 }
-                guard j > digitStart && j < chars.count && chars[j] == ";" else { return nil }
-                guard j - digitStart <= 7 else { return nil } // Max 7 decimal digits
-                // Validate code point range
-                let decStr = String(chars[digitStart..<j])
-                guard let codePoint = UInt32(decStr),
-                      codePoint <= 0x10FFFF else { return nil }
-                let entity = String(chars[start...j])
-                return (entity, j + 1)
-            }
-        } else {
-            // Named reference: &[a-zA-Z][a-zA-Z0-9]+;
-            guard chars[j].isLetter else { return nil }
-            j += 1
-            while j < chars.count && (chars[j].isLetter || chars[j].isNumber) { j += 1 }
-            guard j < chars.count && chars[j] == ";" else { return nil }
-            // Extract the name and validate against known entities
-            let name = String(chars[(start + 1)..<j])
-            guard knownHTMLEntities.contains(name) else { return nil }
-            let entity = String(chars[start...j])
-            return (entity, j + 1)
-        }
     }
 
     // MARK: - Link and image detection
