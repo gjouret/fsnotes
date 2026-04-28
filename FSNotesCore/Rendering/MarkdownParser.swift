@@ -67,62 +67,12 @@ public enum MarkdownParser {
                 continue
             }
 
-            if let fence = detectFenceOpen(line) {
+            if let result = FencedCodeBlockReader.read(
+                lines: lines, from: i, trailingNewline: markdown.hasSuffix("\n")
+            ) {
                 flushRawBuffer()
-
-                // Scan forward for the matching close fence.
-                var contentLines: [String] = []
-                var j = i + 1
-                var foundClose = false
-
-                while j < lines.count {
-                    let l = lines[j]
-                    // Skip the synthetic trailing "" for file-ending newline
-                    if j == lines.count - 1 && l.isEmpty && markdown.hasSuffix("\n") {
-                        break
-                    }
-                    if isFenceClose(l, matching: fence) {
-                        foundClose = true
-                        break
-                    }
-                    contentLines.append(l)
-                    j += 1
-                }
-
-                // Strip up to `fence.indent` leading spaces from each
-                // content line (CommonMark indentation removal rule).
-                if fence.indent > 0 {
-                    contentLines = contentLines.map { contentLine in
-                        let lineChars = Array(contentLine)
-                        var strip = 0
-                        while strip < fence.indent && strip < lineChars.count && lineChars[strip] == " " {
-                            strip += 1
-                        }
-                        return String(lineChars[strip...])
-                    }
-                }
-
-                let content: String
-                let advanceTo: Int
-                if foundClose {
-                    content = contentLines.joined(separator: "\n")
-                    advanceTo = j + 1
-                } else {
-                    // Unterminated fence: code block extends to end of
-                    // document (CommonMark rule). No closing fence line.
-                    content = contentLines.joined(separator: "\n")
-                    advanceTo = j
-                }
-
-                let infoTrimmed = fence.infoRaw.trimmingCharacters(in: .whitespaces)
-                let language = infoTrimmed.isEmpty ? nil : infoTrimmed
-                let fenceStyle = FenceStyle(
-                    character: fence.fenceChar == "`" ? .backtick : .tilde,
-                    length: fence.fenceLength,
-                    infoRaw: fence.infoRaw
-                )
-                blocks.append(.codeBlock(language: language, content: content, fence: fenceStyle))
-                i = advanceTo
+                blocks.append(result.block)
+                i = result.nextIndex
                 continue
             }
 
@@ -433,7 +383,7 @@ public enum MarkdownParser {
                                 let lineIndent = leadingSpaceCount(l)
                                 let dedented = stripLeadingSpaces(l, count: cc)
                                 let isBlockStarter =
-                                    detectFenceOpen(dedented) != nil
+                                    FencedCodeBlockReader.detectOpen(dedented) != nil
                                     || detectHeading(dedented) != nil
                                     || detectHorizontalRule(dedented) != nil
                                     || parseListLine(dedented) != nil
@@ -744,67 +694,6 @@ public enum MarkdownParser {
             widths.append(CGFloat(d))
         }
         return widths
-    }
-
-    // MARK: - Fence detection
-
-    /// Info captured from a fence-open line. We store the fence string so
-    /// the close must match exactly (CommonMark rule: close fence length
-    /// must be >= open fence length AND use the same fence character).
-    private struct Fence {
-        let fenceChar: Character   // '`' or '~'
-        let fenceLength: Int       // number of fence chars (>= 3)
-        let infoRaw: String        // info string verbatim (not trimmed)
-        let indent: Int            // 0-3 leading spaces on the opening fence
-    }
-
-    /// Detect whether `line` opens a fenced code block. Returns the Fence
-    /// descriptor if so, nil otherwise.
-    ///
-    /// Rule: a fence-open is a line that starts with up to 3 leading
-    /// spaces followed by >= 3 backticks or >= 3 tildes, optionally
-    /// followed by an info string. The indent level is tracked so
-    /// content lines can have up to that many leading spaces stripped.
-    private static func detectFenceOpen(_ line: String) -> Fence? {
-        let chars = Array(line)
-        var i = 0
-        // Allow up to 3 leading spaces
-        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
-        let indent = i
-
-        guard i < chars.count else { return nil }
-        let fenceChar = chars[i]
-        guard fenceChar == "`" || fenceChar == "~" else { return nil }
-
-        var count = 0
-        while i < chars.count && chars[i] == fenceChar { i += 1; count += 1 }
-        guard count >= 3 else { return nil }
-
-        let rest = String(chars[i...])
-
-        // CommonMark: backtick fences cannot contain backticks in their
-        // info string. If they do, this isn't a fence open.
-        if fenceChar == "`" && rest.contains("`") { return nil }
-
-        return Fence(fenceChar: fenceChar, fenceLength: count, infoRaw: rest, indent: indent)
-    }
-
-    /// Check whether `line` is a valid close fence for the given open.
-    /// Close fence: up to 3 leading spaces, then only fence chars
-    /// (>= open length) and optional trailing whitespace, no info string.
-    private static func isFenceClose(_ line: String, matching open: Fence) -> Bool {
-        let chars = Array(line)
-        var i = 0
-        // Allow up to 3 leading spaces
-        while i < chars.count && i < 3 && chars[i] == " " { i += 1 }
-
-        var count = 0
-        while i < chars.count && chars[i] == open.fenceChar { i += 1; count += 1 }
-        guard count >= open.fenceLength else { return false }
-
-        // Everything after fence chars must be whitespace only.
-        let trailing = chars[i...]
-        return trailing.allSatisfy { $0 == " " || $0 == "\t" }
     }
 
     // MARK: - Heading detection
@@ -2284,7 +2173,7 @@ public enum MarkdownParser {
 
             // Track code fences to avoid matching inside them.
             if !inCodeFence {
-                if let fence = detectFenceOpen(line) {
+                if let fence = FencedCodeBlockReader.detectOpen(line) {
                     inCodeFence = true
                     openFenceChar = fence.fenceChar
                     openFenceLength = fence.fenceLength
@@ -2293,8 +2182,11 @@ public enum MarkdownParser {
                 }
             } else {
                 // Check for closing fence.
-                let fence = Fence(fenceChar: openFenceChar, fenceLength: openFenceLength, infoRaw: "", indent: 0)
-                if isFenceClose(line, matching: fence) {
+                let fence = FencedCodeBlockReader.Fence(
+                    fenceChar: openFenceChar, fenceLength: openFenceLength,
+                    infoRaw: "", indent: 0
+                )
+                if FencedCodeBlockReader.isClose(line, matching: fence) {
                     inCodeFence = false
                 }
                 i += 1
@@ -2318,7 +2210,7 @@ public enum MarkdownParser {
                 // ATX heading line on the previous line? Check detect.
                 if detectHeading(prev) != nil { return true }
                 // Fence open/close on the previous line?
-                if detectFenceOpen(prev) != nil { return true }
+                if FencedCodeBlockReader.detectOpen(prev) != nil { return true }
                 // Horizontal rule on the previous line?
                 if detectHorizontalRule(prev) != nil { return true }
                 return false
@@ -2591,7 +2483,7 @@ public enum MarkdownParser {
         // ATX heading
         if detectHeading(line) != nil { return true }
         // Fenced code opening
-        if detectFenceOpen(line) != nil { return true }
+        if FencedCodeBlockReader.detectOpen(line) != nil { return true }
         // Thematic break / HR
         if detectHorizontalRule(line) != nil { return true }
         // List item with <= 3 spaces of indent (4+ spaces = indented code
@@ -2617,13 +2509,13 @@ public enum MarkdownParser {
         guard !contentLines.isEmpty else { return false }
 
         // Check for an open (unclosed) code fence
-        var openFence: Fence? = nil
+        var openFence: FencedCodeBlockReader.Fence? = nil
         for inner in contentLines {
             if let fence = openFence {
-                if isFenceClose(inner, matching: fence) {
+                if FencedCodeBlockReader.isClose(inner, matching: fence) {
                     openFence = nil
                 }
-            } else if let fence = detectFenceOpen(inner) {
+            } else if let fence = FencedCodeBlockReader.detectOpen(inner) {
                 openFence = fence
             }
         }
