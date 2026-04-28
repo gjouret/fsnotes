@@ -133,6 +133,8 @@
 		BQRT12C50000000000B1 /* BlockquoteReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQRT12C50000000000F1 /* BlockquoteReaderTests.swift */; };
 		TBLP12C50000000000B1 /* TableReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = TBLP12C50000000000F1 /* TableReader.swift */; };
 		TBLT12C50000000000B1 /* TableReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TBLT12C50000000000F1 /* TableReaderTests.swift */; };
+		LSRP12C50000000000B1 /* ListReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = LSRP12C50000000000F1 /* ListReader.swift */; };
+		LSRT12C50000000000B1 /* ListReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = LSRT12C50000000000F1 /* ListReaderTests.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
 		SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCR20260427F1 /* SubviewTableClickResponderTests.swift */; };
@@ -1409,6 +1411,8 @@
 		BQRT12C50000000000F1 /* BlockquoteReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockquoteReaderTests.swift; sourceTree = "<group>"; };
 		TBLP12C50000000000F1 /* TableReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/TableReader.swift; sourceTree = "<group>"; };
 		TBLT12C50000000000F1 /* TableReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableReaderTests.swift; sourceTree = "<group>"; };
+		LSRP12C50000000000F1 /* ListReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/ListReader.swift; sourceTree = "<group>"; };
+		LSRT12C50000000000F1 /* ListReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListReaderTests.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
 		SVCR20260427F1 /* SubviewTableClickResponderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableClickResponderTests.swift; sourceTree = "<group>"; };
@@ -2110,6 +2114,7 @@
 				HBRP12C50000000000F1 /* HtmlBlockReader.swift */,
 				BQRP12C50000000000F1 /* BlockquoteReader.swift */,
 				TBLP12C50000000000F1 /* TableReader.swift */,
+				LSRP12C50000000000F1 /* ListReader.swift */,
 				P41S000000000000000000F1 /* SourceRenderer.swift */,
 				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
@@ -3065,6 +3070,7 @@
 				HBRT12C50000000000F1 /* HtmlBlockReaderTests.swift */,
 				BQRT12C50000000000F1 /* BlockquoteReaderTests.swift */,
 				TBLT12C50000000000F1 /* TableReaderTests.swift */,
+				LSRT12C50000000000F1 /* ListReaderTests.swift */,
 				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
 				SVCR20260427F1 /* SubviewTableClickResponderTests.swift */,
 				SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */,
@@ -4091,6 +4097,7 @@
 				HBRP12C50000000000B1 /* HtmlBlockReader.swift in Sources */,
 				BQRP12C50000000000B1 /* BlockquoteReader.swift in Sources */,
 				TBLP12C50000000000B1 /* TableReader.swift in Sources */,
+				LSRP12C50000000000B1 /* ListReader.swift in Sources */,
 				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
 				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
@@ -4792,6 +4799,7 @@
 				HBRT12C50000000000B1 /* HtmlBlockReaderTests.swift in Sources */,
 				BQRT12C50000000000B1 /* BlockquoteReaderTests.swift in Sources */,
 				TBLT12C50000000000B1 /* TableReaderTests.swift in Sources */,
+				LSRT12C50000000000B1 /* ListReaderTests.swift in Sources */,
 				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
 				SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */,
 				SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */,

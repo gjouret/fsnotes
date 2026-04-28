@@ -135,7 +135,7 @@ public enum MarkdownParser {
                 continue
             }
 
-            if let firstParsed = parseListLine(line),
+            if let firstParsed = ListReader.parseListLine(line),
                // Don't let a bare marker at EOL (e.g. "*", "1.") interrupt
                // a paragraph. CommonMark example 285: "foo\n*" is a paragraph,
                // not a paragraph + list. Only applies when raw buffer has content.
@@ -144,7 +144,7 @@ public enum MarkdownParser {
                // than 1 cannot interrupt a paragraph. Example 304: a paragraph
                // that happens to contain "14. ..." as its second line must
                // remain a single paragraph, not paragraph + list.
-               !(rawBuffer.count > 0 && isOrderedListMarkerWithNonOneStart(firstParsed.marker)) {
+               !(rawBuffer.count > 0 && ListReader.isOrderedListMarkerWithNonOneStart(firstParsed.marker)) {
                 flushRawBuffer()
 
                 // Determine the list type from the first item's marker.
@@ -153,7 +153,7 @@ public enum MarkdownParser {
                 // applies to items at the SAME indent level — nested
                 // items can have different marker types (e.g. unordered
                 // list containing ordered sublist).
-                let listType = Self.listMarkerType(firstParsed.marker)
+                let listType = ListReader.listMarkerType(firstParsed.marker)
                 let topIndent = firstParsed.indent.count
 
                 // Collect list lines, continuing through blank lines
@@ -162,7 +162,7 @@ public enum MarkdownParser {
                 // items (makes the list "loose"). Each item that
                 // follows a blank line gets blankLineBefore = true
                 // for round-trip serialization.
-                var parsedLines: [ParsedListLine] = [firstParsed]
+                var parsedLines: [ListReader.ParsedListLine] = [firstParsed]
                 var hasBlankLines = false
                 var nextItemFollowsBlank = false
                 // Track the number of *consecutive* blank lines between
@@ -186,9 +186,9 @@ public enum MarkdownParser {
                         {
                             break
                         }
-                        if let nextParsed = parseListLine(lines[k]) {
+                        if let nextParsed = ListReader.parseListLine(lines[k]) {
                             let nextIndent = nextParsed.indent.count
-                            if nextIndent == topIndent && Self.listMarkerType(nextParsed.marker) != listType {
+                            if nextIndent == topIndent && ListReader.listMarkerType(nextParsed.marker) != listType {
                                 // Top-level item with different marker type — new list.
                                 break
                             }
@@ -249,7 +249,7 @@ public enum MarkdownParser {
                             let lineIndentCount = leadingSpaceCount(line2)
                             // If it's a list marker, decide whether it
                             // belongs to this list before taking over.
-                            if let maybeMarker = parseListLine(line2) {
+                            if let maybeMarker = ListReader.parseListLine(line2) {
                                 // A marker at indent < contentCol breaks
                                 // out of this item's continuation and
                                 // returns control to the outer loop.
@@ -312,7 +312,7 @@ public enum MarkdownParser {
                        HorizontalRuleReader.detect(l) != nil {
                         break
                     }
-                    guard var parsed = parseListLine(l) else {
+                    guard var parsed = ListReader.parseListLine(l) else {
                         // Non-list line without a preceding blank.
                         //
                         // Narrow lazy continuation: if the line is
@@ -365,11 +365,11 @@ public enum MarkdownParser {
                                     FencedCodeBlockReader.detectOpen(dedented) != nil
                                     || ATXHeadingReader.detect(dedented) != nil
                                     || HorizontalRuleReader.detect(dedented) != nil
-                                    || parseListLine(dedented) != nil
+                                    || ListReader.parseListLine(dedented) != nil
                                     || BlockquoteReader.detect(dedented) != nil
                                     || leadingSpaceCount(dedented) >= 4
                                 if lineIndent >= cc && !isBlockStarter {
-                                    parsedLines[parsedLines.count - 1] = ParsedListLine(
+                                    parsedLines[parsedLines.count - 1] = ListReader.ParsedListLine(
                                         indent: last.indent,
                                         marker: last.marker,
                                         afterMarker: last.afterMarker,
@@ -408,7 +408,7 @@ public enum MarkdownParser {
                                 {
                                     let stripped = stripLeadingSpaces(l, count: cc)
                                     let merged = last.content + "\n" + stripped
-                                    parsedLines[parsedLines.count - 1] = ParsedListLine(
+                                    parsedLines[parsedLines.count - 1] = ListReader.ParsedListLine(
                                         indent: last.indent,
                                         marker: last.marker,
                                         afterMarker: last.afterMarker,
@@ -432,7 +432,7 @@ public enum MarkdownParser {
                     // content column. Otherwise it would be a sibling,
                     // and a sibling with a different marker type starts
                     // a new list.
-                    if Self.listMarkerType(parsed.marker) != listType {
+                    if ListReader.listMarkerType(parsed.marker) != listType {
                         let childOfSome = parsedLines.contains(where: { existing in
                             let existingContentCol = existing.indent.count
                                 + existing.marker.count + existing.afterMarker.count
@@ -1049,231 +1049,6 @@ public enum MarkdownParser {
         return false
     }
 
-    // MARK: - List detection
-
-    /// Classify a list marker into its "type" for determining whether
-    /// two list items belong to the same list. CommonMark rule: a
-    /// change in bullet character (`-`, `*`, `+`) or ordered delimiter
-    /// (`.` vs `)`) starts a new list.
-    /// Returns: the bullet character for unordered, or the delimiter
-    /// character for ordered (e.g. "." or ")").
-    /// Returns true if `marker` is an ordered-list marker (e.g. "2.", "10)")
-    /// whose starting number is not 1. Used to enforce CommonMark 5.3:
-    /// such a marker cannot interrupt a paragraph.
-    static func isOrderedListMarkerWithNonOneStart(_ marker: String) -> Bool {
-        // Ordered marker is digits + "." or ")".
-        guard marker.last == "." || marker.last == ")" else { return false }
-        let digits = String(marker.dropLast())
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isNumber }) else { return false }
-        return Int(digits) != 1
-    }
-
-    static func listMarkerType(_ marker: String) -> String {
-        if marker == "-" || marker == "*" || marker == "+" {
-            return marker
-        }
-        // Ordered: digits + delimiter. The delimiter is the last char.
-        if let last = marker.last {
-            return String(last)
-        }
-        return marker
-    }
-
-    /// A single line parsed as a list item: split into leading
-    /// indentation, the marker itself, the whitespace after the
-    /// marker, an optional checkbox, and the line's content.
-    struct ParsedListLine {
-        let indent: String        // leading whitespace (spaces/tabs)
-        let marker: String        // "-", "*", "+", or "<digits>.", "<digits>)"
-        let afterMarker: String   // whitespace between marker and content/checkbox
-        let checkbox: Checkbox?   // "[ ]", "[x]", "[X]" for todo items
-        let content: String       // remainder of the line after checkbox/afterMarker
-        var blankLineBefore: Bool = false // true if blank line(s) preceded this item
-        /// Raw continuation lines attached to this item after a blank
-        /// line — already dedented by the item's content column, with
-        /// blank-line separators preserved as empty strings. Parsed at
-        /// buildItemTree time into `ListItem.continuationBlocks`.
-        var continuationLines: [String] = []
-    }
-
-    /// Detect whether `line` is a list item. Rules:
-    /// - Leading indentation: any run of spaces/tabs (may be empty).
-    /// - Marker: `-`, `*`, `+`, or one-or-more digits followed by `.`
-    ///   or `)`.
-    /// - At least ONE space/tab must follow the marker (afterMarker).
-    ///   Content may be empty (the "empty item" case "- ").
-    ///
-    /// Ambiguities with emphasis-or-HR: a lone `*` line without a
-    /// following space is NOT a list item (returns nil). A line of
-    /// just `***` is also rejected (future HR handling).
-    static func parseListLine(_ line: String) -> ParsedListLine? {
-        let chars = Array(line)
-        var i = 0
-
-        // Leading indent: spaces or tabs.
-        while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-        let indent = String(chars[0..<i])
-
-        guard i < chars.count else { return nil }
-        let markerStart = i
-
-        // Unordered marker: single `-`, `*`, or `+`.
-        if chars[i] == "-" || chars[i] == "*" || chars[i] == "+" {
-            // Disambiguate: a RUN of the same char ("---", "***", "+++")
-            // is not a list item (it's HR-like). Require the next
-            // character to NOT be the same marker.
-            let markerCh = chars[i]
-            if i + 1 < chars.count, chars[i + 1] == markerCh {
-                return nil
-            }
-            i += 1
-        } else if chars[i].isNumber {
-            // Ordered marker: digits followed by `.` or `)`.
-            // CommonMark 5.2 caps the digit run at 9. 10+ digits is not
-            // a valid list marker (e.g. "1234567890. not ok").
-            let digitStart = i
-            while i < chars.count, chars[i].isNumber { i += 1 }
-            let digitCount = i - digitStart
-            guard digitCount >= 1 && digitCount <= 9 else { return nil }
-            guard i < chars.count, chars[i] == "." || chars[i] == ")" else {
-                return nil
-            }
-            i += 1
-        } else {
-            return nil
-        }
-
-        let marker = String(chars[markerStart..<i])
-
-        // afterMarker: require at least one space/tab, OR the marker
-        // is at end of line (empty list item, e.g. "-\n", "1.\n").
-        // CommonMark allows empty items where the marker is the entire
-        // line content.
-        let afterStart = i
-        while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-        if i == afterStart {
-            // Marker at end of line with no whitespace — valid empty
-            // list item per CommonMark (e.g. "-\n", "1.\n", "*\n").
-            if i == chars.count {
-                return ParsedListLine(
-                    indent: indent, marker: marker,
-                    afterMarker: "", checkbox: nil,
-                    content: ""
-                )
-            }
-            // Marker followed by non-whitespace — not a list item.
-            return nil
-        }
-        let afterMarker = String(chars[afterStart..<i])
-
-        // CommonMark §5.2 indented-code-in-list-item rule: if the
-        // whitespace between the marker and the content expands to 5
-        // or more virtual columns, the content is an indented code
-        // block inside the list item. In that case the "afterMarker"
-        // is EXACTLY 1 virtual column (the minimum required to
-        // separate marker and content); the remaining columns belong
-        // to the item body as indented-code indentation.
-        //
-        // Example (spec #7): `-\t\tfoo`
-        //   marker `-` col 0, tab col 1→4 (3 cols), tab col 4→8 (4
-        //   cols). Total afterMarker width = 7 cols. Content col = 2
-        //   (marker + 1 col). Remaining 6 cols become the code
-        //   block's indent; after the code-block dedent strips 4,
-        //   the rendered output is `  foo`.
-        //
-        // Implementation: compute the virtual column width of
-        // afterMarker. If ≥ 5, rewrite the item as having a 1-column
-        // afterMarker with empty inline content, and stuff the
-        // expanded `indented-code indent + content` onto
-        // continuationLines so the buildItemTree inner re-parse picks
-        // it up as an indented code block.
-        let markerCol = indent.count + marker.count
-        var afterWidth = 0
-        do {
-            var vcol = markerCol
-            for ch in afterMarker {
-                if ch == " " { afterWidth += 1; vcol += 1 }
-                else if ch == "\t" {
-                    let w = 4 - (vcol % 4)
-                    afterWidth += w
-                    vcol += w
-                }
-            }
-        }
-        if afterWidth >= 5 {
-            let leftoverCols = afterWidth - 1
-            let contentIndent = String(repeating: " ", count: leftoverCols)
-            let content = String(chars[i..<chars.count])
-            // The continuation line is at content-col-2 relative indent;
-            // since buildItemTree's re-parse uses MarkdownParser.parse
-            // directly (no dedent), we provide the full indent-string
-            // so the inner parse recognizes indented code (≥ 4 cols).
-            var parsed = ParsedListLine(
-                indent: indent, marker: marker,
-                afterMarker: " ", checkbox: nil,
-                content: ""
-            )
-            parsed.continuationLines = [contentIndent + content]
-            return parsed
-        }
-
-        // Detect checkbox: "[ ] ", "[x] ", "[X] " at the start of
-        // content. Only for unordered markers ("-", "*", "+").
-        let remaining = chars[i..<chars.count]
-        let checkbox: Checkbox?
-        let contentStart: Int
-        if (marker == "-" || marker == "*" || marker == "+"),
-           remaining.count >= 4,
-           chars[i] == "[",
-           (chars[i+1] == " " || chars[i+1] == "x" || chars[i+1] == "X"),
-           chars[i+2] == "]" {
-            let cbText = String(chars[i..<(i+3)])  // "[ ]", "[x]", "[X]"
-            // Consume whitespace after checkbox.
-            var afterCB = i + 3
-            let afterCBStart = afterCB
-            while afterCB < chars.count, chars[afterCB] == " " || chars[afterCB] == "\t" {
-                afterCB += 1
-            }
-            // Require at least one space after the checkbox.
-            if afterCB > afterCBStart {
-                checkbox = Checkbox(text: cbText, afterText: String(chars[afterCBStart..<afterCB]))
-                contentStart = afterCB
-            } else if afterCB == chars.count {
-                // Checkbox at end of line with no content (empty todo).
-                checkbox = Checkbox(text: cbText, afterText: "")
-                contentStart = afterCB
-            } else {
-                checkbox = nil
-                contentStart = i
-            }
-        } else {
-            checkbox = nil
-            contentStart = i
-        }
-
-        let content = String(chars[contentStart..<chars.count])
-        // CommonMark §5.2: if the content of the first line is blank
-        // (empty or only-whitespace), the item's content column is the
-        // marker column + marker length + 1 — the afterMarker defaults
-        // to a single virtual column regardless of its actual width on
-        // the source line. Collapse afterMarker to " " in that case so
-        // the downstream content-column arithmetic (continuation,
-        // nesting, lazy continuation) uses the canonical value.
-        // Spec #279: `-   \n  foo\n` expects `<ul><li>foo</li></ul>`
-        // — the continuation `  foo` at col 2 attaches to the item
-        // whose content column is 2, not 4.
-        let contentIsBlank = content.isEmpty
-            || content.allSatisfy({ $0 == " " || $0 == "\t" })
-        let normalizedAfter = (contentIsBlank && !afterMarker.isEmpty)
-            ? " "
-            : afterMarker
-        return ParsedListLine(
-            indent: indent, marker: marker,
-            afterMarker: normalizedAfter, checkbox: checkbox,
-            content: content
-        )
-    }
-
     /// Recursively build a list item tree from a flat array of parsed
     /// list lines. Items at the same indent column become siblings;
     /// items at a deeper indent are collected as children of the
@@ -1285,7 +1060,7 @@ public enum MarkdownParser {
     /// strictly greater than `parentIndent`. Items whose indent falls
     /// below `siblingIndent` pop the recursion back to the caller.
     static func buildItemTree(
-        lines: [ParsedListLine], from: Int,
+        lines: [ListReader.ParsedListLine], from: Int,
         parentContentColumn: Int,
         refDefs: [String: (url: String, title: String?)] = [:]
     ) -> (items: [ListItem], endIndex: Int) {
@@ -1346,7 +1121,7 @@ public enum MarkdownParser {
             // with empty inline content. This produces the correct
             // `<li><ul><li>...</li></ul></li>` tree.
             var outerInline = inline
-            if let nested = parseListLine(cur.content),
+            if let nested = ListReader.parseListLine(cur.content),
                nested.indent.isEmpty || nested.indent.allSatisfy({ $0 == " " }) {
                 // Re-emit the nested content as its own list in the
                 // outer item's continuationBlocks. Keep any pre-existing
@@ -1480,7 +1255,7 @@ public enum MarkdownParser {
     /// means the item most recently pushed onto the list, which is
     /// what makes nested-list continuation work (continuations attach
     /// to the innermost container that can host them).
-    private static func deepestOwner(in parsed: [ParsedListLine], forIndent indent: Int) -> Int? {
+    private static func deepestOwner(in parsed: [ListReader.ParsedListLine], forIndent indent: Int) -> Int? {
         // Walk forward and take the last qualifying item. "Last"
         // matters in flat-list cases like `- a\n- b\n\n  c`, where
         // both `a` and `b` have the same content column but the
@@ -1837,12 +1612,12 @@ public enum MarkdownParser {
         if HorizontalRuleReader.detect(line) != nil { return true }
         // List item with <= 3 spaces of indent (4+ spaces = indented code
         // block context, which cannot interrupt a paragraph)
-        if let parsed = parseListLine(line) {
+        if let parsed = ListReader.parseListLine(line) {
             let spaceCount = parsed.indent.filter { $0 == " " }.count
                 + parsed.indent.filter { $0 == "\t" }.count * 4
             // CommonMark 5.3: an ordered marker with start != 1 also
             // does NOT interrupt a paragraph.
-            if spaceCount <= 3 && !isOrderedListMarkerWithNonOneStart(parsed.marker) {
+            if spaceCount <= 3 && !ListReader.isOrderedListMarkerWithNonOneStart(parsed.marker) {
                 return true
             }
         }
