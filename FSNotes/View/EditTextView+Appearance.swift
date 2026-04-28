@@ -107,10 +107,144 @@ extension EditTextView {
             bmLog("✏️ drawInsertionPoint: TK2-rect=\(rect) tableRect=\(tableRect) containerOrigin=\(textContainerOrigin) selRange=\(selectedRange())")
             newRect = tableRect
             newRect.size.width = caretWidth
+        } else if let outsideRect = caretRectAtSubviewTableBoundary(default: rect) {
+            // Subview-tables: when the parent's cursor sits at the
+            // U+FFFC of a TableAttachment (start) or one offset past
+            // (end), TK2's natural caret rect is the FULL line-fragment
+            // height — which equals the entire table's height. That
+            // paints a giant caret on top of the table. Clamp to a
+            // single-line height so the user sees a normal cursor
+            // right next to the table, ready to press Enter for a
+            // new paragraph below or Delete to remove the table.
+            newRect = outsideRect
+            newRect.size.width = caretWidth
         }
 
         let caretColor = NSColor(red: 0.47, green: 0.53, blue: 0.69, alpha: 1.0)
         super.drawInsertionPoint(in: newRect, color: caretColor, turnedOn: flag)
+    }
+
+    /// If the parent's selection is at the start (offset N) or just
+    /// past the end (offset N+1) of a TableAttachment's U+FFFC, return
+    /// a rect with a normal single-line height so we paint a sensible
+    /// caret instead of the line-fragment-height giant.
+    ///
+    /// Returns nil when the cursor isn't adjacent to a TableAttachment
+    /// (the natural-flow rect is correct in that case).
+    /// Public entry point for `updateTableCellCaret` to compute a
+    /// rect when the cursor is at a subview-tables TableAttachment
+    /// boundary. No `default` param — computes from scratch.
+    func caretRectAtSubviewTableBoundary() -> NSRect? {
+        return caretRectAtSubviewTableBoundary(default: .zero)
+    }
+
+    private func caretRectAtSubviewTableBoundary(default rect: NSRect) -> NSRect? {
+        guard UserDefaultsManagement.useSubviewTables else { return nil }
+        guard let storage = textStorage else { return nil }
+        let cursor = selectedRange().location
+        let len = storage.length
+
+        // Case A: cursor is right after a TableAttachment's U+FFFC —
+        // paint a single-line caret at the RIGHT edge of the visible
+        // table grid (not at the line fragment's natural end, which
+        // with full-width bounds is at the far right margin).
+        if cursor > 0, cursor <= len {
+            if let attachment = storage.attribute(
+                .attachment, at: cursor - 1, effectiveRange: nil
+            ) as? TableAttachment {
+                return caretRectNextToTable(
+                    attachment: attachment,
+                    storage: storage,
+                    attachmentOffset: cursor - 1,
+                    side: .right,
+                    fallback: rect
+                )
+            }
+        }
+        // Case B: cursor is at a TableAttachment's U+FFFC offset —
+        // paint at the LEFT edge of the visible table.
+        if cursor < len {
+            if let attachment = storage.attribute(
+                .attachment, at: cursor, effectiveRange: nil
+            ) as? TableAttachment {
+                return caretRectNextToTable(
+                    attachment: attachment,
+                    storage: storage,
+                    attachmentOffset: cursor,
+                    side: .left,
+                    fallback: rect
+                )
+            }
+        }
+        return nil
+    }
+
+    private enum TableSide { case left, right }
+
+    /// Compute a caret rect on either side of the visible table grid,
+    /// at single-line height anchored to the bottom of the table's
+    /// vertical extent. Returns nil if TK2 layout state isn't ready.
+    private func caretRectNextToTable(
+        attachment: TableAttachment,
+        storage: NSTextStorage,
+        attachmentOffset: Int,
+        side: TableSide,
+        fallback: NSRect
+    ) -> NSRect? {
+        // Find the fragment frame for the attachment offset to anchor
+        // y. Use TK2's textLayoutManager — it knows where the U+FFFC
+        // line fragment lives in container coords.
+        guard let tlm = textLayoutManager,
+              let cs = tlm.textContentManager as? NSTextContentStorage,
+              let loc = cs.location(cs.documentRange.location, offsetBy: attachmentOffset),
+              let fragment = tlm.textLayoutFragment(for: loc)
+        else { return nil }
+
+        let fragFrame = fragment.layoutFragmentFrame  // container coords
+        // X: container coords for left/right edge of visible grid.
+        // Computed via the container's `containerWidth` parameter
+        // (= text container width) and the attachment's geometry.
+        let textContainerWidth = tlm.textContainer?.size.width ?? fragFrame.width
+        let visibleWidth = attachment.visibleGridWidth(containerWidth: textContainerWidth)
+
+        let xInContainer: CGFloat
+        switch side {
+        case .left:  xInContainer = fragFrame.origin.x
+        case .right: xInContainer = fragFrame.origin.x + visibleWidth
+        }
+
+        // Container → view: add textContainerOrigin.
+        let xInView = xInContainer + textContainerOrigin.x
+
+        // Y: bottom-anchor the single-line caret to the table's
+        // bottom. Reads as "ready to start a new line below the table".
+        let font = UserDefaultsManagement.noteFont
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        let yBottomInView = fragFrame.maxY + textContainerOrigin.y
+        let yInView = yBottomInView - lineHeight
+
+        return NSRect(
+            x: xInView,
+            y: yInView,
+            width: caretWidth,
+            height: lineHeight
+        )
+    }
+
+    /// Replace the line-fragment-height rect TK2 hands us with a rect
+    /// of a single body-font line height, anchored to the BOTTOM of
+    /// the original rect. Bottom-anchored matches user expectation —
+    /// the caret reads as "ready to start a new line below the table".
+    private func clampedToSingleLine(_ rect: NSRect) -> NSRect {
+        let font = UserDefaultsManagement.noteFont
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        guard rect.height > lineHeight else { return rect }
+        return NSRect(
+            x: rect.origin.x,
+            y: rect.maxY - lineHeight,
+            width: rect.width,
+            height: lineHeight
+        )
     }
 
     override func updateInsertionPointStateAndRestartTimer(_ restartFlag: Bool) {

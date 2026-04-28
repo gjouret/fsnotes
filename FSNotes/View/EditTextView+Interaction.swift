@@ -263,6 +263,41 @@ extension EditTextView {
         // `(span.location, length=0)`, so parking at `span.location`
         // is the right insertion point.
         setSelectedRange(NSRange(location: span.location, length: 0))
+
+        // Subview-tables: also focus the (0,0) cell of the new table's
+        // TableContainerView. Without this, the parent EditTextView
+        // remains first responder and paints its caret at the U+FFFC
+        // offset of the attachment glyph — which TK2 places at the
+        // tail of the previous line, producing the "giant caret left
+        // of the table" artifact users see when they create a fresh
+        // table.
+        //
+        // The view-provider mounts asynchronously: TK2 enqueues
+        // `loadView()` for the next viewport-layout pass. Defer the
+        // cell-focus to that pass so `attachment.liveContainerView`
+        // is populated when we read it.
+        if UserDefaultsManagement.useSubviewTables {
+            requestSubviewTableCellFocus(blockIndex: blockIndex, row: 0, col: 0)
+        }
+    }
+
+    /// Event-driven post-mount focus: tag the table attachment with
+    /// the cell coordinate to focus, and let the view-provider's
+    /// `loadView` consume it when it mounts the container. If the
+    /// container is already live (e.g. table was already on-screen),
+    /// `requestPostMountFocus` focuses immediately.
+    func requestSubviewTableCellFocus(
+        blockIndex: Int, row: Int, col: Int
+    ) {
+        guard let projection = documentProjection,
+              let storage = textStorage,
+              blockIndex < projection.blockSpans.count else { return }
+        let span = projection.blockSpans[blockIndex]
+        guard span.location < storage.length,
+              let attachment = storage.attribute(
+                .attachment, at: span.location, effectiveRange: nil
+              ) as? TableAttachment else { return }
+        attachment.requestPostMountFocus(row: row, col: col)
     }
 
     /// Map a mouse-down event to a table cell + cursor offset, and

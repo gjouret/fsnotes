@@ -49,6 +49,18 @@ import AppKit
 
 final class TableCellEditingTests: XCTestCase {
 
+    override func setUp() {
+        super.setUp()
+        // This suite tests the NATIVE-cell editing path
+        // (`TableElement` + `handleTableCellEdit`). If a previous test
+        // leaks `useSubviewTables = true` into UserDefaults (it
+        // persists across processes), the renderer emits subview
+        // attachments here and `TableElement` is never produced —
+        // every test in this suite then fails with "No TableElement
+        // found" / "Harness setup failed". Force the flag off.
+        UserDefaultsManagement.useSubviewTables = false
+    }
+
     // MARK: - Fixtures
 
     /// 2 columns × 2 body rows. Short distinct cell text so tests can

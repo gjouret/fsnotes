@@ -149,9 +149,30 @@ extension EditTextView {
     /// directly to `frame`.
     func updateTableCellCaret() {
         let selection = selectedRange()
-        guard selection.length == 0,
-              let rect = caretRectIfInTableCell()
-        else {
+        // If a TableCellTextView (subview-tables cell) currently owns
+        // first responder, the cell paints its OWN caret. Don't also
+        // paint the parent's caret view — that'd be a phantom caret
+        // visible alongside the cell's real one.
+        if let fr = window?.firstResponder, fr is TableCellTextView {
+            tableCellCaretView?.hide()
+            if let saved = savedInsertionPointColor {
+                insertionPointColor = saved
+                savedInsertionPointColor = nil
+            }
+            return
+        }
+        // Check both: (a) cursor inside a native TableLayoutFragment
+        // cell (TK1-style native-tables path), and (b) cursor at a
+        // subview-tables `TableAttachment`'s U+FFFC offset (start or
+        // end). Either way TK2 doesn't call `drawInsertionPoint` so
+        // we manually position the caret subview.
+        let rect: NSRect? = {
+            guard selection.length == 0 else { return nil }
+            if let r = caretRectIfInTableCell() { return r }
+            if let r = caretRectAtSubviewTableBoundary() { return r }
+            return nil
+        }()
+        guard let rect = rect else {
             tableCellCaretView?.hide()
             // Restore the platform indicator color when we leave the
             // table. Save-then-restore handles the case where the user

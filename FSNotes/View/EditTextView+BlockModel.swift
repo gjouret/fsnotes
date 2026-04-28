@@ -633,6 +633,20 @@ extension EditTextView {
             return
         }
 
+        // Subview-tables fast path: cell-content-only edits update
+        // the existing TableAttachment in place and skip the storage
+        // splice. Storage representation is invariant for
+        // `.replaceTableCell` (always 1 U+FFFC), so the splice would
+        // be semantically a no-op — but constructing a new attachment
+        // object causes TK2 to remount the view provider and tear
+        // down the live cell view (eating the user's first responder).
+        // The fast path is no-op when `useSubviewTables` is off.
+        if tryApplyTableCellInPlace(result) {
+            pendingInlineTraits = savedPendingTraits
+            explicitlyOffTraits = savedOffTraits
+            return
+        }
+
         // No-op edit guard (Perf plan #5): if the splice replaces a
         // range with a byte-identical attributed string (same text AND
         // same attributes), skip the entire mutation path. This catches
@@ -732,6 +746,27 @@ extension EditTextView {
                 note: self.note,
                 priorRenderedOverride: oldProjection.rendered
             )
+            // Subview-tables: schedule a deferred viewport-layout +
+            // table-container redisplay. The splice can dismount the
+            // table's view-provider when the splice range is in a
+            // neighbouring block (TK2 invalidates a wider range than
+            // the changed characters). Doing the remount synchronously
+            // doesn't take effect — TK2 needs the run loop to settle.
+            // Coalescing flag: only ONE refresh per run-loop tick is
+            // scheduled, so rapid typing doesn't queue N redundant
+            // refreshes (which would each force a paint and produce
+            // visible flicker on the table).
+            if UserDefaultsManagement.useSubviewTables,
+               !pendingTableRefreshScheduled {
+                pendingTableRefreshScheduled = true
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.pendingTableRefreshScheduled = false
+                    guard let tlm = self.textLayoutManager else { return }
+                    tlm.textViewportLayoutController.layoutViewport()
+                    self.refreshAllTableContainerViews(in: self)
+                }
+            }
         } else {
             // Phase 5a: TK1 splice fallback. Same logical scope as
             // `applyDocumentEdit` — an `EditingOps`-driven mutation

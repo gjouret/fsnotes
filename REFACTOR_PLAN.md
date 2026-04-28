@@ -2,6 +2,12 @@
 
 > **File relocation:** user requested final location at `REFACTOR_PLAN.md` in the project root. Plan mode restricts writes to this file only; first action after ExitPlanMode approval is copying this to `/Users/guido/Documents/Programming/Claude/fsnotes/REFACTOR_PLAN.md`.
 
+> **Bug numbering note (2026-04-26):** any `Bug #NN` references in this document predate the 2026-04-26 renumber and use a legacy ad-hoc scheme. The canonical bug list with stable sequential IDs (`#1`–`#74`, growing as new bugs append) lives in the FSNotes note **"FSNotes++ Bugs - Refactor 4"**. Legacy references that survive in this document and don't map cleanly to new IDs:
+> - Legacy `#26` (CMD+B-stuck-on) → new `#14`
+> - Legacy `#35`, `#36` (residual stubborn bugs from the original Context paragraph) → no clean new-ID equivalent; resolved during Phases 2–4
+> - Legacy `#41` (seamCursor / `(paragraph, blankLine, paragraph)` delete) → no clean new-ID equivalent; pure-function regression captured in `test_bug41_returnThenDelete_*`
+> - Legacy `#60` (Find across tables) → resolved by Phase 2e T2-f; not present in new list
+
 ---
 
 ## Context
@@ -1989,3 +1995,22 @@ TK2 is alive at delegate-install time and the delegate attaches successfully. Pr
 - Not root-caused. Instrumentation was removed on the user's instruction to stop investigating.
 
 **Gate:** Re-investigate only after Phase 2c replaces the TK1 draw path with custom `NSTextLayoutFragment` subclasses. If the bug persists under TK2 fragments, it's in attribute assignment after all and the test above is lying. If it disappears, it was a TK1-path artifact that Phase 2c eliminated structurally.
+
+### Deferred — full-suite hang on `HeaderTests.test_headerFonts_areBold` (2026-04-28)
+
+**Symptom:** Running `xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes` (the full FSNotesTests target) hangs indefinitely on `test_headerFonts_areBold`. The hang appears after ~28 prior suites have run; the test never completes (≥3 min observed). Killing the process exits cleanly.
+
+**Reproduces on master.** Verified by stashing the Phase 8 / Subview Tables WIP and running the full suite against `6352ae9` — same hang at the same test, same elapsed point. Not WIP-introduced.
+
+**In isolation the test passes** (~0.1s). Single-suite (`-only-testing:FSNotesTests/HeaderTests`) and small bundles (5-suite combinations) both pass. The hang only emerges from the cumulative state of the full sweep.
+
+**What is known:**
+- `test_headerFonts_areBold` is the FIRST test in `HeaderTests` that calls `makeFullPipelineEditor()` + `runFullPipeline()` — i.e. the first test that constructs an `EditTextView` + `Note` + `Project` + adds them to an `NSWindow`, then calls `RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))`.
+- The seven preceding `HeaderTests` cases (`test_blockParser_*`) are pure-function parser tests — they pass instantly.
+- Suspected: a timer / observer / async `DispatchQueue.main` block left in flight by an earlier full-pipeline test (`EditorHTMLParityTests`, `EditorSnapshotTests`, `EditTextViewFillRenderSyncTests`, `BugDrivenHarnessTests`, `HarnessContractCoverageTests`, etc.) keeps the runloop busy when this test pumps it. None of the leakers are obvious from a code read.
+
+**Workarounds:**
+- Run targeted suites instead of the full target. The Phase 8 / Subview Tables landing run used `-only-testing:` for the relevant subview/table suites and ran clean (30/30 green).
+- Skip `test_headerFonts_areBold` via a temporary `-skip-testing` flag if a CI green button is needed.
+
+**Gate to re-investigate:** when test infra needs the full suite to be green (e.g. ahead of a CI re-introduction). The fix is in test isolation, not the code under test.

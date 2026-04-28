@@ -168,8 +168,7 @@ final class SubviewTableRenderTests: XCTestCase {
             rows: rows,
             alignments: alignments,
             containerWidth: 600,
-            font: UserDefaultsManagement.noteFont
-                ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            font: UserDefaultsManagement.noteFont,
             columnWidthsOverride: nil
         )
         let expectedHeight = TableGeometry.handleBarHeight + g.totalHeight

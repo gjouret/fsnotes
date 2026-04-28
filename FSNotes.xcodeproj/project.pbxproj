@@ -89,6 +89,11 @@
 		TGEO000000000000000000B1 /* TableGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGEO000000000000000000F1 /* TableGeometry.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
+		SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCR20260427F1 /* SubviewTableClickResponderTests.swift */; };
+		SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */; };
+		SVFP20260427B1 /* SubviewTableInPlaceFastPathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVFP20260427F1 /* SubviewTableInPlaceFastPathTests.swift */; };
+		SVBC20260427B1 /* SubviewTableBoundaryCaretTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVBC20260427F1 /* SubviewTableBoundaryCaretTests.swift */; };
+		SVCE20260428B1 /* SubviewTableCellEditingPhasesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCE20260428F1 /* SubviewTableCellEditingPhasesTests.swift */; };
 		BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */; };
 		DEA0000000000000000000B1 /* DocumentEditApplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA0000000000000000000F1 /* DocumentEditApplier.swift */; };
 		P5A0000000000000000000B1 /* StorageWriteGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5A0000000000000000000F1 /* StorageWriteGuard.swift */; };
@@ -218,6 +223,8 @@
 		11F5A1012F1A100100AAA001 /* EditTextView+NoteState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */; };
 		C2EBE360717D9B7D5AEA7764 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
 		41086938FB7AC6B9680E9E06 /* EditTextView+BlockModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */; };
+		SVT20260427A009 /* EditTextView+SubviewTables.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427A010 /* EditTextView+SubviewTables.swift */; };
+		SVT20260427A011 /* EditTextView+SubviewTables.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVT20260427A010 /* EditTextView+SubviewTables.swift */; };
 		P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F2 /* EditTextView+Selection.swift */; };
 		P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = P5B0000000000000000000F2 /* EditTextView+Selection.swift */; };
 		TCCV20260426A001 /* TableCellCaretView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TCCV20260426F001 /* TableCellCaretView.swift */; };
@@ -1312,6 +1319,11 @@
 		TGEO000000000000000000F1 /* TableGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elements/TableGeometry.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
+		SVCR20260427F1 /* SubviewTableClickResponderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableClickResponderTests.swift; sourceTree = "<group>"; };
+		SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableBodyTypingPreservesAttachmentTests.swift; sourceTree = "<group>"; };
+		SVFP20260427F1 /* SubviewTableInPlaceFastPathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableInPlaceFastPathTests.swift; sourceTree = "<group>"; };
+		SVBC20260427F1 /* SubviewTableBoundaryCaretTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableBoundaryCaretTests.swift; sourceTree = "<group>"; };
+		SVCE20260428F1 /* SubviewTableCellEditingPhasesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableCellEditingPhasesTests.swift; sourceTree = "<group>"; };
 		BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockSourceTextAttachment.swift; sourceTree = "<group>"; };
 		DEA0000000000000000000F1 /* DocumentEditApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditApplier.swift; sourceTree = "<group>"; };
 		P5A0000000000000000000F1 /* StorageWriteGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageWriteGuard.swift; sourceTree = "<group>"; };
@@ -1422,6 +1434,7 @@
 		P5B0000000000000000000F2 /* EditTextView+Selection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+Selection.swift"; sourceTree = "<group>"; };
 		TCCV20260426F001 /* TableCellCaretView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellCaretView.swift; sourceTree = "<group>"; };
 		SVT20260427F001 /* TableAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableAttachment.swift; sourceTree = "<group>"; };
+		SVT20260427A010 /* EditTextView+SubviewTables.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditTextView+SubviewTables.swift"; sourceTree = "<group>"; };
 		SVT20260427F002 /* TableAttachmentViewProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableAttachmentViewProvider.swift; sourceTree = "<group>"; };
 		SVT20260427F003 /* TableContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableContainerView.swift; sourceTree = "<group>"; };
 		SVT20260427F004 /* TableCellTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellTextView.swift; sourceTree = "<group>"; };
@@ -2585,6 +2598,7 @@
 				D797004B1F3DD10700BAD94D /* EditTextView.swift */,
 				11F5A1002F1A100100AAA001 /* EditTextView+NoteState.swift */,
 				FF39426DC37A269D8EEB0F7E /* EditTextView+BlockModel.swift */,
+				SVT20260427A010 /* EditTextView+SubviewTables.swift */,
 				P5FW000000000000000000F1 /* EditTextView+UndoJournal.swift */,
 				P5B0000000000000000000F2 /* EditTextView+Selection.swift */,
 				TCCV20260426F001 /* TableCellCaretView.swift */,
@@ -2914,6 +2928,11 @@
 				P5ET000000000000000000F1 /* Phase5eCompositionSessionTests.swift */,
 				TGET000000000000000000F1 /* TableGeometryTests.swift */,
 				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
+				SVCR20260427F1 /* SubviewTableClickResponderTests.swift */,
+				SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */,
+				SVFP20260427F1 /* SubviewTableInPlaceFastPathTests.swift */,
+				SVBC20260427F1 /* SubviewTableBoundaryCaretTests.swift */,
+				SVCE20260428F1 /* SubviewTableCellEditingPhasesTests.swift */,
 				CBET000000000000000000F1 /* CodeBlockEditToggleTests.swift */,
 				TEET000000000000000000F1 /* TableElementEmissionTests.swift */,
 				TLFT000000000000000000F1 /* TableLayoutFragmentRenderTests.swift */,
@@ -4076,6 +4095,7 @@
 				P5B0000000000000000000B2 /* EditTextView+Selection.swift in Sources */,
 				TCCV20260426A001 /* TableCellCaretView.swift in Sources */,
 				SVT20260427A001 /* TableAttachment.swift in Sources */,
+				SVT20260427A009 /* EditTextView+SubviewTables.swift in Sources */,
 				SVT20260427A003 /* TableAttachmentViewProvider.swift in Sources */,
 				SVT20260427A005 /* TableContainerView.swift in Sources */,
 				SVT20260427A007 /* TableCellTextView.swift in Sources */,
@@ -4377,6 +4397,7 @@
 				P5B0000000000000000000B3 /* EditTextView+Selection.swift in Sources */,
 				TCCV20260426A002 /* TableCellCaretView.swift in Sources */,
 				SVT20260427A002 /* TableAttachment.swift in Sources */,
+				SVT20260427A011 /* EditTextView+SubviewTables.swift in Sources */,
 				SVT20260427A004 /* TableAttachmentViewProvider.swift in Sources */,
 				SVT20260427A006 /* TableContainerView.swift in Sources */,
 				SVT20260427A008 /* TableCellTextView.swift in Sources */,
@@ -4588,6 +4609,11 @@
 				P5ET000000000000000000B1 /* Phase5eCompositionSessionTests.swift in Sources */,
 				TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */,
 				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
+				SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */,
+				SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */,
+				SVFP20260427B1 /* SubviewTableInPlaceFastPathTests.swift in Sources */,
+				SVBC20260427B1 /* SubviewTableBoundaryCaretTests.swift in Sources */,
+				SVCE20260428B1 /* SubviewTableCellEditingPhasesTests.swift in Sources */,
 				CBET000000000000000000B1 /* CodeBlockEditToggleTests.swift in Sources */,
 				TEET000000000000000000B1 /* TableElementEmissionTests.swift in Sources */,
 				TLFT000000000000000000B1 /* TableLayoutFragmentRenderTests.swift in Sources */,
