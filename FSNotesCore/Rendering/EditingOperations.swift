@@ -1017,11 +1017,11 @@ public enum EditingOps {
                 in: block, from: fromOffset, to: toOffset, with: replacement
             )
 
-        case .heading(let level, let suffix):
-            let leading = leadingWhitespaceCount(in: suffix)
-            let suffixFrom = fromOffset + leading
-            let newSuffix = spliceString(suffix, at: suffixFrom, replacing: length, with: replacement)
-            return .heading(level: level, suffix: newSuffix)
+        case .heading:
+            // Phase 12.B.2: per-kind editor extracted to HeadingBlockEditor.
+            return try HeadingBlockEditor.replace(
+                in: block, from: fromOffset, to: toOffset, with: replacement
+            )
 
         case .codeBlock(let language, let content, let fence):
             let newContent = spliceString(content, at: fromOffset, replacing: length, with: replacement)
@@ -3352,35 +3352,11 @@ public enum EditingOps {
                 into: block, offsetInBlock: offsetInBlock, string: string
             )
 
-        case .heading(let level, let suffix):
-            // Map render-offset → suffix-offset. HeadingRenderer strips
-            // ONLY leading whitespace from the suffix; trailing is
-            // rendered verbatim. So render offset `o` corresponds to
-            // suffix offset `o + leading` and the displayed count is
-            // `suffix.count - leading`. Keeping trailing whitespace in
-            // the rendered length is what lets the user type a trailing
-            // space into a heading without stranding the cursor.
-            let leading = leadingWhitespaceCount(in: suffix)
-            let displayedCount = suffix.count - leading
-            
-            // Special case: empty heading (just whitespace in suffix).
-            // When displayedCount <= 0, there's no visible text, so any
-            // insertion offset should add text after the leading whitespace.
-            if displayedCount <= 0 {
-                // Insert after the leading whitespace - this becomes the heading text
-                let newSuffix = spliceString(suffix, at: leading, replacing: 0, with: string)
-                return .heading(level: level, suffix: newSuffix)
-            }
-            
-            // Normal case: heading has visible text
-            guard offsetInBlock >= 0, offsetInBlock <= displayedCount else {
-                throw EditingError.unsupported(
-                    reason: "heading: offset \(offsetInBlock) out of displayed range [0, \(displayedCount)]"
-                )
-            }
-            let suffixOffset = offsetInBlock + leading
-            let newSuffix = spliceString(suffix, at: suffixOffset, replacing: 0, with: string)
-            return .heading(level: level, suffix: newSuffix)
+        case .heading:
+            // Phase 12.B.2: per-kind editor extracted to HeadingBlockEditor.
+            return try HeadingBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
+            )
 
         case .codeBlock(let language, let content, let fence):
             // content is raw code; render offset == content offset
@@ -3440,19 +3416,11 @@ public enum EditingOps {
                 in: block, from: fromOffset, to: toOffset
             )
 
-        case .heading(let level, let suffix):
-            // Trailing whitespace is part of the rendered output —
-            // see insertIntoBlock(.heading) for rationale.
-            let leading = leadingWhitespaceCount(in: suffix)
-            let displayedCount = suffix.count - leading
-            guard fromOffset >= 0, toOffset <= displayedCount, fromOffset <= toOffset else {
-                throw EditingError.unsupported(
-                    reason: "heading: delete range [\(fromOffset), \(toOffset)] out of displayed [0, \(displayedCount)]"
-                )
-            }
-            let suffixFrom = fromOffset + leading
-            let newSuffix = spliceString(suffix, at: suffixFrom, replacing: length, with: "")
-            return .heading(level: level, suffix: newSuffix)
+        case .heading:
+            // Phase 12.B.2: per-kind editor extracted to HeadingBlockEditor.
+            return try HeadingBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
         case .codeBlock(let language, let content, let fence):
             let newContent = spliceString(content, at: fromOffset, replacing: length, with: "")
@@ -4646,7 +4614,7 @@ public enum EditingOps {
 
     /// Number of leading whitespace characters (spaces / tabs) in a
     /// string. Matches CharacterSet.whitespaces (space + tab + &c).
-    private static func leadingWhitespaceCount(in s: String) -> Int {
+    static func leadingWhitespaceCount(in s: String) -> Int {
         var n = 0
         for ch in s {
             if ch.unicodeScalars.allSatisfy({ CharacterSet.whitespaces.contains($0) }) {
