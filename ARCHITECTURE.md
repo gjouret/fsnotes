@@ -5,9 +5,9 @@
 FSNotes++ is a WYSIWYG markdown editor for macOS (forked from FSNotes). Rendering happens in a single `NSTextView` on TextKit 2 — no HTML preview pane. The `Document` block model is the single source of truth; two render paths consume it:
 
 - **WYSIWYG path** (`hideSyntax == true`, the default): `MarkdownParser` → `Document` → `DocumentRenderer` → `NSAttributedString` with markers consumed. The user sees bold/italic/headings as visual formatting.
-- **Source path** (`hideSyntax == false`): same `Document` → `SourceRenderer` → `NSAttributedString` with markers preserved and tagged `.markerRange`. `SourceLayoutFragment` paints those runs in the theme's marker color on top of the default text draw.
+- **Source path** (`hideSyntax == false`): same `Document` → `SourceRenderer` → `NSAttributedString` with markers preserved and tagged `.markerRange`. `SourceLayoutFragment` paints those runs in the theme's marker color over the default text draw.
 
-Both paths feed a single TK2 `NSTextContentStorage` / `NSTextLayoutManager` pair. Element dispatch and layout-fragment dispatch are per-block-kind (see "TextKit 2 adoption" below). Edits in WYSIWYG route through `EditingOps`, mutate the `Document`, and apply to `NSTextContentStorage` via `DocumentEditApplier`. Source mode edits flow into storage directly (the widget is a plain editable text view with marker coloring).
+Both paths feed a single TK2 `NSTextContentStorage` / `NSTextLayoutManager` pair. Element dispatch and layout-fragment dispatch are per-block-kind. Edits in WYSIWYG route through `EditingOps`, mutate the `Document`, and apply to `NSTextContentStorage` via `DocumentEditApplier`. Source mode edits flow into storage directly.
 
 ## Block-Model Pipeline
 
@@ -41,78 +41,81 @@ raw markdown ──► MarkdownParser ──► Document (block tree)
                    DocumentEditApplier ──► NSTextContentStorage splice
 ```
 
-**Key invariant (WYSIWYG)**: `textStorage.string` contains only displayed characters. Markdown markers (`#`, `**`, `-`, `>`, fences) exist only in the `Document` model and on disk. Edits mutate the `Document`; `DocumentEditApplier` emits a minimal element-bounded splice to patch the content storage.
+## Architecture Invariants
 
-**Key invariant (source mode)**: `textStorage.string` is the raw markdown byte-for-byte. `SourceRenderer` tags marker runs with `.markerRange`; `SourceLayoutFragment` overpaints them in the theme's marker color without mutating `.foregroundColor`.
+These are facts about the codebase. They are mechanically enforced where possible (DEBUG assertions, `scripts/rule7-gate.sh`) and load-bearing for everything else.
 
-### Document Model
+**A. Single write path into `NSTextContentStorage`.** `DocumentEditApplier.applyDocumentEdit(priorDoc:newDoc:contentStorage:…)` is the one function that mutates TK2 content storage for WYSIWYG edits. It consumes two `Document` values and emits a minimal element-bounded splice inside `performEditingTransaction`. The fill paths (`fillViaBlockModel`, `fillViaSourceRenderer`, `fill(note:)`) are the other authorized writers (initial-load, not edit-time). Enforced by `StorageWriteGuard`'s three scoped flags (`applyDocumentEditInFlight`, `fillInFlight`, `legacyStorageWriteInFlight`) and a DEBUG assertion in `TextStorageProcessor.didProcessEditing` that traps any unauthorized character-edit while `blockModelActive && !sourceRendererActive`. Release builds compile to no-ops. The grep gate flags any `performEditingTransaction` caller outside `DocumentEditApplier.swift`.
+
+The IME composition window (Phase 5e) is the one sanctioned exemption: `setMarkedText` writes inside `markedRange` while `compositionSession.isActive == true` are allowed; commit folds the final string into `Document` via one `applyEditResultWithUndo` call.
+
+**B. One layout primitive per block type.** Every per-block visual runs through TK2's element + fragment dispatch. Each block kind maps to exactly one `NSTextParagraph` subclass and at most one `NSTextLayoutFragment` subclass. If a block's rendering is wrong, the fragment class for that kind is where the fix lives. There is no second draw path.
+
+**C. All block content lives in `NSTextContentStorage`.** Tables carry cell text as live character runs; mermaid and math keep their source text in storage and hide it visually via their fragments. `NSTextFinder` / Cmd+F / accessibility traverse everything by construction. No block kind routes through `NSTextAttachment` as its *only* source of text.
+
+**D. No marker-hiding tricks in storage.** WYSIWYG storage contains only displayed characters — markdown markers (`**`, `#`, `` ` ``, `>`, list prefixes, fence lines, HR lines, cell pipes) do not exist in `textStorage.string`. Source mode contains markers but renders them via `SourceLayoutFragment` overpainting `.markerRange` runs in `Theme.shared.chrome.sourceMarker`; the default `.foregroundColor` is never mutated to hide or dim markers. The grep gate bans tiny-font / clear-foreground / negative-kern / invisible-character tricks.
+
+**E. Views read data; views never write data.** The projection → renderer → element → fragment chain is one-way. Views capture user intent (clicks, keystrokes, selections) and call a pure `EditingOps.*` primitive that returns a new `Document`; `applyDocumentEdit` delivers the minimal splice. Widget-level read-back into the model (the cautionary `InlineTableView` pattern, deleted) is grep-banned.
+
+**F. Theme is the sole presentation source of truth.** Every font size, color, paragraph spacing, border width, margin, and line-height literal is defined in `ThemeSchema.swift` + bundled JSON files. Renderers and fragments *read* from `Theme.shared`; they do not hardcode values. The grep gate bans literal `systemFont(ofSize:)`, `paragraphSpacing`, and hex color literals in render-path files.
+
+**G. `EditContract` checks every edit.** Every `EditingOps` primitive returns an `EditResult` carrying an `EditContract` (declared structural actions, post-cursor, post-selection length). `Invariants.assertContract(before:after:contract:)` runs in pure unit tests *and* in the live `EditorHarness` after every scripted input — the same invariant on both layers.
+
+## Document Model
 
 Nine block types (`FSNotesCore/Rendering/Document.swift`):
 
 - `paragraph(inline:)`
 - `heading(level:suffix:)` — ATX or setext; level 1-6
-- `codeBlock(language:content:fence:)` — fenced only (CommonMark indented code blocks are low priority)
-- `list(items:loose:)` — `ListItem` carries `indent`, `marker`, `afterMarker`, optional `checkbox`, inline content, and `children` for nesting
+- `codeBlock(language:content:fence:)` — fenced; indented code blocks parse to fenced for round-trip
+- `list(items:loose:)` — `ListItem` carries `indent`, `marker`, `afterMarker`, optional `checkbox`, inline content, and `body: [Block]` for nested children + continuation in CommonMark source order
 - `blockquote(lines:)` — each `BlockquoteLine` stores its `>`-prefix verbatim
 - `horizontalRule(character:length:)` — source character + run length preserved for byte-equal round-trip
 - `htmlBlock(raw:)` — raw HTML source, verbatim
-- `table(header:alignments:rows:columnWidths:)` — `TableCell` values (inline trees), per-column `TableAlignment`, and optional persisted drag-resize widths (T2-g.4). **`raw` was deleted in Phase 4.2** — tables now serialize canonically on every write via `MarkdownSerializer`, regardless of whether the table was edited. Legacy non-canonical source formatting is rewritten on the first save of a note that contains tables.
-- `blankLine` — structural separator (renders to empty string — see "Blank Lines and Zero-Length Blocks")
+- `table(header:alignments:rows:columnWidths:)` — `TableCell` values (inline trees), per-column `TableAlignment`, optional persisted drag-resize widths. Tables serialize canonically on every write; legacy non-canonical formatting is rewritten on first save.
+- `blankLine` — structural separator (renders to empty string)
 
-Each content block contains `[Inline]` trees for rich text. Inline nodes: `.text`, `.bold`, `.italic`, `.strikethrough`, `.underline`, `.highlight`, `.code`, `.link`, `.image`, `.autolink`, `.wikilink(target:display:)`, `.rawHTML`, `.entity`, `.escapedChar`, `.lineBreak`, `.math`, `.displayMath`, `.kbd`, `.superscript`, `.subscript`.
+Each content block contains `[Inline]` trees: `.text`, `.bold`, `.italic`, `.strikethrough`, `.underline`, `.highlight`, `.code`, `.link`, `.image`, `.autolink`, `.wikilink(target:display:)`, `.rawHTML`, `.entity`, `.escapedChar`, `.lineBreak`, `.math`, `.displayMath`, `.kbd`, `.superscript`, `.subscript`.
 
-**Parser / serializer round-trip contract**: `MarkdownSerializer.serialize(MarkdownParser.parse(x))` is byte-equal to `x` for supported constructs. The blocks that preserve exact source (blockquote prefix, HR character/length, list `indent`/`marker`/`afterMarker`, checkbox text, blockquote-line prefix) exist specifically so the serializer can replay the user's typing without rewriting unrelated whitespace. The two deliberate exceptions are tables (canonical since Phase 4.2) and the `columnWidths` sentinel (see "Table edit primitive" below).
+**Round-trip contract**: `MarkdownSerializer.serialize(MarkdownParser.parse(x))` is byte-equal to `x` for supported constructs. The fields that preserve exact source (blockquote prefix, HR character/length, list `indent`/`marker`/`afterMarker`, checkbox text) exist specifically so the serializer can replay the user's typing without rewriting unrelated whitespace. Tables (canonical since the table refactor) and the `columnWidths` HTML-comment sentinel are the deliberate exceptions.
 
-Wikilinks parse from `[[target]]` or `[[target|display]]` and render as styled clickable text using the `wiki:<target>` URL scheme — the `[[ ]]` brackets never appear in rendered storage. The click handler in the view layer dispatches `wiki:` URLs to the note resolver.
+Wikilinks parse from `[[target]]` or `[[target|display]]` and render as styled clickable text using the `wiki:<target>` URL scheme — the brackets never appear in rendered storage. The click handler dispatches `wiki:` URLs to the note resolver.
 
 ### Blank Lines and Zero-Length Blocks
 
-**Critical**: `Block.blankLine` renders to an empty string (`""`), producing a `blockSpan` with `length == 0`. This has important consequences:
+`Block.blankLine` renders to an empty string (`""`), producing a `blockSpan` with `length == 0`. Consequences:
 
-1. **Range overlap checks fail**: The standard overlap test `span.location < rangeEnd && spanEnd > range.location` returns `false` for zero-length spans because `spanEnd == span.location`. `blockIndices(overlapping:)` works around this with a fallback to `blockContaining(storageIndex:)` for zero-length selections.
-
-2. **Cursor position checks fail**: A check like `cursorLoc >= span.location && cursorLoc < span.location + span.length` can never be true for zero-length blocks (since `span.location + 0 == span.location`). Code operating on zero-length blocks must special-case `span.length == 0` and use `span.location` directly.
-
-3. **Blank lines are structural, not visual**: In the rendered output, blank lines exist only as the `"\n"` separator between adjacent blocks. They carry no content of their own. The separator uses the same paragraph style as empty paragraphs (`paragraphSpacing = 12`) to ensure consistent line metrics and prevent visual jumps when typing begins.
-
-4. **No fallback path between WYSIWYG and source**: When `documentProjection` is non-nil (WYSIWYG), ALL editing must route through `EditingOps`. Returning `false` from a block-model function does NOT fall through to a source-mode code path — it typically results in a no-op or broken state. The two rendering paths share the `Document`, but their edit mechanisms are independent.
-
-5. **Return key creates blank lines**: When Return is pressed at the end of a paragraph, `splitParagraphOnNewline` produces `[paragraph(before), .blankLine]`. The cursor ends up on the blank line, which has zero rendered length. Toolbar operations targeting the cursor must handle this case explicitly.
+1. **Range overlap checks fail**: `span.location < rangeEnd && spanEnd > range.location` returns `false` for zero-length spans. `blockIndices(overlapping:)` falls back to `blockContaining(storageIndex:)` for zero-length selections.
+2. **Cursor position checks fail**: `cursorLoc >= span.location && cursorLoc < span.location + span.length` is never true for zero-length blocks. Code operating on zero-length blocks must special-case `span.length == 0`.
+3. **Blank lines are structural, not visual**: in rendered output, blank lines are the `"\n"` separator between adjacent blocks. Empty paragraphs use the same paragraph style for consistent line metrics.
+4. **No fallback path between WYSIWYG and source**: when `documentProjection` is non-nil (WYSIWYG), all editing must route through `EditingOps`. Returning `false` from a block-model function does NOT fall through to source mode.
+5. **Return at end of paragraph creates blank lines**: `splitParagraphOnNewline` produces `[paragraph(before), .blankLine]`; the cursor lands on the zero-length blank.
 
 ### Save Path
 
-Post-Phase 4.7, **every save routes through `Note.save(markdown: String)`**. There is no second save entry point and no `NoteSerializer` / `prepareForSave`; they were deleted.
+Every save routes through `Note.save(markdown: String)`. There is no second save entry point.
 
-- **WYSIWYG save**: `MarkdownSerializer.serialize(projection.document)` → `Note.save(markdown:)`. The `Document` is the sole source of truth at serialize time. The previous save-path walker that read live `InlineTableView` state and rewrote `Block.table.raw` has been deleted; it is the cautionary tale in `CLAUDE.md` for why views must never be read back into data.
-- **Source-mode save**: `textStorage.string` is already byte-preserving markdown. `Note.save()` (no arg) restores rendered block placeholders and unloads attachments in-place, then writes the file. No round-trip through `MarkdownParser` / `MarkdownSerializer`, so a source-mode user's exact bytes are preserved.
+- **WYSIWYG save**: `MarkdownSerializer.serialize(projection.document)` → `Note.save(markdown:)`. The `Document` is the sole source of truth at serialize time.
+- **Source-mode save**: `textStorage.string` is already byte-preserving markdown. `Note.save()` (no arg) restores rendered block placeholders and unloads attachments in-place, then writes the file — no round-trip through `MarkdownParser` / `MarkdownSerializer`.
 
-`save(markdown:)` invalidates `Note.cachedDocument`, updates `modifiedLocalAt`, and clears `isBlocked` so the file-system watcher can resume detecting external changes.
+`save(markdown:)` invalidates `Note.cachedDocument`, updates `modifiedLocalAt`, and clears `isBlocked` so the file-system watcher can resume detecting external changes. The grep gate bans `prepareForSave` / `.save(content:)` patterns to prevent reintroduction of the legacy save-path widget walker.
 
-## Architecture Principles
-
-1. **Storage is rendered output (WYSIWYG)**: `textStorage.string` has no markers. Markdown lives in `Document` and on disk. In source mode `textStorage.string` IS the markdown — but marker coloring is a view-layer concern (`SourceLayoutFragment`), never a mutation of `.foregroundColor`.
-2. **Each stage owns its attributes**: `DocumentRenderer` owns `.font`, `.paragraphStyle`, `.foregroundColor` on the WYSIWYG path; `SourceRenderer` owns them on the source path. Don't set these elsewhere. Theme is the single source of every presentation literal (see "Theme" below).
-3. **Fix at the source stage**: Trace which stage sets a wrong attribute; fix there, never patch downstream. When saved output is wrong, trace which edit failed to update the projection and fix *there*, not in the save path.
-4. **Editing mutates Document**: User keystrokes → `EditingOps` → mutated `Document` → `DocumentEditApplier.applyDocumentEdit` → element-bounded splice. This is the single write path for block-model WYSIWYG storage; mechanically enforced by `StorageWriteGuard` + a DEBUG assertion in `TextStorageProcessor.didProcessEditing` (see "Edit Application" below). `CLAUDE.md` Invariant A is authoritative.
-5. **One general solution**: Solve recurring patterns once (e.g., typing attributes after Return for ALL transitions).
-6. **Views render data; views never write to data**. The projection → renderer → element → fragment chain is one-way. Views capture user intent (clicks, keystrokes) and call pure `EditingOps` primitives that return a new `Document`; the applier re-renders just the affected element range.
-
-## Per-Block-Kind Editor Dispatch (Phase 12.B)
+## Per-Block-Kind Editor Dispatch
 
 Every `Block` kind has a dedicated `BlockEditor` conformer under `FSNotesCore/Rendering/BlockEditors/`:
 
 | Block kind | Editor file |
 |---|---|
-| `.paragraph` | `BlockEditors/ParagraphBlockEditor.swift` |
-| `.heading` | `BlockEditors/HeadingBlockEditor.swift` |
-| `.codeBlock` | `BlockEditors/CodeBlockBlockEditor.swift` |
-| `.htmlBlock` | `BlockEditors/HtmlBlockBlockEditor.swift` |
-| `.blankLine`, `.horizontalRule`, `.table` (atomic / read-only kinds) | `BlockEditors/AtomicBlockEditors.swift` (one file, three editors) |
-| `.list` | `BlockEditors/ListBlockEditor.swift` (wraps `EditingOps.{insertIntoList,deleteInList,replaceInList}`) |
-| `.blockquote` | `BlockEditors/BlockquoteBlockEditor.swift` (wraps `EditingOps.{insertIntoBlockquote,deleteInBlockquote,replaceInBlockquote}`) |
+| `.paragraph` | `ParagraphBlockEditor.swift` |
+| `.heading` | `HeadingBlockEditor.swift` |
+| `.codeBlock` | `CodeBlockBlockEditor.swift` |
+| `.htmlBlock` | `HtmlBlockBlockEditor.swift` |
+| `.blankLine`, `.horizontalRule`, `.table` (atomic / read-only kinds) | `AtomicBlockEditors.swift` |
+| `.list` | `ListBlockEditor.swift` (wraps `EditingOps.{insertIntoList,deleteInList,replaceInList}`) |
+| `.blockquote` | `BlockquoteBlockEditor.swift` |
 
-The protocol (`FSNotesCore/Rendering/EditingOperations.swift:173`):
-```
+Protocol shape (`EditingOperations.swift`):
+```swift
 public protocol BlockEditor {
     static func insert(into block: Block, offsetInBlock: Int, string: String) throws -> Block
     static func delete(in block: Block, from: Int, to: Int) throws -> Block
@@ -120,476 +123,242 @@ public protocol BlockEditor {
 }
 ```
 
-`EditingOps.{insertIntoBlock, deleteInBlock, replaceInBlock}` — formerly 23 block-kind switches with ~100-150 LoC bodies each — now collapse to one polymorphic call per kind. Each switch is exhaustive over the 9 block kinds: no `default: throw .notSupported` patterns. The compiler enforces that any new block kind must add an explicit branch.
+`EditingOps.{insertIntoBlock, deleteInBlock, replaceInBlock}` switches are exhaustive over the 9 block kinds: no `default: throw .notSupported` patterns. The compiler enforces that any new block kind must add an explicit branch.
 
-The retired `EditableBlock` / `BlockAction` / `BlockActionResult` scaffold (172 LoC at `EditingOperations.swift` lines 173-244 prior to commit `ebfc764`) was deleted as part of Phase 12.B.1; the new `BlockEditor` protocol takes its place with a tighter shape that matches the existing primitive contracts (pure functions on `Block`, not `mutating` methods on a protocol existential).
+## Parser Combinator Infrastructure
 
-## Parser Combinator Infrastructure (Phase 12.C)
+`FSNotesCore/Rendering/Combinators/Parser.swift` (~250 LoC) provides a bespoke parser-combinator library: `Parser<A>` value type, primitives (`char`, `string`, `oneOf`, `satisfy`, `eof`), combinators (`<|>`, `seq2`, `between`, `many`, `optional`, `sepBy`, `lookahead`, `notFollowedBy`). Backtracking is non-mutating — a failed alternative leaves the input intact. `many` has an explicit zero-consumption infinite-loop guard.
 
-`FSNotesCore/Rendering/Combinators/Parser.swift` provides the bespoke parser combinator library used by the bucket-by-bucket port of `MarkdownParser` (Phase 12.C.2 → 12.C.6). ~250 LoC. The infrastructure ships independently from any production parser changes.
-
-API surface:
-- Value type `Parser<A>` carrying `parse: (Substring) -> ParseResult<A>`.
-- Result enum `ParseResult<A>` with `.success(value, remainder)` and `.failure(message, remainder)` plus `.isSuccess` / `.value` / `.remainder` accessors.
-- Primitives: `pure`, `fail`, `satisfy`, `char`, `oneOf`, `noneOf`, `string`, `eof`.
-- Combinators: `map`, `flatMap`, `<|>` (alternative), `seq2`, `seq3`, `then`, `thenSkip`, `between`, `many`, `many1`, `optional`, `sepBy`, `sepBy1`, `lookahead`, `notFollowedBy`.
-- `parseAll` for full-input matching (returns failure on partial consumption).
-
-Why bespoke and not a Pod: existing Swift combinator libraries (PointFree's swift-parsing, SwiftParsec) lean on existential / protocol-witness machinery that's heavy in Swift. ~250 LoC of bespoke value types + closures is faster to compile, easier to debug, and removes the dependency surface. The library is also tuned to CommonMark — backtracking is non-mutating by construction (a failed alternative leaves the input intact because no input was consumed), `many`'s zero-consumption infinite-loop guard is explicit, all primitives are non-throwing.
+Bespoke rather than a Pod because existing Swift combinator libraries lean on existential / protocol-witness machinery that compiles slowly. ~250 LoC of value types + closures is faster to compile, easier to debug, and removes the dependency surface.
 
 The bridge between `MarkdownParser`'s `[Character] + Int` cursor convention and the combinator API's `Substring` shape lives in each ported file as a `match(_ chars:from:)` (or `read(lines:from:…)` for block readers) static method.
 
-### Inline tokenizer chain (Phases 12.C.2 + 12.C.3)
+### Inline tokenizer chain
 
-`MarkdownParser.tokenizeNonEmphasis` walks each character of paragraph text once, dispatching to a series of detectors. All 11 `tryMatch*` functions that previously lived in MarkdownParser have been moved out to dedicated files in `Combinators/`. Each detector exposes a `match(_ chars: [Character], from: Int) -> Match?` API; the bridge converts the slice to `Substring`, runs the combinator, and returns the consumed range.
+`MarkdownParser.tokenizeNonEmphasis` walks each character of paragraph text once, dispatching to detectors in `Combinators/`. Each detector exposes `match(_ chars: [Character], from: Int) -> Match?`.
 
-| Slice | File | Replaces | Spec bucket |
-|---|---|---|---|
-| 12.C.2 | `HardLineBreakParser.swift` | `\\\n` + ≥2-space-newline `if`-branches | Hard line breaks 15/15 (100%) |
-| 12.C.3.a | `CodeSpanParser.swift` | `tryMatchCodeSpan` | Code spans 22/22 (100%) |
-| 12.C.3.b | `MathParser.swift` | `tryMatchInlineMath` + `tryMatchDisplayMath` | FSNotes++ extension |
-| 12.C.3.c | `StrikethroughParser.swift` | `tryMatchStrikethrough` | GFM extension |
-| 12.C.3.d | `WikilinkParser.swift` | `tryMatchWikilink` | FSNotes++ extension |
-| 12.C.3.e | `EntityParser.swift` | `tryMatchEntity` + 50-entry HTML5 named-entity table | Entity refs 17/17 (100%) |
-| 12.C.3.f | `AutolinkParser.swift` | `tryMatchAutolink` | Autolinks 19/19 (100%) |
-| 12.C.3.g | `RawHTMLParser.swift` (5 sub-grammars) | `tryMatchRawHTML` | Raw HTML 20/20 (100%) |
-| 12.C.3.h | `LinkParser.swift` (carries `LinkParser` + `ImageParser`) | `tryMatchLink` + `tryMatchImage` | Links 76/90, Images 21/22 (floor held) |
+| File | Replaces | Spec bucket (current) |
+|---|---|---|
+| `HardLineBreakParser.swift` | `\\\n` + ≥2-space-newline | Hard line breaks 15/15 |
+| `CodeSpanParser.swift` | `tryMatchCodeSpan` | Code spans 22/22 |
+| `MathParser.swift` | `tryMatchInlineMath` + `tryMatchDisplayMath` | FSNotes++ extension |
+| `StrikethroughParser.swift` | `tryMatchStrikethrough` | GFM extension |
+| `WikilinkParser.swift` | `tryMatchWikilink` | FSNotes++ extension |
+| `EntityParser.swift` | `tryMatchEntity` + 50-entry HTML5 named-entity table | Entity refs 17/17 |
+| `AutolinkParser.swift` | `tryMatchAutolink` | Autolinks 19/19 |
+| `RawHTMLParser.swift` (5 sub-grammars) | `tryMatchRawHTML` | Raw HTML 20/20 |
+| `LinkParser.swift` (carries `LinkParser` + `ImageParser`) | `tryMatchLink` + `tryMatchImage` | Links 90/90, Images 21/22 |
 
-How "combinator" the port is varies with grammar shape. Hard-line-break, code-span, math, strikethrough, wikilink, autolink — all use real combinator chains (`seq2`, `<|>`, `between`, `many1`, `flatMap`). Entity is a lookahead dispatch into three sub-`Parser<String>`s. Raw HTML is the same shape but with five sub-grammars. Link / image are a deliberate exception: the bracket-match-with-code-span-skipping requires `codeSpanRanges` from the caller, which is more naturally expressed as an imperative `Int` walk than as a state-monad threading through `Parser<…>`. The structure is still per-block-kind file isolation, just not literal combinators inside that file. Each file ships its own per-bucket regression test under `Tests/<Kind>ParserTests.swift`.
+How "combinator" the port is varies with grammar shape. Hard-line-break, code-span, math, strikethrough, wikilink, autolink use real combinator chains. Entity is a lookahead dispatch into three sub-`Parser<String>`s. Raw HTML is the same shape with five sub-grammars. Link/image are an exception: the bracket-match-with-code-span-skipping requires `codeSpanRanges` from the caller, which is more naturally an imperative `Int` walk than a state-monad threading.
 
-### Inline emphasis (Phase 12.C.4)
+### Inline emphasis
 
-`Combinators/EmphasisResolver.swift` carries the CommonMark §6.2 delimiter-stack algorithm. Three responsibilities live in this file:
+`Combinators/EmphasisResolver.swift` carries the CommonMark §6.2 delimiter-stack algorithm. Three responsibilities:
 
-- `InlineToken` enum and `DelimiterRun` final class — the data types that flow between Phase A (`MarkdownParser.tokenizeNonEmphasis`) and Phase B (resolve). Both are public so Phase A can construct them.
-- `EmphasisResolver.flanking(delimChar:before:after:)` — left/right-flanking rules with `*` permissive vs `_` intra-word strict, and the v0.31.2 punctuation broadening that includes Sc/Sk/Sm/So categories so currency symbols (£, €) are treated as punctuation for flanking. Called from Phase A at delimiter-run construction time.
-- `EmphasisResolver.resolve(tokens:refDefs:)` — the doubly-walked token rewrite. For each closer, scans backwards for a matching opener obeying Rule of 3 (skip if `(canOpen || canClose) && sum % 3 == 0 && opener.originalCount % 3 != 0 && closer.originalCount % 3 != 0`); collects content between them as the emphasis container's children; replaces the opener slot with the new `.bold` / `.italic`; rebuilds the delimiter-index list and continues.
+- `InlineToken` enum and `DelimiterRun` final class — data types between Phase A (`MarkdownParser.tokenizeNonEmphasis`) and Phase B (resolve).
+- `EmphasisResolver.flanking(...)` — left/right-flanking rules with `*` permissive vs `_` intra-word strict, plus the v0.31.2 punctuation broadening for Sc/Sk/Sm/So categories (currency symbols `£`, `€` count as punctuation for flanking).
+- `EmphasisResolver.resolve(tokens:refDefs:)` — the doubly-walked token rewrite. For each closer, scans backwards for a matching opener obeying Rule of 3; collects content; replaces the opener slot with the new `.bold` / `.italic`; rebuilds the index list and continues.
 
-Not a literal `Parser<…>` port — the algorithm is a stateful linked-list rewrite over tokens, not a backtracking parse over characters. A `Parser<…>` shape would obscure the spec text. The port's value is structural: 240 LoC of stateful logic now lives in a dedicated file with its own per-bucket regression tests (`Tests/EmphasisResolverTests.swift`, 15 tests). `MarkdownParser.parseInlines` is now a thin three-phase orchestrator: `tokenizeNonEmphasis` → `EmphasisResolver.resolve` → `resolveHTMLTagPairs`. CommonMark "Emphasis and strong emphasis" bucket: 132/132 (100%).
+Not a literal `Parser<…>` port — the algorithm is a stateful linked-list rewrite over tokens, not a backtracking parse over characters. `MarkdownParser.parseInlines` is now a thin three-phase orchestrator: `tokenizeNonEmphasis` → `EmphasisResolver.resolve` → `resolveHTMLTagPairs`.
 
-### Block readers (Phase 12.C.5)
+`Combinators/LinkResolver.swift` carries the §6.4 inactive-link delimiter-stack algorithm. A pre-pass walks the inline character stream, tracking `[` and `![` openers on a stack; on each `]` it tries to match a link/image body. On success a `[` opener flips every earlier `[` opener to `active = false` so nested `[a [b](u1)](u2)` cannot re-activate as a link. `![` openers stay active because spec §6.4 only inactivates link openers.
 
-`MarkdownParser.parse` walks the input line-by-line, dispatching to per-block-kind branches. Block readers are extracted from the monolithic `parse` into dedicated files in `Combinators/`, mirroring the inline-tokenizer port pattern. Each reader exposes:
+### Block readers
 
-- `detect(_ line: String) -> …?` — single-line detection helper, public so cross-cutting callers (list continuation, ref-def collection, lazy-continuation interrupt, blockquote inner-content scan) can call it directly without re-implementing the rules.
-- `read(lines: [String], from: Int, …) -> ReadResult?` — multi-line read (when applicable) returning the parsed `Block` and the next line index.
+`MarkdownParser.parse` is a thin block-loop dispatcher. Each block kind has a dedicated reader in `Combinators/` exposing `detect(_ line:)` (single-line) and `read(lines:from:…)` (multi-line). Readers in the system:
 
-| Slice | File | Replaces | Spec bucket |
-|---|---|---|---|
-| 12.C.5.a | `FencedCodeBlockReader.swift` | `detectFenceOpen` + `isFenceClose` + `Fence` struct + the fenced-code branch of `parse` | Fenced code blocks 29/29 (100%) |
-| 12.C.5.b | `HorizontalRuleReader.swift` | `detectHorizontalRule` + the HR branch of `parse` | Thematic breaks 19/19 (100%) |
-| 12.C.5.b | `ATXHeadingReader.swift` (carries ATX `detect`/`read` + `detectSetextUnderline`) | `detectHeading` + `detectSetextUnderline` + the ATX branch of `parse` | ATX headings 18/18 (100%), Setext headings 27/27 (100%) |
-| 12.C.5.c | `HtmlBlockReader.swift` | `detectHTMLBlock` + `htmlBlockEndsOnLine` + `htmlBlockTags` + `extractHTMLTagName` + `isCompleteHTMLTag` + the HTML-block branch of `parse` (7 sub-types: pre/script/style/textarea, comment, processing instruction, declaration, CDATA, block-level tag, type-7 complete tag) | HTML blocks 43/44 (98%) |
-| 12.C.5.d | `BlockquoteReader.swift` | `detectBlockquoteLine` + `blockquoteInnerAllowsLazyContinuation` + the blockquote branch of `parse`. The `read` method takes `parseInlines` and `interruptsLazyContinuation` as injected closures (both depend on parser state — refDef table, list-marker rules — the reader doesn't own). | Block quotes 24/25 (96%) |
-| 12.C.5.e | `TableReader.swift` | `detectTable` + `TableDetection` struct + `isTableRow` + `isTableSeparator` + `parseAlignments` + `parseTableRow` + the GFM-pipe-table branch of `parse`. Covers both detection modes (a: header on current line, b: header buffered as paragraph). | GFM extension; not part of base CommonMark |
-| 12.C.5.f | `ListReader.swift` (per-line classifier) | `parseListLine` + `listMarkerType` + `isOrderedListMarkerWithNonOneStart` + `ParsedListLine` struct (now `public`, lives on the reader). Cross-cutting callers in MarkdownParser qualified as `ListReader.X`. | List items 42/48 (88%), Lists 19/26 (73%) |
-| 12.C.5.g | `ListReader.swift` (multi-line collection + item-tree builder) | `read(lines:from:rawBuffer:trailingNewline:parseInlines:interruptsLazyContinuation:parseRecursive:refDefs:) -> ReadResult?` ports the ~556-line block-loop list-collection-and-build section. The full helper kit moves with it: `buildItemTree` (now public), `deepestOwner`, `canAppendListMarker`, `leadingSpaceCount`, `stripLeadingSpaces`, `isEmphasisOnlyParagraph`. Closure surface: 4 arguments — `parseInlines`, `interruptsLazyContinuation`, `parseRecursive` (callback to `MarkdownParser.parse`), `refDefs`. The trivial 3-line `isBlankLine` is duplicated as private `isBlank` rather than plumbed as another closure. Two cross-cutting call-site updates outside the list block: outer-loop setext detection at line 100 (`!ListReader.isEmphasisOnlyParagraph(rawBuffer)`), and the indented-code-block branch (~7 sites for `ListReader.leadingSpaceCount` / `ListReader.stripLeadingSpaces`). Spec buckets unchanged (no behavior change — pure structural port). | List items 48/48, Lists 26/26 (held) |
+| File | Owns |
+|---|---|
+| `FencedCodeBlockReader.swift` | fence open/close detection + body read |
+| `HorizontalRuleReader.swift` | HR detection |
+| `ATXHeadingReader.swift` | ATX heading + setext-underline detection |
+| `HtmlBlockReader.swift` | 7 HTML-block sub-types (pre/script/style, comment, PI, declaration, CDATA, block tag, type-7 complete tag) |
+| `BlockquoteReader.swift` | `>` prefix + lazy continuation; injected closures `parseInlines` + `interruptsLazyContinuation` |
+| `TableReader.swift` | GFM pipe tables (header-on-current-line + header-buffered modes) |
+| `ListReader.swift` | per-line classifier (`parseListLine`) + multi-line collection (`read`) + `buildItemTree`. Owns helpers `leadingSpaceCount`, `stripLeadingSpaces`, `canAppendListMarker`, `deepestOwner`, `isEmphasisOnlyParagraph`. Closure surface: `parseInlines`, `interruptsLazyContinuation`, `parseRecursive` (callback to `MarkdownParser.parse`), `refDefs`. |
 
-Setext heading promotion stays in `MarkdownParser.parse` because it depends on the paragraph buffer state (`rawBuffer`) — not a self-contained line read. Only the underline detector moved.
+The recursive callback `parseRecursive: { MarkdownParser.parse($0) }` is how `ListReader.read` and `BlockquoteReader.read` re-enter the parser for inner item bodies.
 
-Across the seven reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to ~1,454 LoC (−2,520 LoC, ~63%) while spec compliance held flat at 620/652 (95.1%) through 12.C.5 and then advanced to **651/652 (99.8%)** through Phase 12.C.6. After 12.C.5.g `MarkdownParser.parse` is a thin block-loop dispatcher: each block kind delegates to its dedicated reader, and the parser owns only the line splitter, the paragraph buffer, the link-ref-def first pass, the inline tokenizer entry, the indented-code-block branch (still owned by the parser because it is one of the two callers of `ListReader.leadingSpaceCount` / `ListReader.stripLeadingSpaces`), and `interruptsLazyContinuation` (used as a closure by both `BlockquoteReader.read` and `ListReader.read`). The recursive callback `parseRecursive: { MarkdownParser.parse($0) }` is how `ListReader.read` and `ListReader.buildItemTree` re-enter the parser for inner item bodies.
+Setext heading promotion stays in `MarkdownParser.parse` because it depends on the paragraph buffer (`rawBuffer`) — not a self-contained line read. Only the underline detector moved.
 
-### Container-aware ref-def discovery (Phase 12.C.6.a)
-
-CommonMark §4.7 allows link reference definitions to live inside any container block, including blockquotes. The pre-decomposition parser collected ref-defs by scanning raw lines, which missed `> [foo]: /url` (the `>` prefix prevented the ref-def regex from matching). Phase 12.C.6.a closes this without re-architecting the collector:
-
-- `collectLinkRefDefs` builds a `strippedLines: [String]` view alongside the source — every line carrying a blockquote prefix has its prefix stripped to expose the inner content for ref-def matching.
-- When the line at position `i` carries a `>` prefix AND `tryParseLinkRefDef(strippedLines, startIndex: i, ...)` succeeds AND every line consumed by the parse also carries a `>` prefix (a multi-line nested ref-def must stay inside the same container), the def is registered in `refDefs` and its source-line indices are accumulated into a new `blockquoteRefDefLines: Set<Int>` return value.
-- The top-level block-parse loop unpacks the three-tuple `(refDefs, consumed, blockquoteRefDefLines)` and threads `blockquoteRefDefLines` to `BlockquoteReader.read(..., skipLines: …)`. The reader walks past those line indices without emitting `BlockquoteLine`s, preserving the (now empty) blockquote container while the ref-def is hoisted to document scope.
-- `BlockquoteReader.read(...)` gains a `skipLines: Set<Int> = []` parameter (default-empty for back-compat with all other callers).
-
-Closes spec example #218. Bucket: Link reference definitions 26/27 → 27/27 (100%). Overall CommonMark 620/652 → 621/652 (95.2%).
-
-### Ref label normalization (Phase 12.C.6.b + 12.C.6.c)
-
-CommonMark §4.7 specifies that link reference labels are normalized in two steps: trim and collapse all whitespace runs (spaces, tabs, AND line ends) to a single space, then apply Unicode case folding. Two single-line edits to `normalizeLabel(_:)` close the two failure modes that were leaking through:
-
-- **12.C.6.b — Unicode case fold (`495c121`).** Previous implementation used Swift's `.lowercased()`, which performs only single-codepoint case mapping. Multi-codepoint folds — most notably ẞ (U+1E9E, capital sharp S) folding to "ss" (two codepoints) — fall outside `lowercased()`'s capability. Switching to `.folding(options: .caseInsensitive, locale: nil)` gives the proper Unicode-aware fold. Closes spec example #540. Bucket: Links 76/90 → 77/90 (85%). Overall 621/652 → 622/652 (95.4%).
-- **12.C.6.c — Line-end-aware whitespace collapse (`ecbba98`).** Previous implementation split on " " and "\t" only, so a multi-line label `[Foo\n  bar]` normalized to `foo\n  bar` and never matched its single-line lookup `[Foo bar]`. Switching to `components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")` collapses every kind of whitespace run uniformly. Closes spec example #541. Bucket: Links 77/90 → 78/90 (87%). Overall 622/652 → 623/652 (95.6%).
-
-Both changes pass through the single `normalizeLabel(_:)` helper, so registration and lookup remain symmetric.
-
-### Wikilink yields to brackets and ref-defs (Phase 12.C.6.d)
-
-The wikilink extension `[[target]]` previously won unconditionally over the standard CommonMark reference link, which produced two CommonMark-conformance failures even though wikilink itself is an accepted FSNotes++ extension. Two narrow rules tighten the wikilink path so it plays nicely with adjacent bracket structure and known ref-defs:
-
-- **Bracket-integrity (`WikilinkParser.match`).** The matcher fails if an extra `[` immediately precedes the opening `[[` or an extra `]` immediately follows the closing `]]`. Spec #548 (`[[[foo]]]`) is plain text — the wikilink must not consume the middle `[[foo]]` and leave stray brackets behind.
-- **Ref-def precedence (call site in `MarkdownParser.tokenizeNonEmphasis`).** When the wikilink target normalizes to a known link-reference-definition label, the regular ref-link parse wins. The outer `[` becomes a literal bracket, the inner `[target]` resolves through the ref-def, and the closing `]` is also literal. Spec #559 (`[[*foo* bar]]` + `[*foo* bar]: /url "title"`).
-
-The wikilink-as-fallback semantics for unmatched targets are preserved — spec #590 (`![[foo]]` with no matching ref-def) is the documented FSNotes++ extension and still emits a wikilink.
-
-Closes spec examples #548 and #559. Bucket: Links 78/90 → 80/90 (89%). Overall 623/652 → 625/652 (95.9%).
-
-### Shortcut ref-link works after failed inline link (Phase 12.C.6.e)
-
-`tryMatchReferenceLink` previously rejected the shortcut path whenever the closing `]` was followed by `(`, on the theory that `(` always indicates an inline link. That heuristic is too eager: the function is only consulted *after* `LinkParser.match` has already failed, so reaching it guarantees the `(...)` is NOT a valid inline-link destination. Removing the guard lets the shortcut activate as the spec intends — `[foo](not a link)` with `[foo]: /url1` defined now renders as ref-link `<a>foo</a>` followed by literal `(not a link)`.
-
-Closes spec example #568. Bucket: Links 80/90 → 81/90 (90%). Overall 625/652 → 626/652 (96.0%).
-
-### 4-space-indented marker can't interrupt a paragraph (Phase 12.C.6.f)
-
-CommonMark §4.4 / §5.2: a list marker indented 4+ spaces is lazy continuation, not a new block. The block-parse loop already had two "don't interrupt a paragraph" guards (bare-marker-at-EOL and ordered-start≠1); the missing third was indent ≥ 4. Adding `!(rawBuffer.count > 0 && leadingSpaceCount(firstParsed.indent) >= 4)` to the list-detection branch means `> foo\n    - bar` keeps `- bar` as paragraph continuation inside the blockquote rather than splitting the blockquote into paragraph + list.
-
-Closes spec example #238. Bucket: Block quotes 24/25 → 25/25 (100%). Overall 626/652 → 627/652 (96.2%).
-
-### Link bracket scan respects HTML / autolink boundaries (Phase 12.C.6.g)
-
-CommonMark §6.4: brackets inside an HTML attribute value or an autolink URL are protected — they're literal text inside another inline construct, not link delimiters. The link-text bracket scan in both `LinkParser.match` (inline-link path) and `tryMatchReferenceLink` (ref-link path) used to count every `[`/`]` on equal footing, so inputs like `[foo <bar attr="](baz)">` and `[foo <bar attr="][ref]">` had their `]` eaten by the link parser.
-
-Both scans now, when they see `<`, first try `AutolinkParser.match` then `RawHTMLParser.match`. A success advances the cursor to the construct's end and the bracket count is unaffected. If neither matches, the `<` falls through as ordinary text.
-
-Closes spec examples #524, #526, #536, #538. Bucket: Links 81/90 → 85/90 (94%). Overall 627/652 → 631/652 (96.8%).
-
-### Link-in-link literalization via the §6.4 delimiter stack (Phase 12.C.6.h)
-
-CommonMark §6.4 specifies an "inactive link" pass on the inline delimiter stack: when a `[` opener resolves into a link, every earlier `[` opener still on the stack becomes inactive so the surrounding bracket pair can't re-activate as a nested link. The greedy left-to-right `LinkParser.match` previously embedded in `tokenizeNonEmphasis` had no notion of this — it would happily match the OUTER bracket pair of `[a [b](u1)](u2)` as a link with the inner link as its text content, producing spurious nested `<a>` tags.
-
-The fix lands as `Combinators/LinkResolver.swift`:
-
-- A pre-pass walks the inline character stream once, tracking `[` and `![` openers on a stack. Code spans, autolinks, raw HTML, and backslash escapes are skipped exactly as the tokenizer would skip them, so brackets inside those constructs don't participate.
-- At each `]`, the resolver tries to match a link/image body in `chars[j..]`: inline `(...)` first (via `LinkParser.parseInlineBody`, factored out for sharing), then full / collapsed `[label]`, then shortcut. On success, a `ResolvedLink` is appended and — if the opener was a `[` (not `![`) — every `[` opener still on the stack flips to `active = false`. `![` openers stay active because spec §6.4 only inactivates link openers; `[![alt](img)](url)` is intentional.
-- An inactive opener on the stack causes its `]` to fall through as literal text: no resolution attempted.
-
-The tokenizer materialises resolved spans by indexing into `linksByOpenIdx[i]` instead of greedy-matching. Image alt text is recursively re-parsed; the alt-as-string rendering in `CommonMarkHTMLRenderer` already flattens nested `<a>` to text content, so `![[[foo](uri1)](uri2)](uri3)` correctly renders alt as `[foo](uri2)` (the inner `[`/`]` survive as literals because of inactivation, the inner link's anchor is dropped at alt-rendering time).
-
-The retired `tryMatchReferenceLink` (~70 LoC) was the imperative twin of the new resolver's `matchAfterCloser`; the three forms (full / collapsed / shortcut) plus the spec #568 fall-through-to-shortcut semantic now live in one place.
-
-Closes spec examples #518, #519, #520, #532, #533. Bucket: Links 85/90 → 90/90 (100%). Overall 631/652 → 636/652 (97.5%).
-
-### Multi-block list items via continuationLines + tight-mode rendering (Phase 12.C.6.i)
-
-CommonMark §5.2 list items can directly contain non-paragraph blocks — fenced code, blockquotes, ATX headings, HTML blocks. The block-model already represents this via `ListItem.continuationBlocks: [Block]`; the gap was that the parser routed those blocks AROUND the item (terminating the list and emitting the block at document scope) instead of THROUGH it (collecting it into the item's continuation), and the renderer had a too-eager looseness heuristic that wrapped tight items in `<p>` whenever they had two continuation blocks.
-
-The fix has three coordinated parts:
-
-- **Block-starter routing in `MarkdownParser.parse`.** A new sibling to the lazy-continuation branch sits inside the list-block loop's "non-list line without preceding blank" handler. When the line is indented to the current item's content column or deeper AND is a block-starter (`interruptsLazyContinuation` returns true), the line — and any further continuation-eligible lines — go into the last item's `continuationLines` instead of breaking out of the list. The collection loop mirrors the existing blank-line-then-content branch (lines 234-300) without the blank prefix; it stops at a list marker indented less than the content column or at a non-blank line whose indent falls below the content column. Spec #320 `* a\n  > b\n  >` now collects the blockquote into *a's continuation; spec #321 (blockquote + fence) does the same for both blocks.
-
-- **Combined re-parse in `buildItemTree`.** When the item's first line opens a non-paragraph block (`FencedCodeBlockReader.detectOpen`, `ATXHeadingReader.detect`, `HorizontalRuleReader.detect`, `BlockquoteReader.detect`, `HtmlBlockReader.detect`), `cur.content + continuationLines` joins to a single string and re-parses as a `Document`. The result becomes `inline = []` + `continuationBlocks = innerDoc.blocks`. This unwinds the lazy-merge contamination where spec #318 `- ```\n  b` had previously merged "b" into the item's inline content as text — once the lazy-merge is recognized as fence body via combined re-parse, "b" lands in the codeBlock body where it belongs. The blank-line filter on continuation blocks (`innerDoc.blocks.filter { case .blankLine = $0; return false }`) was lifted so the renderer's blank-line looseness signal can fire; the renderer already skips `.blankLine` entries when iterating, so removing the filter is rendering-neutral but adds the per-item looseness signal CommonMark §5.4 requires. The existing nested-marker special case (lines 1201-1222 of `MarkdownParser.swift`) is gated on `!firstLineIsBlockStarter` so spec #61 `- * * *` doesn't double-emit an HR (combined re-parse already produces it).
-
-- **Tight-mode rendering + correct looseness in `CommonMarkHTMLRenderer`.** The `count >= 2 → loose` heuristic in `itemHasLoosenessSignal` was dropped — CommonMark §5.4 keys looseness on blank-line-between-blocks, not block count, and the dropped filter (above) makes the `.blankLine` detection authoritative. Tight-mode rendering now inserts a `\n` between inline content and the first continuation block so output reads `<li>a\n<blockquote>...` (spec #320) rather than `<li>a<blockquote>...`. The list-level `hasBlankLines` flag is no longer set unconditionally when continuation collection consumes blanks — only when trailing blanks are trimmed (the actual "next item follows blank" signal). Spec #318's fence body containing blanks no longer false-flags the list as loose.
-
-Test thresholds bumped: HTML blocks 40 → 44, Lists 9 → 23.
-
-Closes spec examples #175, #318, #320, #321, #324. Buckets: HTML blocks 43/44 → 44/44 (100%); Lists 19/26 → 23/26 (88%). Overall 636/652 → 641/652 (98.3%).
-
-### Top-level 4-space-indented marker → indented code + setext-underline-as-first-continuation (Phase 12.C.6.j)
-
-Two narrow follow-ups against the same multi-block list-item failure family. Both close one spec example each.
-
-- **Top-level list-detection guard tightened.** `MarkdownParser.parse`'s list-block branch had a guard from 12.C.6.f saying "don't open a list when continuing a paragraph with 4+ space indent" — `!(rawBuffer.count > 0 && leadingSpaceCount(firstParsed.indent) >= 4)`. CommonMark §5.2 rule 1 actually caps preceding indent K at [0,3] *regardless* of whether a paragraph is open: a 4-space-indented marker at top level is an indented code block, not a list item. Dropping the `rawBuffer.count > 0` qualifier closes spec #289 (`    1.  A paragraph` and following indented lines now go to one indented code block instead of opening a list). The downstream indented-code-block detector at line ~582 already handles all the multi-line consume logic.
-
-- **Setext-underline-as-first-continuation.** When a list-item's first continuation line is a setext underline (`---` or `===`) and the item's content is a non-emphasis paragraph, `buildItemTree` now routes through the combined-reparse branch (the same path 12.C.6.i added for non-paragraph block-starters in `cur.content`). The check is `firstContIsSetext = !cur.content.isEmpty && ATXHeadingReader.detectSetextUnderline(cur.continuationLines.first) != nil && !isEmphasisOnlyParagraph([cur.content])`. Without this gate the inner re-parse sees `---\nbaz` (without the paragraph context) and falls into HR detection; with the combined re-parse it sees `Bar\n---\nbaz` and emits a setext h2 + paragraph. The renderer also needed two coordinated fixes: `renderListItem` was passing `inTightList: false` for continuation blocks (now passes `inTightList: tight` so paragraphs in continuation blocks get the §5.4 unwrap), and `renderBlock` for `.paragraph` now actually honours `inTightList` by emitting only the inline content (no `<p>` tags) when set. Closes spec #300.
-
-Test threshold bumped: List items 12 → 44.
-
-Closes spec examples #289, #300. Buckets: List items 42/48 → 44/48 (92%). Overall 641/652 → 643/652 (98.6%).
-
-### Empty-marker items owning indented code (Phase 12.C.6.k)
-
-CommonMark §5.2: a list item that begins with `-\n` (empty marker, content on subsequent lines) accepts indented code at column ≥ markerCol + markerLen + 1 + 4. The previous parser had an empty-marker-content-fill branch that detected this case ("dedented has 4+ leading spaces → it's a block starter") but only used the detection to *skip* filling cur.content with the line — it then fell through to the normal control flow, which broke out of the list and emitted the line as a top-level indented code block.
-
-The fix routes the line(s) into the empty-marker item's `continuationLines` instead. A new branch sits right after the cur.content-fill check inside the same `last.content.isEmpty && last.continuationLines.isEmpty && !interruptsLazyContinuation(l)` guard: when `lineIndent >= cc && dedentedIs4Indent`, walk forward collecting all indented-enough lines (mirroring the block-starter-as-continuation walk's stop conditions) into the item's `continuationLines`. `buildItemTree`'s else branch then re-parses `parse("    baz\n") → [.codeBlock("baz")]` and the renderer emits `<li>\n<pre><code>baz\n</code></pre>\n</li>`.
-
-Test threshold bumped: List items 44 → 45.
-
-Closes spec example #278. Buckets: List items 44/48 → 45/48 (94%). Overall 643/652 → 644/652 (98.8%).
-
-### Tab expansion in list-item indent + afterMarker (Phase 12.C.6.l)
-
-CommonMark §2.2: tab characters expand to the next 4-stop tabstop, so a tab's *virtual width* depends on the column it sits at. The previous `ListReader.parseListLine` returned `indent` and `afterMarker` as the raw character substrings — so for input `\t - baz` the indent was the 2-character string `"\t "` even though it occupies 5 virtual columns (tab at col 0 → col 4, then space → col 5).
-
-Roughly twenty downstream sites in `MarkdownParser` (the inner list-collection loop, `buildItemTree`, `deepestOwner`, `interruptsLazyContinuation`, the lazy-continuation branches) compute nesting and content-column arithmetic with `parsed.indent.count` and `parsed.indent.count + parsed.marker.count + parsed.afterMarker.count` — character counts. For pure-space indent (the common case) the character count equals the virtual-column count, so the arithmetic is correct. For tab-bearing indent it diverges. Spec #9 ` - foo\n   - bar\n\t - baz\n` measured baz's indent as 2 < bar's content column 5 and treated baz as a sibling at the wrong level instead of nesting it under bar (bar's content column 5 = baz's virtual indent 5).
-
-The fix collapses the divergence at the source rather than auditing every call site. `parseListLine` now normalizes both `indent` and `afterMarker` to virtual-column-equivalent expanded spaces inside the function, via a single `expandTabsToSpaces(_:startingAt:)` helper that applies the §2.2 4-stop rule with the indent run starting at column 0 and the afterMarker run starting at the marker column. After normalization `parsed.indent.count == leadingSpaceCount(parsed.indent)` and `parsed.afterMarker.count == virtualAfterMarkerWidth` hold by construction, so every downstream `.count`-based arithmetic site automatically becomes virtual-column-correct without further change. The simplification also subsumes the open-coded "spaces + tabs*4" tab math in `MarkdownParser.interruptsLazyContinuation`, which over-counted leading-position tabs as 4 cols regardless of column.
-
-The serializer (`MarkdownSerializer.serializeList`) writes `item.indent` directly back into the output, so tab inputs round-trip as their expanded-space equivalent (e.g. `\t -` becomes `     -`). The editor never types tabs into list indents (the FSM uses spaces), so no internal code path is affected; only external markdown that contains tabs is normalized at parse time.
-
-Test threshold bumped: Tabs 2 → 11.
-
-Closes spec example #9. Buckets: Tabs 10/11 → 11/11 (100%). Overall 644/652 → 645/652 (98.9%).
-
-### Invalid-marker rejection (Phase 12.C.6.m)
-
-Two related fixes. The inner list-collection loop was appending every `parseListLine`-successful marker to `parsedLines` without checking whether the marker indent was actually valid for the current open list. CommonMark §5.2 requires a marker to satisfy one of two indent conditions to open a new item:
-
-- **Top-level sibling slot:** marker indent within K∈[0,3] of the outermost list edge (`topListEdge`). For top-level lists this means marker indent ≤ 3.
-- **Nested under deepest open item:** marker indent ≥ the most recently appended item's content column.
-
-A marker that fails both is NOT a marker for the current list. The fix encodes this rule once in a new private helper `canAppendListMarker(_ parsed, parsedLines, topIndent)` and gates two distinct call sites:
-
-- **BLANK-line peek branch.** When the next non-blank line is a marker but its indent is invalid, the list terminates rather than continuing across the blank. Spec #313 `1. a\n\n  2. b\n\n    3. c\n`: after b (content col 5), `3. c` at marker col 4 is past the top-level cap [0,3] AND below b's content col, so it is neither sibling nor child. The list closes after b; the outer block loop then picks up `3. c` as a top-level indented code block (col 4 ≥ 4).
-- **NON-BLANK branch.** When the parsed marker is invalid in this list's context AND there's no preceding blank, the line falls through to the else branch's lazy-continuation logic, where it merges into the deepest open paragraph. Spec #312 `- a\n - b\n  - c\n   - d\n    - e\n`: after d (content col 5), `- e` at marker col 4 is invalid; the narrow lazy-continuation rule (`lineIndent > last.indent.count && !interruptsLazyContinuation(l)`) merges the line into d's paragraph as `d\n- e`. The implementation wraps `parseListLine(l)` in a `flatMap` that returns nil for invalid markers, which converts the success case into the same control flow as the parse-fail case — leaving the existing else-branch logic untouched.
-
-Test threshold bumped: Lists 23 → 25.
-
-Closes spec examples #312, #313. Buckets: Lists 23/26 → 25/26 (96%). Overall 645/652 → 647/652 (99.2%).
-
-### `ListItem.body: [Block]` redesign (Phase 12.C.6.n)
-
-Pre-redesign, a list item's content area was split into two segregated arrays: `children: [ListItem]` (sublists) and `continuationBlocks: [Block]` (continuation paragraphs, fenced code, blockquotes, etc.). The renderer concatenated them in a fixed order — continuation FIRST, sublists LAST — regardless of the source order. CommonMark §5.2 example #325 (`* foo\n  * bar\n\n  baz\n`) needs the sublist to appear BETWEEN two paragraphs in the same item: `<li><p>foo</p><ul><li>bar</li></ul><p>baz</p></li>`. The flat fields can't express that ordering.
-
-**Data-model change.** `ListItem.body: [Block]` is now the single ordered storage. Sublists appear as `Block.list(...)` entries interleaved with continuation blocks and `.blankLine` markers (the latter retained as the renderer's looseness signal — they're skipped during HTML emission but used to determine tight-vs-loose). The legacy reads `children` and `continuationBlocks` survive as filtered computed views derived from `body`; the legacy `ListItem(... children: continuationBlocks:)` initializer survives as a convenience that concatenates `continuationBlocks` first then `.list(items: children)` last (matching the pre-redesign join). All ~150 existing call sites and test fixtures compile unchanged via the legacy paths.
-
-**Parser change.** `ParsedListLine` gains `continuationLinesPost: [String]`. The inner-while-loop's deepest-owner branch now routes a continuation-collection segment into `continuationLinesPost` whenever any child of the owner has already been appended to `parsedLines` (i.e., a sublist precedes this continuation in source order). `MarkdownParser.buildItemTree` composes `body` as `continuationBlocks_pre + (.list(children) if any) + continuationBlocks_post`. The vast majority of items (no children, or no post-children continuation) produce identical body to the pre-redesign legacy join; only #325-style cases differ.
-
-**Renderer change.** `CommonMarkHTMLRenderer.renderListItem` walks `body` in source order, dispatching `.list` blocks to `renderList` (sublist render) and other blocks to `renderBlock(_, inTightList:)` so paragraph unwrapping in tight lists still works for continuation paragraphs. `itemHasLoosenessSignal` reads `body.filter(non-list)` rather than the legacy `continuationBlocks` — semantically identical for non-#325 cases.
-
-**Serializer change.** `MarkdownSerializer.serializeItem` slices `body` into runs of contiguous non-list blocks vs. single sublists; non-list runs serialize as a single Document fragment (re-indented to the item's content column) so embedded blank-line blocks round-trip naturally; sublist runs recurse via `serializeItem`. The first non-list run prepends `\n\n` (multi-block items are loose for round-trip), and sublist runs prepend `\n` (matching the legacy children-after-content separator). For #325 the output is `* foo\n  * bar\n\n  baz` — sublist between two paragraphs, byte-equal to the input.
-
-Test threshold bumped: Lists 25 → 26. New regression test `test_parse_paragraphAfterSublist_preservesOrder` in `ListRoundTripTests` pins the body order — sublist as `body[0]`, paragraph "baz" later in `body` after a `.blankLine` marker.
-
-Closes spec example #325. Buckets: Lists 25/26 → 26/26 (100%). Overall 647/652 → 648/652 (99.4%).
-
-### Multi-block-evidence lazy continuation (Phase 12.C.6.o)
-
-CommonMark §5.1 lazy continuation merges any non-block-starter, non-blank line into an open paragraph regardless of indent. Our list-block parser ran a narrow rule instead — merge only when `lineIndent > last.indent.count` — to preserve the editor layer's `[list, paragraph]` round-trip: those Documents serialize to `- foo\nbar` without an explicit `.blankLine` separator, and a fully-strict parser would re-merge them at load time.
-
-Spec #290 (`  1.  A paragraph\nwith two lines.\n\n          indented code\n\n      > A block quote.`) hits the gap: `with two lines.` at indent 0 should lazy-continue item 1's paragraph, but the narrow rule rejects (`0 > 2` is false). The parser falls through to `break`, terminating the list, and the deeply-indented code line and blockquote become top-level blocks instead of body content of item 1.
-
-**Compromise: multi-block-evidence look-ahead.** When the narrow rule rejects, the parser scans forward through consecutive lazy-continuation candidate lines (non-blank, non-marker, non-block-starter), then any blank gap, and reports `multiBlockEvidence = true` if the next non-blank line is indented to ≥ the item's content column. For #290 the look-ahead from `with two lines.` finds the 10-space-indented code line two lines later — proof the item has multi-block content — and licenses the lazy merge. `buildItemTree`'s existing continuation re-parse then emits the indented code block and blockquote as `body` blocks of item 1, matching the spec's `<ol><li><p>...</p><pre><code>...</code></pre><blockquote>...</blockquote></li></ol>` shape.
-
-Editor-produced `- foo\nbar` (no deep follower) continues to parse as `[list, paragraph]` because the look-ahead finds no qualifying line. The narrow rule's editor-round-trip property is preserved without sacrificing the spec case.
-
-Closes spec example #290. Buckets: List items 45/48 → 46/48 (96%). Overall 648/652 → 649/652 (99.5%).
-
-### Nested-blockquote lazy continuation via renderer prefix injection (Phase 12.C.6.p)
-
-Specs #292 (`> 1. > Blockquote\ncontinued here.`) and #293 (`> 1. > Blockquote\n> continued here.`) need the second line — `continued here.` after the outer blockquote's prefix is stripped — to lazy-continue the inner blockquote's paragraph through three container levels (outer blockquote → ordered list item → inner blockquote). Our line-oriented parser doesn't model the multi-level container stack that strict CommonMark uses for cross-container lazy continuation, and 12.C.6.o's multi-block-evidence look-ahead can't help: there's no follower at ≥ contentCol to license a merge.
-
-Both specs land in the same outer-blockquote internal state. `BlockquoteReader.read` captures `[BlockquoteLine("> ", "1. > Blockquote"), BlockquoteLine(prefix, "continued here.")]` where `prefix` is empty for #292 (lazy) and `"> "` for #293 (explicit). When `CommonMarkHTMLRenderer.renderBlockquote` reconstructs the inner markdown, both produce `1. > Blockquote\ncontinued here.\n`. The inner re-parse then sees:
-- list item with content `> Blockquote`
-- top-level paragraph `continued here.` (because `continued here.` at indent 0 falls outside the list item's content column 3 and below the inner blockquote's prefix detection)
-
-**Synthesise the multi-level continuation at the renderer.** When a continuation line follows an inner-content line that opens a list-item-with-inner-blockquote chain, inject `(contentCol spaces) + "> "` before the line body. The new `lazyContainerPrefix(forLine:previousLine:)` helper detects the chain — `ListReader.parseListLine(previousLine)` succeeds AND `BlockquoteReader.detect(previousLine.content)` matches — and returns the inheritance prefix. It skips injection when the current line would itself open a new block (heading, HR, fenced code, HTML block, list marker, blockquote marker) so legitimate top-level interrupts pass through unchanged.
-
-Apply to BOTH lazy-prefix and explicit-`> `-prefix lines. From the inner re-parse's perspective the two arrive identically as plain `continued here.`, so both need the same fix. The earlier draft's `isLazy`-only gate closed #292 but left #293 failing — dropping the gate and switching to a paragraph-continuation discriminator closes both with one condition.
-
-After injection the inner markdown for both specs becomes `1. > Blockquote\n   > continued here.\n`. The list parser's existing block-starter-as-continuation branch (`lineIndent >= cc && interruptsLazyContinuation(l)`) collects the prefixed line into the item's `continuationLines`, and `buildItemTree`'s `firstLineIsBlockStarter` combined re-parse emits `[blockquote(["Blockquote", "continued here."])]` as the item's body — matching the spec's `<blockquote><ol><li><blockquote><p>Blockquote\ncontinued here.</p></blockquote></li></ol></blockquote>` shape.
-
-Closes spec examples #292, #293. Buckets: List items 46/48 → 48/48 (100%). Overall 649/652 → 651/652 (99.8%).
-
-The sole remaining failure is documented wikilink-extension non-conformance (#590, accepted) — `![[foo]]` resolves to a wiki link by product design rather than literal text. 651/652 (99.8%) is the practical ceiling for FSNotes++ given the wikilink extension; pure-CommonMark conformance would land at 652/652 only by removing the extension, which is out of scope for the refactor.
+After full decomposition, `MarkdownParser.swift` shrank from ~3,974 LoC to ~1,454 LoC. The parser owns: line splitter, paragraph buffer, link-ref-def first pass, inline tokenizer entry, indented-code-block branch, `interruptsLazyContinuation`, `isBlankLine`. Everything else delegates to a reader.
 
 ## Editing FSMs by Block Type
 
-Each table shows what happens for every editing action on that block type. "Unsupported" means the operation throws or is a no-op. CommonMark spec references are noted where they constrain behavior.
+Each table shows what every editing action does on that block type. "Unsupported" means no-op or throws.
 
 ### Paragraph
 
-Per CommonMark 4.8: paragraphs are interrupted by blank lines, headings, thematic breaks, block quotes, list items, and fenced code blocks.
+CommonMark §4.8: paragraphs are interrupted by blank lines, headings, thematic breaks, block quotes, list items, and fenced code blocks.
 
 | Action | Result |
 |--------|--------|
 | **Return** | Split at cursor → two paragraphs. Cursor at start → blankLine + paragraph. Cursor at end → paragraph + blankLine. |
 | **Backspace at start** | Merge with previous block (see Cross-Block Merge). |
 | **Tab / Shift-Tab** | No block-model operation (passthrough). |
-| **Inline format** (bold/italic/code/strike) | Toggle trait on selection or set pending trait at cursor. |
+| **Inline format** | Toggle trait on selection or set pending trait at cursor. |
 | **Set heading level** | Paragraph → heading(level). Content becomes heading suffix. |
-| **Toggle list** | Paragraph → single-item list. Inline content becomes item content. |
+| **Toggle list** | Paragraph → single-item list. |
 | **Toggle blockquote** | Paragraph → blockquote with one line. |
-| **Insert HR** | Insert blankLine + HR after paragraph. (BlankLine prevents `---` setext ambiguity per CommonMark 4.3.) |
-| **Toggle todo** | Paragraph → single-item todo list with `[ ]` checkbox. |
+| **Insert HR** | Insert blankLine + HR after paragraph. |
+| **Toggle todo** | Paragraph → single-item todo list with `[ ]`. |
 
 ### Heading
 
-Per CommonMark 4.2 (ATX): headings are single-line. Opening `#` sequence determines level (1-6). Closing `#`s optional. Per 4.3 (setext): underline `===` or `---` under a paragraph.
+CommonMark §4.2 (ATX) / §4.3 (setext). Headings are single-line; opening `#` count determines level (1-6).
 
 | Action | Result |
 |--------|--------|
-| **Return** | Split → heading(same level) + paragraph(afterText). Cursor at end → heading + empty paragraph. Cursor moves to the new paragraph. No blankLine between — paragraphSpacing provides the visual gap and the serializer emits a blank separator between non-blank siblings anyway. |
+| **Return** | Split → heading(same level) + paragraph. Cursor moves to the new paragraph. |
 | **Backspace at start** | Merge with previous block. |
-| **Tab / Shift-Tab** | No operation. |
 | **Inline format** | Toggle trait on heading suffix inlines. |
 | **Set heading level** | Change level (1-6). Same level or level 0 → convert to paragraph. |
-| **Toggle list** | Unsupported (heading stays as heading). |
-| **Toggle blockquote** | Unsupported. |
+| **Toggle list / blockquote / todo** | Unsupported. |
 | **Insert HR** | Insert blankLine + HR after heading. |
-|| **Toggle todo** | Unsupported. |
 
 ### Code Block
 
-Per CommonMark 4.5: fenced code blocks open with `` ` `` or `~` (3+ chars). Content is verbatim literal text — no inline parsing. Closes with matching fence or end of document.
+CommonMark §4.5: fenced code blocks open with `` ` `` or `~` (3+). Content is verbatim — no inline parsing.
 
 | Action | Result |
 |--------|--------|
-| **Return** | Insert literal newline within code content. No structural change. *Special:* Return at the end of the content with a trailing `\n` exits the code block and inserts a new empty paragraph after — the keyboard escape from fenced code (bug 88). |
-| **Backspace at start** | Delete within code content. If content empty and at boundary, merge with previous. |
-| **Tab** | Insert literal tab character. |
-| **Shift-Tab** | No operation. |
-| **Inline format** | Unsupported (code blocks are verbatim). |
-| **Set heading level** | Unsupported. |
-| **Toggle list** | Unsupported. |
-| **Toggle blockquote** | Unsupported. |
+| **Return** | Insert literal newline within code content. *Special:* Return at end-of-content with trailing `\n` exits the block and inserts a new empty paragraph. |
+| **Backspace at start** | Delete within content. If content empty at boundary, merge with previous. |
+| **Tab** | Insert literal tab. |
+| **Inline format / heading / list / blockquote / todo** | Unsupported (verbatim content). |
 | **Insert HR** | Insert HR after code block. |
-| **Toggle todo** | Unsupported. |
 
 ### List
 
-Per CommonMark 5.2-5.3: list items start with bullet (`-`, `*`, `+`) or ordered marker (`1.`, `1)`). Continuation lines indented to content column. Blank line between items → loose list. Nested lists require sufficient indentation.
+CommonMark §5.2-5.3. Structural operations route through **ListEditingFSM**.
 
-**Ordered List Numbering**: All ordered list items store and serialize with marker `1.` (regardless of their rendered position). The `ListRenderer` maintains a running counter at each nesting level to display sequential numbers (1, 2, 3...). This allows split lists to re-merge naturally when the separating block is deleted — no special merge logic required.
-
-Structural operations route through **ListEditingFSM** (see below).
+**Ordered list numbering**: all ordered list items store and serialize with marker `1.` regardless of rendered position. `ListRenderer` maintains a running counter at each nesting level to display sequential numbers. Split lists re-merge naturally when the separating block is deleted — no special merge logic required.
 
 | Action | Result |
 |--------|--------|
 | **Return (non-empty item)** | FSM `newItem`: split item at cursor. New item inherits marker; checkbox resets to unchecked. Children stay with original. |
-| **Return (empty item, depth 0)** | FSM `exitToBody`: remove empty item from list and convert to paragraph. Cursor positioned at start of new paragraph. |
-| **Return (empty item, depth > 0)** | FSM `unindent`: move item one level shallower (L4→L3, L3→L2, L2→L1). |
-| **Backspace at start (depth 0)** | FSM `exitToBody`: convert item to paragraph. |
-| **Backspace at start (depth > 0)** | FSM `unindent`: move item one level shallower. |
-| **Tab (has previous sibling)** | FSM `indent`: item becomes child of previous sibling. Indent = parent indent + `"  "`. |
+| **Return (empty item, depth 0)** | FSM `exitToBody`: convert empty item to paragraph. |
+| **Return (empty item, depth > 0)** | FSM `unindent`. |
+| **Backspace at start (depth 0)** | FSM `exitToBody`. |
+| **Backspace at start (depth > 0)** | FSM `unindent`. |
+| **Tab (has previous sibling)** | FSM `indent`: item becomes child of previous sibling. |
 | **Tab (no previous sibling)** | FSM `noOp`. |
-| **Shift-Tab (depth 0)** | FSM `exitToBody`: convert to paragraph. |
-| **Shift-Tab (depth > 0)** | FSM `unindent`: move one level shallower. |
+| **Shift-Tab (depth 0)** | FSM `exitToBody`. |
+| **Shift-Tab (depth > 0)** | FSM `unindent`. |
 | **Inline format** | Toggle trait on item's inline content. |
-| **Set heading level** | Unsupported (items stay as items). |
-| **Toggle list** | Cursor in single item (no multi-selection): convert ONLY that item to paragraph, splitting the list. See Multi-Selection FSM for multi-block behavior. |
-| **Toggle blockquote** | Unsupported. |
+| **Toggle list** | Convert ONLY the cursor's item to paragraph, splitting the list. (Multi-selection differs — see Multi-Selection.) |
 | **Insert HR** | Insert HR after list block. |
-| **Toggle todo** | All items have checkbox → unwrap to paragraphs. Otherwise → add `[ ]` to items lacking checkboxes. |
+| **Toggle todo** | All items have checkbox → unwrap. Otherwise → add `[ ]` to items lacking. |
 
 ### ListEditingFSM
 
-Pure function: `(State, Action) → Transition`. No side effects.
-
-**State**: `.bodyText` or `.listItem(depth: Int, hasPreviousSibling: Bool)`
+Pure function: `(State, Action) → Transition`. State: `.bodyText` or `.listItem(depth: Int, hasPreviousSibling: Bool)`.
 
 | State | Action | Transition |
 |-------|--------|------------|
 | `.bodyText` | any | `noOp` |
 | `.listItem(0, _)` | `.tab` with sibling | `indent` |
 | `.listItem(0, false)` | `.tab` | `noOp` |
-| `.listItem(0, _)` | `.shiftTab` | `exitToBody` |
-| `.listItem(0, _)` | `.deleteAtHome` | `exitToBody` |
-| `.listItem(0, _)` | `.returnOnEmpty` | `exitToBody` |
+| `.listItem(0, _)` | `.shiftTab` / `.deleteAtHome` / `.returnOnEmpty` | `exitToBody` |
 | `.listItem(>0, _)` | `.tab` with sibling | `indent` |
 | `.listItem(>0, false)` | `.tab` | `noOp` |
-| `.listItem(>0, _)` | `.shiftTab` | `unindent` |
-| `.listItem(>0, _)` | `.deleteAtHome` | `unindent` |
-| `.listItem(>0, _)` | `.returnOnEmpty` | `unindent` |
+| `.listItem(>0, _)` | `.shiftTab` / `.deleteAtHome` / `.returnOnEmpty` | `unindent` |
 | any `.listItem` | `.returnKey` | `newItem` |
 
 ### Blockquote
 
-Per CommonMark 5.1: block quotes start with `>` (optional space after). Lazy continuation: a line without `>` continues the blockquote if it would be a continuation line of a paragraph. Nested blocks allowed inside blockquotes.
+CommonMark §5.1. Lazy continuation: a line without `>` continues the blockquote if it would be a paragraph continuation. Nested blocks allowed.
 
 | Action | Result |
 |--------|--------|
-| **Return** | Split blockquote line at cursor. Both lines stay in same blockquote block. |
+| **Return** | Split blockquote line at cursor; both lines stay in same blockquote block. |
 | **Backspace at start** | Merge with previous block. |
-| **Tab / Shift-Tab** | No operation. |
 | **Inline format** | Toggle trait on line's inline content. |
-| **Set heading level** | Unsupported. |
-| **Toggle list** | Unsupported. |
 | **Toggle blockquote** | Blockquote → paragraph (all lines merged). |
 | **Insert HR** | Insert HR after blockquote. |
-| **Toggle todo** | Unsupported. |
 
 ### Horizontal Rule
 
-Per CommonMark 4.1: thematic breaks are `---`, `***`, or `___` (3+ chars, optional spaces). They have no content.
+CommonMark §4.1. Read-only.
 
 | Action | Result |
 |--------|--------|
-| **Return** | Unsupported (no editable content). |
 | **Backspace at start** | Remove HR; merge surrounding blocks. |
-| **Tab / Shift-Tab** | Unsupported. |
-| **Inline format** | Unsupported (read-only). |
-| **Set heading level** | Unsupported. |
-| **Toggle list** | Unsupported. |
-| **Toggle blockquote** | Unsupported. |
 | **Insert HR** | Insert another HR after (with blankLine separator). |
-| **Toggle todo** | Unsupported. |
+| All others | Unsupported. |
 
 ### HTML Block
 
-Per CommonMark 4.6: HTML blocks begin with specific tags (`<script`, `<pre`, `<style`, HTML comments, etc.) and contain raw HTML until a closing condition. Content is verbatim literal text — no inline parsing. Renders with code font.
+CommonMark §4.6. Verbatim content; renders with code font.
 
 | Action | Result |
 |--------|--------|
-| **Return** | Insert literal newline within HTML content. No structural split (unlike code blocks, no keyboard escape). |
-| **Backspace at start** | Delete within HTML content. If content empty and at boundary, merge with previous (falls back to paragraph). |
-| **Tab / Shift-Tab** | Insert literal tab character (like code block). |
-| **Inline format** | Unsupported (HTML blocks are verbatim). |
-| **Set heading level** | Unsupported. |
-| **Toggle list** | Unsupported. |
-| **Toggle blockquote** | Unsupported. |
-| **Insert HR** | Insert HR after HTML block. |
-| **Toggle todo** | Unsupported. |
+| **Return** | Insert literal newline. No structural split (unlike code blocks, no keyboard escape). |
+| **Backspace at start** | Delete within content. If empty at boundary, merge with previous (falls back to paragraph). |
+| **Tab** | Insert literal tab. |
+| All inline-formatting / structural | Unsupported. |
+| **Insert HR** | Insert HR after. |
 
 ### Table
 
-Tables are a GFM extension (not core CommonMark). Cell content is an inline tree — `Block.table` holds `[TableCell]` values where each cell is a `[Inline]` tree, the same type backing `Block.paragraph`. Cell editing routes through the block-model pipeline the same way paragraph editing does. Since Phase 2e (T2-h) the render path is native TK2 `TableElement` + `TableLayoutFragment` — there is no `InlineTableView` NSTextAttachment widget anymore.
+GFM extension. Cell content is an inline tree; cells are stored as `[TableCell]` where each cell is `[Inline]`. The render path is native TK2 `TableElement` + `TableLayoutFragment`.
 
-- **Element dispatch**: `DocumentRenderer` emits the table as a paragraph range carrying `.blockModelKind = .table` plus a `.tableAuthoritativeBlock` boxed reference to the `Block.table` value. `BlockModelContentStorageDelegate` reads the attribute and returns a `TableElement` (not a `BlockModelElement`) — the boxed authoritative block preserves alignments and structure that the flat cell text alone couldn't convey.
-- **Display**: `TableLayoutFragment` draws the grid directly on TK2 — resize handles, column separators, alignment — without an NSView attachment. Cells are rendered via `InlineRenderer.render(cell.inline, baseAttributes:)` — the same code path paragraphs use. Zero markdown markers appear; formatting lives entirely in `.font`, `.underlineStyle`, `.strikethroughStyle`, `.backgroundColor`, and `.link` attributes.
-- **Cell-content editing**: field-editor edits flow through `InlineRenderer.inlineTreeFromAttributedString(_:)` (the pure inverse of `render`) and route through `EditingOps.replaceTableCellInline(blockIndex:at:inline:in:)`. No raw-markdown round-trip.
-- **Structural editing**: five primitives on `EditingOps` — `insertTableRow`, `insertTableColumn`, `deleteTableRow`, `deleteTableColumn`, `setTableColumnAlignment`, plus T2-g.4's `setTableColumnWidths` — all mutate `Document` and return a contract-carrying `EditResult`. Hover handles (T2-g.1/2) invoke these via `EditingOps`, not by widget-state mutation.
-- **Column widths**: `setTableColumnWidths` persists drag-resize widths on `Block.table.columnWidths`. `MarkdownSerializer` emits an adjacent HTML comment sentinel `<!-- fsnotes-col-widths: [100.5, 200, 150.25] -->`; the parser reads the sentinel back into the `columnWidths` field.
+- **Element dispatch**: `DocumentRenderer` tags the table's paragraph range with `.blockModelKind = .table` plus a `.tableAuthoritativeBlock` boxed reference to the `Block.table` value. The content-storage delegate reads the attribute and constructs a `TableElement` (boxed authoritative block carries alignments and structure that flat cell text alone couldn't convey).
+- **Display**: `TableLayoutFragment` draws the grid directly on TK2 — resize handles, column separators, alignment — with no NSView attachment. Cells are rendered via `InlineRenderer.render(cell.inline, baseAttributes:)` — the same code path paragraphs use.
+- **Cell editing**: field-editor edits flow through `InlineRenderer.inlineTreeFromAttributedString(_:)` (the pure inverse of `render`) and route through `EditingOps.replaceTableCellInline(blockIndex:at:inline:in:)`. No raw-markdown round-trip.
+- **Structural editing**: `EditingOps.{insertTableRow, insertTableColumn, deleteTableRow, deleteTableColumn, setTableColumnAlignment, setTableColumnWidths}`. Hover handles invoke these via `EditingOps`, not by widget-state mutation.
+- **Column widths**: `setTableColumnWidths` persists drag-resize widths on `Block.table.columnWidths`. `MarkdownSerializer` emits an HTML-comment sentinel `<!-- fsnotes-col-widths: [100.5, 200, 150.25] -->`; the parser reads it back.
 
 | Action | Result |
 |--------|--------|
-| **Return** | Within a cell: insert newline (stored as `<br>`, rendered as `\n`). Outside a cell: unsupported. |
+| **Return inside cell** | Insert `<br>` (rendered as `\n`). Outside a cell: unsupported. |
 | **Backspace at start** | Remove table; merge surrounding blocks. |
-| **Tab / Shift-Tab** | Cell navigation inside the table (handled by `TableLayoutFragment` focus logic). |
-| **Inline format** | Edits the cell's field-editor attributed storage, converts to inline tree, flushes through `EditingOps.replaceTableCellInline`. |
-| **Set heading level** | Unsupported. |
-| **Toggle list** | Unsupported. |
-| **Toggle blockquote** | Unsupported. |
+| **Tab / Shift-Tab inside cell** | Cell navigation handled by `TableLayoutFragment` focus logic. |
+| **Inline format** | Edits the cell's field-editor storage, converts to inline tree, flushes through `replaceTableCellInline`. |
 | **Insert HR** | Insert HR after table. |
-| **Toggle todo** | Unsupported. |
-| **Structural (add/remove row/col, alignment, width)** | `EditingOps.{insert,delete}Table{Row,Column}` / `setTableColumnAlignment` / `setTableColumnWidths` — all contract-aware. |
 
 ### Multi-Selection
 
-When multiple blocks are selected (spanning a range), operations apply to all selected blocks as a unit. The selection is defined by `blockIndices(overlapping:)` — all blocks touched by the selection range.
+When multiple blocks are selected, operations apply to all selected blocks. Selection defined by `blockIndices(overlapping:)`.
 
 | Action | Result |
 |--------|--------|
-| **Return** | Delete selected content; merge first partial block with last partial block (see Cross-Block Merge). |
-| **Backspace** | Same as Return (delete selection, merge boundaries). |
-| **Delete** | Delete selected content without merge (content removed, blocks collapse). |
-| **Tab** | Indent all selected blocks that support indentation (lists indent current items; other blocks no-op). |
-| **Shift-Tab** | Outdent all selected blocks (lists unindent current items; other blocks no-op). |
-| **Inline format** (bold/italic/code/strike) | Toggle trait across entire selection. Preserves block boundaries; each block's inlines are formatted. |
-| **Set heading level** | Convert all selected paragraphs/headings to target level. Non-paragraph/heading blocks unchanged. |
-| **Toggle list** | Convert all selected blocks to a single list with one item per block. Each block's content becomes a list item. |
-| **Toggle blockquote** | Wrap all selected blocks in a single blockquote. Each block becomes a quoted line. |
-| **Insert HR** | Insert HR after the last selected block. |
-| **Toggle todo** | If all selected list items have checkboxes → remove them. Otherwise add `[ ]` to items lacking checkboxes. Non-list blocks converted to todo list items. |
-| **Copy** | Serialize all selected blocks to markdown; push to pasteboard. |
-| **Paste** | Replace selection with parsed markdown document; merge first/last boundaries if partial. |
+| **Return / Backspace** | Delete selection; merge first partial block with last partial block. |
+| **Delete** | Delete content without merge. |
+| **Tab / Shift-Tab** | Indent / outdent all selected (lists support; other blocks no-op). |
+| **Inline format** | Toggle trait across selection; per-block. |
+| **Set heading level** | Apply to first overlapping non-blank block only (deliberate departure from list/quote/todo). |
+| **Toggle list** | Convert all selected to a single list (one item per block). |
+| **Toggle blockquote** | Wrap all in single blockquote. |
+| **Insert HR** | Insert after last selected block. |
+| **Toggle todo** | All have checkboxes → remove; otherwise → add to items lacking. Non-list blocks → todo items. |
+| **Copy / Paste** | Serialize selection to markdown / replace with parsed `Document`. |
 
 ## Cross-Block Merge Rules
 
-When backspace crosses a block boundary, `mergeAdjacentBlocks` combines the tail of one block with the head of the next. The result depends on the pair:
+When backspace crosses a block boundary, `mergeAdjacentBlocks` combines the tail of one with the head of the next:
 
 | Block A (tail) | Block B (head) | Result |
 |---------------|----------------|--------|
 | paragraph | paragraph | Single merged paragraph (inlines concatenated) |
-| heading | paragraph | Heading with paragraph's inlines appended to suffix |
+| heading | paragraph | Heading with paragraph's inlines appended |
 | paragraph | heading | Paragraph with heading suffix appended |
 | heading | heading | First heading with second's suffix appended |
 | list | paragraph | Paragraph inlines appended to last list item |
-| paragraph | list | Paragraph (list's first item inlines appended) |
+| paragraph | list | Paragraph with list's first item inlines appended |
 | any | blankLine | BlankLine removed; if adjacent paragraphs result, they merge |
-| blankLine | any | BlankLine removed; adjacent paragraphs merge |
 | any | horizontalRule | HR removed |
 | any | codeBlock | Code block removed (content lost) |
 | any | htmlBlock | HTML block removed (content lost) |
 | any | blockquote | Blockquote removed (first line's inlines appended) |
 
-## FSM and Edit Contracts
+## Edit Contracts
 
-### Why this exists
-
-Every `EditingOps` primitive used to return an opaque `EditResult` that described the *textual* outcome — a splice range, a replacement string, and a cursor `Int`. The *structural* outcome (which blocks were created, deleted, merged, split, or renumbered) was implicit in the diff between the before and after projections. That meant a bug like "toggleList accidentally deleted a neighbor block" or "renumberList touched an adjacent ordered list that should have been untouched" was only caught by code review: nothing in the primitive's signature declared what it was allowed to change. Phase 1 introduces `EditContract`, a declarative statement each primitive attaches to its result. The harness holds the primitive to exactly what it promised — undeclared changes and missing declared changes both surface as invariant failures at the pure-function layer.
+Every `EditingOps` primitive returns an `EditResult` carrying an `EditContract` that *declares* what changed structurally. `Invariants.assertContract(before:after:contract:)` runs in pure unit tests AND in the live editor harness after every scripted input.
 
 ### DocumentCursor
 
-A cursor expressed in document terms rather than storage terms. `blockPath` identifies a block (flat today, nestable tomorrow without a migration). `inlineOffset` is a UTF-16 character offset into the block's rendered inline text — the *same* coordinate `DocumentRenderer` emits into `NSAttributedString`. Conversion between `DocumentCursor` and a storage `Int` goes through the projection, which owns `blockSpans` and knows where every block lives. This is the natural representation for the eventual TextKit 2 / `NSTextLocation` switchover: Phase 2 replaces the storage-int translation, not the cursor type.
-
+A cursor in document terms rather than storage terms:
 ```swift
 public struct DocumentCursor: Equatable {
     public let blockPath: [Int]
@@ -597,28 +366,26 @@ public struct DocumentCursor: Equatable {
 }
 ```
 
-For block kinds whose storage representation is a single attachment (`.horizontalRule`, `.table`), `inlineOffset` is ignored and canonically 0.
+`blockPath` identifies a block (flat today, nestable later without migration). `inlineOffset` is a UTF-16 character offset into the block's rendered inline text — the same coordinate `DocumentRenderer` emits. Conversion to a storage `Int` goes through the projection. For atomic-attachment block kinds (`.horizontalRule`, `.table`), `inlineOffset` is canonically 0.
 
 ### EditAction
 
-The enumeration of structural changes a primitive may declare. Actions are coarse-grained — they describe *what* changed, not *how*.
+Coarse-grained — describes *what* changed, not *how*:
 
 | Case | Meaning |
 |------|---------|
-| `.insertBlock(at:)` | A new block appeared at this post-edit top-level index. |
-| `.deleteBlock(at:)` | The block at this pre-edit top-level index was removed. |
-| `.replaceBlock(at:)` | Same position, same-or-different kind, different content. |
-| `.mergeAdjacent(firstIndex:)` | Two adjacent blocks were merged; post-edit doc is one shorter. |
-| `.splitBlock(at:inlineIndex:offset:)` | A block was split in two; post-edit doc is one longer. |
-| `.renumberList(startIndex:)` | An ordered list's markers were resequenced from this index. |
-| `.reindentList(range:)` | Indent/outdent changed across a range of list items. |
-| `.modifyInline(blockIndex:)` | Inline-level change within a single block (typing, formatting, inline delete). |
-| `.changeBlockKind(at:)` | Block kind changed (paragraph ↔ heading, list marker change, heading level, todo toggle). Same top-level index. |
-| `.replaceTableCell(blockIndex:rowIndex:colIndex:)` | A table cell's inline content changed; shape unchanged. |
+| `.insertBlock(at:)` | New block at this post-edit top-level index. |
+| `.deleteBlock(at:)` | Block at this pre-edit index removed. |
+| `.replaceBlock(at:)` | Same position, different content. |
+| `.mergeAdjacent(firstIndex:)` | Two adjacent blocks merged; doc one shorter. |
+| `.splitBlock(at:inlineIndex:offset:)` | Block split in two; doc one longer. |
+| `.renumberList(startIndex:)` | Ordered list markers resequenced. |
+| `.reindentList(range:)` | Indent/outdent across range. |
+| `.modifyInline(blockIndex:)` | Inline-level change within a single block. |
+| `.changeBlockKind(at:)` | Block kind changed (paragraph ↔ heading, etc.). |
+| `.replaceTableCell(blockIndex:rowIndex:colIndex:)` | Cell content changed; table shape unchanged. |
 
 ### EditContract
-
-What the primitive promises. Populated by the primitive and attached to `EditResult`.
 
 ```swift
 public struct EditContract: Equatable {
@@ -628,42 +395,19 @@ public struct EditContract: Equatable {
 }
 ```
 
-Empty `declaredActions` means "no structural change" — a pure-inline edit that doesn't change block count or kind (e.g. `toggleInlineTrait` on a non-empty selection inside a single paragraph).
+Empty `declaredActions` means "no structural change" — pure-inline edit on a single block. Strictly enforced: empty contract requires `beforeBlocks == afterBlocks`.
 
 ### Invariant: `assertContract`
 
-`Invariants.assertContract(before:after:contract:)` is the enforcement mechanism. Called from every contract-aware test, it checks three things:
+Three checks:
 
-1. **Count-delta matches declared size-changing actions.** The sum of `+1` for each `.insertBlock` / `.splitBlock` and `-1` for each `.deleteBlock` / `.mergeAdjacent` must equal `afterBlocks.count - beforeBlocks.count`. If a primitive declares one insertion but actually added two blocks, the mismatch fails here.
-2. **Size-preserving contracts leave neighbors untouched.** When every declared action is in-place (`.changeBlockKind`, `.modifyInline`, `.replaceBlock`, `.replaceTableCell`), every block index *not* named in the contract must be bit-identical before and after. This is the "toggleList leaked to a neighbor" detector.
-3. **`postCursor` resolves in-bounds.** The declared post-edit cursor must resolve to a storage index inside the new projection's total length. A primitive that claims to leave the cursor on a block that no longer exists gets caught here.
-
-The empty-contract case is enforced strictly: if `declaredActions` is empty, `beforeBlocks` and `afterBlocks` must be equal.
-
-### Retrofitted primitives
-
-The following `EditingOps` primitives populate `result.contract` today:
-
-- `changeHeadingLevel`
-- `toggleInlineTrait`
-- `toggleList`, `toggleListRange` (via its per-block calls into `toggleList`)
-- `toggleBlockquote`
-- `toggleTodoList`, `toggleTodoCheckbox`
-- `insertHorizontalRule`
-- `wrapInCodeBlock`
-- `insertImage`, `setImageSize`
-- `insertWithTraits`
-- `indentListItem`, `unindentListItem`, `exitListItem`
-- `reparseInlinesIfNeeded`
-- `swapBlocks` / `rerenderSingleBlockSwap` (the private helpers under `moveBlockUp` / `moveBlockDown` / `moveListItemOrBlockUp` / `moveListItemOrBlockDown`)
-- `replaceTableCellInline` (and the raw-string `replaceTableCell` forwarder)
-- `insert` — every return path (Return-key splits across all block kinds, multi-line paste into paragraph/list/blockquote/heading, atomic-block sibling insertion, HTML block typing, blankLine doubling, code-block Return-on-blank exit)
-- `delete` — single-block delete paths, atomic-block full-select, and the multi-block merge path (inherits contract from `mergeAdjacentBlocks`)
-- `mergeAdjacentBlocks` — delta-based `.replaceBlock(at: effectiveStart)` + |delta| × `.mergeAdjacent` on both the coalesced and block-granular splice return paths
+1. **Count-delta matches declared size-changing actions.** Sum of `+1` per `.insertBlock`/`.splitBlock` and `-1` per `.deleteBlock`/`.mergeAdjacent` must equal `afterBlocks.count - beforeBlocks.count`.
+2. **Size-preserving contracts leave neighbors untouched.** When every action is in-place (`.changeBlockKind`, `.modifyInline`, `.replaceBlock`, `.replaceTableCell`), every block index *not* named must be bit-identical before and after. This is the "toggleList leaked to a neighbor" detector.
+3. **`postCursor` resolves in-bounds.**
 
 ### Observed-delta pattern
 
-Several primitives go through `replaceBlocksSlow`, which runs a coalescence pass that merges adjacent same-kind blocks (paragraph+paragraph, list+list) after the splice lands. The primitive can't know statically how many neighbors will coalesce — that depends on what's *around* the target block in the input document. The pattern these primitives use:
+Several primitives go through `replaceBlocksSlow`, which runs a coalescence pass merging adjacent same-kind blocks. The primitive can't statically know how many neighbors will coalesce — it depends on what's around the target. The pattern:
 
 ```swift
 let delta = newProj.document.blocks.count - projection.document.blocks.count
@@ -674,284 +418,233 @@ for _ in 0..<(-delta) {
 result.contract = EditContract(declaredActions: actions, postCursor: ...)
 ```
 
-Each coalesced neighbor contributes one `.mergeAdjacent`, so the count-delta invariant passes without the primitive having to predict surroundings. `toggleList`, `toggleTodoList`, `indentListItem`, `unindentListItem`, and `exitListItem` all use this pattern.
-
-### Coverage
-
-As of 2026-04-22, `EditContractTests` contains 66 tests covering every retrofitted primitive above. Several use `XCTExpectFailure` as negative controls: contracts that claim no structural change fail when the primitive actually changed count, contracts naming the wrong block fail when the primitive modified a different one, and contracts over `.replaceTableCell` fail on cross-cell leak or table shape change. The negative tests are the proof that the harness catches a lying contract — without them, the whole apparatus would be decorative.
-
-Batch H (the insert/delete/replace retrofit) landed on 2026-04-22 and is complete: every `insert`, `delete`, and `replace` return path either populates `result.contract` directly or forwards to a primitive that does. On the same date the harness auto-assert wired contracts into the live editor path: `EditTextView` captures `preEditProjection` + `lastEditContract` inside `applyEditResultWithUndo`, and `EditorHarness` calls `Invariants.assertContract` after every scripted input. A dedicated coverage file `Tests/HarnessContractCoverageTests.swift` (4 tests) drives mermaid typing / backspace, math typing, and `replaceTableCellInline` through the harness-owned live projection — verifying the contract-diff invariants (per-cell structural equality for tables, neighbour bit-equality for mermaid/math code blocks) hold end-to-end through the same path the app uses. Regression gate: zero regressions against the 3 baseline known-red tests (`test_bug60_findAcrossTableCells`, `CommonMarkSpecTests.test_images`, `.test_links`).
+`toggleList`, `toggleTodoList`, `indentListItem`, `unindentListItem`, and `exitListItem` all use this pattern.
 
 ## Paste Pipeline
 
-Copy reads `EditTextView.copyAsMarkdownViaBlockModel()` which walks `blockIndices(overlapping: selection)` and either serializes each fully-covered block through `MarkdownSerializer.serialize(Document(blocks: [block]))` or (for partial paragraph overlaps) calls `splitInlines` to isolate the covered inline sub-tree and runs it through `serializeInlines`. The result is pushed to the pasteboard as markdown and — for cross-app fidelity into TextEdit / Pages / Mail — as `.rtf`.
+Copy reads `EditTextView.copyAsMarkdownViaBlockModel()` which walks `blockIndices(overlapping: selection)` and either serializes each fully-covered block through `MarkdownSerializer.serialize(Document(blocks: [block]))` or (for partial paragraph overlaps) calls `splitInlines` to isolate the covered inline sub-tree. The result is pushed to the pasteboard as markdown plus `.rtf` (cross-app fidelity into TextEdit, Pages, Mail).
 
-Paste dispatches on pasteboard type in this order (first match wins, later branches fall through to `super.paste()`):
+Paste dispatches on pasteboard type in this order (first match wins):
 
-1. **Markdown pasteboard type present** — `insertMarkdownFragmentViaBlockModel(_:)` parses the pasteboard string as a full `Document` via `MarkdownParser.parse` (not a per-line split) and splices it via `EditingOps.replaceFragment(range: selectedRange, with: fragment, in:)` through `applyEditResultWithUndo → DocumentEditApplier.applyDocumentEdit`. Paragraph boundaries, headings, lists, code blocks, and inline formatting are all preserved. One undo step per paste regardless of selection state.
-2. **`.png` or `.tiff` image pasteboard type present** — saves the bytes to the note's files directory (`<note>.textbundle/files/<uuid>.<ext>` for textbundle notes, legacy `<note>_files/<uuid>.<ext>` otherwise) and inserts `Inline.image(url: <relative-path>, alt: "")` via the same `replaceFragment` path. If an attributed string is also present, the image wins — the attributed string usually carries only an attachment run that IS the image.
-3. **`NSAttributedString` pasteboard type present (no markdown, no image)** — `insertAttributedStringFragmentViaBlockModel(_:)` calls `EditTextView.documentFromAttributedString(_:)` to convert runs into a `Document`. The converter preserves bold / italic / strike / underline / link traits; drops font family/size, foreground/background color, paragraph style, kern, baseline offset; strips `NSTextAttachment` runs (their rich equivalent is handled by branch 2). Paragraph split on `\n\n` and `\u{2028}` (Unicode line separator — Pages / Safari emit this on Shift+Enter). Routes through `replaceFragment`.
-4. **Fallback** — `super.paste(...)` / `insertText(_:)`.
+1. **Markdown pasteboard type** — `insertMarkdownFragmentViaBlockModel(_:)` parses the string as a full `Document` and splices via `EditingOps.replaceFragment(range:with:in:)`. One undo step regardless of selection state.
+2. **`.png` / `.tiff`** — saves bytes to `<note>.textbundle/files/<uuid>.<ext>` (textbundle) or `<note>_files/<uuid>.<ext>` (legacy) and inserts `Inline.image(url:alt:)` via `replaceFragment`.
+3. **`NSAttributedString`** (no markdown, no image) — `documentFromAttributedString(_:)` converts runs preserving bold/italic/strike/underline/link traits; drops font/colors/spacing; strips attachments. Paragraph split on `\n\n` and `\u{2028}`. Routes through `replaceFragment`.
+4. **Fallback** — `super.paste(...)`.
 
-All four branches route writes through `applyDocumentEdit` — no direct storage mutation, no `StorageWriteGuard.performingLegacyStorageWrite`. The `EditingOps.replaceFragment` primitive is the fused delete+insert added in Phase 5d Commit 4: an empty range degenerates to `insertFragment`, an empty fragment degenerates to `delete`, and both non-empty compose into a single `EditResult` with one `EditContract` (fixing the pre-C4 two-undo-steps bug that affected paste-over-selection on the markdown branch too).
+All four branches route writes through `applyDocumentEdit`. `EditingOps.replaceFragment` is the fused delete+insert primitive: empty range degenerates to `insertFragment`, empty fragment degenerates to `delete`, both non-empty compose into one `EditResult` with one `EditContract` (one undo step).
 
 ## Inline Re-parsing (RC4)
 
-Character-by-character typing can complete inline patterns (e.g., typing `*` completes `*bold*`). After inserting closing delimiters (`)`, `]`, `}`, `` ` ``, `>`, `*`, `_`, `~`), `reparseInlinesIfNeeded` serializes the block's inlines and re-parses them. If the parse tree differs, the block is replaced with the re-parsed version.
+Character-by-character typing can complete inline patterns (typing `*` completes `*bold*`). After inserting closing delimiters (`)`, `]`, `}`, `` ` ``, `>`, `*`, `_`, `~`), `reparseInlinesIfNeeded` serializes the block's inlines and re-parses. If the parse tree differs, the block is replaced.
 
 ## TextKit 2 Adoption
 
-The app is fully on TextKit 2 (`NSTextView` backed by `NSTextLayoutManager` + `NSTextContentStorage`). All per-block-kind visuals run through TK2's element / fragment dispatch. Phase 4.5 deleted `FSNotes/LayoutManager.swift`; the `AttributeDrawer` protocol and its five conformers (`BulletDrawer`, `HorizontalRuleDrawer`, `BlockquoteBorderDrawer`, `KbdBoxDrawer`, `ImageSelectionHandleDrawer`) in `FSNotes/Rendering/` survive as dormant helpers but have no live call site — they are candidates for deletion in a follow-up slice.
+`EditTextView` is fully on TextKit 2 (`NSTextLayoutManager` + `NSTextContentStorage`). `FSNotes/LayoutManager.swift` and the TK1 `AttributeDrawer` protocol are deleted; only `ImageSelectionHandleDrawer` survives as a hit-testing helper.
 
 ### Content-storage delegate
 
-`BlockModelContentStorageDelegate` (`FSNotesCore/Rendering/BlockModelElements.swift`) implements `NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:)`. For each paragraph range it:
+`BlockModelContentStorageDelegate` (`FSNotesCore/Rendering/BlockModelElements.swift`) implements `textContentStorage(_:textParagraphWith:)`. For each paragraph range:
 
-1. Checks for `.foldedContent` first — if present, returns `FoldedElement` (zero-height no-op fragment) regardless of underlying block kind.
-2. Reads the `.blockModelKind` attribute tagged by `DocumentRenderer` / `SourceRenderer`.
-3. For `.table`, unwraps the `.tableAuthoritativeBlock` boxed `Block.table` and constructs a `TableElement` directly; synthesizes a placeholder from the flat cell text on the edit-reconciliation race where the attribute is momentarily absent.
+1. Checks `.foldedContent` first — if present, returns `FoldedElement` (zero-height) regardless of underlying block kind.
+2. Reads `.blockModelKind` tagged by the renderer.
+3. For `.table`, unwraps `.tableAuthoritativeBlock` and constructs a `TableElement` directly.
 4. Otherwise dispatches through `BlockModelElementFactory` to the matching `NSTextParagraph` subclass: `ParagraphElement`, `ParagraphWithKbdElement`, `HeadingElement`, `ListItemElement`, `BlockquoteElement`, `CodeBlockElement`, `HorizontalRuleElement`, `MermaidElement`, `MathElement`, `DisplayMathElement`, `SourceMarkdownElement`.
 
 Untagged ranges (mid-splice windows) fall back to TK2's default `NSTextParagraph`.
 
 ### Layout-manager delegate
 
-`BlockModelLayoutManagerDelegate` (`FSNotesCore/Rendering/Fragments/BlockModelLayoutManagerDelegate.swift`) dispatches by element class (not by attribute) to:
+`BlockModelLayoutManagerDelegate` dispatches by element class:
 
 - `FoldedLayoutFragment` (zero-height; wins over every other dispatch)
-- `HorizontalRuleLayoutFragment` — 4pt gray bar
+- `HorizontalRuleLayoutFragment` — gray bar
 - `BlockquoteLayoutFragment` — depth-stacked left bars
-- `HeadingLayoutFragment` — H1/H2 hairline below, reads `.headingLevel`
+- `HeadingLayoutFragment` — H1/H2 hairline + folded `[...]` chip
 - `MermaidLayoutFragment` — diagram widget; reads `.renderedBlockSource`
-- `MathLayoutFragment` — MathJax bitmap; reads `.renderedBlockSource`
-- `DisplayMathLayoutFragment` — centered equation for inline `$$…$$` paragraph shape
-- `TableLayoutFragment` — native TK2 table grid with resize handles
+- `MathLayoutFragment` — MathJax bitmap
+- `DisplayMathLayoutFragment` — centered equation for inline `$$…$$` paragraph
+- `TableLayoutFragment` — native TK2 grid with resize handles
 - `KbdBoxParagraphLayoutFragment` — rounded boxes behind `.kbdTag` runs
 - `CodeBlockLayoutFragment` — gray rounded-rect background + 1pt border
-- `SourceLayoutFragment` (Phase 4.4) — paints `.markerRange` runs in `theme.chrome.sourceMarker` over the default text draw
+- `SourceLayoutFragment` — paints `.markerRange` runs in `theme.chrome.sourceMarker`
 
 Plain paragraphs (`ParagraphElement`, `ListItemElement`) fall back to the default `NSTextLayoutFragment` — zero dispatch overhead for the common case.
 
+### TK2 gotchas (learned the hard way)
+
+1. **TK2 adoption happens at `NSTextView` construction.** `NSTextView` fixes its TextKit version when the initial `NSTextContainer` is attached. A post-hoc `replaceTextContainer(_:)` does NOT flip an already-TK1 view. For storyboard-decoded views, construct a fresh TK2 instance and re-point `scrollView.documentView`.
+
+2. **Reading `NSTextView.layoutManager` on a TK2 view permanently disables TK2.** AppKit lazily instantiates a TK1 `NSLayoutManager` compatibility shim and `textLayoutManager` becomes `nil` — silent fallback with no API to detect. Use the `layoutManagerIfTK1` accessor (returns nil under TK2, the TK1 manager otherwise) for any code path that needs TK1 behavior.
+
+3. **`cacheDisplay` does NOT capture fragment-level drawing.** `bitmapImageRepForCachingDisplay` invokes `view.draw()` but does not invoke `NSTextLayoutFragment.draw`. Per-block chrome (HR line, blockquote border, heading hairline, kbd box, code-block border) won't appear in test snapshots taken this way. Verify these by asserting fragment-class dispatch (see `TextKit2FragmentDispatchTests`) or via live deployment.
+
+4. **Element-vs-fragment attribute ownership.** `DocumentRenderer` / `SourceRenderer` tag `.blockModelKind` + per-kind payload (`.headingLevel`, `.tableAuthoritativeBlock`, `.renderedBlockSource`) at render time. The content-storage delegate reads these and constructs the right element class; the layout-manager delegate dispatches by element class to the right fragment.
+
 ## Edit Application (`DocumentEditApplier`)
 
-`DocumentEditApplier.applyDocumentEdit(priorDoc:newDoc:contentStorage:…)` (`FSNotesCore/Rendering/DocumentEditApplier.swift`) is the single mutation entry point for the TK2 content storage. It takes the two `Document` values (before and after an `EditingOps` primitive) and emits a minimal element-bounded splice inside a single `performEditingTransaction`.
+`DocumentEditApplier.applyDocumentEdit(priorDoc:newDoc:contentStorage:…)` is the single mutation entry point for TK2 content storage. Takes two `Document` values (before/after `EditingOps`) and emits a minimal element-bounded splice inside one `performEditingTransaction`.
 
-**Block identity is structural, not UUID-based.** The differ runs a Longest-Common-Subsequence pass keyed on `Block: Equatable` (O(M·N) on block count, comfortably under the perf budget for any realistic note). A post-LCS pass merges adjacent `(delete priorIdx, insert newIdx)` pairs of the same block kind at the same relative position into a single `.modified` change — this is the "typing into a paragraph" case, which should be reported as one element update, not delete+insert. Non-contiguous changes fall back to a single contiguous `[firstChange … lastChange]` replacement (the v1 default; finer-grained splits can land later if perf metrics demand).
+**Block identity is structural, not UUID-based.** The differ runs LCS keyed on `Block: Equatable` (O(M·N) on block count). A post-LCS pass merges adjacent `(delete priorIdx, insert newIdx)` pairs of the same kind at the same relative position into a single `.modified` change — the "typing into a paragraph" case is one element update, not delete+insert. Non-contiguous changes fall back to a single contiguous `[firstChange … lastChange]` replacement.
 
-**The applier's guarantee**: elements above the first changed block are untouched across every edit. This is what makes typing into a long note cheap — TK2's layout engine does not re-query paragraphs it didn't touch.
+**Guarantee**: elements above the first changed block are untouched across every edit. This is what makes typing into a long note cheap — TK2's layout engine does not re-query paragraphs it didn't touch.
 
-**Wire-in**: `EditTextView.applyEditResultWithUndo` (on TK2 — always today) calls `DocumentEditApplier.applyDocumentEdit` and attaches the `EditResult.contract` + the pre-edit projection to associated objects. `EditorHarness` reads those back after every scripted input and runs `Invariants.assertContract(before:after:contract:)` against the live post-edit projection — the same harness invariants run on the real editor that the contract unit tests enforce on pure calls.
+`EditTextView.applyEditResultWithUndo` calls `applyDocumentEdit` and attaches `EditResult.contract` + the pre-edit projection to associated objects. `EditorHarness` reads those back after every scripted input and runs `Invariants.assertContract` against the live post-edit projection — same harness invariants as on pure calls.
 
-**Single-write-path enforcement (Phase 5a).** `StorageWriteGuard` (`FSNotesCore/Rendering/StorageWriteGuard.swift`) exposes three scoped authorization flags — `applyDocumentEditInFlight`, `fillInFlight`, `legacyStorageWriteInFlight` — each set by a `performing*` wrapper for the duration of its body. `applyDocumentEdit` runs its `performEditingTransaction` inside `performingApplyDocumentEdit`; fill paths (`fillViaBlockModel`, `fillViaSourceRenderer`, `fill(note:)` clears, `lockEncryptedView`, `clear()`) run under `performingFill`; **18 production call sites across 6 logical categories** run under `performingLegacyStorageWrite` with TODOs: fold re-splice; async attachment hydration for inline math, display math, PDF (×2), QuickLook; 9 formatting-IBAction `insertText` sites in `EditTextView+Formatting.swift` (commit `e1e700d` + follow-ups, added to close the `_insertText:replacementRange:` bypass class that Phase 5a's assertion exposed via a user-reported crash); 1 input-path bypass in `EditTextView+Input.swift`. Audit live: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'`. Phase 5f retired the former "undo/redo state restore" category by removing `restoreBlockModelState`; a Phase 5f follow-up retired the former drag-and-drop category by re-routing the two `EditTextView+DragOperation.swift` drop handlers through `handleEditViaBlockModel`. A DEBUG assertion in `TextStorageProcessor.didProcessEditing` traps when `editedMask.contains(.editedCharacters) && blockModelActive && !sourceRendererActive && !StorageWriteGuard.isAnyAuthorized && !compositionSession.isActive` — it dumps `editedRange`, `editedMask`, and a 12-frame call stack for self-debugging. Release builds compile to no-ops. `scripts/rule7-gate.sh` has a `bypassStorageWrite` pattern flagging any `performEditingTransaction` outside `DocumentEditApplier.swift`. `CLAUDE.md` Invariant A is the authoritative rule text.
+**Stale-projection guard.** `applyDocumentEdit` accepts an optional `priorRenderedOverride: RenderedDocument?` parameter for cases where async hydration (inline-math swap, image resize) has mutated `NSTextContentStorage` since the last `priorDoc.render()`. Callers that know their projection is stale (the inline-math callback path, image-resize commit) pass `oldProjection.rendered` so span-offset math uses the post-swap rendered layout instead of re-rendering from a stale `priorDoc`. `priorDoc` still drives the LCS block-diff (block-value equality is unaffected by rendered-form drift).
 
 ## IME Composition (`CompositionSession`)
 
-`FSNotesCore/Rendering/CompositionSession.swift` (Phase 5e) is a value type attached to `EditTextView` via associated-object storage, capturing the state of a marked-text composition (Kotoeri, Pinyin, Korean 2-Set, Option-E dead-key accent, emoji picker). Fields: `anchorCursor: DocumentCursor` (pre-composition caret), `markedRange: NSRange` (current storage range of the marked run), `isActive: Bool`, plus a `pendingEdits` queue and a `preSessionFoldState` snapshot for fold save/restore across composition.
+`FSNotesCore/Rendering/CompositionSession.swift` is a value type attached to `EditTextView` via associated-object storage, capturing the state of a marked-text composition (Kotoeri, Pinyin, Korean 2-Set, Option-E dead-key accent, emoji picker). Fields: `anchorCursor: DocumentCursor` (pre-composition caret), `markedRange: NSRange`, `isActive: Bool`, plus a `pendingEdits` queue and a `preSessionFoldState` snapshot.
 
-Lifecycle: `EditTextView.setMarkedText(_:selectedRange:replacementRange:)` enters the session; repeated calls update it; `unmarkText()` or `insertText(_:replacementRange:)` with the committed string commits — the final text is folded into `Document` via one `applyEditResultWithUndo` call, the same 5a-authorized path as any other edit. Escape / empty commit aborts the session and reverts to `anchorCursor` via an empty-string replace. Pinned by 25 tests in `Tests/Phase5eCompositionSessionTests.swift`.
+Lifecycle: `setMarkedText(...)` enters; repeated calls update; `unmarkText()` or `insertText(_:replacementRange:)` with the committed string folds the final text into `Document` via one `applyEditResultWithUndo`. Escape / empty commit aborts and reverts to `anchorCursor`.
 
-**5a interaction**: `TextStorageProcessor.didProcessEditing` relaxes the single-write-path assertion for mutations strictly inside `markedRange` while `compositionSession.isActive == true` — this is the one sanctioned architectural exemption to Invariant A, gated by an assertion predicate (not by `performingLegacyStorageWrite`). Exactly one `compositionSession.isActive` check survives in `TextStorageProcessor.swift`, enforced as a grep invariant.
+**Invariant A interaction**: `TextStorageProcessor.didProcessEditing` relaxes the single-write-path assertion for mutations strictly inside `markedRange` while `compositionSession.isActive == true` — the one sanctioned architectural exemption, gated by an assertion predicate (not by `performingLegacyStorageWrite`).
 
 ## Undo / Redo (`UndoJournal`)
 
-`FSNotesCore/Rendering/UndoJournal.swift` (Phase 5f) is a reference-typed per-editor journal with `past: [UndoEntry]` and `future: [UndoEntry]` stacks. Each `UndoEntry` carries an `EditContract.InverseStrategy` — Tier A (cheap inverse `EditContract`), Tier B (`[Block]` snapshot of the affected block range), or Tier C (full `Document` snapshot, rare). `EditingOps` primitives populate the strategy at result-construction time; `applyEditResultWithUndo` records one `UndoEntry` per edit unless journaling is suspended.
+`FSNotesCore/Rendering/UndoJournal.swift` is a per-editor reference type with `past: [UndoEntry]` and `future: [UndoEntry]` stacks. Each `UndoEntry` carries an `EditContract.InverseStrategy`:
 
-State machine with 5 coalesce classes: `typing` (merge adjacent single-char inserts within 1s), `deletion` (same for backspace runs), `structural` (Return, Tab, toolbar — own group), `formatting` (inline trait toggles — own group), `composition` (IME commit — own group via Phase 5e suspension). A 1-second heartbeat timer finalizes the current group on idle (mockable via `advanceTime(by:)` for tests).
+- **Tier A** — cheap inverse `EditContract` (e.g. invert insert↔delete with swapped ranges)
+- **Tier B** — `[Block]` snapshot of the affected block range
+- **Tier C** — full `Document` snapshot (rare)
 
-**Wire-in**: `applyEditResultWithUndo` calls `journal.record(entry, on: self)`. Inside that method lives the **one surviving** `NSUndoManager.registerUndo(withTarget:handler:)` site in the editor path — the handler pops the journal and replays the inverse via `DocumentEditApplier.applyDocumentEdit` with a `replayDepth += 1` guard so the replay doesn't re-journal. The pre-5f `restoreBlockModelState` closure path is retired. Grep invariant: `rg 'registerUndo|beginUndoGrouping|endUndoGrouping' FSNotes/ FSNotesCore/` returns the one `UndoJournal.record` hit plus two out-of-scope sites on `notesListUndoManager` (note-list delete/reorder). Pinned by 33 tests in `Tests/UndoJournalTests.swift`.
+5-class coalescing FSM:
+- `typing` — adjacent single-char inserts within 1s merge into one entry
+- `deletion` — same for backspace runs
+- `structural` — Return, Tab, toolbar (own group)
+- `formatting` — inline trait toggles (own group)
+- `composition` — IME commit (own group via Phase 5e suspension)
 
-**5e interaction**: while `compositionSession.isActive == true`, `journal.record` is a no-op (the Phase 5e composition commit produces exactly one `composition`-class entry; an abort produces zero).
+A 1-second heartbeat finalizes the current group on idle (mockable for tests).
+
+**Wire-in**: `applyEditResultWithUndo` calls `journal.record(entry, on: self)`. The **one surviving** `NSUndoManager.registerUndo(withTarget:handler:)` site in the editor path lives inside `UndoJournal.record`. The handler pops the journal and replays the inverse via `applyDocumentEdit` with a `replayDepth += 1` guard so the replay doesn't re-journal. Grep invariant: `rg 'registerUndo|beginUndoGrouping|endUndoGrouping' FSNotes/ FSNotesCore/` returns the one `UndoJournal.record` hit plus two out-of-scope sites on `notesListUndoManager` (note-list delete/reorder).
+
+While `compositionSession.isActive`, `journal.record` is a no-op (the composition commit produces exactly one `composition`-class entry; abort produces zero).
 
 ## Attachment Handling
 
-Inline images, PDFs, and QuickLook-previewed files render as `NSTextAttachment` with a `NSTextAttachmentViewProvider` subclass attached per attachment:
+Inline images, PDFs, and QuickLook-previewed files render as `NSTextAttachment` with an `NSTextAttachmentViewProvider` subclass:
 
-- `ImageAttachmentViewProvider` (`FSNotes/Helpers/InlineImageView.swift`) — includes the Phase 2f.5 live-resize path: `mouseDragged` on the resize handle fires `onResizeLiveUpdate(NSSize)`, which the provider routes to the pure static `ImageAttachmentViewProvider.applyLiveResize(attachment:newSize:textLayoutManager:location:)`. That helper mutates `NSTextAttachment.bounds` and calls `NSTextLayoutManager.invalidateLayout(for: NSTextRange)` so surrounding text reflows during the drag, not only at `mouseUp`. Pinned by `Tests/Phase2f5ImageResizeInvalidationTests.swift` (5 tests: happy path + nil-attachment + nil-TLM + doc-end boundary + widget-wiring).
-- `PDFAttachmentViewProvider` (`FSNotes/Helpers/InlinePDFView.swift`)
-- `QuickLookAttachmentViewProvider` (`FSNotes/Helpers/InlineQuickLookView.swift`)
+- `ImageAttachmentViewProvider` (`InlineImageView.swift`)
+- `PDFAttachmentViewProvider` (`InlinePDFView.swift`)
+- `QuickLookAttachmentViewProvider` (`InlineQuickLookView.swift`)
 
-List bullets and todo checkboxes are also attachments so the glyph can be sized independently of the body font without affecting line height:
+List bullets and todo checkboxes are also attachments so the glyph can be sized independently of the body font:
 
-- `BulletAttachmentViewProvider` / `CheckboxAttachmentViewProvider` (`FSNotesCore/Rendering/ListRenderer.swift`)
+- `BulletAttachmentViewProvider` / `CheckboxAttachmentViewProvider` (`ListRenderer.swift`)
 
 ### Transparent-placeholder pattern
 
-Between TK2's first layout pass and a view provider's `loadView` completing, AppKit draws its generic document-icon glyph — visible as a brief flash on every attachment on initial render. The fix (commit `c033b46`) is to initialize each attachment's `.image` property with a **transparent, correctly-sized placeholder NSImage** so the glyph has a blank backing during the loadView window. Placeholders are memoized by size in an `NSCache` (see `ListRenderer.transparentPlaceholder`) so a bullet-heavy document reuses the same NSImage instance per distinct cell size instead of allocating fresh.
+Between TK2's first layout pass and a view provider's `loadView` completing, AppKit draws its generic document-icon glyph — visible as a brief flash on every attachment. Fix: initialize each attachment's `.image` with a transparent, correctly-sized placeholder `NSImage` so the glyph has a blank backing during the loadView window. Placeholders are memoized by size in an `NSCache`.
+
+### View-provider state must be value-typed
+
+A latent bug class: storing a pre-built live view on the attachment causes thumbnail loss when TK2 detaches the view from its window on scroll and re-attaches on scroll-back. The TK2 contract is that `loadView()` builds a fresh view per call. Store only value types (URL + size) on the `NSTextAttachment`; build the inline view inside `loadView()`. (Caught when QuickLook + PDF thumbnails disappeared after scroll-recycle; `ImageAttachmentViewProvider` already followed this pattern, both others didn't.)
+
+### Inline-image live resize
+
+`ImageAttachmentViewProvider.applyLiveResize(attachment:newSize:textLayoutManager:location:)` — pure static helper — mutates `NSTextAttachment.bounds` AND calls `NSTextLayoutManager.invalidateLayout(for: NSTextRange)` on the attachment's single-character range. Both steps are needed: `tracksTextAttachmentViewBounds` only reflows when the view's observable bounds change, but TK2 reads `attachment.bounds` (not the view frame) for line-fragment sizing. Without the explicit invalidation, surrounding text only reflows on commit (visible "text jump" at mouseUp).
 
 ## Fold System
 
-Fold state persists per-note via `Note.cachedFoldState: Set<Int>?` (block storage offsets in the post-render text). A fold toggle sets the `.foldedContent` attribute on the folded range; `BlockModelContentStorageDelegate` checks for the attribute first and returns `FoldedElement` → `FoldedLayoutFragment` (zero-height) regardless of the underlying block kind. One element class + one fragment cover every foldable block type with zero per-kind code.
+Fold state persists per-note via `Note.cachedFoldState: Set<Int>?` (block storage offsets in the post-render text). A fold toggle sets `.foldedContent` on the folded range; `BlockModelContentStorageDelegate` checks for it first and returns `FoldedElement` → `FoldedLayoutFragment` (zero-height) regardless of underlying block kind. One element class + one fragment cover every foldable block type with zero per-kind code.
 
-Post-Phase 4.6, there is no `syncBlocksFromProjection` bridge — fold state reads directly off the `Document` projection. The source-mode `blocks` mirror array has been deleted.
+Fold state reads directly off the `Document` projection — no `syncBlocksFromProjection` bridge. The source-mode `blocks` mirror array is deleted.
+
+Folded headers paint a trailing `[...]` chip via `HeadingLayoutFragment.drawFoldedIndicator`, theme-driven through `ThemeChrome.foldedHeaderIndicator{Foreground,Background,CornerRadius,...}`.
 
 ## Source-Mode Pipeline (`hideSyntax == false`)
 
-Source mode shares the `Document` model and the TK2 layer with WYSIWYG but renders via `SourceRenderer` instead of `DocumentRenderer`:
+Source mode shares `Document` and the TK2 layer with WYSIWYG but renders via `SourceRenderer`:
 
 1. `MarkdownParser.parse(markdown)` → `Document`.
-2. `SourceRenderer.render(document, bodyFont:, codeFont:)` → `NSAttributedString` with **every marker the parser consumed re-injected** (`#` prefixes on headings, `**…**` around bolds, `` `…` `` around code spans, `>` blockquote prefixes, fence lines, `---` HR lines, list markers + checkboxes, table pipes + alignment rows, `<br>` in cells). Marker runs are tagged with `.markerRange`; the renderer does NOT set a marker `.foregroundColor`.
-3. Each paragraph is tagged `.blockModelKind = .sourceMarkdown`. `BlockModelContentStorageDelegate` returns `SourceMarkdownElement`; `BlockModelLayoutManagerDelegate` returns `SourceLayoutFragment`.
-4. `SourceLayoutFragment.draw` delegates to super for the default text draw, then overpaints each `.markerRange` run in `Theme.shared.chrome.sourceMarker`.
+2. `SourceRenderer.render(document, bodyFont:, codeFont:)` → `NSAttributedString` with **every marker the parser consumed re-injected** (`#` prefixes on headings, `**…**` around bolds, fence lines, list markers + checkboxes, table pipes + alignment rows, `<br>` in cells). Marker runs are tagged `.markerRange`; the renderer does NOT set a marker `.foregroundColor`.
+3. Each paragraph is tagged `.blockModelKind = .sourceMarkdown`. The content-storage delegate returns `SourceMarkdownElement`; the layout-manager delegate returns `SourceLayoutFragment`.
+4. `SourceLayoutFragment.draw` delegates to super for default text, then overpaints `.markerRange` runs in `Theme.shared.chrome.sourceMarker`.
 
-Source-mode edits flow into `textStorage` directly (no `EditingOps`, no `DocumentEditApplier` — the widget is a plain editable text view with marker coloring). `TextStorageProcessor` runs minor post-edit work (attachment restore on save, fold attribute propagation) but has no highlight responsibility; the `NotesTextProcessor.highlightMarkdown` / `phase5_paragraphStyles` stages are no longer part of the source-mode path post-Phase 4.4.
+Source-mode edits flow into `textStorage` directly (no `EditingOps`, no `DocumentEditApplier`). `TextStorageProcessor` runs minor post-edit work (attachment restore on save, fold attribute propagation) but has no highlight responsibility — the legacy `NotesTextProcessor.highlightMarkdown` path is retired.
 
-## Theme — single source of truth for presentation
+## Theme — single source of truth
 
-Every value that describes how the editor *looks* — font family, font size, line
-spacing, margins, paragraph spacing, block colors, border widths, heading
-hairlines, kbd fills, HR line color, blockquote bar, code-block chrome, inline
-link color, highlight color — lives on `BlockStyleTheme` (see
-`FSNotesCore/Rendering/ThemeSchema.swift`). The active theme is `Theme.shared`;
-all renderers and fragments read their values from it at render time. There is
-exactly one place literal presentation values are allowed: theme JSON files and
-`ThemeSchema.swift`'s default-value constructors. Everything else is a read.
+Every value that describes how the editor *looks* — font, size, line spacing, margins, paragraph spacing, block colors, border widths, heading hairlines, kbd fills, HR line color, blockquote bar, code-block chrome, inline link color, highlight color — lives on `BlockStyleTheme` (`FSNotesCore/Rendering/ThemeSchema.swift`). Renderers and fragments read `Theme.shared` at render time. The only places literal presentation values are allowed: theme JSON files and `ThemeSchema.swift`'s default-value constructors.
 
 ### Load order
 
-1. **Bundled defaults** ship inside the app bundle: the `Default` theme is
-   `Resources/default-theme.json`; siblings `Dark` and `High Contrast` live
-   under `Resources/Themes/*.json`. (The two paths are discovered separately
-   by `ThemeDiscovery` but merged in `Theme.availableThemes`.)
-2. **User overrides** live at
-   `~/Library/Application Support/FSNotes++/Themes/*.json`. A user theme with
-   the same basename as a bundled theme replaces the bundled entry in
-   `Theme.availableThemes(...)` — user-override-wins.
-3. **Selection** persists via `UserDefaultsManagement.currentThemeName` and is
-   applied in `AppDelegate.applicationDidFinishLaunching` before
-   `applyAppearance()`.
+1. **Bundled defaults** — `Resources/default-theme.json`, `Resources/Themes/Dark.json`, `Resources/Themes/High Contrast.json`.
+2. **User overrides** — `~/Library/Application Support/FSNotes++/Themes/*.json`. Same basename as a bundled theme replaces the bundled entry.
+3. **Selection** — `UserDefaultsManagement.currentThemeName`, applied in `AppDelegate.applicationDidFinishLaunching` before `applyAppearance()`.
 
-If a named theme is missing or its JSON is corrupt, `Theme.load(named:)` falls
-back to the bundled default rather than propagating the error to the UI.
+If a named theme is missing or its JSON is corrupt, `Theme.load(named:)` falls back to the bundled default rather than propagating the error.
 
 ### Who owns what
 
 | Layer | Reads from theme |
 |---|---|
 | `DocumentRenderer` | block-level fills, borders, margins, paragraph spacing, heading font sizes, list/blockquote/code-block chrome |
-| `InlineRenderer` | link color, highlight background, inline code color, strike / underline / mark styles |
-| Per-block fragments (`HeadingLayoutFragment`, `BlockquoteLayoutFragment`, `HorizontalRuleLayoutFragment`, `KbdBoxParagraphLayoutFragment`, `CodeBlockLayoutFragment`) | the block's own section of the theme |
-| `TableElement` / `TableLayoutFragment` | table handle color, resize preview color, column separator color |
+| `InlineRenderer` | link color, highlight background, inline code chrome, strike/underline/mark styles |
+| Per-block fragments | the block's own section of the theme |
+| `TableElement` / `TableLayoutFragment` | table handle color, resize preview, column separator |
 
-Geometry that is inherently structural (e.g. an HR's arithmetic around line
-thickness, bezier curve offsets in a code-block border path) stays as-is; only
-the *values* flow through Theme.
+Geometry that is inherently structural (HR arithmetic around line thickness, bezier offsets in code-block borders) stays as-is; only *values* flow through Theme.
 
 ### Write-through from Preferences
 
-IBActions on `PreferencesEditorViewController` (font family, font size, margin,
-line width, line spacing, images width, italic, bold) mutate `Theme.shared` in
-place and persist via `Theme.saveActiveTheme(...)`, which writes the active
-theme to `~/Library/Application Support/FSNotes++/Themes/<name>.json`. When the
-user is on the read-only bundled `Default`, the override file is written under
-the same name so subsequent launches pick it up via user-override-wins.
+IBActions on `PreferencesEditorViewController` (font family, size, margin, line width, line spacing, image width, italic, bold) mutate `Theme.shared` and persist via `Theme.saveActiveTheme(...)`. When the user is on the read-only bundled `Default`, the override file is written under the same name so subsequent launches pick it up via user-override-wins.
 
-Every save posts `Theme.didChangeNotification`. Each live `EditTextView`
-installs one observer per view (associated-object token, idempotent) via
-`EditTextView+ThemeObserver.swift` and re-runs `fillViaBlockModel(note:)` on
-theme-change without flushing scroll.
+Every save posts `Theme.didChangeNotification`. Each live `EditTextView` installs one observer (associated-object token, idempotent) and re-runs `fillViaBlockModel(note:)` on theme-change without flushing scroll.
 
 ### UserDefaults subsumption
 
-The legacy `UserDefaultsManagement` typography/layout accessors
-(`noteFont`, `fontName`, `fontSize`, `codeFont`, `codeFontName`, `codeFontSize`,
-`editorLineSpacing`, `lineHeightMultiple`, `lineWidth`, `marginSize`,
-`imagesWidth`, `italic`, `bold`) are **computed-property proxies** over
-`Theme.shared` — no independent storage. The first-launch migration copies any
-pre-7.5 legacy UD values into the active theme, then deletes the backing UD
-keys. To change any of these values programmatically, mutate `Theme.shared` and
-call `Theme.saveActiveTheme(...)`; do not write UD keys.
+The legacy `UserDefaultsManagement` typography accessors (`fontName`, `fontSize`, `codeFontName`, `codeFontSize`, `editorLineSpacing`, `lineHeightMultiple`, `lineWidth`, `marginSize`, `imagesWidth`, `italic`, `bold`) are computed-property proxies over `Theme.shared` — no independent storage. First-launch migration copies pre-7.5 legacy values into the active theme then deletes the backing UD keys.
 
 ### Whitelist: UI-only literals
 
-One documented literal survives in presentation code:
-`PreferencesEditorViewController.previewFontSize: CGFloat = 13` is used to
-render the font-preview label in the Preferences sheet. This is UI chrome for
-the preference UI itself, not for note rendering, and is explicitly exempt from
-the gate (file-level exclusion). Any new literal in render-path code is a
-violation.
+One documented literal: `PreferencesEditorViewController.previewFontSize: CGFloat = 13` for the preference-sheet preview label. UI chrome for the pref UI itself, file-level exempt.
 
 ### Grep gate
 
-`scripts/rule7-gate.sh` scans `FSNotes/` and `FSNotesCore/` for the banned
-patterns that enforce this invariant:
+`scripts/rule7-gate.sh` (pure shell, CI-ready) scans `FSNotes/` and `FSNotesCore/` for:
 
-- Marker-hiding tricks (0.1pt font, `NSColor.clear` foreground, `.kern`
-  attribute, widget-local `parseInlineMarkdown`) — CLAUDE.md Rule 7 proper.
-- View→model bidirectional data flow inside `InlineTableView.swift` and
-  `TableRenderController.swift` (reads of `.stringValue` into `rows[]` /
-  `headers[]`).
-- Literal presentation values in `FSNotesCore/Rendering/*` — hardcoded
-  `NSFont.systemFont(ofSize: <number>)`, hardcoded `paragraphSpacing = <number>`,
-  hex color literals in `Fragments/` or `Elements/`.
+- Marker-hiding tricks (0.1pt font, `NSColor.clear` foreground, `.kern` attribute, widget-local `parseInlineMarkdown`)
+- View→model bidirectional reads (`.stringValue` into `rows[]` / `headers[]` in table widgets)
+- Literal presentation values in render-path files (hardcoded `NSFont.systemFont(ofSize:)`, hardcoded `paragraphSpacing`, hex color literals in `Fragments/`)
+- `performEditingTransaction` callers outside `DocumentEditApplier.swift` (Phase 5a)
 
-Files that belong to the theme definition itself (`ThemeSchema.swift`,
-`ThemeAccess.swift`, `Theme.swift`) and the still-retired source-mode pipeline
-(`TextStorageProcessor.swift`, `NotesTextProcessor.swift`, `NSTextStorage++.swift`,
-`TextFormatter.swift`, `ImagesProcessor.swift` — see Phase 4 of
-`REFACTOR_PLAN.md` for retirement) are excluded at the file level. Any
-individual line can be exempted with a `// rule7-gate:allow` comment on the
-preceding line; use sparingly and always with a rationale.
+Files in the theme definition itself (`ThemeSchema.swift`, `Theme.swift`, `ThemeAccess.swift`) and the source-mode pipeline (`TextStorageProcessor.swift`, `NotesTextProcessor.swift`, `NSTextStorage++.swift`, `TextFormatter.swift`, `ImagesProcessor.swift`) are excluded at the file level. Any individual line can be exempted with `// rule7-gate:allow`.
 
-Run locally: `./scripts/rule7-gate.sh` — exit 0 on pass, 1 on violations with a
-`file:line: label: source` report per hit. The script is pure shell (no
-xcodebuild, no state), so it is CI-ready; wiring it into a pre-build phase or a
-GitHub Actions step is a separate slice (deferred to avoid an
-`FSNotes.xcodeproj/project.pbxproj` race with concurrent refactor work).
+Run: `./scripts/rule7-gate.sh` — exit 0 on pass, 1 on violations with `file:line: label: source`.
 
 ## Code-Block Edit Toggle
 
-Obsidian-style `</>` hover button that swaps a code block between its rendered form (syntax-highlighted or mermaid/math bitmap) and an editable raw-fenced-source form. Lives on `EditTextView.editingCodeBlocks: Set<BlockRef>` — a per-editor-session content-hash-keyed set.
+Obsidian-style `</>` hover button that swaps a code block between rendered (syntax-highlighted or mermaid/math bitmap) and editable raw-fenced-source form. Lives on `EditTextView.editingCodeBlocks: Set<BlockRef>` — per-editor-session content-hash-keyed set.
 
-- **`BlockRef`** (`FSNotesCore/Rendering/BlockRef.swift`): content-hash reference keyed off `MarkdownSerializer.serializeBlock(block)`. Stable across structural edits that insert blocks above the ref'd block — content-hash doesn't shift on index changes. Not persisted; membership is session-local.
-- **Renderer wire-through** (Slice 1): `DocumentRenderer.render(…, editingCodeBlocks:)` emits code blocks in the set as raw fenced source in the plain code font with no bitmap attachment. Blocks not in the set render in today's default form. Pure function of the input set — no separate toggle-write path.
-- **Applier promotion** (Slice 1): `DocumentEditApplier.applyDocumentEdit(…, priorEditingBlocks:, newEditingBlocks:)` promotes `.unchanged` LCS entries to `.modified` when the block's editing-set membership flipped between prior and new calls, so the byte-differing renders are reflected in a single block-level diff.
-- **Hover button** (Slice 3, `b693a42`): `CodeBlockEditToggleOverlay` (`FSNotes/Helpers/CodeBlockEditToggleOverlay.swift`) pools `CodeBlockEditToggleView` subviews and positions one `</>` button per visible code block at the first fragment's top-right. Click flips the ref's membership in `editingCodeBlocks` and calls `applyDocumentEdit` with `priorDoc == newDoc` but different editing-set — the Slice-1 `promoteToggledBlocksToModified` pass reifies this into a single `.modified` block-level diff.
-- **Cursor-leaves auto-collapse** (Slice 4, `9ba0d44`): `EditTextView.collapseEditingCodeBlocksOutsideSelection` drops any ref whose span no longer contains the current selection. Guarded against the infinite "observer fires on re-render, re-renders, fires on re-render" cycle by an `oldSet == newSet` early-return.
+- **`BlockRef`** — content-hash reference keyed off `MarkdownSerializer.serializeBlock(block)`. Stable across structural edits that insert blocks above the ref'd block. Not persisted; session-local.
+- **Renderer wire-through** — `DocumentRenderer.render(…, editingCodeBlocks:)` emits code blocks in the set as raw fenced source with no bitmap attachment.
+- **Applier promotion** — `applyDocumentEdit(…, priorEditingBlocks:, newEditingBlocks:)` promotes `.unchanged` LCS entries to `.modified` when membership flipped, so the byte-differing renders surface as a single block-level diff.
+- **Hover button** — `CodeBlockEditToggleOverlay` pools `CodeBlockEditToggleView` subviews and positions one `</>` button per visible code block. Click flips the ref's membership and calls `applyDocumentEdit` with `priorDoc == newDoc` but different editing-set.
+- **Cursor-leaves auto-collapse** — `collapseEditingCodeBlocksOutsideSelection` drops any ref whose span no longer contains the current selection. Guarded by `oldSet == newSet` early-return against re-render observer cycles.
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **651 / 652 passing (99.8%)** as of Phase 12.C.6.p (shipped 2026-04-28, commits `2d05378 → f998c6c`, +31 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is exceeded; 99.8% is the practical ceiling for FSNotes++ given the wikilink-extension boundary case (#590).
+Serializer compliance against CommonMark 0.31.2: **651 / 652 passing (99.8%)** — the practical ceiling for FSNotes++ given the wikilink-extension boundary case (#590 — `![[foo]]` resolves to a wikilink rather than literal text by product design).
 
-Per-bucket state:
-- **100%**: Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, **HTML blocks (44/44, fixed in 12.C.6.i)**, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, **Links (90/90, fixed in 12.C.6.h)**, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content, **Tabs (11/11, fixed in 12.C.6.l)**, **Lists (26/26, fixed in 12.C.6.n)**, **List items (48/48, fixed in 12.C.6.o + 12.C.6.p)**.
-- **Near-perfect (90%+)**: Images 21/22.
+Every bucket is at 100% except Images (21/22). The conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every commit is gated against "must not regress."
 
-Phase 12.C.6 ladder (against 620 baseline):
-- 12.C.6.a (`2d05378`): nested-blockquote ref-def discovery (#218) → 621/652.
-- 12.C.6.b (`495c121`): Unicode case fold for ref labels (#540) → 622/652.
-- 12.C.6.c (`ecbba98`): newline-aware ref label normalization (#541) → 623/652.
-- 12.C.6.d (`7d6fc44`): wikilink yields to brackets / ref-defs (#548, #559) → 625/652.
-- 12.C.6.e (`a2b4ef7`): shortcut ref-link works after failed inline link (#568) → 626/652.
-- 12.C.6.f (`6264bc5`): 4-space indented marker can't interrupt a paragraph (#238) → 627/652.
-- 12.C.6.g (`07a55c9`): link bracket scan respects HTML / autolink boundaries (#524, #526, #536, #538) → 631/652.
-- 12.C.6.h (`14e38f6`): link-in-link literalization via §6.4 delimiter stack (#518, #519, #520, #532, #533) → 636/652.
-- 12.C.6.i (`6e93688`): multi-block list items via continuationLines + tight-mode rendering (#175, #318, #320, #321, #324) → 641/652.
-- 12.C.6.j (`575431b`): top-level 4-space-indented marker → indented code + setext-underline-as-first-continuation (#289, #300) → 643/652.
-- 12.C.6.k (`6904e2b`): empty-marker items owning indented code (#278) → 644/652.
-- 12.C.6.l (`957b9be`): tab expansion in list-item indent + afterMarker (#9) → 645/652.
-- 12.C.6.m (`3b7d1f9`): invalid-marker rejection (#312, #313) → 647/652.
-- 12.C.6.n (`94c211b`): `ListItem.body: [Block]` redesign for paragraph-after-sublist source-order preservation (#325) → 648/652.
-- 12.C.6.o (`fa437c3`): multi-block-evidence lazy continuation (#290) → 649/652.
-- 12.C.6.p (`f998c6c`): nested-blockquote lazy continuation via renderer prefix injection (#292, #293) → 651/652.
-
-Sole remaining failure:
-- **Images (1, #590)**: documented FSNotes++ wikilink-extension non-conformance — `![[foo]]` resolves to a wiki link by product design rather than literal text.
-
-The full conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every phase is gated against "must not regress from current baseline."
+Compliance was lifted from a 92.2% baseline by a series of small grammar edits and one renderer-side fix in the `LinkResolver` and `ListReader` paths. The arc is documented in `REFACTOR_PLAN.md` for archaeological purposes. Forward-looking: any new CommonMark spec failure should be reproducible as a per-bucket regression test in `Tests/CommonMark/` and gated against the bucket's current floor.
 
 ## Test Infrastructure
 
 ~1,800+ test functions across ~150 files in `Tests/`. Four complementary harnesses:
 
-**Pure-function unit tests** — `BlockParserTests`, `EditingOperationsTests`, `BlockModelFormattingTests`, `MarkdownSerializer*Tests`, `ListEditingFSMTests`, `EditContractTests`, `DocumentEditApplierTests`, etc. — call `EditingOps.*` / `MarkdownParser.parse` / `MarkdownSerializer.serialize` / `DocumentEditApplier.diffDocuments` directly on value-typed `Document`s. No AppKit setup.
+**Pure-function unit tests** — `BlockParserTests`, `EditingOperationsTests`, `BlockModelFormattingTests`, `MarkdownSerializer*Tests`, `ListEditingFSMTests`, `EditContractTests`, `DocumentEditApplierTests`. Call `EditingOps.*` / `MarkdownParser.parse` / `MarkdownSerializer.serialize` / `DocumentEditApplier.diffDocuments` directly on value-typed `Document`s. No AppKit setup.
 
-**HTML Parity** (`EditorHTMLParityTests.swift`, 85 tests): "expected" (fresh parse of target markdown) and "live" (editor after a sequence of simulated edits) `Document`s both render to HTML via `DocumentHTMLRenderer` and are asserted byte-equal. Also verifies `HTML(doc) == HTML(parse(serialize(doc)))` — the serializer round-trip property. The canonical live-edit harness.
+**HTML Parity** (`EditorHTMLParityTests.swift`, ~85 tests). "Expected" (fresh parse of target markdown) and "live" (editor after simulated edits) `Document`s both render to HTML via `DocumentHTMLRenderer` and are asserted byte-equal. Also verifies `HTML(doc) == HTML(parse(serialize(doc)))` — the round-trip property. Canonical live-edit harness.
 
-**EditorHarness** (`Tests/EditorHarness.swift`): edit-script DSL — `.type("text")`, `.pressReturn`, `.backspace`, `.select(range)`, `.toggleBold`, `.setHeading(level:)`, `.toggleList`, `.toggleQuote`, `.insertHR`, `.toggleTodo`. After each scripted input the harness reads `EditTextView.preEditProjection` + `.lastEditContract` (set by `applyEditResultWithUndo`) and runs `Invariants.assertContract(before:after:contract:)` on the live projection — the same invariant contract-unit-tests enforce on pure calls. `HarnessContractCoverageTests.swift` covers mermaid typing/backspace, math typing, and `replaceTableCellInline` end-to-end.
+**EditorHarness** (`Tests/EditorHarness.swift`). Edit-script DSL: `.type(_:)`, `.pressReturn`, `.backspace`, `.select(_:)`, `.toggleBold`, `.setHeading(level:)`, `.toggleList`, `.toggleQuote`, `.insertHR`, `.toggleTodo`, `.beginComposition`, etc. After each input the harness reads `preEditProjection` + `lastEditContract` (set by `applyEditResultWithUndo`) and runs `Invariants.assertContract(before:after:contract:)` on the live projection.
 
-**TK2 fragment dispatch** (`TextKit2FragmentDispatchTests.swift`, 55 tests; `TextKit2ElementDispatchTests.swift`, 10 tests): construct a minimal `NSTextContentStorage` + layout manager with the real `BlockModelContentStorageDelegate` / `BlockModelLayoutManagerDelegate`, feed it rendered output, and assert the correct element / fragment class comes back per paragraph range.
+**TK2 fragment dispatch** (`TextKit2FragmentDispatchTests.swift`, ~55 tests). Construct a minimal `NSTextContentStorage` + layout manager with the real delegates, feed rendered output, and assert the correct element / fragment class comes back per paragraph range.
 
-**Rule-7 grep gate**: `scripts/rule7-gate.sh` (pure shell, zero xcodebuild) runs on demand and in CI. Exit 1 on any banned-pattern hit (marker-hiding tricks, view→model bidirectional flow, literal presentation values in render-path files). See the Theme section's "Grep gate" above.
+**Rule-7 grep gate** — `scripts/rule7-gate.sh`. Pure shell, runs on demand and in CI.
 
 ```bash
 xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes \
@@ -961,18 +654,16 @@ xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes \
 
 ## Supporting Infrastructure
 
-`EditingOperations.swift` carries several typed-safety layers used throughout the editing primitives:
+`EditingOperations.swift` carries typed-safety layers used throughout the primitives:
 
 - **Phantom-typed storage indices** — `StorageIndex<OldStorage>` vs. `StorageIndex<NewStorage>` prevents mixing pre-edit and post-edit offsets at compile time.
 - **`EditorError` enum** — structured error context (invalid block index, read-only block, cross-block selection, etc.) instead of stringly-typed errors.
 - **`TextBuffer` protocol** — abstraction over `NSTextStorage` so primitive-layer tests can run against an `InMemoryTextBuffer` without instantiating AppKit.
-- **Per-block-kind editor dispatch** — see "Per-Block-Kind Editor Dispatch (Phase 12.B)" above. Each `Block` enum case has a dedicated `BlockEditor` conformer in `FSNotesCore/Rendering/BlockEditors/`; the public `EditingOps.insert/replace/delete` switches are exhaustive (no `default: throw .notSupported` patterns). Replaced the unused `EditableBlock` / `BlockAction` / `BlockCapabilities` scaffold that was retired in Phase 12.B.1.
-
-The Redux-style `EditorStore` / `EditorAction` / `EditorReducer` / `EditorEffect` types that briefly lived in `EditingOperations.swift` were deleted in Phase 6 Tier C (commit `f72ee0d`) — the scaffold predated Phase 5a's `StorageWriteGuard` + Phase 5f's `UndoJournal` and never had a production caller. The actual editor-side unidirectional flow is `EditingOps` (pure primitives) → `applyEditResultWithUndo` → `DocumentEditApplier.applyDocumentEdit` (single write path, `StorageWriteGuard`-gated) → `UndoJournal` (per-editor coalescing FSM, single `registerUndo` site).
+- **Per-block-kind editor dispatch** — see "Per-Block-Kind Editor Dispatch" above.
 
 ## AI Chat / MCP
 
-FSNotes++ embeds an AI chat panel that the user can drive through three providers (Anthropic, OpenAI, Ollama). The Ollama path supports tool calling via an in-process MCP (Model Context Protocol) server, giving the LLM read/write access to notes, folders, and editor state. The full surface (Phases 1–4 plus the AppBridge wire-up) follows the same single-write-path discipline as the rest of the editor.
+FSNotes++ embeds an AI chat panel that the user can drive through three providers (Anthropic, OpenAI, Ollama). The Ollama path supports tool calling via an in-process MCP (Model Context Protocol) server, giving the LLM read/write access to notes, folders, and editor state. The full surface follows the same single-write-path discipline as the rest of the editor.
 
 ```
 User → AIChatPanelView ──► AIChatStore ──► dispatch action
@@ -1005,62 +696,49 @@ User → AIChatPanelView ──► AIChatStore ──► dispatch action
 
 ### AIChatStore (Redux-style state)
 
-`FSNotes/Helpers/AIChatStore.swift` owns the chat conversation state. `AIChatState` carries `messages`, `isStreaming`, `error`, `pendingToolCalls`, `pendingConfirmations`, and `streamingResponse`. `AIChatAction` enumerates `sendMessage` / `receiveToken` / `completeResponse` / `toolCallRequested` / `toolCallCompleted` / `toolCallConfirmRequested` / `toolCallApproved` / `toolCallRejected` / `loadConversation` / `clearChat`. The `reduce(state:action:)` function is pure and tested directly (`AIChatStoreTests`, `AIChatStoreConfirmationTests`). The store does NOT call providers — the view layer drives the provider and feeds results back via `dispatch(...)`. Threading: every public method asserts main-queue.
+`FSNotes/Helpers/AIChatStore.swift` owns conversation state. `AIChatState` carries `messages`, `isStreaming`, `error`, `pendingToolCalls`, `pendingConfirmations`, `streamingResponse`. `AIChatAction` enumerates `sendMessage` / `receiveToken` / `completeResponse` / `toolCallRequested` / `toolCallCompleted` / `toolCallConfirmRequested` / `toolCallApproved` / `toolCallRejected` / `loadConversation` / `clearChat`. The `reduce(state:action:)` function is pure and tested directly. The store does NOT call providers — the view layer drives the provider and feeds results back via `dispatch(...)`. Threading: every public method asserts main-queue.
 
 ### MCPServer
 
-`FSNotes/Helpers/MCP/MCPServer.swift` is the singleton tool registry. Tools conform to `MCPTool` (name, description, JSON-schema input, async `execute(input:) -> ToolOutput`). `handleToolCalls(_:)` dispatches a batch of tool calls and returns `[ToolResult]` in order. Schemas flow into the Ollama request body via `MCPServer.shared.toolSchemasForLLM()` so the LLM has up-to-date tool descriptions on every turn — no hardcoded list.
+`FSNotes/Helpers/MCP/MCPServer.swift` is the singleton tool registry. Tools conform to `MCPTool` (name, description, JSON-schema input, async `execute(input:) -> ToolOutput`). Schemas flow into the Ollama request body via `MCPServer.shared.toolSchemasForLLM()` — no hardcoded list.
 
-Tools (15 today, growing):
-- **Read tools** (filesystem-only, no AppBridge dep): `ReadNoteTool`, `SearchNotesTool`, `ListFoldersTool`, `GetFolderNotesTool`, `ListNotesTool`, `GetProjectsTool`, `GetTagsTool`, `GetCurrentNoteTool`.
+Tools (15, growing):
+- **Read tools** (filesystem-only): `ReadNoteTool`, `SearchNotesTool`, `ListFoldersTool`, `GetFolderNotesTool`, `ListNotesTool`, `GetProjectsTool`, `GetTagsTool`, `GetCurrentNoteTool`.
 - **Write tools** (route through AppBridge for open notes): `EditNoteTool`, `CreateNoteTool`, `DeleteNoteTool`, `MoveNoteTool`, `AppendToNoteTool`, `ApplyFormattingTool`, `ExportPDFTool`.
 
-Path safety: `NotePathResolver` standardizes URLs and validates `relativePath(of:under:)` against the storage root, so a malicious LLM passing `path: "../../../../etc/passwd"` resolves to nil. Encrypted notes (`.etp` extension or encrypted-bundle metadata) return `ToolOutput.error("Note is encrypted")` from every tool.
+Path safety: `NotePathResolver` validates `relativePath(of:under:)` against the storage root, so a malicious LLM passing `path: "../../../../etc/passwd"` resolves to nil. Encrypted notes (`.etp` extension or encrypted-bundle metadata) return `ToolOutput.error("Note is encrypted")`.
 
 ### AppBridge
 
-`FSNotes/Helpers/MCP/AppBridge.swift` defines the protocol that lets the (out-of-view-context) MCP layer query and mutate the live editor. Implemented by `AppBridgeImpl` in `FSNotes/Helpers/MCP/AppBridgeImpl.swift`. Methods split into:
+`AppBridge` lets the (out-of-view-context) MCP layer query and mutate the live editor. `AppBridgeImpl` (main-thread-only):
 
-- **Read** (always safe): `currentNotePath`, `hasUnsavedChanges(path:)`, `editorMode(for:)` (`.wysiwyg` / `.source` / `.none`), `cursorState(for:)`.
+- **Read** (always safe): `currentNotePath`, `hasUnsavedChanges(path:)`, `editorMode(for:)`, `cursorState(for:)`.
 - **Write** (gated): `notifyFileChanged(path:)`, `requestWriteLock(path:)`, `appendMarkdown(toPath:markdown:)`, `applyStructuredEdit(toPath:request:)`, `applyFormatting(toPath:command:)`, `exportPDF(fromPath:to:)`.
 
-Each write method dispatches WYSIWYG mutations through `editor.applyEditResultWithUndo(...)` → `DocumentEditApplier.applyDocumentEdit` (the canonical single write path), and source-mode mutations through `note.content = ...` + `notifyFileChanged`. **Refuses with `BridgeEditOutcome.failed(reason:)` if `editor.compositionSession?.isActive == true`** — the IME composition window is the one sanctioned exemption to Invariant A and racing with `setMarkedText` corrupts the marked range. `AppBridgeImpl` is documented as main-thread-only; callers (notably `OllamaProvider.dispatchToolCallsAndContinue` running on a `Task.detached` queue) must marshal via `MainActor`.
+Each write dispatches WYSIWYG through `editor.applyEditResultWithUndo(...)` → `applyDocumentEdit` (canonical single write path), source-mode through `note.content = ...` + `notifyFileChanged`. **Refuses with `BridgeEditOutcome.failed(reason:)` if `editor.compositionSession?.isActive == true`** — racing with `setMarkedText` corrupts the marked range. Callers (notably `OllamaProvider.dispatchToolCallsAndContinue` running on `Task.detached`) must marshal via `MainActor`.
 
 ### OllamaProvider tool-calling loop
 
-`FSNotes/Helpers/Ollama/OllamaProvider.swift` adds tool calling on top of the Ollama `/api/chat` NDJSON stream. Each round:
+`OllamaProvider.swift` adds tool calling on top of the Ollama `/api/chat` NDJSON stream:
 
-1. Send `messages` + `tools: [...schemas...]` to `/api/chat` with `stream: true`.
-2. Parse the streamed NDJSON. `message.content` chunks dispatch `.receiveToken`. `message.tool_calls` arrays buffer.
-3. On `done: true` with no tool_calls → dispatch `.completeResponse(.success(...))`.
-4. With tool_calls → for each call:
-   a. If the tool name is in `needsConfirm = ["delete_note", "move_note"]`, dispatch `.toolCallConfirmRequested(call)` and suspend on `withCheckedContinuation` until the chat panel resolves it via Approve/Reject. Reject → synthetic `ToolOutput.error("user rejected")` skips the tool. Approve → continue.
-   b. Run the call through `MCPServer.shared.handleToolCalls([call])`.
-   c. Append a `role: "tool"` message with the result.
-5. Re-issue the chat request and continue.
-6. Cap iteration at `maxToolRounds = 10`; on cap-hit, dispatch `.completeResponse(.failure(.apiError("Tool-calling exceeded 10 rounds...")))`.
+1. Send `messages` + `tools: [...schemas...]` with `stream: true`.
+2. Parse streamed NDJSON. `message.content` chunks dispatch `.receiveToken`. `message.tool_calls` arrays buffer.
+3. On `done: true` with no tool_calls → `.completeResponse(.success(...))`.
+4. With tool_calls — for each:
+   - If name in `needsConfirm = ["delete_note", "move_note"]`, dispatch `.toolCallConfirmRequested(call)` and suspend on `withCheckedContinuation` until panel resolves Approve/Reject. Reject → synthetic `ToolOutput.error("user rejected")` skips the tool. Approve → continue.
+   - Run via `MCPServer.shared.handleToolCalls([call])`.
+   - Append `role: "tool"` message with the result.
+5. Re-issue chat request and continue.
+6. Cap at `maxToolRounds = 10`; cap-hit → `.completeResponse(.failure(.apiError("Tool-calling exceeded 10 rounds...")))`.
 
-### AIPromptContext (system prompt enrichment)
+### AIPromptContext
 
-`FSNotes/Helpers/AIService.swift` exposes `aiSystemPrompt(_ ctx: AIPromptContext, mcpServer: MCPServer = .shared)` shared by all three providers. `AIPromptContext` carries `noteTitle?`, `noteContent`, `noteFolder?`, `projectName?`, `allTags`, `editorMode`, `isTextBundle`. The chat panel resolves the context per-message in `AIChatPanelView.makePromptContext()` from `note.project` / `Storage.shared().tags` / `NotesTextProcessor.hideSyntax`. Tool descriptions are read at runtime from `mcpServer.registeredTools.sorted` — adding a tool updates the prompt automatically.
+`AIService.aiSystemPrompt(_ ctx: AIPromptContext, mcpServer: MCPServer = .shared)` shared by all three providers. `AIPromptContext` carries `noteTitle?`, `noteContent`, `noteFolder?`, `projectName?`, `allTags`, `editorMode`, `isTextBundle`. Tool descriptions are read at runtime from `mcpServer.registeredTools.sorted` — adding a tool updates the prompt automatically.
 
 ### Conversation persistence
 
-Per-note JSON in `~/Library/Application Support/FSNotes++/AIChats/<sha256-of-note-url>.json` (mirrors `Themes/`). `AIChatPersistence.save(noteId:messages:)` debounces by 500ms; `clearChat` deletes the on-disk file. Malformed/missing → `nil`, never blocks the user. Implemented in `FSNotes/Helpers/AIChatPersistence.swift` (173 LoC, 12 tests).
+Per-note JSON in `~/Library/Application Support/FSNotes++/AIChats/<sha256-of-note-url>.json`. `AIChatPersistence.save(noteId:messages:)` debounces by 500ms; `clearChat` deletes the file. Malformed/missing → nil, never blocks the user.
 
 ### Keyboard
 
 Cmd+Shift+A toggles the panel via the View menu's "Hide/Show AI Chat" item (storyboard, action `toggleAIChat:` on `ViewController`).
-
-### Test coverage
-
-- `AIChatStoreTests` (16) + `AIChatStoreConfirmationTests` (11) — reducer + subscribe/dispatch + confirmation flow
-- `AIPromptContextTests` — full-context prompt rendering + provider parity
-- `AIChatPersistenceTests` (12) — per-note JSON round-trip + debounce + clearChat-deletes
-- `Phase1OllamaClientTests` (12) + `Phase1OllamaProviderTests` (10) — model listing + reachability + request body shape
-- `Phase2OllamaToolCallingTests` (11) — tool_calls parsing + dispatch loop + iteration cap
-- `MCPServerTests` (9) + per-tool tests (one suite per of the 15 tools, ~75 tests total)
-- `AppBridgeImplTests` (34) — including 8 IME-composition-refusal tests
-- `AIToolCallE2ETests` (5) — end-to-end Ollama → MCP → AppBridge → editor → save through `URLProtocol` mocks
-- `AIChatPanelToolBubblesTests` (10) — tool-call bubble rendering + status update + confirmation bubble
-- `AIChatKeyboardShortcutTests` (3) — menu-item key equivalent + action target
