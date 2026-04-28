@@ -228,7 +228,7 @@ final class GutterOverlayTests: XCTestCase {
             return
         }
         XCTAssertTrue(
-            processor.blocks[blockIdx].collapsed,
+            processor.isCollapsed(blockIndex: blockIdx),
             "Heading block must report collapsed=true after toggle"
         )
     }
@@ -478,7 +478,7 @@ final class GutterOverlayTests: XCTestCase {
         }
         processor.toggleFold(headerBlockIndex: headerIdx, textStorage: storage)
         XCTAssertTrue(
-            processor.blocks[headerIdx].collapsed,
+            processor.isCollapsed(blockIndex: headerIdx),
             "Heading must be marked collapsed after toggleFold"
         )
         tlm.ensureLayout(for: tlm.documentRange)
@@ -532,7 +532,7 @@ final class GutterOverlayTests: XCTestCase {
             return
         }
         processor.toggleFold(headerBlockIndex: headerIdx, textStorage: storage)
-        XCTAssertTrue(processor.blocks[headerIdx].collapsed)
+        XCTAssertTrue(processor.isCollapsed(blockIndex: headerIdx))
         tlm.ensureLayout(for: tlm.documentRange)
 
         // Post-fold: code block must be filtered out — its copy icon

@@ -136,12 +136,11 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         ]
         let permitted: Set<String> = [
             // TextStorageProcessor owns the `blocks` array and its
-            // `collapsed` per-entry flag by design.
-            "TextStorageProcessor.swift",
-            // GutterController reads `.collapsed` to draw fold carets —
-            // this is a legitimate renderer of the processor's cached
-            // view of fold state.
-            "GutterController.swift"
+            // `collapsed` per-entry flag by design. Phase 6 Tier B′
+            // Sub-slice 2 migrated `GutterController` to use the
+            // public `processor.isCollapsed(blockIndex:)` API, so it
+            // is no longer in this allow-list.
+            "TextStorageProcessor.swift"
         ]
 
         // Regex matches `.collapsed` as a whole-word property access —

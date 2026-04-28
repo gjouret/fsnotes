@@ -247,7 +247,12 @@ class GutterController {
                 continue
             }
             let block = processor.blocks[blockIdx]
-            let isCollapsed = block.collapsed
+            // Phase 6 Tier B′ Sub-slice 2: route fold-state read
+            // through the public side-table query instead of the
+            // dual-written per-block legacy cache. The cache stays
+            // in sync for now but will be retired once all readers
+            // (incl. tests) have migrated.
+            let isCollapsed = processor.isCollapsed(blockIndex: blockIdx)
 
             // Fold caret
             if isMouseInGutter || isCollapsed {

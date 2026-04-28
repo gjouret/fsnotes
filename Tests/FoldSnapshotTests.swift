@@ -154,7 +154,7 @@ class FoldSnapshotTests: XCTestCase {
             "First at (\(firstDarkPixel?.0 ?? -1), \(firstDarkPixel?.1 ?? -1)). " +
             "Snapshot saved to \(outputPath). " +
             "Check area from y=\(h2Bottom) to y=\(renderSize.height). " +
-            "blocks=\(processor.blocks.count), collapsed=\(processor.blocks[h2Idx].collapsed), " +
+            "blocks=\(processor.blocks.count), collapsed=\(processor.isCollapsed(blockIndex: h2Idx)), " +
             "foldedChars=\(foldedCharCount)/\(storage.length) ranges=\(foldedRanges), " +
             "h2block=\(processor.blocks[h2Idx].range), " +
             "allBlocks=\(processor.blocks.map { "\(describeType($0.type))@\($0.range.location)" }.joined(separator: ","))")

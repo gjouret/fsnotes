@@ -39,7 +39,7 @@ class FoldRangeTests: XCTestCase {
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
 
         // Section 1 should be collapsed
-        XCTAssertTrue(proc.blocks[idx].collapsed)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: idx))
 
         // The fold range should NOT include "## Section 2"
         let foldedText = storage.string
@@ -55,7 +55,7 @@ class FoldRangeTests: XCTestCase {
         }
 
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
-        XCTAssertTrue(proc.blocks[idx].collapsed)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: idx))
     }
 
     func test_foldLastHeader_toEOF() {
@@ -73,7 +73,7 @@ class FoldRangeTests: XCTestCase {
         }
 
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
-        XCTAssertTrue(proc.blocks[idx].collapsed)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: idx))
     }
 
     func test_foldDoesNotStopAtHR() {
@@ -88,7 +88,7 @@ class FoldRangeTests: XCTestCase {
 
         // The fold should include content after the HR
         // "## Next" should still be visible (not folded)
-        XCTAssertTrue(proc.blocks[idx].collapsed)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: idx))
     }
 
     func test_unfold_restoresContent() {
@@ -101,11 +101,11 @@ class FoldRangeTests: XCTestCase {
 
         // Fold
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
-        XCTAssertTrue(proc.blocks[idx].collapsed)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: idx))
 
         // Unfold
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
-        XCTAssertFalse(proc.blocks[idx].collapsed)
+        XCTAssertFalse(proc.isCollapsed(blockIndex: idx))
 
         // Content should be visible (no .foldedContent attribute)
         let fullRange = NSRange(location: 0, length: storage.length)
@@ -125,7 +125,7 @@ class FoldRangeTests: XCTestCase {
         }
 
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
-        XCTAssertTrue(proc.blocks[idx].collapsed)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: idx))
     }
 
     func test_foldRange_coversFullContent_toEOF() {
@@ -187,7 +187,7 @@ class FoldRangeTests: XCTestCase {
 
         // Fold H2
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
-        XCTAssertTrue(proc.blocks[idx].collapsed)
+        XCTAssertTrue(proc.isCollapsed(blockIndex: idx))
 
         // The fold range should extend to EOF — everything after H2 line is folded
         let nsStr = storage.string as NSString
