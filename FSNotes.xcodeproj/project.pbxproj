@@ -113,6 +113,8 @@
 		WLKT12C30000000000B1 /* WikilinkParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WLKT12C30000000000F1 /* WikilinkParserTests.swift */; };
 		ENTP12C30000000000B1 /* EntityParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ENTP12C30000000000F1 /* EntityParser.swift */; };
 		ENTT12C30000000000B1 /* EntityParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ENTT12C30000000000F1 /* EntityParserTests.swift */; };
+		AUTP12C30000000000B1 /* AutolinkParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AUTP12C30000000000F1 /* AutolinkParser.swift */; };
+		AUTT12C30000000000B1 /* AutolinkParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AUTT12C30000000000F1 /* AutolinkParserTests.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
 		SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCR20260427F1 /* SubviewTableClickResponderTests.swift */; };
@@ -1369,6 +1371,8 @@
 		WLKT12C30000000000F1 /* WikilinkParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WikilinkParserTests.swift; sourceTree = "<group>"; };
 		ENTP12C30000000000F1 /* EntityParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/EntityParser.swift; sourceTree = "<group>"; };
 		ENTT12C30000000000F1 /* EntityParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntityParserTests.swift; sourceTree = "<group>"; };
+		AUTP12C30000000000F1 /* AutolinkParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/AutolinkParser.swift; sourceTree = "<group>"; };
+		AUTT12C30000000000F1 /* AutolinkParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutolinkParserTests.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
 		SVCR20260427F1 /* SubviewTableClickResponderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableClickResponderTests.swift; sourceTree = "<group>"; };
@@ -2060,6 +2064,7 @@
 				STKP12C30000000000F1 /* StrikethroughParser.swift */,
 				WLKP12C30000000000F1 /* WikilinkParser.swift */,
 				ENTP12C30000000000F1 /* EntityParser.swift */,
+				AUTP12C30000000000F1 /* AutolinkParser.swift */,
 				P41S000000000000000000F1 /* SourceRenderer.swift */,
 				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
@@ -3005,6 +3010,7 @@
 				STKT12C30000000000F1 /* StrikethroughParserTests.swift */,
 				WLKT12C30000000000F1 /* WikilinkParserTests.swift */,
 				ENTT12C30000000000F1 /* EntityParserTests.swift */,
+				AUTT12C30000000000F1 /* AutolinkParserTests.swift */,
 				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
 				SVCR20260427F1 /* SubviewTableClickResponderTests.swift */,
 				SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */,
@@ -4021,6 +4027,7 @@
 				STKP12C30000000000B1 /* StrikethroughParser.swift in Sources */,
 				WLKP12C30000000000B1 /* WikilinkParser.swift in Sources */,
 				ENTP12C30000000000B1 /* EntityParser.swift in Sources */,
+				AUTP12C30000000000B1 /* AutolinkParser.swift in Sources */,
 				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
 				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
@@ -4712,6 +4719,7 @@
 				STKT12C30000000000B1 /* StrikethroughParserTests.swift in Sources */,
 				WLKT12C30000000000B1 /* WikilinkParserTests.swift in Sources */,
 				ENTT12C30000000000B1 /* EntityParserTests.swift in Sources */,
+				AUTT12C30000000000B1 /* AutolinkParserTests.swift in Sources */,
 				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
 				SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */,
 				SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */,

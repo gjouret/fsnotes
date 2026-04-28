@@ -1366,7 +1366,7 @@ public enum MarkdownParser {
                 continue
             }
             // 4. Autolinks
-            if let match = tryMatchAutolink(chars, from: i) {
+            if let match = AutolinkParser.match(chars, from: i) {
                 flushPlain()
                 tokens.append(.inline(.autolink(text: match.text, isEmail: match.isEmail)))
                 i = match.endIndex
@@ -1776,47 +1776,6 @@ public enum MarkdownParser {
             "`", "{", "|", "}", "~"
         ]
         return punctuation.contains(ch)
-    }
-
-    // MARK: - Autolink detection
-
-    /// Try to match an autolink `<scheme:path>` (URI) or `<local@domain>`
-    /// (email) starting at `start`.
-    private static func tryMatchAutolink(
-        _ chars: [Character], from start: Int
-    ) -> (text: String, isEmail: Bool, endIndex: Int)? {
-        guard start < chars.count, chars[start] == "<" else { return nil }
-        // Scan for closing >
-        var j = start + 1
-        while j < chars.count {
-            if chars[j] == ">" {
-                let inner = String(chars[(start + 1)..<j])
-                // Check if it's a URI autolink (has scheme:)
-                if let colonIdx = inner.firstIndex(of: ":"),
-                   colonIdx > inner.startIndex {
-                    let scheme = inner[..<colonIdx]
-                    // Scheme: [A-Za-z][A-Za-z0-9+.-]{1,31} (CommonMark spec)
-                    if scheme.count >= 2 && scheme.count <= 32 &&
-                       scheme.first!.isASCII && scheme.first!.isLetter &&
-                       scheme.dropFirst().allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "+" || $0 == "-" || $0 == ".") }) {
-                        return (inner, false, j + 1)
-                    }
-                }
-                // Check if it's an email autolink
-                if inner.contains("@") && !inner.contains(" ") && !inner.contains("\\") && inner.count >= 3 {
-                    let parts = inner.split(separator: "@", maxSplits: 1)
-                    if parts.count == 2 && !parts[0].isEmpty && !parts[1].isEmpty {
-                        return (inner, true, j + 1)
-                    }
-                }
-                // Not a valid autolink — bail
-                return nil
-            }
-            // Autolinks can't contain spaces or newlines
-            if chars[j] == " " || chars[j] == "\n" { return nil }
-            j += 1
-        }
-        return nil
     }
 
     // MARK: - Raw HTML inline detection
