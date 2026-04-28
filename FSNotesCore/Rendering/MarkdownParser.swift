@@ -38,7 +38,8 @@ public enum MarkdownParser {
         // First pass: collect link reference definitions, respecting
         // code fences. Lines that are link ref defs are consumed and
         // NOT emitted as blocks.
-        let (refDefs, consumedLines) = collectLinkRefDefs(lines, trailingNewline: markdown.hasSuffix("\n"))
+        let (refDefs, consumedLines, blockquoteRefDefLines) =
+            collectLinkRefDefs(lines, trailingNewline: markdown.hasSuffix("\n"))
 
         var blocks: [Block] = []
         var i = 0
@@ -81,7 +82,8 @@ public enum MarkdownParser {
                 from: i,
                 trailingNewline: markdown.hasSuffix("\n"),
                 parseInlines: { parseInlines($0, refDefs: refDefs) },
-                interruptsLazyContinuation: interruptsLazyContinuation
+                interruptsLazyContinuation: interruptsLazyContinuation,
+                skipLines: blockquoteRefDefLines
             ) {
                 flushRawBuffer()
                 blocks.append(result.block)
@@ -1283,14 +1285,37 @@ public enum MarkdownParser {
     /// scanned for link ref defs.
     private static func collectLinkRefDefs(
         _ lines: [String], trailingNewline: Bool
-    ) -> (defs: [String: (url: String, title: String?)], consumed: Set<Int>) {
+    ) -> (
+        defs: [String: (url: String, title: String?)],
+        consumed: Set<Int>,
+        blockquoteRefDefLines: Set<Int>
+    ) {
         var defs: [String: (url: String, title: String?)] = [:]
         var consumed: Set<Int> = []
+        // Lines that are ref-defs nested inside a blockquote container.
+        // These are NOT added to `consumed` (which would skip them at
+        // the top-level block-parse loop), but ARE passed to
+        // `BlockquoteReader.read` so the reader can drop them from the
+        // blockquote's inner content while still walking past them.
+        var blockquoteRefDefLines: Set<Int> = []
         var inCodeFence = false
         var openFenceChar: Character = "`"
         var openFenceLength = 0
 
         let effectiveCount = (trailingNewline && lines.last == "") ? lines.count - 1 : lines.count
+
+        // Per-line stripped view: any line carrying a blockquote prefix
+        // (`>`, `> `, `>> `, etc.) is replaced with its inner content so
+        // the ref-def parser can recognize ref-defs nested inside a
+        // blockquote (CommonMark §4.7 — ref-defs may live inside any
+        // container block). Top-level lines pass through unchanged.
+        let strippedLines: [String] = lines.map { line in
+            if let parts = BlockquoteReader.detect(line) {
+                return parts.content
+            }
+            return line
+        }
+
         var i = 0
         while i < effectiveCount {
             let line = lines[i]
@@ -1350,11 +1375,45 @@ public enum MarkdownParser {
                     consumed.insert(j)
                 }
                 i += parsed.linesConsumed
-            } else {
-                i += 1
+                continue
             }
+
+            // Blockquote-internal ref-def: line carries a `>` prefix and
+            // its stripped content parses as a ref-def. Register the
+            // definition but DO NOT add the source lines to `consumed`
+            // — the BlockquoteReader still needs to walk these lines so
+            // the (now empty) blockquote container is preserved. The
+            // renderer's inner re-parse will rediscover the ref-def and
+            // emit no inner block.
+            if canStartBlock,
+               BlockquoteReader.detect(line) != nil,
+               let parsed = tryParseLinkRefDef(strippedLines, startIndex: i, effectiveCount: effectiveCount) {
+                // All lines consumed by the parse must themselves carry
+                // a blockquote prefix — a multi-line blockquote ref-def
+                // requires every line to be inside the same container.
+                var allPrefixed = true
+                for j in i..<(i + parsed.linesConsumed) {
+                    if BlockquoteReader.detect(lines[j]) == nil {
+                        allPrefixed = false
+                        break
+                    }
+                }
+                if allPrefixed {
+                    let key = normalizeLabel(parsed.label)
+                    if defs[key] == nil {
+                        defs[key] = (url: parsed.url, title: parsed.title)
+                    }
+                    for j in i..<(i + parsed.linesConsumed) {
+                        blockquoteRefDefLines.insert(j)
+                    }
+                    i += parsed.linesConsumed
+                    continue
+                }
+            }
+
+            i += 1
         }
-        return (defs, consumed)
+        return (defs, consumed, blockquoteRefDefLines)
     }
 
     /// Normalize a link reference label for case-insensitive matching.

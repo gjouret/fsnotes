@@ -422,9 +422,11 @@ class CommonMarkSpecTests: XCTestCase {
 
     // --- Link Reference Definitions (27 examples) ---
     // First-pass collection in MarkdownParser, consumed lines skipped.
-    // Reference links and images resolved in parseInlines.
+    // Reference links and images resolved in parseInlines. Phase 12.C.6.a
+    // landed nested-blockquote ref-def discovery (spec #218), bringing
+    // the bucket to full compliance.
     func test_linkReferenceDefinitions() {
-        assertSection("Link reference definitions", passesAtLeast: 22)
+        assertSection("Link reference definitions", passesAtLeast: 27)
     }
 
     // MARK: - Inline-level sections

@@ -41,12 +41,18 @@ public enum BlockquoteReader {
     /// `interruptsLazyContinuation` guards lazy-continuation lines
     /// (no `>` prefix) — it must return true for any line that opens a
     /// new block, so the walk stops at the right boundary.
+    /// `skipLines` lists source-line indices that should be walked
+    /// past WITHOUT contributing to the blockquote's inner content
+    /// (typically blockquote-internal link reference definitions —
+    /// CommonMark §4.7 — which are consumed by the ref-def first pass
+    /// and must not appear as paragraph text inside the blockquote).
     public static func read(
         lines: [String],
         from start: Int,
         trailingNewline: Bool,
         parseInlines: (String) -> [Inline],
-        interruptsLazyContinuation: (String) -> Bool
+        interruptsLazyContinuation: (String) -> Bool,
+        skipLines: Set<Int> = []
     ) -> ReadResult? {
         guard start < lines.count, detect(lines[start]) != nil else { return nil }
 
@@ -58,6 +64,13 @@ public enum BlockquoteReader {
         while j < lines.count {
             let l = lines[j]
             if j == lines.count - 1 && l.isEmpty && trailingNewline { break }
+
+            if skipLines.contains(j), detect(l) != nil {
+                // Blockquote-prefixed line consumed as a nested ref-def:
+                // walk past without emitting a BlockquoteLine.
+                j += 1
+                continue
+            }
 
             if let parts = detect(l) {
                 qLines.append(BlockquoteLine(

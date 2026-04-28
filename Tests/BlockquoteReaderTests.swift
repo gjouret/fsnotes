@@ -271,6 +271,32 @@ final class BlockquoteReaderTests: XCTestCase {
         }
     }
 
+    // Phase 12.C.6.a — CommonMark spec #218: a link reference definition
+    // nested inside a blockquote is collected by the document-level
+    // ref-def pass and disappears from the blockquote's inner content.
+    // The remaining (now empty) blockquote container is preserved.
+    func test_endToEnd_refDefInsideBlockquote_isHoisted() {
+        let doc = MarkdownParser.parse("[foo]\n\n> [foo]: /url\n")
+        XCTAssertEqual(doc.refDefs["foo"]?.url, "/url")
+        XCTAssertEqual(doc.blocks.count, 3)
+        guard case .blockquote(let qLines) = doc.blocks[2] else {
+            return XCTFail("expected blockquote at index 2")
+        }
+        XCTAssertEqual(qLines.count, 0,
+                       "blockquote should be empty — its only inner line was a ref-def")
+    }
+
+    func test_endToEnd_refDefInsideBlockquote_keepsOtherInnerLines() {
+        // The ref-def line is hoisted; the other inner line stays.
+        let doc = MarkdownParser.parse("> [foo]: /url\n> hello\n")
+        XCTAssertEqual(doc.refDefs["foo"]?.url, "/url")
+        XCTAssertEqual(doc.blocks.count, 1)
+        guard case .blockquote(let qLines) = doc.blocks[0] else {
+            return XCTFail("expected blockquote")
+        }
+        XCTAssertEqual(qLines.count, 1)
+    }
+
     func test_endToEnd_nestedQuoteShape() {
         let doc = MarkdownParser.parse("> > nested\n")
         XCTAssertEqual(doc.blocks.count, 1)
