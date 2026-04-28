@@ -1837,13 +1837,21 @@ After Slice B lands, every new bug fix MUST land with a `Given.X().Y().Z().Then.
 | 12.C.3.g — Raw HTML port (5 sub-grammars) | ✅ SHIPPED | — | +240 combinator + 150 tests; "Raw HTML" 20/20 (100%) held |
 | 12.C.3.h — Inline link + image port | ✅ SHIPPED | — | +165 combinator + 180 tests; "Links" 76/90 + "Images" 21/22 floor held |
 | **Phase 12.C.3 aggregate** | **✅ COMPLETE** | (8 commits, 5af16d5..676ac93) | All 11 inline-tokenizer `tryMatch*` functions removed from MarkdownParser. 8 dedicated combinator files. 187/187 tests across all 12.C suites + CommonMark spec — green. Overall compliance unchanged at 620/652 (95.1%). |
-| 12.C.4 — Emphasis algorithm port (CommonMark §6.2 delimiter stack) | ✅ SHIPPED | (HEAD) | New `EmphasisResolver.swift` (370 LoC) carries the data types (`InlineToken`, `DelimiterRun`), flanking helper, and the resolve walk. MarkdownParser net -352 LoC. 15 new tests. "Emphasis and strong emphasis" 132/132 (100%) held. Overall 620/652 (95.1%) held. |
-| 12.C.5 — Block parsing port (paragraph, heading, code, blockquote, list item, HR, table, HTML block) | ⏳ NEXT | — | Parallels 12.B's per-block decomposition. Each block parser as its own combinator. |
+| 12.C.4 — Emphasis algorithm port (CommonMark §6.2 delimiter stack) | ✅ SHIPPED | `EMP4` | New `EmphasisResolver.swift` (370 LoC) carries the data types (`InlineToken`, `DelimiterRun`), flanking helper, and the resolve walk. MarkdownParser net -352 LoC. 15 new tests. "Emphasis and strong emphasis" 132/132 (100%) held. Overall 620/652 (95.1%) held. |
+| 12.C.5.a — Fenced code block reader port | ✅ SHIPPED | (12.C.5 commit 1) | `FencedCodeBlockReader.swift` (155 LoC). Public `Fence` struct + `detectOpen` + `isClose` + `read(lines:from:trailingNewline:)`. 4 cross-cutting callers in MarkdownParser rewired. 10 new tests. "Fenced code blocks" 29/29 (100%) held. |
+| 12.C.5.b — HR + ATX heading + setext underline detectors port | ✅ SHIPPED | (12.C.5 commit 2) | `HorizontalRuleReader.swift` (55 LoC) + `ATXHeadingReader.swift` (100 LoC, includes `detectSetextUnderline`). 5 cross-cutting callers rewired. 24 new tests. "Thematic breaks" 19/19, "ATX headings" 18/18, "Setext headings" 27/27 — all 100% held. |
+| 12.C.5.c — HTML block reader port | ⏳ NEXT | — | Multi-line block reader for the 7 HTML block sub-types (CommonMark §4.6) with distinct close conditions. Largest remaining single-block reader. Bucket: HTML blocks 43/44 (98%). |
+| 12.C.5.d — Blockquote reader port | ⏳ PENDING | — | Multi-line block reader with lazy continuation logic. Bucket: Block quotes 24/25 (96%). |
+| 12.C.5.e — Table reader port | ⏳ PENDING | — | Multi-line reader with header + separator + body row detection. Already mostly factored as `detectTable`. |
+| 12.C.5.f — List reader port | ⏳ PENDING | — | The most complex remaining: 200+ lines of item collection with marker-type-change detection, blank-line-between-items handling, and indented-content continuation. Buckets: List items 42/48 (88%), Lists 19/26 (73%). |
 | 12.C.6 — Push CommonMark from 95.1% to 100% (32 residual failures) | ⏳ PENDING | — | With combinator architecture in place, residuals become small grammar edits, not surgery on imperative state. |
 
 **File layout established:**
 - `FSNotesCore/Rendering/BlockEditors/` — 7 files, one per block kind (Paragraph, Heading, CodeBlock, HtmlBlock, AtomicBlockEditors [BlankLine + HorizontalRule + Table], List, Blockquote)
-- `FSNotesCore/Rendering/Combinators/` — `Parser.swift` (lib) + 10 ported parsers/resolvers: HardLineBreakParser (12.C.2), CodeSpanParser, MathParser (Inline + Display), StrikethroughParser, WikilinkParser, EntityParser, AutolinkParser, RawHTMLParser, LinkParser (incl. ImageParser) (all 12.C.3), EmphasisResolver (12.C.4). 12.C.5 adds one file per ported block parser.
+- `FSNotesCore/Rendering/Combinators/` — `Parser.swift` (lib) + 13 ported parsers/resolvers/readers:
+  - **Inline tokenizers (12.C.2 + 12.C.3):** HardLineBreakParser, CodeSpanParser, MathParser (Inline + Display), StrikethroughParser, WikilinkParser, EntityParser, AutolinkParser, RawHTMLParser, LinkParser (incl. ImageParser).
+  - **Inline emphasis (12.C.4):** EmphasisResolver (the §6.2 delimiter-stack algorithm).
+  - **Block readers (12.C.5):** FencedCodeBlockReader, HorizontalRuleReader, ATXHeadingReader. 12.C.5.c+ adds HTML, blockquote, table, list readers.
 
 **Architectural invariants now enforced by the compiler:**
 - All 9 `Block` kinds have a dedicated `BlockEditor` conformer.
