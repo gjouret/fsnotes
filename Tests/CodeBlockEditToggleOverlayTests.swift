@@ -676,4 +676,58 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
             "\(notificationCount) spurious storage notifications"
         )
     }
+
+    // MARK: - Phase 8 Slice 5: mermaid / math fragment classes accepted
+
+    /// Mermaid block: the overlay must enumerate its
+    /// `MermaidLayoutFragment` (which renders the diagram) as a
+    /// toggle target. Without the slice 5 filter broadening, the
+    /// `fragment is CodeBlockLayoutFragment` check would reject it
+    /// and the user would have no way to open the mermaid block for
+    /// editing.
+    func test_slice5_overlay_acceptsMermaidFragment() {
+        let markdown = """
+        ```mermaid
+        graph TD
+        A --> B
+        ```
+        """
+        let harness = EditorHarness(markdown: markdown)
+        defer { harness.teardown() }
+        pumpLayout(harness.editor)
+
+        let overlay = CodeBlockEditToggleOverlay(editor: harness.editor)
+        let visible = overlay.visibleFragments()
+        XCTAssertEqual(
+            visible.count, 1,
+            "Mermaid block must produce exactly 1 overlay entry — " +
+            "got \(visible.count)"
+        )
+    }
+
+    /// Fenced ```math``` block: parses as
+    /// `Block.codeBlock(language: "math", …)` and dispatches to
+    /// `MathLayoutFragment`. The slice 5 broadening must accept it.
+    /// (Note: `$$ … $$` syntax is parsed differently — as
+    /// `Block.paragraph(inline: [.displayMath(…)])` — and is correctly
+    /// rejected by the per-block filter at line ~341 because a
+    /// paragraph isn't an editable code block.)
+    func test_slice5_overlay_acceptsFencedMathFragment() {
+        let markdown = """
+        ```math
+        x^2 + y^2 = z^2
+        ```
+        """
+        let harness = EditorHarness(markdown: markdown)
+        defer { harness.teardown() }
+        pumpLayout(harness.editor)
+
+        let overlay = CodeBlockEditToggleOverlay(editor: harness.editor)
+        let visible = overlay.visibleFragments()
+        XCTAssertEqual(
+            visible.count, 1,
+            "Fenced ```math``` block must produce exactly 1 overlay " +
+            "entry — got \(visible.count)"
+        )
+    }
 }

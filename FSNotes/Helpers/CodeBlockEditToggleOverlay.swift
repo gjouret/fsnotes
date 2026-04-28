@@ -292,7 +292,21 @@ final class CodeBlockEditToggleOverlay {
         ) { fragment in
             let cls = String(describing: Swift.type(of: fragment))
             fragmentClassHistogram[cls, default: 0] += 1
-            guard fragment is CodeBlockLayoutFragment else { return true }
+            // Phase 8 Slice 5: accept the four fragment classes that
+            // present an underlying `Block.codeBlock`. Mermaid /
+            // display-math / LaTeX-math blocks are all stored as
+            // `Block.codeBlock(language: "mermaid"|"math"|"latex", …)`
+            // — they just dispatch to a dedicated layout fragment for
+            // diagram / equation rendering. The toggle is the user's
+            // way to *open* such a block for editing, so the filter
+            // can't restrict to plain code-block fragments. The
+            // per-block filter further down (`case .codeBlock: break`)
+            // is the authoritative gate.
+            guard fragment is CodeBlockLayoutFragment
+               || fragment is MermaidLayoutFragment
+               || fragment is MathLayoutFragment
+               || fragment is DisplayMathLayoutFragment
+            else { return true }
             guard let element = fragment.textElement,
                   let elementRange = element.elementRange
             else { return true }

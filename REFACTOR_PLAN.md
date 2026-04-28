@@ -28,7 +28,7 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 | 5f — Undo journal | ✅ shipped | `UndoJournal` per-editor with 5-class coalesce FSM; one `registerUndo` site survives in the editor path |
 | 6 — Cleanup | ✅ partial | Tier C delete legacy `NotesTextProcessor.highlightMarkdown` + dead `processInlineTags` / `applySyntaxHiding`. **Tier B′ deferred** (TextStorageProcessor.blocks retirement — see Remaining Work) |
 | 7 — Theme system | ✅ shipped | `BlockStyleTheme` schema + bundled Default/Dark/HighContrast + user overrides; preferences write-through; UD subsumption; rule-7 gate |
-| 8 — Code-block edit toggle | ✅ shipped (slices 1-4); 5 deferred | `</>` hover button, cursor-leaves auto-collapse. Slice 5 = dogfood + tuning + mermaid/math chicken-and-egg fix |
+| 8 — Code-block edit toggle | ✅ shipped (slices 1-5) | `</>` hover button, cursor-leaves auto-collapse. Slice 5 broadened the overlay + gutter copy-icon filters to also accept `MermaidLayoutFragment` / `MathLayoutFragment` / `DisplayMathLayoutFragment` (the dedicated fragment classes for fenced ```mermaid``` / ```math``` / ```latex``` blocks) so the user can open them for editing. Display math via `$$…$$` is a paragraph-with-displayMath-inline, not a code block — correctly rejected by the per-block filter |
 | 9 — Compiler-warning cleanup | ✅ partial | Tier 1 mechanical sweep, Tier 2 UTType migration, Tier 3 AppKit modernization (partial). Pod warnings deferred |
 | 10 — CommonMark Slice A | ✅ shipped | 92.2% → 95.1% via small grammar edits across 11 commits |
 | 11 — Composable user-flow harness | ✅ partial | Slice A (Given/When builder + 8 readbacks) shipped; bug inventory mostly migrated. Slices A.5/C/D/E/F outstanding |
@@ -89,13 +89,9 @@ Retirement path (own slice):
 5. Rewrite `EditTextView+Interaction.swift`'s click-to-edit rendered-image path.
 6. Update ~5 test files.
 
-### Phase 8 Slice 5 — dogfood + mermaid/math toggle chicken-and-egg
+### Phase 8 Slice 5 — ✅ shipped
 
-The `</>` hover button doesn't appear on mermaid/math blocks because `CodeBlockEditToggleOverlay` filters fragments via `fragment is CodeBlockLayoutFragment` — it doesn't match `MermaidLayoutFragment` or any math fragment. The downgrade-to-source path in Slice 1 only fires when the block is *already* in the editing set, so the toggle can never appear on a mermaid block to *open* it.
-
-Two viable fixes:
-- (a) Broaden the overlay filter to also match Mermaid/Math layout fragments
-- (b) Re-render the toggle on top of the rendered fragment regardless of class
+Filter broadened in both `CodeBlockEditToggleOverlay.swift:295` and `GutterController.swift:399` to accept `MermaidLayoutFragment` / `MathLayoutFragment` / `DisplayMathLayoutFragment` alongside `CodeBlockLayoutFragment`. The per-block `case .codeBlock` gate further down remains the authoritative filter (paragraphs containing `Inline.displayMath` from `$$…$$` syntax are correctly rejected — they're not editable code blocks). Two new tests in `CodeBlockEditToggleOverlayTests` cover the mermaid + fenced-math cases.
 
 ### Phase 9 remnants
 

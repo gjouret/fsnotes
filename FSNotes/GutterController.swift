@@ -396,7 +396,16 @@ class GutterController {
             from: tlm.documentRange.location,
             options: [.ensuresLayout]
         ) { fragment in
-            guard fragment is CodeBlockLayoutFragment else { return true }
+            // Phase 8 Slice 5: the gutter "copy code" icon should also
+            // appear next to mermaid / display-math / LaTeX-math blocks
+            // — they're all `Block.codeBlock` underneath; the user
+            // wants to copy the source. Mirrors the same filter
+            // broadening in `CodeBlockEditToggleOverlay`.
+            guard fragment is CodeBlockLayoutFragment
+               || fragment is MermaidLayoutFragment
+               || fragment is MathLayoutFragment
+               || fragment is DisplayMathLayoutFragment
+            else { return true }
             guard let element = fragment.textElement,
                   let elementRange = element.elementRange else { return true }
 
