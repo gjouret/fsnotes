@@ -374,22 +374,31 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     let safeRange = NSRange(location: safeStart, length: safeEnd - safeStart)
                     if safeRange.length > 0 {
                         let originalAttrs = attrSource.attributedSubstring(from: safeRange)
+                        // Attribute-only refresh: walk each run and
+                        // call `setAttributes` to copy the projection's
+                        // attributes onto storage. The Document hasn't
+                        // changed — only presentation state needs to
+                        // be reset (clearing the collapsed
+                        // foreground override). Because nothing
+                        // triggers `.editedCharacters`, the Phase 5a
+                        // assertion (gated on
+                        // `editedMask.contains(.editedCharacters)`)
+                        // is never tested — no
+                        // `performingLegacyStorageWrite` wrapper
+                        // needed.
                         isRendering = true
-                        // Phase 5a: fold unfold re-splices attributes-
-                        // equivalent characters to clear the collapsed
-                        // foreground override. This is not an
-                        // `EditContract`-style edit (`Document` hasn't
-                        // changed — only presentation state), so it
-                        // can't route through `applyDocumentEdit`.
-                        // TODO: route through a dedicated
-                        // "apply-attribute-only-diff" primitive once
-                        // one exists; until then this is the legal
-                        // escape hatch.
-                        StorageWriteGuard.performingLegacyStorageWrite {
-                            textStorage.beginEditing()
-                            textStorage.replaceCharacters(in: safeRange, with: originalAttrs)
-                            textStorage.endEditing()
+                        textStorage.beginEditing()
+                        originalAttrs.enumerateAttributes(
+                            in: NSRange(location: 0, length: originalAttrs.length),
+                            options: []
+                        ) { attrs, runRange, _ in
+                            let absRange = NSRange(
+                                location: safeRange.location + runRange.location,
+                                length: runRange.length
+                            )
+                            textStorage.setAttributes(attrs, range: absRange)
                         }
+                        textStorage.endEditing()
                         isRendering = false
                     }
                 }

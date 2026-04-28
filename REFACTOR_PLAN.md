@@ -42,11 +42,11 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 
 ### Phase 5a bypass retirement
 
-6 production call sites remain wrapped in `StorageWriteGuard.performingLegacyStorageWrite` with TODOs (down from 14). Audit live: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'`.
+5 production call sites remain wrapped in `StorageWriteGuard.performingLegacyStorageWrite` with TODOs (down from 14). Audit live: `rg -c 'performingLegacyStorageWrite' FSNotes/ FSNotesCore/ -g '*.swift'`.
 
 | Bucket | Sites | Clean fix |
 |---|---:|---|
-| Fold re-splice in `TextStorageProcessor` | 1 | Route through `applyDocumentEdit` proper |
+| Fold re-splice in `TextStorageProcessor` | 0 (was 1) | **Bucket fully retired** |
 | Async attachment hydration (inline math ×2, PDF ×2, QuickLook ×1) | 5 | Each callback needs an `EditContract` inverse so the swap can route through `applyEditResultWithUndo` |
 | Formatting-IBAction `insertText` | 0 (was 8) | **Bucket fully retired** |
 
@@ -56,7 +56,9 @@ Each bucket is independently revertible. Pairs naturally with Phase 5f's `UndoJo
 
 **Slice landed (code-span / code-block / table source-mode wrapper drop, commit `35be87f`)**: `insertCodeSpan` now routes through the existing `toggleInlineTraitViaBlockModel(.code)` for WYSIWYG (which already supports `.code` — wraps the selection in `Inline.code(text)` for non-empty selections, or sets the pending `.code` typing trait for empty selections). The `EditTextView.toggleInlineTrait(.code, ...)` primitive already had wrap/unwrap test coverage. Source-mode bypass wrappers dropped from `insertCodeSpan` ×2, `insertCodeBlock` ×2, and `insertTableMenu` ×1 — same gating-via-`sourceRendererActive` reasoning as the link slice. Five further bypasses retired in this slice.
 
-**Slice landed (remove-link IBAction retirement)**: `showLinkDialog`'s "Remove Link" button now routes through `EditingOps.unwrapLink(at:in:)` for WYSIWYG. The primitive walks the cursor's containing block (paragraph / list item / blockquote line — heading suffixes are stored as `String` so they fall through to the regex), recurses through container traits (`.bold` / `.italic` / etc.), finds the `Inline.link` enclosing the cursor, and replaces it with its `text` contents. Source-mode regex fallback retained without the bypass wrapper — heading suffixes need it because the link markers stay in heading storage as literal text. 8 unit tests covering paragraph / list / blockquote / nested-in-bold / multiple-links / no-link-at-cursor / heading-falls-through. **Formatting-IBAction bucket fully retired (8 → 0).**
+**Slice landed (remove-link IBAction retirement, commit `e9ae1ea`)**: `showLinkDialog`'s "Remove Link" button now routes through `EditingOps.unwrapLink(at:in:)` for WYSIWYG. The primitive walks the cursor's containing block (paragraph / list item / blockquote line — heading suffixes are stored as `String` so they fall through to the regex), recurses through container traits (`.bold` / `.italic` / etc.), finds the `Inline.link` enclosing the cursor, and replaces it with its `text` contents. Source-mode regex fallback retained without the bypass wrapper — heading suffixes need it because the link markers stay in heading storage as literal text. 8 unit tests covering paragraph / list / blockquote / nested-in-bold / multiple-links / no-link-at-cursor / heading-falls-through. **Formatting-IBAction bucket fully retired (8 → 0).**
+
+**Slice landed (fold re-splice attribute-only update)**: `TextStorageProcessor.toggleFold`'s unfold path used `replaceCharacters(in:with:)` to re-apply the projection's attributes after removing the `.foldedContent` / `.foregroundColor=clear` overrides. Even though the replacement characters were identical to what was already in storage (the Document hadn't changed — only presentation state), the `.editedCharacters` flag fired and the 5a assertion required a `performingLegacyStorageWrite` wrapper. Replaced with a per-run `setAttributes` walk over `originalAttrs` that triggers only `.editedAttributes` — no character change, no 5a trip, no wrapper. **Fold re-splice bucket fully retired (1 → 0).** All four FoldRange / FoldSnapshot / FoldedHeaderIndicator / HeaderFolding suites pass.
 
 **Latent risk class**: any new menu/toolbar IBAction calling `insertText(_:replacementRange:)` will hit the same `_insertText:replacementRange:` private bypass that Phase 5a's assertion catches. Rule-7 gate doesn't catch this (the grep pattern only flags `performEditingTransaction`); protection is discipline + the DEBUG assertion during dogfood.
 
