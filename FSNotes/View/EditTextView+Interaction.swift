@@ -549,12 +549,15 @@ extension EditTextView {
         let attachmentRange = NSRange(location: index, length: 1)
         guard NSMaxRange(attachmentRange) <= storage.length else { return false }
 
-        if let processor = self.textStorageProcessor,
-           let idx = processor.blocks.firstIndex(where: {
-               processor.isRendered(storageOffset: $0.range.location)
-                   && $0.range.location == index
-           }) {
-            processor.setRenderMode(.source, forBlockAt: idx)
+        // Phase 6 Tier B′ Sub-slice 6: flip the render mode by storage
+        // offset so this site no longer reads `processor.blocks`.
+        // The attachment guard above (`.attachment` +
+        // `.renderedBlockOriginalMarkdown`) is the authoritative check
+        // that this offset hosts a rendered block; the side-table
+        // update is idempotent for offsets that don't currently match
+        // a block.
+        if let processor = self.textStorageProcessor {
+            processor.setRenderMode(.source, forBlockAtOffset: index)
         }
 
         var markdown = originalMarkdown

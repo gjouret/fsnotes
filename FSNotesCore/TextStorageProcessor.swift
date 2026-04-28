@@ -206,11 +206,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return renderedStorageOffsets
     }
 
-    /// Set the render mode for the block at the given index. Public
-    /// entry for external callers (e.g. the click-to-edit rendered-image
-    /// handler in `EditTextView+Interaction`). Internally routes through
-    /// the side-table mutator so the legacy `MarkdownBlock.renderMode`
-    /// field stays in sync.
+    /// Set the render mode for the block at the given index. Internally
+    /// routes through the side-table mutator so the legacy
+    /// `MarkdownBlock.renderMode` field stays in sync.
     public func setRenderMode(
         _ mode: BlockRenderMode, forBlockAt blockIndex: Int
     ) {
@@ -220,6 +218,28 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             mode == .rendered,
             storageOffset: offset,
             blockIndex: blockIndex
+        )
+    }
+
+    /// Set the render mode for the block at the given storage offset.
+    /// Public entry for callers that have a storage location but no
+    /// `processor.blocks` index (Phase 6 Tier B′ Sub-slice 6 — the
+    /// click-to-edit rendered-image handler in
+    /// `EditTextView+Interaction`). Internally walks `blocks` once to
+    /// find the matching index for dual-write to the legacy
+    /// `MarkdownBlock.renderMode` field; the per-block-array read is
+    /// hidden from external callers so Sub-slice 7 can retire it
+    /// without touching this site.
+    public func setRenderMode(
+        _ mode: BlockRenderMode, forBlockAtOffset storageOffset: Int
+    ) {
+        let idx = blocks.firstIndex(where: {
+            $0.range.location == storageOffset
+        })
+        setRendered(
+            mode == .rendered,
+            storageOffset: storageOffset,
+            blockIndex: idx
         )
     }
 

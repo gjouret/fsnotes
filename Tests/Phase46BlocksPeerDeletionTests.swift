@@ -315,6 +315,67 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         XCTAssertEqual(proc.collapsedBlockIndices, Set(headings))
     }
 
+    // MARK: - Phase 6 Tier B′ Sub-slice 6 — click-to-edit by storage offset
+
+    /// `setRenderMode(_:forBlockAtOffset:)` is the public mutator that
+    /// the click-to-edit handler uses — flip the side-table by storage
+    /// offset without the caller needing a `processor.blocks` index.
+    func test_phase6Bprime_subslice6_setRenderModeByOffset() {
+        let md = """
+        ```mermaid
+        graph TD; A-->B
+        ```
+
+        ```math
+        x^2
+        ```
+        """
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        let codeBlocks = proc.blocks.enumerated().compactMap { i, b -> Int? in
+            if case .codeBlock = b.type { return i }
+            return nil
+        }
+        XCTAssertEqual(codeBlocks.count, 2, "Expected 2 code blocks")
+
+        // Both mermaid and math blocks start as .rendered (language).
+        let firstOffset = proc.blocks[codeBlocks[0]].range.location
+        let secondOffset = proc.blocks[codeBlocks[1]].range.location
+        XCTAssertTrue(proc.isRendered(storageOffset: firstOffset))
+        XCTAssertTrue(proc.isRendered(storageOffset: secondOffset))
+
+        // Flip the first via the offset-keyed API.
+        proc.setRenderMode(.source, forBlockAtOffset: firstOffset)
+        XCTAssertFalse(proc.isRendered(storageOffset: firstOffset))
+        XCTAssertEqual(proc.blocks[codeBlocks[0]].renderMode, .source)
+        // Second block untouched.
+        XCTAssertTrue(proc.isRendered(storageOffset: secondOffset))
+        XCTAssertEqual(proc.blocks[codeBlocks[1]].renderMode, .rendered)
+    }
+
+    /// `setRenderMode(_:forBlockAtOffset:)` is idempotent for offsets
+    /// that don't match any block — a no-op rather than a crash, so
+    /// the click handler can call it without a pre-flight lookup.
+    func test_phase6Bprime_subslice6_setRenderModeByOffset_unknownOffsetIsNoOp() {
+        let md = "# H1\n"
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        let before = proc.renderedBlockOffsets
+        // 99999 is way past any block in this tiny note.
+        proc.setRenderMode(.source, forBlockAtOffset: 99999)
+        XCTAssertEqual(proc.renderedBlockOffsets, before)
+    }
+
     // MARK: - Phase 6 Tier B′ Sub-slice 5 — gutter reads from Document.blocks
 
     /// In WYSIWYG mode, `GutterController.visibleCodeBlocksTK2()` must
