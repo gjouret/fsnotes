@@ -1445,7 +1445,7 @@ public enum MarkdownParser {
             // match as a ref-link `[foo]`. The target must not contain
             // `]`, `|`, or newline.
             if chars[i] == "[" && i + 1 < chars.count && chars[i + 1] == "[" {
-                if let match = tryMatchWikilink(chars, from: i) {
+                if let match = WikilinkParser.match(chars, from: i) {
                     if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
                         flushPlain()
                         tokens.append(.inline(.wikilink(target: match.target, display: match.display)))
@@ -2113,42 +2113,6 @@ public enum MarkdownParser {
     ///
     /// The returned `dest` is the raw content between `(` and `)` for
     /// round-trip serialization (includes angle brackets, whitespace, title).
-    /// Try to match a wikilink starting at `chars[from]`. The input must
-    /// start with `[[`. Returns the parsed target, optional display text,
-    /// and the index PAST the closing `]]`. Returns nil if no matching
-    /// `]]` is found or the content is empty.
-    ///
-    /// Syntax: `[[target]]` or `[[target|display]]`. Target and display
-    /// may not contain `[`, `]`, `|`, or newline — keeping the grammar
-    /// narrow prevents collisions with CommonMark link syntax.
-    private static func tryMatchWikilink(
-        _ chars: [Character],
-        from: Int
-    ) -> (target: String, display: String?, endIndex: Int)? {
-        guard from + 1 < chars.count,
-              chars[from] == "[", chars[from + 1] == "[" else { return nil }
-        var i = from + 2
-        var inner = ""
-        while i + 1 < chars.count {
-            let c = chars[i]
-            if c == "\n" || c == "[" { return nil }
-            if c == "]" && chars[i + 1] == "]" {
-                guard !inner.isEmpty else { return nil }
-                // Split on first '|' into target|display.
-                if let pipeIdx = inner.firstIndex(of: "|") {
-                    let target = String(inner[..<pipeIdx])
-                    let display = String(inner[inner.index(after: pipeIdx)...])
-                    guard !target.isEmpty else { return nil }
-                    return (target, display.isEmpty ? nil : display, i + 2)
-                }
-                return (inner, nil, i + 2)
-            }
-            inner.append(c)
-            i += 1
-        }
-        return nil
-    }
-
     private static func tryMatchLink(
         _ chars: [Character], from start: Int,
         codeSpanRanges: [(start: Int, end: Int)] = []

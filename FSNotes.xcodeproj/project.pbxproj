@@ -109,6 +109,8 @@
 		MTHT12C30000000000B1 /* MathParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MTHT12C30000000000F1 /* MathParserTests.swift */; };
 		STKP12C30000000000B1 /* StrikethroughParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = STKP12C30000000000F1 /* StrikethroughParser.swift */; };
 		STKT12C30000000000B1 /* StrikethroughParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = STKT12C30000000000F1 /* StrikethroughParserTests.swift */; };
+		WLKP12C30000000000B1 /* WikilinkParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = WLKP12C30000000000F1 /* WikilinkParser.swift */; };
+		WLKT12C30000000000B1 /* WikilinkParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = WLKT12C30000000000F1 /* WikilinkParserTests.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
 		SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCR20260427F1 /* SubviewTableClickResponderTests.swift */; };
@@ -1361,6 +1363,8 @@
 		MTHT12C30000000000F1 /* MathParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathParserTests.swift; sourceTree = "<group>"; };
 		STKP12C30000000000F1 /* StrikethroughParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/StrikethroughParser.swift; sourceTree = "<group>"; };
 		STKT12C30000000000F1 /* StrikethroughParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrikethroughParserTests.swift; sourceTree = "<group>"; };
+		WLKP12C30000000000F1 /* WikilinkParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Combinators/WikilinkParser.swift; sourceTree = "<group>"; };
+		WLKT12C30000000000F1 /* WikilinkParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WikilinkParserTests.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
 		SVCR20260427F1 /* SubviewTableClickResponderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableClickResponderTests.swift; sourceTree = "<group>"; };
@@ -2050,6 +2054,7 @@
 				CSPP12C30000000000F1 /* CodeSpanParser.swift */,
 				MTHP12C30000000000F1 /* MathParser.swift */,
 				STKP12C30000000000F1 /* StrikethroughParser.swift */,
+				WLKP12C30000000000F1 /* WikilinkParser.swift */,
 				P41S000000000000000000F1 /* SourceRenderer.swift */,
 				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
@@ -2993,6 +2998,7 @@
 				CSPT12C30000000000F1 /* CodeSpanParserTests.swift */,
 				MTHT12C30000000000F1 /* MathParserTests.swift */,
 				STKT12C30000000000F1 /* StrikethroughParserTests.swift */,
+				WLKT12C30000000000F1 /* WikilinkParserTests.swift */,
 				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
 				SVCR20260427F1 /* SubviewTableClickResponderTests.swift */,
 				SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */,
@@ -4007,6 +4013,7 @@
 				CSPP12C30000000000B1 /* CodeSpanParser.swift in Sources */,
 				MTHP12C30000000000B1 /* MathParser.swift in Sources */,
 				STKP12C30000000000B1 /* StrikethroughParser.swift in Sources */,
+				WLKP12C30000000000B1 /* WikilinkParser.swift in Sources */,
 				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
 				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
@@ -4696,6 +4703,7 @@
 				CSPT12C30000000000B1 /* CodeSpanParserTests.swift in Sources */,
 				MTHT12C30000000000B1 /* MathParserTests.swift in Sources */,
 				STKT12C30000000000B1 /* StrikethroughParserTests.swift in Sources */,
+				WLKT12C30000000000B1 /* WikilinkParserTests.swift in Sources */,
 				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
 				SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */,
 				SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */,
