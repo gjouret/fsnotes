@@ -552,9 +552,12 @@ A latent bug class: storing a pre-built live view on the attachment causes thumb
 
 ## Fold System
 
-Fold state persists per-note via `Note.cachedFoldState: Set<Int>?` (block storage offsets in the post-render text). A fold toggle sets `.foldedContent` on the folded range; `BlockModelContentStorageDelegate` checks for it first and returns `FoldedElement` → `FoldedLayoutFragment` (zero-height) regardless of underlying block kind. One element class + one fragment cover every foldable block type with zero per-kind code.
+Fold state lives in two places:
 
-Fold state reads directly off the `Document` projection — no `syncBlocksFromProjection` bridge. The source-mode `blocks` mirror array is deleted.
+- **In-memory canonical**: `TextStorageProcessor.collapsedStorageOffsets: Set<Int>` (Phase 6 Tier B′ Sub-slice 1) — set of `block.range.location` values for blocks that are currently collapsed. Storage offset is more stable than block index across edits above the folded block (inserting a paragraph above a folded heading shifts indices but not offsets). Public query API: `processor.isCollapsed(blockIndex:)` / `isCollapsed(storageOffset:)` / `collapsedBlockIndices: Set<Int>` (computed). All readers (`GutterController`, fold-related test files) route through this API; no production code reads `MarkdownBlock.collapsed` directly except the dual-write inside `TextStorageProcessor` itself.
+- **Persistent**: `Note.cachedFoldState: Set<Int>?` — set of block indices, persisted per-URL in `UserDefaults`. Index-keyed for now (Sub-slice 3 will migrate to offset-keyed for robustness); converted in/out at the persistence boundary.
+
+A fold toggle sets `.foldedContent` on the folded range; `BlockModelContentStorageDelegate` checks for it first and returns `FoldedElement` → `FoldedLayoutFragment` (zero-height) regardless of underlying block kind. One element class + one fragment cover every foldable block type with zero per-kind code.
 
 Folded headers paint a trailing `[...]` chip via `HeadingLayoutFragment.drawFoldedIndicator`, theme-driven through `ThemeChrome.foldedHeaderIndicator{Foreground,Background,CornerRadius,...}`.
 
@@ -628,6 +631,7 @@ Obsidian-style `</>` hover button that swaps a code block between rendered (synt
 - **Applier promotion** — `applyDocumentEdit(…, priorEditingBlocks:, newEditingBlocks:)` promotes `.unchanged` LCS entries to `.modified` when membership flipped, so the byte-differing renders surface as a single block-level diff.
 - **Hover button** — `CodeBlockEditToggleOverlay` pools `CodeBlockEditToggleView` subviews and positions one `</>` button per visible code block. Click flips the ref's membership and calls `applyDocumentEdit` with `priorDoc == newDoc` but different editing-set.
 - **Cursor-leaves auto-collapse** — `collapseEditingCodeBlocksOutsideSelection` drops any ref whose span no longer contains the current selection. Guarded by `oldSet == newSet` early-return against re-render observer cycles.
+- **Fragment-class filter** — the overlay enumerates layout fragments and accepts `CodeBlockLayoutFragment`, `MermaidLayoutFragment`, `MathLayoutFragment`, and `DisplayMathLayoutFragment` — all four present underlying `Block.codeBlock` instances (mermaid is `language:"mermaid"`, fenced math is `language:"math"`/`"latex"`, plain code is no-language). The per-block `case .codeBlock` filter further down is the authoritative gate; paragraphs containing `Inline.displayMath` from `$$…$$` syntax are correctly rejected. The same fragment-class set is also applied in `GutterController` for the gutter copy-icon.
 
 ## CommonMark Compliance
 
