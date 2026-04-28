@@ -49,9 +49,6 @@ public enum ParagraphBlockEditor: BlockEditor {
         into block: Block, offsetInBlock: Int, string: String
     ) throws -> Block {
         guard case .paragraph(let inline) = block else {
-            #if DEBUG
-            assertionFailure("ParagraphBlockEditor.insert: block is not .paragraph (\(block))")
-            #endif
             throw EditingError.unsupported(reason: "ParagraphBlockEditor.insert called with non-paragraph block")
         }
 
@@ -89,9 +86,6 @@ public enum ParagraphBlockEditor: BlockEditor {
         in block: Block, from fromOffset: Int, to toOffset: Int
     ) throws -> Block {
         guard case .paragraph(let inline) = block else {
-            #if DEBUG
-            assertionFailure("ParagraphBlockEditor.delete: block is not .paragraph (\(block))")
-            #endif
             throw EditingError.unsupported(reason: "ParagraphBlockEditor.delete called with non-paragraph block")
         }
 
@@ -132,9 +126,6 @@ public enum ParagraphBlockEditor: BlockEditor {
         in block: Block, from fromOffset: Int, to toOffset: Int, with replacement: String
     ) throws -> Block {
         guard case .paragraph(let inline) = block else {
-            #if DEBUG
-            assertionFailure("ParagraphBlockEditor.replace: block is not .paragraph (\(block))")
-            #endif
             throw EditingError.unsupported(reason: "ParagraphBlockEditor.replace called with non-paragraph block")
         }
 

@@ -1023,16 +1023,11 @@ public enum EditingOps {
                 in: block, from: fromOffset, to: toOffset, with: replacement
             )
 
-        case .codeBlock(let language, let content, let fence):
-            let newContent = spliceString(content, at: fromOffset, replacing: length, with: replacement)
-            let spliced = Block.codeBlock(language: language, content: newContent, fence: fence)
-            // Bug #41: if the user typed a known diagram-language identifier
-            // on its own line at the top of a no-language code block, promote
-            // it into the fence's language field. Block-model WYSIWYG mode
-            // hides the fences from storage, so this is the only way for a
-            // user to upgrade an untagged code block to a mermaid/math
-            // rendered block via keystrokes alone.
-            return maybePromoteDiagramLanguage(spliced)
+        case .codeBlock:
+            // Phase 12.B.3: per-kind editor extracted to CodeBlockBlockEditor.
+            return try CodeBlockBlockEditor.replace(
+                in: block, from: fromOffset, to: toOffset, with: replacement
+            )
 
         case .list(let items, _):
             return try replaceInList(items: items, from: fromOffset, to: toOffset, with: replacement)
@@ -3358,16 +3353,11 @@ public enum EditingOps {
                 into: block, offsetInBlock: offsetInBlock, string: string
             )
 
-        case .codeBlock(let language, let content, let fence):
-            // content is raw code; render offset == content offset
-            // (no fence characters in the rendered output).
-            let newContent = spliceString(content, at: offsetInBlock, replacing: 0, with: string)
-            let spliced = Block.codeBlock(language: language, content: newContent, fence: fence)
-            // Bug #41: promote a no-language code block whose content is
-            // now a whitelisted diagram-language identifier on line 1 —
-            // the block-model WYSIWYG mode's equivalent of typing
-            // `\`\`\`mermaid` in source mode.
-            return maybePromoteDiagramLanguage(spliced)
+        case .codeBlock:
+            // Phase 12.B.3: per-kind editor extracted to CodeBlockBlockEditor.
+            return try CodeBlockBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
+            )
 
         case .blankLine:
             // Typing into a blankLine converts it to a paragraph
@@ -3380,9 +3370,11 @@ public enum EditingOps {
         case .blockquote(let lines):
             return try insertIntoBlockquote(lines: lines, offsetInBlock: offsetInBlock, string: string)
 
-        case .htmlBlock(let raw):
-            let newRaw = spliceString(raw, at: offsetInBlock, replacing: 0, with: string)
-            return .htmlBlock(raw: newRaw)
+        case .htmlBlock:
+            // Phase 12.B.3: per-kind editor extracted to HtmlBlockBlockEditor.
+            return try HtmlBlockBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
+            )
 
         case .horizontalRule:
             // HR has no editable content — typing on it inserts a new
@@ -3422,9 +3414,11 @@ public enum EditingOps {
                 in: block, from: fromOffset, to: toOffset
             )
 
-        case .codeBlock(let language, let content, let fence):
-            let newContent = spliceString(content, at: fromOffset, replacing: length, with: "")
-            return .codeBlock(language: language, content: newContent, fence: fence)
+        case .codeBlock:
+            // Phase 12.B.3: per-kind editor extracted to CodeBlockBlockEditor.
+            return try CodeBlockBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
         case .blankLine:
             // BlankLine has no rendered content — nothing to delete
@@ -3438,9 +3432,11 @@ public enum EditingOps {
         case .blockquote(let lines):
             return try deleteInBlockquote(lines: lines, from: fromOffset, to: toOffset)
 
-        case .htmlBlock(let raw):
-            let newRaw = spliceString(raw, at: fromOffset, replacing: length, with: "")
-            return .htmlBlock(raw: newRaw)
+        case .htmlBlock:
+            // Phase 12.B.3: per-kind editor extracted to HtmlBlockBlockEditor.
+            return try HtmlBlockBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
         case .horizontalRule:
             // HR has no editable content — deletes within it are no-ops.

@@ -33,9 +33,6 @@ public enum HeadingBlockEditor: BlockEditor {
         into block: Block, offsetInBlock: Int, string: String
     ) throws -> Block {
         guard case .heading(let level, let suffix) = block else {
-            #if DEBUG
-            assertionFailure("HeadingBlockEditor.insert: block is not .heading (\(block))")
-            #endif
             throw EditingError.unsupported(reason: "HeadingBlockEditor.insert called with non-heading block")
         }
 
@@ -67,9 +64,6 @@ public enum HeadingBlockEditor: BlockEditor {
         in block: Block, from fromOffset: Int, to toOffset: Int
     ) throws -> Block {
         guard case .heading(let level, let suffix) = block else {
-            #if DEBUG
-            assertionFailure("HeadingBlockEditor.delete: block is not .heading (\(block))")
-            #endif
             throw EditingError.unsupported(reason: "HeadingBlockEditor.delete called with non-heading block")
         }
 
@@ -90,9 +84,6 @@ public enum HeadingBlockEditor: BlockEditor {
         in block: Block, from fromOffset: Int, to toOffset: Int, with replacement: String
     ) throws -> Block {
         guard case .heading(let level, let suffix) = block else {
-            #if DEBUG
-            assertionFailure("HeadingBlockEditor.replace: block is not .heading (\(block))")
-            #endif
             throw EditingError.unsupported(reason: "HeadingBlockEditor.replace called with non-heading block")
         }
         let length = toOffset - fromOffset
