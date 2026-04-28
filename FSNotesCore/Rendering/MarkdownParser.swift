@@ -1417,9 +1417,13 @@ public enum MarkdownParser {
     }
 
     /// Normalize a link reference label for case-insensitive matching.
-    /// Collapses whitespace runs to a single space and lowercases.
+    /// Per CommonMark §4.7: trim leading/trailing whitespace, collapse
+    /// internal whitespace runs to a single space, and apply Unicode
+    /// case fold. The case fold (vs. plain `lowercased()`) is what
+    /// makes pairs like `[ẞ]`/`[SS]` and `[ﬀ]`/`[ff]` equivalent —
+    /// `lowercased()` only handles single-codepoint case mappings.
     private static func normalizeLabel(_ label: String) -> String {
-        label.lowercased()
+        label.folding(options: .caseInsensitive, locale: nil)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .split(separator: " ").joined(separator: " ")
             .split(separator: "\t").joined(separator: " ")
