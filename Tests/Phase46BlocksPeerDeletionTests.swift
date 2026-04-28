@@ -6,11 +6,13 @@
 //  and fold state is driven by `Note.cachedFoldState` + `Document.blocks`
 //  via the auto-syncing `documentProjection` setter.
 //
-//  The tests here exercise the authoritative sources (Document.blocks,
-//  cachedFoldState) rather than the legacy `MarkdownBlock.collapsed`
-//  per-block mutable flag. `MarkdownBlock.collapsed` is retained only
-//  as a view-local cache that the setter-driven rebuild re-derives from
-//  the projection on every projection update.
+//  Phase 6 Tier B′ Sub-slice 7 retired the legacy
+//  `MarkdownBlock.collapsed` field entirely; the canonical fold state
+//  lives on `TextStorageProcessor.collapsedStorageOffsets` (offset-
+//  keyed side-table). The tests here exercise the authoritative
+//  sources (Document.blocks, cachedFoldState, isCollapsed/
+//  collapsedBlockOffsets) and the grep-discipline test enforces zero
+//  `.collapsed` reads in production code.
 //
 
 import XCTest
@@ -118,13 +120,16 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
     // MARK: - 4. No production `MarkdownBlock.collapsed` reads
 
     func test_phase46_noMarkdownBlockCollapsed_reads() throws {
-        // The grep gate enforces the absence of
-        // `syncBlocksFromProjection` call sites in production code.
-        // This test complements the gate by reading the production
-        // directories and asserting that any residual
-        // `MarkdownBlock.collapsed` reads (the per-block mutable flag
-        // we're phasing out as the canonical source of truth) are
-        // confined to the processor that owns the sync cache.
+        // Phase 6 Tier B′ Sub-slice 7 retired the
+        // `MarkdownBlock.collapsed` field entirely. This test now
+        // enforces the strict invariant: zero production code
+        // anywhere may read or write `.collapsed` as a property
+        // access on a `MarkdownBlock` value, because the field
+        // doesn't exist any more — the canonical fold state lives
+        // on `TextStorageProcessor.collapsedStorageOffsets` (a
+        // private offset-keyed Set), with public reads through
+        // `isCollapsed(blockIndex:) / isCollapsed(storageOffset:) /
+        // collapsedBlockIndices / collapsedBlockOffsets`.
         let repoRoot = findRepoRoot()
         guard let repoRoot = repoRoot else {
             XCTFail("Unable to locate repo root for source scan")
@@ -134,23 +139,23 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             repoRoot.appendingPathComponent("FSNotes"),
             repoRoot.appendingPathComponent("FSNotesCore")
         ]
-        let permitted: Set<String> = [
-            // TextStorageProcessor owns the `blocks` array and its
-            // `collapsed` per-entry flag by design. Phase 6 Tier B′
-            // Sub-slice 2 migrated `GutterController` to use the
-            // public `processor.isCollapsed(blockIndex:)` API, so it
-            // is no longer in this allow-list.
-            "TextStorageProcessor.swift"
-        ]
 
         // Regex matches `.collapsed` as a whole-word property access —
-        // NOT `.collapsedBlockIndices` (the Set<Int>-valued processor
-        // API that callers legitimately use to read fold state).
+        // NOT `.collapsedBlockIndices` / `.collapsedBlockOffsets` /
+        // `.collapsedStorageOffsets` (the Set<Int>-valued processor
+        // APIs that callers legitimately use to read fold state).
         // Word-boundary: the character after "collapsed" must be non-
         // identifier (dot-call, whitespace, paren, equals, end-of-line).
         let regex = try NSRegularExpression(
             pattern: #"\.collapsed\b(?![A-Za-z0-9_])"#
         )
+
+        // Strip Swift line comments before scanning so that doc-
+        // comments referencing the historical `MarkdownBlock.collapsed`
+        // field don't count as violations. Block comments (/* */) are
+        // not stripped — they're rare in this codebase and any
+        // residual hit there would still be worth flagging.
+        let lineCommentRegex = try NSRegularExpression(pattern: #"//.*"#)
 
         var violations: [String] = []
         for dir in prodDirs {
@@ -163,20 +168,25 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             while let fileURL = enumerator?.nextObject() as? URL {
                 guard fileURL.pathExtension == "swift" else { continue }
                 let fileName = fileURL.lastPathComponent
-                if permitted.contains(fileName) { continue }
                 guard let content = try? String(contentsOf: fileURL)
                 else { continue }
-                let range = NSRange(content.startIndex..., in: content)
-                if regex.firstMatch(in: content, range: range) != nil {
+                let stripped = lineCommentRegex.stringByReplacingMatches(
+                    in: content,
+                    range: NSRange(content.startIndex..., in: content),
+                    withTemplate: ""
+                )
+                let range = NSRange(stripped.startIndex..., in: stripped)
+                if regex.firstMatch(in: stripped, range: range) != nil {
                     violations.append(fileName)
                 }
             }
         }
         XCTAssertTrue(
             violations.isEmpty,
-            "Files outside the permitted set read `.collapsed`: " +
-            "\(violations). Route through cachedFoldState + " +
-            "Document.blocks instead."
+            "Production code reads or writes `.collapsed` on a " +
+            "MarkdownBlock; Sub-slice 7 retired this field. Route " +
+            "through `processor.isCollapsed(blockIndex:)` or the " +
+            "offset-keyed query API. Offending files: \(violations)."
         )
     }
 
@@ -249,9 +259,10 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         }
     }
 
-    /// Toggling fold flips the side-table; the legacy `.collapsed`
-    /// field stays in sync.
-    func test_phase6Bprime_toggleFold_updatesSideTableAndLegacyField() {
+    /// Toggling fold flips the offset-keyed side-table — the sole
+    /// source of truth after Sub-slice 7 retired the per-block
+    /// `MarkdownBlock.collapsed` field.
+    func test_phase6Bprime_toggleFold_updatesSideTable() {
         let md = "# H1\n\nBody.\n\n# H2\n"
         let harness = EditorHarness(markdown: md)
         defer { harness.teardown() }
@@ -275,16 +286,13 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         proc.toggleFold(headerBlockIndex: h1Idx, textStorage: storage)
         XCTAssertTrue(proc.isCollapsed(blockIndex: h1Idx))
         XCTAssertTrue(proc.isCollapsed(storageOffset: h1Offset))
-        XCTAssertTrue(
-            proc.blocks[h1Idx].collapsed,
-            "Legacy field must stay in sync with side-table"
-        )
+        XCTAssertTrue(proc.collapsedBlockOffsets.contains(h1Offset))
 
         // Unfold.
         proc.toggleFold(headerBlockIndex: h1Idx, textStorage: storage)
         XCTAssertFalse(proc.isCollapsed(blockIndex: h1Idx))
         XCTAssertFalse(proc.isCollapsed(storageOffset: h1Offset))
-        XCTAssertFalse(proc.blocks[h1Idx].collapsed)
+        XCTAssertFalse(proc.collapsedBlockOffsets.contains(h1Offset))
     }
 
     /// `collapsedBlockIndices` derives the index set from the

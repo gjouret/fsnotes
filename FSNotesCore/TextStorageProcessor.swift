@@ -135,11 +135,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// preservation logic that `rebuildBlocksFromProjection` already
     /// uses to carry collapsed state across projection rebuilds.
     ///
-    /// `MarkdownBlock.collapsed` is now a dual-written cache that
-    /// reflects this set. Internal reads should prefer the offset-keyed
-    /// queries below; external readers (`GutterController`, tests)
-    /// still read `block.collapsed` until Sub-slice 2 migrates them
-    /// to public APIs on this processor.
+    /// Sub-slice 7 retired the `MarkdownBlock.collapsed` per-block
+    /// field; this set is the sole source of truth. All readers go
+    /// through `isCollapsed(blockIndex:) / isCollapsed(storageOffset:) /
+    /// collapsedBlockIndices / collapsedBlockOffsets`.
     private var collapsedStorageOffsets: Set<Int> = []
 
     /// Is the block at this storage offset currently collapsed?
@@ -277,23 +276,20 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         renderedStorageOffsets = rendered
     }
 
-    /// Set the collapsed flag for a block at a given storage offset
-    /// (canonical) AND keep the dual-written `MarkdownBlock.collapsed`
-    /// cache in sync. Called by `toggleFold` / `restoreCollapsedState`
-    /// / `rebuildBlocksFromProjection`. External callers should not
+    /// Set the collapsed flag for a block at a given storage offset.
+    /// Called by `toggleFold` / `restoreCollapsedState` /
+    /// `rebuildBlocksFromProjection`. External callers should not
     /// call this directly — go through `toggleFold` /
-    /// `foldHeader` / `unfoldHeader`.
+    /// `foldHeader` / `unfoldHeader`. Sub-slice 7 retired the
+    /// dual-write to `MarkdownBlock.collapsed`; the side-table is
+    /// the sole source of truth.
     fileprivate func setCollapsed(
-        _ collapsed: Bool, storageOffset: Int, blockIndex: Int? = nil
+        _ collapsed: Bool, storageOffset: Int
     ) {
         if collapsed {
             collapsedStorageOffsets.insert(storageOffset)
         } else {
             collapsedStorageOffsets.remove(storageOffset)
-        }
-        // Keep the legacy field in sync for external readers.
-        if let idx = blockIndex, idx >= 0, idx < blocks.count {
-            blocks[idx].collapsed = collapsed
         }
     }
 
@@ -330,7 +326,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
             let foldRange = foldRangeForHeader(at: idx, level: headerLevel, in: textStorage)
             guard foldRange.length > 0 else { continue }
-            setCollapsed(true, storageOffset: block.range.location, blockIndex: idx)
+            setCollapsed(true, storageOffset: block.range.location)
             isRendering = true
             textStorage.addAttribute(.foldedContent, value: true, range: foldRange)
             textStorage.addAttribute(.foregroundColor, value: NSColor.clear, range: foldRange)
@@ -422,9 +418,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         newBlocks.reserveCapacity(doc.blocks.count)
         for (i, block) in doc.blocks.enumerated() {
             var mb = makeBlockEntry(block: block, span: spans[i], projection: projection)
-            if collapsedStorageOffsets.contains(spans[i].location) {
-                mb.collapsed = true
-            }
+            // Sub-slice 7 retired `MarkdownBlock.collapsed` — fold
+            // state lives entirely on `collapsedStorageOffsets`.
             // WYSIWYG language-based render classification: mermaid /
             // math / latex are kept off the gray-background gate via
             // `codeBlockRanges`, which filters on
@@ -552,7 +547,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             // Unfold: remove fold marker. Rendering gate in LayoutManager handles the rest.
             textStorage.removeAttribute(.foldedContent, range: foldRange)
             textStorage.removeAttribute(.foregroundColor, range: foldRange)
-            setCollapsed(false, storageOffset: header.range.location, blockIndex: idx)
+            setCollapsed(false, storageOffset: header.range.location)
             textStorage.endEditing()
             isRendering = false
 
@@ -619,7 +614,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
             editor?.needsDisplay = true
         } else {
-            setCollapsed(true, storageOffset: header.range.location, blockIndex: idx)
+            setCollapsed(true, storageOffset: header.range.location)
             textStorage.endEditing()
             // Set fold attributes AFTER endEditing so process()/highlightMarkdown
             // doesn't strip them during the editing session's processEditing callback.

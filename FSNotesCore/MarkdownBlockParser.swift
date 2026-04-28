@@ -46,7 +46,10 @@ public struct MarkdownBlock {
     public var range: NSRange               // Full range in textStorage (includes syntax)
     public var contentRange: NSRange        // Range of visible content (excludes syntax delimiters)
     public var syntaxRanges: [NSRange]      // Ranges of syntax chars to hide in WYSIWYG
-    public var collapsed: Bool = false      // For future expand/collapse feature
+    // Phase 6 Tier B′ Sub-slice 7: `collapsed` field retired. Fold
+    // state lives canonically on `TextStorageProcessor.collapsedStorageOffsets`
+    // (offset-keyed side-table); query via `isCollapsed(blockIndex:) /
+    // isCollapsed(storageOffset:)`.
     public var renderMode: BlockRenderMode = .source  // Current display mode
     /// Original markdown source for blocks whose rendered output differs
     /// from the source (e.g. tables in block-model mode). Used by
