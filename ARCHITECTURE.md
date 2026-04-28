@@ -188,7 +188,7 @@ Setext heading promotion stays in `MarkdownParser.parse` because it depends on t
 
 **ListReader scope deliberately conservative.** The per-line classifier surface ports cleanly. The ~320-line block-loop multi-line list collection code, `buildItemTree` (recursive item-tree builder that calls back into `MarkdownParser.parse` for item-content re-parsing), `deepestOwner`, `leadingSpaceCount`, and `stripLeadingSpaces` STAY in `MarkdownParser`. They weave through container-block continuation rules, blank-line semantics, and recursive parser entry; porting them cleanly is its own slice (potentially 12.C.5.g, optional follow-up — the gain is structure, not LoC).
 
-Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped eleven slices on top of the decomposition, advancing compliance to **644/652 (98.8%)** — see the per-slice write-up below.
+Across the six reader slices, `MarkdownParser.swift` shrank from ~3,974 LoC to 1,994 LoC (−1,980 LoC, ~50%) while spec compliance held flat at 620/652 (95.1%). Phase 12.C.6 (residual spec compliance) has since shipped fourteen slices on top of the decomposition, advancing compliance to **648/652 (99.4%)** — see the per-slice write-up below.
 
 ### Container-aware ref-def discovery (Phase 12.C.6.a)
 
@@ -883,12 +883,11 @@ Obsidian-style `</>` hover button that swaps a code block between its rendered f
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2 spec: **644 / 652 passing (98.8%)** as of Phase 12.C.6.k (shipped 2026-04-28, commits `2d05378 → (12.C.6.k)`, +24 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is exceeded.
+Serializer compliance against CommonMark 0.31.2 spec: **648 / 652 passing (99.4%)** as of Phase 12.C.6.n (shipped 2026-04-28, commits `2d05378 → 94c211b`, +28 examples on top of the 620 Phase 10 Slice A baseline). The refactor's 90% target is exceeded.
 
 Per-bucket state:
-- **100%**: Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, **HTML blocks (44/44, fixed in 12.C.6.i)**, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, **Links (90/90, fixed in 12.C.6.h)**, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content.
-- **Near-perfect (90%+)**: Tabs 10/11, List items 45/48 (after 12.C.6.k), Images 21/22.
-- **Moderate (88%)**: Lists 23/26.
+- **100%**: Backslash escapes, Entity refs, Precedence, Thematic breaks, ATX/Setext headings, Indented/Fenced code blocks, **HTML blocks (44/44, fixed in 12.C.6.i)**, Link reference definitions (27/27, fixed in 12.C.6.a), Paragraphs, Blank lines, Block quotes (25/25, fixed in 12.C.6.f), Inlines, Code spans, Emphasis and strong emphasis, **Links (90/90, fixed in 12.C.6.h)**, Autolinks, Raw HTML, Hard/Soft line breaks, Textual content, **Tabs (11/11, fixed in 12.C.6.l)**, **Lists (26/26, fixed in 12.C.6.n)**.
+- **Near-perfect (90%+)**: List items 45/48 (after 12.C.6.k), Images 21/22.
 
 Phase 12.C.6 ladder (against 620 baseline):
 - 12.C.6.a (`2d05378`): nested-blockquote ref-def discovery (#218) → 621/652.
@@ -904,7 +903,7 @@ Phase 12.C.6 ladder (against 620 baseline):
 - 12.C.6.k (`6904e2b`): empty-marker items owning indented code (#278) → 644/652.
 - 12.C.6.l (`957b9be`): tab expansion in list-item indent + afterMarker (#9) → 645/652.
 - 12.C.6.m (`3b7d1f9`): invalid-marker rejection (#312, #313) → 647/652.
-- 12.C.6.n (this slice): `ListItem.body: [Block]` redesign for paragraph-after-sublist source-order preservation (#325) → 648/652.
+- 12.C.6.n (`94c211b`): `ListItem.body: [Block]` redesign for paragraph-after-sublist source-order preservation (#325) → 648/652.
 
 Remaining 4 failures cluster in:
 - **List items (3)**: residual multi-block items needing fixes for 0-space lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293).
