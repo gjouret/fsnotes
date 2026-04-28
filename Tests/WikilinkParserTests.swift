@@ -82,4 +82,41 @@ final class WikilinkParserTests: XCTestCase {
         XCTAssertEqual(wikis[0].0, "Page")
         XCTAssertEqual(wikis[0].1, "alias")
     }
+
+    // Phase 12.C.6.d — bracket-integrity: extra `[` immediately before
+    // the opening `[[` rejects the wikilink. CommonMark spec #548
+    // (`[[[foo]]]`) treats those bracket triples as plain text.
+    func test_extraLeadingBracket_rejectsWikilink() {
+        let input = chars("[[[foo]]]")
+        // At start=1 we'd otherwise match `[[foo]]` — but chars[0]
+        // is `[`, so the bracket-integrity rule fails the wikilink.
+        XCTAssertNil(WikilinkParser.match(input, from: 1))
+    }
+
+    // Symmetric rule: extra `]` immediately after the closing `]]`
+    // rejects the wikilink.
+    func test_extraTrailingBracket_rejectsWikilink() {
+        let input = chars("[[foo]]]")
+        XCTAssertNil(WikilinkParser.match(input, from: 0))
+    }
+
+    // When the wikilink target also matches a link-reference-definition
+    // label, the standard reference link wins. CommonMark spec #559.
+    func test_endToEnd_targetMatchesRefDef_prefersRefLink() {
+        let md = "[[*foo* bar]]\n\n[*foo* bar]: /url \"title\"\n"
+        let doc = MarkdownParser.parse(md)
+        guard case .paragraph(let inline) = doc.blocks[0] else {
+            return XCTFail("expected paragraph")
+        }
+        let hasWikilink = inline.contains { ix in
+            if case .wikilink = ix { return true }
+            return false
+        }
+        XCTAssertFalse(hasWikilink, "wikilink should yield to ref-def match")
+        let hasLink = inline.contains { ix in
+            if case .link = ix { return true }
+            return false
+        }
+        XCTAssertTrue(hasLink, "expected a regular ref-def link")
+    }
 }

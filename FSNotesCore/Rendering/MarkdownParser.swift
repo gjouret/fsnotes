@@ -939,9 +939,19 @@ public enum MarkdownParser {
             // BEFORE the regular link path so that `[[foo]]` doesn't
             // match as a ref-link `[foo]`. The target must not contain
             // `]`, `|`, or newline.
+            //
+            // CommonMark spec #559: when the inner content matches a
+            // link-reference-definition label, the standard reference
+            // link wins — the outer `[` becomes a literal bracket and
+            // the inner `[target]` resolves through the ref-def. The
+            // wikilink extension is a fallback for unmatched inners.
             if chars[i] == "[" && i + 1 < chars.count && chars[i + 1] == "[" {
                 if let match = WikilinkParser.match(chars, from: i) {
-                    if !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
+                    let labelKey = normalizeLabel(match.target)
+                    let resolvesViaRefDef = match.display == nil
+                        && refDefs[labelKey] != nil
+                    if !resolvesViaRefDef
+                        && !codeSpanCrossesBoundary(codeSpanRanges, matchStart: i, matchEnd: match.endIndex) {
                         flushPlain()
                         tokens.append(.inline(.wikilink(target: match.target, display: match.display)))
                         i = match.endIndex
