@@ -295,7 +295,21 @@ Test threshold bumped: List items 44 → 45.
 
 Closes spec example #278. Buckets: List items 44/48 → 45/48 (94%). Overall 643/652 → 644/652 (98.8%).
 
-The remaining 8 failures cluster into: 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), tab-as-indent in nested list (#9), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
+### Tab expansion in list-item indent + afterMarker (Phase 12.C.6.l)
+
+CommonMark §2.2: tab characters expand to the next 4-stop tabstop, so a tab's *virtual width* depends on the column it sits at. The previous `ListReader.parseListLine` returned `indent` and `afterMarker` as the raw character substrings — so for input `\t - baz` the indent was the 2-character string `"\t "` even though it occupies 5 virtual columns (tab at col 0 → col 4, then space → col 5).
+
+Roughly twenty downstream sites in `MarkdownParser` (the inner list-collection loop, `buildItemTree`, `deepestOwner`, `interruptsLazyContinuation`, the lazy-continuation branches) compute nesting and content-column arithmetic with `parsed.indent.count` and `parsed.indent.count + parsed.marker.count + parsed.afterMarker.count` — character counts. For pure-space indent (the common case) the character count equals the virtual-column count, so the arithmetic is correct. For tab-bearing indent it diverges. Spec #9 ` - foo\n   - bar\n\t - baz\n` measured baz's indent as 2 < bar's content column 5 and treated baz as a sibling at the wrong level instead of nesting it under bar (bar's content column 5 = baz's virtual indent 5).
+
+The fix collapses the divergence at the source rather than auditing every call site. `parseListLine` now normalizes both `indent` and `afterMarker` to virtual-column-equivalent expanded spaces inside the function, via a single `expandTabsToSpaces(_:startingAt:)` helper that applies the §2.2 4-stop rule with the indent run starting at column 0 and the afterMarker run starting at the marker column. After normalization `parsed.indent.count == leadingSpaceCount(parsed.indent)` and `parsed.afterMarker.count == virtualAfterMarkerWidth` hold by construction, so every downstream `.count`-based arithmetic site automatically becomes virtual-column-correct without further change. The simplification also subsumes the open-coded "spaces + tabs*4" tab math in `MarkdownParser.interruptsLazyContinuation`, which over-counted leading-position tabs as 4 cols regardless of column.
+
+The serializer (`MarkdownSerializer.serializeList`) writes `item.indent` directly back into the output, so tab inputs round-trip as their expanded-space equivalent (e.g. `\t -` becomes `     -`). The editor never types tabs into list indents (the FSM uses spaces), so no internal code path is affected; only external markdown that contains tabs is normalized at parse time.
+
+Test threshold bumped: Tabs 2 → 11.
+
+Closes spec example #9. Buckets: Tabs 10/11 → 11/11 (100%). Overall 644/652 → 645/652 (98.9%).
+
+The remaining 7 failures cluster into: 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325 — needs `ListItem.children: [Block]` redesign), and the documented wikilink-extension non-conformance (#590, accepted).
 
 ## Editing FSMs by Block Type
 

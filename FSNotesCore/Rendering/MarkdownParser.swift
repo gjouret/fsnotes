@@ -1864,11 +1864,12 @@ public enum MarkdownParser {
         // List item with <= 3 spaces of indent (4+ spaces = indented code
         // block context, which cannot interrupt a paragraph)
         if let parsed = ListReader.parseListLine(line) {
-            let spaceCount = parsed.indent.filter { $0 == " " }.count
-                + parsed.indent.filter { $0 == "\t" }.count * 4
+            // ListReader.parseListLine normalizes tabs in `indent` to
+            // virtual-column spaces, so .count is the marker's virtual
+            // column directly.
             // CommonMark 5.3: an ordered marker with start != 1 also
             // does NOT interrupt a paragraph.
-            if spaceCount <= 3 && !ListReader.isOrderedListMarkerWithNonOneStart(parsed.marker) {
+            if parsed.indent.count <= 3 && !ListReader.isOrderedListMarkerWithNonOneStart(parsed.marker) {
                 return true
             }
         }

@@ -499,9 +499,11 @@ class CommonMarkSpecTests: XCTestCase {
     // MARK: - Other sections
 
     // --- Tabs (11 examples) ---
-    // Minimal tab handling support.
+    // Tab handling per CommonMark §2.2 (4-stop tabstops). 12.C.6.l
+    // brought this bucket to 100% by normalizing tabs to virtual-column
+    // spaces inside ListReader.parseListLine.
     func test_tabs() {
-        assertSection("Tabs", passesAtLeast: 2)
+        assertSection("Tabs", passesAtLeast: 11)
     }
 
     // --- Backslash Escapes (13 examples) ---

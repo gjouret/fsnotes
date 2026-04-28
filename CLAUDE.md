@@ -295,16 +295,15 @@ Single source of truth for every presentation literal. See `ARCHITECTURE.md` →
 
 ### CommonMark Spec Compliance (v0.31.2)
 
-Serializer compliance: **644 / 652 passing (98.8%)** — Phase 10 Slice A baseline (620) advanced by Phase 12.C.6.a–k (+24, eleven slices closing spec examples #218, #540, #541, #548, #559, #568, #238, #524, #526, #536, #538, #518, #519, #520, #532, #533, #175, #318, #320, #321, #324, #289, #300, #278). Four buckets reached 100% in 12.C.6: Block quotes (25/25 via #238), Link reference definitions (27/27 via #218), **Links (90/90 via 12.C.6.h)**, and **HTML blocks (44/44 via 12.C.6.i)**.
+Serializer compliance: **645 / 652 passing (98.9%)** — Phase 10 Slice A baseline (620) advanced by Phase 12.C.6.a–l (+25, twelve slices closing spec examples #218, #540, #541, #548, #559, #568, #238, #524, #526, #536, #538, #518, #519, #520, #532, #533, #175, #318, #320, #321, #324, #289, #300, #278, #9). Five buckets reached 100% in 12.C.6: Block quotes (25/25 via #238), Link reference definitions (27/27 via #218), **Links (90/90 via 12.C.6.h)**, **HTML blocks (44/44 via 12.C.6.i)**, and **Tabs (11/11 via 12.C.6.l)**.
 
-- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Setext headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks, Indented code blocks, Emphasis, Raw HTML, Thematic breaks, **Link reference definitions** (12.C.6.a), **Block quotes** (12.C.6.f), **Links** (12.C.6.h), **HTML blocks** (12.C.6.i).
-- Near-perfect (90%+): Tabs (10/11, 91%), List items (45/48, 94%, lifted by 12.C.6.k), Images (21/22, 95%).
+- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Setext headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks, Indented code blocks, Emphasis, Raw HTML, Thematic breaks, **Tabs** (12.C.6.l), **Link reference definitions** (12.C.6.a), **Block quotes** (12.C.6.f), **Links** (12.C.6.h), **HTML blocks** (12.C.6.i).
+- Near-perfect (90%+): List items (45/48, 94%, lifted by 12.C.6.k), Images (21/22, 95%).
 - Moderate (88%): Lists (23/26).
 - All failing buckets at or above 88%.
 
-Remaining 8 failing examples by bucket:
+Remaining 7 failing examples by bucket:
 - **List items (3)** + **Lists (3)**: residual multi-block list items. 0-space-indented lazy continuation through item content column (#290), nested-blockquote lazy continuation through stripped prefixes (#292, #293), inner-while-loop break-out for marker indent ≥ outer item content column (#312, #313), and `[ListItem]`-vs-`[Block]` ordering for paragraph-after-sublist (#325). #325 specifically requires the `ListItem.children: [Block]` redesign so a sublist and a continuation paragraph can interleave correctly.
-- **Tabs (1)**: mixed space-tab list-nesting indent case (#9, tied to multi-block list family).
 - **Images (1)**: wikilink-extension bleed through image ref-def pattern (#590, accepted FSNotes++ extension non-conformance).
 
 Phase 10 Slice A trajectory: **601 → 620 / 652 (+19)** in 12 commits (`f9aa284 → 3018ff0`, 2026-04-24). Each commit locks in one or more bucket fixes: short HTML comment forms, ref-def URL/title separator, multi-line ref-def labels, tight-list heuristic refinement, HR-beats-list-item precedence, setext-underline-on-lazy guard, Unicode S-category as punctuation, indented-code trailing-whitespace preservation, blockquote tab partial-consumption, list-item first-line indented-code detection, `stripLeadingSpaces` virtual-column preservation, HTML-block 3-space indent cap, first-item-blankLineBefore exclusion, empty-content item lazy continuation.

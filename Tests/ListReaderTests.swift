@@ -162,6 +162,50 @@ final class ListReaderTests: XCTestCase {
         XCTAssertTrue(p.continuationLines[0].hasSuffix("foo"))
     }
 
+    // MARK: - parseListLine() — tab expansion in indent (spec #9)
+
+    func test_parse_tabIndent_expandsToVirtualCols() {
+        // Spec #9: `\t - baz` → tab is 4 cols, then space = 5 virtual
+        // cols of indent before the marker. `parseListLine` normalizes
+        // the indent string so `.indent.count` measures virtual columns
+        // for the downstream nesting arithmetic.
+        guard let p = ListReader.parseListLine("\t - baz") else {
+            return XCTFail("expected match")
+        }
+        XCTAssertEqual(p.marker, "-")
+        XCTAssertEqual(p.indent.count, 5)
+        XCTAssertTrue(p.indent.allSatisfy { $0 == " " })
+        XCTAssertEqual(p.content, "baz")
+    }
+
+    func test_parse_tabAfterMarker_underFiveCols_expanded() {
+        // `-\tfoo` — tab at col 1 expands to 3 virtual cols (col 1 → 4).
+        // Below the indented-code threshold (≥5 cols), so the afterMarker
+        // is preserved as expanded spaces, not collapsed.
+        guard let p = ListReader.parseListLine("-\tfoo") else {
+            return XCTFail("expected match")
+        }
+        XCTAssertEqual(p.marker, "-")
+        XCTAssertEqual(p.afterMarker.count, 3)
+        XCTAssertTrue(p.afterMarker.allSatisfy { $0 == " " })
+        XCTAssertEqual(p.content, "foo")
+    }
+
+    func test_parse_endToEnd_tabNestedList() {
+        // Spec #9 in full: ` - foo\n   - bar\n\t - baz\n` parses to a
+        // 3-level nested list, where baz nests under bar (bar's content
+        // column is 5, and \t-space-marker puts baz's marker at col 5).
+        let doc = MarkdownParser.parse(" - foo\n   - bar\n\t - baz\n")
+        guard case .list(let outer, _) = doc.blocks.first else {
+            return XCTFail("expected outer list, got \(doc.blocks)")
+        }
+        XCTAssertEqual(outer.count, 1, "expected single top-level item 'foo'")
+        let foo = outer[0]
+        XCTAssertEqual(foo.children.count, 1, "expected 'bar' nested under 'foo'")
+        let bar = foo.children[0]
+        XCTAssertEqual(bar.children.count, 1, "expected 'baz' nested under 'bar'")
+    }
+
     // MARK: - listMarkerType()
 
     func test_markerType_unordered() {

@@ -106,7 +106,13 @@ public enum ListReader {
 
         // Leading indent: spaces or tabs.
         while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-        let indent = String(chars[0..<i])
+        // CommonMark §2.2: tabs expand to the next multiple-of-4 stop.
+        // Normalize the indent string to its expanded-to-spaces form so
+        // downstream arithmetic that uses `.indent.count` measures
+        // virtual columns (spec #9: `\t - baz` → tab is 4 cols + space
+        // = 5 virtual cols, must compare against parent items'
+        // virtual content columns).
+        let indent = expandTabsToSpaces(String(chars[0..<i]), startingAt: 0)
 
         guard i < chars.count else { return nil }
         let markerStart = i
@@ -152,7 +158,13 @@ public enum ListReader {
             // Marker followed by non-whitespace — not a list item.
             return nil
         }
-        let afterMarker = String(chars[afterStart..<i])
+        let rawAfterMarker = String(chars[afterStart..<i])
+        // The afterMarker may contain tabs whose virtual width depends on
+        // the column they sit at. `indent` is already tab-expanded above,
+        // so its `.count` is the marker's virtual column directly.
+        let markerCol = indent.count + marker.count
+        let afterMarker = expandTabsToSpaces(rawAfterMarker, startingAt: markerCol)
+        let afterWidth = afterMarker.count
 
         // CommonMark §5.2 indented-code-in-list-item rule: if the
         // whitespace between marker and content expands to ≥ 5 virtual
@@ -160,19 +172,6 @@ public enum ListReader {
         // item. The "afterMarker" collapses to exactly 1 virtual
         // column; the remaining cols become the code block's indent.
         // Spec #7: `-\t\tfoo` → `<li><pre><code>  foo</code></pre></li>`.
-        let markerCol = indent.count + marker.count
-        var afterWidth = 0
-        do {
-            var vcol = markerCol
-            for ch in afterMarker {
-                if ch == " " { afterWidth += 1; vcol += 1 }
-                else if ch == "\t" {
-                    let w = 4 - (vcol % 4)
-                    afterWidth += w
-                    vcol += w
-                }
-            }
-        }
         if afterWidth >= 5 {
             let leftoverCols = afterWidth - 1
             let contentIndent = String(repeating: " ", count: leftoverCols)
@@ -240,5 +239,27 @@ public enum ListReader {
             afterMarker: normalizedAfter, checkbox: checkbox,
             content: content
         )
+    }
+
+    /// Expand tab characters in `s` to spaces using CommonMark §2.2
+    /// 4-stop tabstop semantics, with the run starting at virtual
+    /// column `startCol`. Spaces are kept as-is. Non-whitespace input is
+    /// not expected (callers pass leading-whitespace runs only).
+    private static func expandTabsToSpaces(_ s: String, startingAt startCol: Int) -> String {
+        if s.isEmpty || !s.contains("\t") { return s }
+        var out = ""
+        out.reserveCapacity(s.count)
+        var col = startCol
+        for ch in s {
+            if ch == "\t" {
+                let w = 4 - (col % 4)
+                for _ in 0..<w { out.append(" ") }
+                col += w
+            } else {
+                out.append(ch)
+                col += 1
+            }
+        }
+        return out
     }
 }
