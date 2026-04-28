@@ -554,12 +554,23 @@ A latent bug class: storing a pre-built live view on the attachment causes thumb
 
 Fold state lives in two places:
 
-- **In-memory canonical**: `TextStorageProcessor.collapsedStorageOffsets: Set<Int>` (Phase 6 Tier B′ Sub-slice 1) — set of `block.range.location` values for blocks that are currently collapsed. Storage offset is more stable than block index across edits above the folded block (inserting a paragraph above a folded heading shifts indices but not offsets). Public query API: `processor.isCollapsed(blockIndex:)` / `isCollapsed(storageOffset:)` / `collapsedBlockIndices: Set<Int>` (computed). All readers (`GutterController`, fold-related test files) route through this API; no production code reads `MarkdownBlock.collapsed` directly except the dual-write inside `TextStorageProcessor` itself.
+- **In-memory canonical**: `TextStorageProcessor.collapsedStorageOffsets: Set<Int>` — set of `block.range.location` values for blocks that are currently collapsed. Storage offset is more stable than block index across edits above the folded block (inserting a paragraph above a folded heading shifts indices but not offsets). Public query API: `processor.isCollapsed(blockIndex:)` / `isCollapsed(storageOffset:)` / `collapsedBlockIndices: Set<Int>` (computed) / `collapsedBlockOffsets: Set<Int>`. The Phase 6 Tier B′ ladder retired the per-block `MarkdownBlock.collapsed` field entirely (Sub-slice 7.A); the side-table is the sole source of truth and the discipline test `test_phase46_noMarkdownBlockCollapsed_reads` enforces zero `.collapsed` reads anywhere in production code.
 - **Persistent**: `Note.cachedFoldState: Set<Int>?` — set of **storage offsets** (Phase 6 Tier B′ Sub-slice 3), persisted per-URL in `UserDefaults` under the V2 key `fsnotes.foldStateOffsets.<path>`. Storage-offset-keyed end to end — no conversion at the persistence boundary. The legacy V1 index-keyed format (`fsnotes.foldState.<path>`) is read once on first load into a transient `Note.legacyFoldStateIndices` field; the editor's restore path migrates it to offsets via the freshly-built `blockSpans` and writes the result back as V2, after which the V1 key is deleted.
 
 A fold toggle sets `.foldedContent` on the folded range; `BlockModelContentStorageDelegate` checks for it first and returns `FoldedElement` → `FoldedLayoutFragment` (zero-height) regardless of underlying block kind. One element class + one fragment cover every foldable block type with zero per-kind code.
 
 Folded headers paint a trailing `[...]` chip via `HeadingLayoutFragment.drawFoldedIndicator`, theme-driven through `ThemeChrome.foldedHeaderIndicator{Foreground,Background,CornerRadius,...}`.
+
+## Render-Mode Side-Table
+
+`TextStorageProcessor.renderedStorageOffsets: Set<Int>` is the canonical store for "is this code block currently rendered as a bitmap / fragment widget" — set of `block.range.location` values for blocks classified as `.rendered`. Mirrors the fold-state side-table's offset-keyed pattern (Sub-slice 4). Two state sources feed it:
+
+- **WYSIWYG language-based classification** — `rebuildBlocksFromProjection` walks each `Document.Block` and inserts the offset for any code block whose language is `mermaid` / `math` / `latex`. Those blocks render via `MermaidLayoutFragment` / `MathLayoutFragment` / `DisplayMathLayoutFragment` (fragment dispatch); `codeBlockRanges` excludes them from the gray-background gate via the side-table check.
+- **Source-mode async render swap** — `renderSpecialCodeBlocks`'s WebView callback replaces fenced-code text with a centred `NSTextAttachment` once `BlockRenderer` completes, then calls `setRendered(true, storageOffset:)` to record the transition. The click-to-edit handler in `EditTextView+Interaction` flips it back via `processor.setRenderMode(.source, forBlockAtOffset: index)` — operating purely on storage offsets so this site doesn't read `processor.blocks`.
+
+Public query API: `isRendered(blockIndex:) / isRendered(storageOffset:) / renderedBlockOffsets`. Public mutators: `setRenderMode(_:forBlockAt:)` and `setRenderMode(_:forBlockAtOffset:)`. The Phase 6 Tier B′ ladder retired the per-block `MarkdownBlock.renderMode` field (Sub-slice 7.B.1); the discipline test `test_phase6Bprime_subslice7B1_noMarkdownBlockRenderMode_reads` enforces zero `.renderMode` reads in production. Source-mode parser methods (`MarkdownBlockParser.parsePreservingRendered / adjustBlocks / reparseBlocks`) accept the side-table as a `renderedOffsets: Set<Int>` parameter for their preserve / skip / splice-extension decisions.
+
+Side-table consistency across `adjustBlocks`'s offset-shift uses a UUID snapshot pattern: `updateBlockModel` captures the IDs of currently-rendered blocks before the parse, then re-derives the side-table from those IDs after — picking up each block's possibly-shifted `range.location` while gracefully dropping rendered blocks the splice replaced.
 
 ## Source-Mode Pipeline (`hideSyntax == false`)
 
