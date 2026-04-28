@@ -170,89 +170,52 @@ import UIKit
 extension NSTextStorage: TextBuffer {}
 #endif
 
-// MARK: - Item 4: Protocol-Oriented Block Editing
+// MARK: - Per-block-kind editing dispatch (Phase 12.B)
 
-/// Capabilities that a block type can expose.
-public struct BlockCapabilities: OptionSet {
-    public let rawValue: Int
-    public init(rawValue: Int) { self.rawValue = rawValue }
-    
-    static let editableInline = BlockCapabilities(rawValue: 1 << 0)
-    static let splittable = BlockCapabilities(rawValue: 1 << 1)
-    static let mergable = BlockCapabilities(rawValue: 1 << 2)
-    static let formattable = BlockCapabilities(rawValue: 1 << 3)
-    static let listItem = BlockCapabilities(rawValue: 1 << 4)
-    static let hasChildren = BlockCapabilities(rawValue: 1 << 5)
-    static let readOnly = BlockCapabilities(rawValue: 1 << 6)
+/// Per-block-kind dispatch for the in-block editing primitives. Each
+/// `Block` kind that supports inline editing has its own conforming
+/// type whose static methods replace the corresponding `case` in
+/// `EditingOps.insertIntoBlock` / `deleteInBlock` / `replaceInBlock`.
+///
+/// Why a protocol instead of a single switch: the per-kind logic is
+/// genuinely different (paragraphs splice into inline trees, code
+/// blocks splice into raw content, lists delegate to `ListEditingFSM`,
+/// tables delegate to `replaceTableCellInline`, HR/blankLine are
+/// read-only). Splitting one kind per file keeps each file small,
+/// independently testable, and lets the compiler enforce that every
+/// kind covers every primitive (no more `default: throw .notSupported`
+/// fallthroughs).
+///
+/// Extraction is incremental — Slice 12.B.1 wires `.paragraph` only;
+/// the other kinds keep their existing switch cases until their slice
+/// lands. The retired `EditableBlock` / `BlockAction` / `BlockActionResult`
+/// scaffold (lines 173-244 prior to commit cd371ae) was deleted as
+/// part of this slice — its `perform(action:at:with:)` shape didn't
+/// fit the existing primitive contracts (`insertIntoBlock`, etc. are
+/// pure functions on `Block`, not `mutating` methods on a protocol
+/// existential).
+public protocol BlockEditor {
+    /// Insert `string` at `offsetInBlock` within the block's rendered
+    /// output. Returns the mutated block. The block kind passed in
+    /// MUST match the editor type (e.g. `ParagraphBlockEditor.insert`
+    /// expects `.paragraph(...)`); a mismatch is a programmer error,
+    /// not a user error, and traps in DEBUG.
+    static func insert(
+        into block: Block, offsetInBlock: Int, string: String
+    ) throws -> Block
+
+    /// Delete characters [`fromOffset`, `toOffset`) from the block's
+    /// rendered output. Returns the mutated block.
+    static func delete(
+        in block: Block, from fromOffset: Int, to toOffset: Int
+    ) throws -> Block
+
+    /// Replace characters [`fromOffset`, `toOffset`) with `replacement`
+    /// in the block's rendered output. Returns the mutated block.
+    static func replace(
+        in block: Block, from fromOffset: Int, to toOffset: Int, with replacement: String
+    ) throws -> Block
 }
-
-/// Protocol for editable block operations.
-public protocol EditableBlock {
-    var capabilities: BlockCapabilities { get }
-    var inlineContent: [Inline] { get set }
-    
-    func canHandle(action: BlockAction) -> Bool
-    mutating func perform(action: BlockAction, at offset: Int, with text: String?) throws -> BlockActionResult
-}
-
-/// Actions that can be performed on blocks.
-public enum BlockAction {
-    case insertText(String)
-    case deleteRange(NSRange)
-    case splitAt(Int)
-    case mergeWith(Block)
-    case toggleFormat(InlineTrait)
-    case changeHeadingLevel(Int)
-    case indent
-    case unindent
-    case exitToBody
-}
-
-/// Result of a block action.
-public struct BlockActionResult {
-    public let newBlock: Block
-    public let cursorOffset: Int
-    public let additionalBlocks: [Block]
-    
-    public init(newBlock: Block, cursorOffset: Int, additionalBlocks: [Block] = []) {
-        self.newBlock = newBlock
-        self.cursorOffset = cursorOffset
-        self.additionalBlocks = additionalBlocks
-    }
-}
-
-/// Block extensions for EditableBlock protocol.
-extension Block {
-    public var capabilities: BlockCapabilities {
-        switch self {
-        case .paragraph:
-            return [.editableInline, .splittable, .mergable, .formattable]
-        case .heading:
-            return [.editableInline, .splittable, .formattable]
-        case .list:
-            return [.listItem, .hasChildren]
-        case .codeBlock, .htmlBlock:
-            return [.editableInline, .readOnly]
-        case .blockquote:
-            return [.editableInline, .splittable, .mergable, .formattable, .hasChildren]
-        case .table:
-            return [.editableInline, .hasChildren]
-        case .horizontalRule, .blankLine:
-            return [.mergable]
-        }
-    }
-}
-
-// (Items 5+6 — `EditorStore` / `EditorReducer` / `EffectHandler`
-// scaffolding — were removed when their role was subsumed by the
-// canonical write path: `EditingOps` (pure primitives) →
-// `applyEditResultWithUndo` → `DocumentEditApplier.applyDocumentEdit`
-// (single write path, `StorageWriteGuard`-gated) and Phase 5f's
-// `UndoJournal` (per-editor coalescing FSM, single registerUndo
-// site). The dead scaffold had ~7 of 40+ EditingOps primitives
-// stubbed in its reducer, no production callers, and predated the
-// 5a/5f architecture. See `docs/AI.md` Architecture Principle 1
-// and `ARCHITECTURE.md` for the actual layers.)
 
 /// The output of an editing operation.
 public struct EditResult {
@@ -1048,39 +1011,11 @@ public enum EditingOps {
     ) throws -> Block {
         let length = toOffset - fromOffset
         switch block {
-        case .paragraph(let inline):
-            if inline.isEmpty {
-                return .paragraph(inline: [.text(replacement)])
-            }
-            if containsImage(inline) {
-                let (before, _) = splitInlines(inline, at: fromOffset)
-                let (_, after) = splitInlines(inline, at: toOffset)
-                return .paragraph(inline: before + [.text(replacement)] + after)
-            }
-            let runs = flatten(inline)
-            guard let (startRun, startOff) = runContainingChar(runs, charIndex: fromOffset) else {
-                throw EditingError.outOfBounds
-            }
-            guard let (endRun, endOffInclusive) = runContainingChar(runs, charIndex: toOffset - 1) else {
-                throw EditingError.outOfBounds
-            }
-            if startRun == endRun {
-                // Selection is within a single leaf — splice directly,
-                // preserving the leaf's formatting context.
-                let leaf = runs[startRun]
-                let endExclusive = endOffInclusive + 1
-                let newText = spliceString(leaf.text, at: startOff, replacing: endExclusive - startOff, with: replacement)
-                let newInline = updateLeafText(inline, at: leaf.path, newText: newText)
-                return .paragraph(inline: newInline)
-            }
-            // Cross-inline selection: use splitInlines to cut at both
-            // boundaries, then splice the replacement into the first
-            // half's formatting context.
-            let (before, _) = splitInlines(inline, at: fromOffset)
-            let (_, after) = splitInlines(inline, at: toOffset)
-            // Insert replacement text. If `before` has formatting context
-            // (e.g. ends inside a bold), the text is placed adjacent to it.
-            return .paragraph(inline: cleanInlines(before + [.text(replacement)] + after))
+        case .paragraph:
+            // Phase 12.B.1: per-kind editor extracted to ParagraphBlockEditor.
+            return try ParagraphBlockEditor.replace(
+                in: block, from: fromOffset, to: toOffset, with: replacement
+            )
 
         case .heading(let level, let suffix):
             let leading = leadingWhitespaceCount(in: suffix)
@@ -3411,33 +3346,11 @@ public enum EditingOps {
         string: String
     ) throws -> Block {
         switch block {
-        case .paragraph(let inline):
-            if inline.isEmpty {
-                guard offsetInBlock == 0 else {
-                    throw EditingError.unsupported(
-                        reason: "paragraph: offset \(offsetInBlock) beyond empty paragraph"
-                    )
-                }
-                return .paragraph(inline: [.text(string)])
-            }
-            // Atomic-aware path: any paragraph that contains an image
-            // (length-1 atom) can't be edited with the flatten/runs
-            // machinery because flatten only emits leaves for text-like
-            // nodes. Use splitInlines instead — it cuts the tree at any
-            // render offset, including the boundary on either side of an
-            // image — and splice the new text between the halves.
-            if containsImage(inline) {
-                let (before, after) = splitInlines(inline, at: offsetInBlock)
-                let newInline = before + [.text(string)] + after
-                return .paragraph(inline: newInline)
-            }
-            // Honor fence semantics: insertion at end-of-bold produces a
-            // sibling, mid-bold extends the bold span. See
-            // `insertInlinesPreservingContainerContext` for details.
-            let newInline = insertInlinesPreservingContainerContext(
-                inline, at: offsetInBlock, inserting: [.text(string)]
+        case .paragraph:
+            // Phase 12.B.1: per-kind editor extracted to ParagraphBlockEditor.
+            return try ParagraphBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
             )
-            return .paragraph(inline: newInline)
 
         case .heading(let level, let suffix):
             // Map render-offset → suffix-offset. HeadingRenderer strips
@@ -3521,32 +3434,11 @@ public enum EditingOps {
     ) throws -> Block {
         let length = toOffset - fromOffset
         switch block {
-        case .paragraph(let inline):
-            if length == 0 { return block }
-            // Atomic-aware path: paragraphs containing images (length-1
-            // atoms) can't use flatten/runs because flatten skips image
-            // nodes. Use splitInlines to cut around the deleted range.
-            if containsImage(inline) {
-                let (before, _) = splitInlines(inline, at: fromOffset)
-                let (_, after) = splitInlines(inline, at: toOffset)
-                let newInline = before + after
-                return .paragraph(inline: newInline)
-            }
-            let runs = flatten(inline)
-            guard let (startRun, startOff) = runContainingChar(runs, charIndex: fromOffset) else {
-                throw EditingError.outOfBounds
-            }
-            guard let (endRun, endOffInclusive) = runContainingChar(runs, charIndex: toOffset - 1) else {
-                throw EditingError.outOfBounds
-            }
-            if startRun != endRun {
-                throw EditingError.crossInlineRange
-            }
-            let leaf = runs[startRun]
-            let endExclusive = endOffInclusive + 1
-            let newText = spliceString(leaf.text, at: startOff, replacing: endExclusive - startOff, with: "")
-            let newInline = updateLeafText(inline, at: leaf.path, newText: newText)
-            return .paragraph(inline: newInline)
+        case .paragraph:
+            // Phase 12.B.1: per-kind editor extracted to ParagraphBlockEditor.
+            return try ParagraphBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
         case .heading(let level, let suffix):
             // Trailing whitespace is part of the rendered output —
@@ -4267,7 +4159,7 @@ public enum EditingOps {
     /// splicing (not the flatten/runs path) because flatten() emits no
     /// leaf run for atomic image nodes, so `runAtInsertionPoint` cannot
     /// find an insertion slot at the image boundary.
-    private static func containsImage(_ inlines: [Inline]) -> Bool {
+    static func containsImage(_ inlines: [Inline]) -> Bool {
         for node in inlines {
             switch node {
             case .image:
@@ -4542,7 +4434,7 @@ public enum EditingOps {
     /// Flatten an inline tree to its sequence of leaf runs, in render
     /// order. Containers (`.bold`, `.italic`) contribute no characters
     /// of their own — only their descendants do.
-    private static func flatten(_ inlines: [Inline]) -> [LeafRun] {
+    static func flatten(_ inlines: [Inline]) -> [LeafRun] {
         var runs: [LeafRun] = []
         var path: InlinePath = []
         walkFlatten(inlines, path: &path, into: &runs)
@@ -4631,7 +4523,7 @@ public enum EditingOps {
     /// Locate the run that OWNS the rendered character at index
     /// `charIndex` (strict less-than upper bound). Used for delete
     /// ranges [from, to): each character is owned by exactly one run.
-    private static func runContainingChar(
+    static func runContainingChar(
         _ runs: [LeafRun],
         charIndex: Int
     ) -> (runIndex: Int, offsetInRun: Int)? {
@@ -4650,7 +4542,7 @@ public enum EditingOps {
     /// Rebuild an inline tree with the leaf at `path` replaced by a
     /// new text value. The Inline case (`.text` vs `.code`) at the
     /// leaf is preserved.
-    private static func updateLeafText(
+    static func updateLeafText(
         _ inlines: [Inline],
         at path: InlinePath,
         newText: String
@@ -4739,7 +4631,7 @@ public enum EditingOps {
     /// Splice `string` into `source` by replacing `replacing` characters
     /// starting at `at` with `string`. Uses String.Index arithmetic for
     /// Unicode correctness. `at` and `replacing` are character counts.
-    private static func spliceString(
+    static func spliceString(
         _ source: String,
         at offset: Int,
         replacing count: Int,
@@ -7647,7 +7539,7 @@ public enum EditingOps {
     }
 
     /// Remove empty text nodes and merge adjacent text nodes.
-    private static func cleanInlines(_ inlines: [Inline]) -> [Inline] {
+    static func cleanInlines(_ inlines: [Inline]) -> [Inline] {
         var result: [Inline] = []
         for node in inlines {
             switch node {
