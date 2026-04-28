@@ -395,7 +395,7 @@ class CommonMarkSpecTests: XCTestCase {
     // We support basic blockquotes with inner block re-parsing.
     // Unsupported: lazy continuation, nested blockquotes, list interaction.
     func test_blockQuotes() {
-        assertSection("Block quotes", passesAtLeast: 17)
+        assertSection("Block quotes", passesAtLeast: 25)
     }
 
     // --- List Items (48 examples) ---

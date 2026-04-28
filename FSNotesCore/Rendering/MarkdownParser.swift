@@ -146,7 +146,13 @@ public enum MarkdownParser {
                // than 1 cannot interrupt a paragraph. Example 304: a paragraph
                // that happens to contain "14. ..." as its second line must
                // remain a single paragraph, not paragraph + list.
-               !(rawBuffer.count > 0 && ListReader.isOrderedListMarkerWithNonOneStart(firstParsed.marker)) {
+               !(rawBuffer.count > 0 && ListReader.isOrderedListMarkerWithNonOneStart(firstParsed.marker)),
+               // CommonMark §4.4 / §5.2: a list marker indented 4+ spaces
+               // does NOT open a list when continuing a paragraph — the
+               // indent makes it lazy continuation, not a new block.
+               // Spec #238: `> foo\n    - bar` is a single blockquote
+               // paragraph, not paragraph + nested list.
+               !(rawBuffer.count > 0 && leadingSpaceCount(firstParsed.indent) >= 4) {
                 flushRawBuffer()
 
                 // Determine the list type from the first item's marker.
