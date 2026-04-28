@@ -373,9 +373,11 @@ extension EditTextView {
         bmLog("🎨 Rendered projection: \(projection.attributed.length) chars, string='\(projection.attributed.string)'")
         bmLog("📐 Block spans: \(projection.blockSpans.map { "[\($0.location),\($0.length)]" }.joined(separator: ", "))")
 
-        // Save fold state from the previous note (if any) before replacing storage.
+        // Save fold state from the previous note (if any) before
+        // replacing storage. Phase 6 Tier B′ Sub-slice 3: write the
+        // offset-keyed canonical form directly.
         if let prevNote = self.note, let processor = textStorageProcessor {
-            let collapsed = processor.collapsedBlockIndices
+            let collapsed = processor.collapsedBlockOffsets
             if !collapsed.isEmpty {
                 prevNote.cachedFoldState = collapsed
             }
@@ -422,10 +424,25 @@ extension EditTextView {
         // `processor.blocks` from `projection`, so no explicit sync call
         // is needed here.
 
-        // Restore fold state from the note's cache (RC5).
+        // Restore fold state from the note's cache (RC5). The V2 form
+        // is offset-keyed (Phase 6 Tier B′ Sub-slice 3); a legacy V1
+        // index-keyed payload from a previous app version is migrated
+        // here via the freshly-built `blocks` array, then written back
+        // as V2 by the `cachedFoldState` setter.
         if let savedFolds = note.cachedFoldState, !savedFolds.isEmpty,
            let processor = textStorageProcessor {
-            processor.restoreCollapsedState(savedFolds, textStorage: storage)
+            processor.restoreCollapsedState(
+                byOffsets: savedFolds, textStorage: storage
+            )
+        } else if let legacyFolds = note.legacyFoldStateIndices,
+                  !legacyFolds.isEmpty,
+                  let processor = textStorageProcessor {
+            processor.restoreCollapsedState(legacyFolds, textStorage: storage)
+            let migrated = processor.collapsedBlockOffsets
+            if !migrated.isEmpty {
+                note.cachedFoldState = migrated
+            }
+            note.legacyFoldStateIndices = nil
         }
 
         // Force an initial layout pass **synchronously**, before first

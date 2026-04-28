@@ -156,10 +156,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Return the set of block indices that are currently collapsed.
     ///
     /// Computed from the canonical `collapsedStorageOffsets` side-table
-    /// + the current `blocks` array. Used by the cachedFoldState
-    /// persistence path (which still operates in index space —
-    /// converting in/out at the persistence boundary keeps the
-    /// in-memory invariant on offset).
+    /// + the current `blocks` array. Retained for tests and gutter
+    /// readers that index the `blocks` array directly; the canonical
+    /// persistence form is `collapsedBlockOffsets` (Phase 6 Tier B′
+    /// Sub-slice 3).
     public var collapsedBlockIndices: Set<Int> {
         var indices: Set<Int> = []
         for (i, block) in blocks.enumerated() {
@@ -168,6 +168,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
         }
         return indices
+    }
+
+    /// Canonical offset-keyed fold state — set of `block.range.location`
+    /// for blocks currently collapsed. Read by the persistence path
+    /// (`Note.cachedFoldState`); stable across edits above the folded
+    /// block (Phase 6 Tier B′ Sub-slice 3).
+    public var collapsedBlockOffsets: Set<Int> {
+        return collapsedStorageOffsets
     }
 
     /// Set the collapsed flag for a block at a given storage offset
@@ -188,6 +196,24 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         if let idx = blockIndex, idx >= 0, idx < blocks.count {
             blocks[idx].collapsed = collapsed
         }
+    }
+
+    /// Restore fold state from a saved set of collapsed storage offsets
+    /// (the canonical persistence form, Phase 6 Tier B′ Sub-slice 3).
+    /// Walks `blocks` once to find the index whose `range.location`
+    /// matches each offset; offsets that no longer correspond to any
+    /// block (e.g. the user edited the heading away between sessions)
+    /// are silently dropped.
+    public func restoreCollapsedState(
+        byOffsets offsets: Set<Int>, textStorage: NSTextStorage
+    ) {
+        var indices: Set<Int> = []
+        for (i, block) in blocks.enumerated() {
+            if offsets.contains(block.range.location) {
+                indices.insert(i)
+            }
+        }
+        restoreCollapsedState(indices, textStorage: textStorage)
     }
 
     /// Restore fold state from a saved set of collapsed block indices.
@@ -583,9 +609,12 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
         }
 
-        // RC5: Persist fold state to the note so it survives note switches.
+        // RC5: Persist fold state to the note so it survives note
+        // switches. Phase 6 Tier B′ Sub-slice 3: write the canonical
+        // offset-keyed form directly — no index conversion at the
+        // persistence boundary.
         if let note = editor?.note {
-            note.cachedFoldState = collapsedBlockIndices
+            note.cachedFoldState = collapsedStorageOffsets
         }
     }
 

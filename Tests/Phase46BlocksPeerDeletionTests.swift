@@ -315,6 +315,175 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         XCTAssertEqual(proc.collapsedBlockIndices, Set(headings))
     }
 
+    // MARK: - Phase 6 Tier B′ Sub-slice 3 — fold-state persistence migration
+
+    /// Helper: build a fresh Note bound to a unique tmp URL so its
+    /// UserDefaults fold-state keys don't collide with other tests.
+    private func makeNote() -> Note {
+        let tmpURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("foldmig_\(UUID().uuidString).md")
+        let project = Project(
+            storage: Storage.shared(),
+            url: URL(fileURLWithPath: NSTemporaryDirectory())
+        )
+        let note = Note(url: tmpURL, with: project)
+        note.type = .Markdown
+        return note
+    }
+
+    /// Helper: clear both V1 and V2 UD entries for a note.
+    private func clearFoldUDKeys(for note: Note) {
+        UserDefaults.standard.removeObject(
+            forKey: "fsnotes.foldState.\(note.url.path)"
+        )
+        UserDefaults.standard.removeObject(
+            forKey: "fsnotes.foldStateOffsets.\(note.url.path)"
+        )
+    }
+
+    /// V2 (offset-keyed) entry loads directly into `cachedFoldState`.
+    func test_phase6Bprime_subslice3_loadV2_offsetKeyed() {
+        let note = makeNote()
+        defer { clearFoldUDKeys(for: note) }
+
+        let v2Key = "fsnotes.foldStateOffsets.\(note.url.path)"
+        UserDefaults.standard.set([42, 100], forKey: v2Key)
+
+        note.loadFoldStateFromDisk()
+        XCTAssertEqual(note.cachedFoldState, Set([42, 100]))
+        XCTAssertNil(note.legacyFoldStateIndices)
+    }
+
+    /// V1 (index-keyed) entry, with no V2 entry present, lands in the
+    /// transient `legacyFoldStateIndices` field — `cachedFoldState`
+    /// stays nil because the editor needs `blockSpans` to convert.
+    func test_phase6Bprime_subslice3_loadV1_legacyMigrationField() {
+        let note = makeNote()
+        defer { clearFoldUDKeys(for: note) }
+
+        let v1Key = "fsnotes.foldState.\(note.url.path)"
+        UserDefaults.standard.set([0, 3], forKey: v1Key)
+
+        note.loadFoldStateFromDisk()
+        XCTAssertNil(note.cachedFoldState)
+        XCTAssertEqual(note.legacyFoldStateIndices, Set([0, 3]))
+    }
+
+    /// V2 wins when both V1 and V2 are present (V2 supersedes legacy).
+    func test_phase6Bprime_subslice3_loadV2PreferredOverV1() {
+        let note = makeNote()
+        defer { clearFoldUDKeys(for: note) }
+
+        let v1Key = "fsnotes.foldState.\(note.url.path)"
+        let v2Key = "fsnotes.foldStateOffsets.\(note.url.path)"
+        UserDefaults.standard.set([0, 1], forKey: v1Key)
+        UserDefaults.standard.set([42], forKey: v2Key)
+
+        note.loadFoldStateFromDisk()
+        XCTAssertEqual(note.cachedFoldState, Set([42]))
+        XCTAssertNil(note.legacyFoldStateIndices)
+    }
+
+    /// Setting `cachedFoldState` writes V2 and clears any stale V1.
+    func test_phase6Bprime_subslice3_writeFlushesV1() {
+        let note = makeNote()
+        defer { clearFoldUDKeys(for: note) }
+
+        let v1Key = "fsnotes.foldState.\(note.url.path)"
+        let v2Key = "fsnotes.foldStateOffsets.\(note.url.path)"
+        UserDefaults.standard.set([0, 1], forKey: v1Key)
+
+        note.cachedFoldState = Set([99])
+
+        XCTAssertEqual(
+            UserDefaults.standard.array(forKey: v2Key) as? [Int],
+            [99]
+        )
+        XCTAssertNil(
+            UserDefaults.standard.array(forKey: v1Key),
+            "Legacy V1 entry must be cleared after migration write"
+        )
+    }
+
+    /// Setting `cachedFoldState` to an empty set or nil clears V2.
+    func test_phase6Bprime_subslice3_emptySetClearsV2() {
+        let note = makeNote()
+        defer { clearFoldUDKeys(for: note) }
+
+        let v2Key = "fsnotes.foldStateOffsets.\(note.url.path)"
+        note.cachedFoldState = Set([7])
+        XCTAssertNotNil(UserDefaults.standard.array(forKey: v2Key))
+
+        note.cachedFoldState = []
+        XCTAssertNil(UserDefaults.standard.array(forKey: v2Key))
+    }
+
+    /// End-to-end migration: a V1 index-keyed entry written by an older
+    /// app version is migrated through `fillViaBlockModel`. After the
+    /// fill, `cachedFoldState` carries the offset-keyed form, the
+    /// transient `legacyFoldStateIndices` is cleared, and the V1 UD
+    /// key is gone so future loads read V2 directly.
+    func test_phase6Bprime_subslice3_endToEndV1Migration() {
+        let md = "# H1\n\nBody.\n\n# H2\n\nMore.\n"
+        let harness = EditorHarness(markdown: md)
+        defer { harness.teardown() }
+        let note = harness.note!
+
+        // Locate the first heading's offset to verify the migration
+        // produced the correct offset-keyed value.
+        guard let proc = harness.editor.textStorageProcessor else {
+            XCTFail("Editor missing TextStorageProcessor")
+            return
+        }
+        guard let h1Idx = proc.blocks.firstIndex(where: { block in
+            if case .heading = block.type { return true }
+            return false
+        }) else {
+            XCTFail("No heading block found")
+            return
+        }
+        let h1Offset = proc.blocks[h1Idx].range.location
+
+        // Simulate a stored V1 index-keyed payload from an older app
+        // version: heading 0 was folded.
+        let v1Key = "fsnotes.foldState.\(note.url.path)"
+        let v2Key = "fsnotes.foldStateOffsets.\(note.url.path)"
+        UserDefaults.standard.set([h1Idx], forKey: v1Key)
+        UserDefaults.standard.removeObject(forKey: v2Key)
+        defer {
+            UserDefaults.standard.removeObject(forKey: v1Key)
+            UserDefaults.standard.removeObject(forKey: v2Key)
+        }
+
+        // Force a fresh load — the harness already filled, so reset
+        // the in-memory cache to simulate a cold open.
+        note.cachedFoldState = nil
+        note.legacyFoldStateIndices = nil
+        UserDefaults.standard.set([h1Idx], forKey: v1Key)
+        note.loadFoldStateFromDisk()
+        XCTAssertNil(note.cachedFoldState)
+        XCTAssertEqual(note.legacyFoldStateIndices, Set([h1Idx]))
+
+        // Re-run fillViaBlockModel to drive the migration through the
+        // restore path.
+        harness.editor.fillViaBlockModel(note: note)
+
+        XCTAssertEqual(
+            note.cachedFoldState, Set([h1Offset]),
+            "Migration must produce offset-keyed canonical state"
+        )
+        XCTAssertNil(note.legacyFoldStateIndices)
+        XCTAssertNil(
+            UserDefaults.standard.array(forKey: v1Key),
+            "Legacy V1 UD entry must be deleted after migration"
+        )
+        XCTAssertEqual(
+            UserDefaults.standard.array(forKey: v2Key) as? [Int],
+            [h1Offset],
+            "V2 UD entry must carry the migrated offset"
+        )
+    }
+
     // MARK: - Helpers
 
     /// Walk up from the current file path to find the repository root

@@ -29,20 +29,37 @@ public class Note: NSObject  {
     /// by `fillViaBlockModel()` on first access after invalidation.
     public var cachedDocument: Document?
 
-    /// Cached fold state: set of block indices that were collapsed when
-    /// the user last viewed this note. Preserved across note switches
-    /// (in-memory) and across app restarts (via UserDefaults — see
-    /// `loadFoldStateFromDisk()` / `saveFoldStateToDisk()`).
+    /// Cached fold state: set of **storage offsets** (block start
+    /// locations within the rendered attributed string) for blocks
+    /// that were collapsed when the user last viewed this note.
+    /// Storage offsets are more stable than block indices across
+    /// edits above the folded block — inserting a paragraph above a
+    /// folded heading shifts indices but not offsets. Preserved
+    /// across note switches (in-memory) and across app restarts (via
+    /// UserDefaults — see `loadFoldStateFromDisk()` /
+    /// `saveFoldStateToDisk()`).
     public var cachedFoldState: Set<Int>? {
         didSet { saveFoldStateToDisk() }
     }
 
-    /// UserDefaults key for the persistent fold state of this note.
-    /// Keyed by file URL path so it survives app restarts but stays
-    /// per-note. The fold state is a list of block indices and is
-    /// fragile (block indices shift when the note is edited) — good
-    /// enough for the read-mostly case the user reported.
-    private var foldStateDefaultsKey: String {
+    /// Transient index-keyed fold state, populated only when the
+    /// legacy V1 UserDefaults format is read on first load and the
+    /// V2 (offset-keyed) entry is absent. The editor's fill path
+    /// converts these indices to offsets via the freshly-built
+    /// `blockSpans` and writes the result back as V2; this field is
+    /// cleared once migration completes.
+    public var legacyFoldStateIndices: Set<Int>?
+
+    /// V2 UserDefaults key — values are storage offsets. Phase 6
+    /// Tier B′ Sub-slice 3 introduced this format; the canonical
+    /// in-memory fold state is now offset-keyed end to end.
+    private var foldStateOffsetsKey: String {
+        return "fsnotes.foldStateOffsets.\(url.path)"
+    }
+
+    /// V1 UserDefaults key — values were block indices. Read once
+    /// for migration on first load, deleted on the next save.
+    private var legacyFoldStateKey: String {
         return "fsnotes.foldState.\(url.path)"
     }
 
@@ -52,31 +69,47 @@ public class Note: NSObject  {
 
     /// Load fold state from UserDefaults. Called by the editor when
     /// the note is first opened, before the projection's renderer
-    /// reads `cachedFoldState`.
+    /// reads `cachedFoldState`. Prefers the V2 offset-keyed entry;
+    /// falls back to the legacy V1 index-keyed entry which the
+    /// editor migrates to V2 once `blockSpans` are available.
     public func loadFoldStateFromDisk() {
         if cachedFoldState != nil { return }
-        guard let arr = UserDefaults.standard.array(
-            forKey: foldStateDefaultsKey
-        ) as? [Int] else { return }
-        let loaded = Set(arr)
-        if !loaded.isEmpty {
-            isLoadingFoldState = true
-            cachedFoldState = loaded
-            isLoadingFoldState = false
+        if let arr = UserDefaults.standard.array(
+            forKey: foldStateOffsetsKey
+        ) as? [Int] {
+            let loaded = Set(arr)
+            if !loaded.isEmpty {
+                isLoadingFoldState = true
+                cachedFoldState = loaded
+                isLoadingFoldState = false
+            }
+            return
+        }
+        if let arr = UserDefaults.standard.array(
+            forKey: legacyFoldStateKey
+        ) as? [Int] {
+            let loaded = Set(arr)
+            if !loaded.isEmpty {
+                legacyFoldStateIndices = loaded
+            }
         }
     }
 
     /// Save the current fold state to UserDefaults. Called from the
-    /// `didSet` of `cachedFoldState` whenever it changes. Removes the
-    /// key when the set is empty so we don't accumulate stale entries.
+    /// `didSet` of `cachedFoldState` whenever it changes. Removes
+    /// the V2 key when the set is empty, and unconditionally clears
+    /// the legacy V1 key so a migrated note can never re-read stale
+    /// index-keyed data on a future load.
     private func saveFoldStateToDisk() {
         if isLoadingFoldState { return }
-        let key = foldStateDefaultsKey
         if let folds = cachedFoldState, !folds.isEmpty {
-            UserDefaults.standard.set(Array(folds).sorted(), forKey: key)
+            UserDefaults.standard.set(
+                Array(folds).sorted(), forKey: foldStateOffsetsKey
+            )
         } else {
-            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: foldStateOffsetsKey)
         }
+        UserDefaults.standard.removeObject(forKey: legacyFoldStateKey)
     }
 
     var creationDate: Date? = Date()
