@@ -3360,9 +3360,10 @@ public enum EditingOps {
             )
 
         case .blankLine:
-            // Typing into a blankLine converts it to a paragraph
-            // containing the inserted text.
-            return .paragraph(inline: [.text(string)])
+            // Phase 12.B.4: per-kind editor extracted to BlankLineBlockEditor.
+            return try BlankLineBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
+            )
 
         case .list(let items, _):
             return try insertIntoList(items: items, offsetInBlock: offsetInBlock, string: string)
@@ -3377,18 +3378,15 @@ public enum EditingOps {
             )
 
         case .horizontalRule:
-            // HR has no editable content — typing on it inserts a new
-            // paragraph. The caller (insert at top level) will detect
-            // that the returned block differs in kind from the original
-            // and handle appropriately. For now, reject: the user can
-            // type above/below the HR, not on it.
-            throw EditingError.unsupported(
-                reason: "horizontalRule is read-only"
+            // Phase 12.B.4: per-kind editor extracted to HorizontalRuleBlockEditor.
+            return try HorizontalRuleBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
             )
 
         case .table:
-            throw EditingError.unsupported(
-                reason: "table is read-only"
+            // Phase 12.B.4: per-kind editor extracted to TableBlockEditor.
+            return try TableBlockEditor.insert(
+                into: block, offsetInBlock: offsetInBlock, string: string
             )
         }
     }
@@ -3421,10 +3419,10 @@ public enum EditingOps {
             )
 
         case .blankLine:
-            // BlankLine has no rendered content — nothing to delete
-            // within it. Cross-block deletion handles removing entire
-            // blankLines via mergeAdjacentBlocks.
-            return .blankLine
+            // Phase 12.B.4: per-kind editor extracted to BlankLineBlockEditor.
+            return try BlankLineBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
         case .list(let items, _):
             return try deleteInList(items: items, from: fromOffset, to: toOffset)
@@ -3439,14 +3437,16 @@ public enum EditingOps {
             )
 
         case .horizontalRule:
-            // HR has no editable content — deletes within it are no-ops.
-            // Cross-block deletion (backspace from next block) is handled
-            // by mergeAdjacentBlocks.
-            return block
+            // Phase 12.B.4: per-kind editor extracted to HorizontalRuleBlockEditor.
+            return try HorizontalRuleBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
 
         case .table:
-            // Table has no editable content — deletes within it are no-ops.
-            return block
+            // Phase 12.B.4: per-kind editor extracted to TableBlockEditor.
+            return try TableBlockEditor.delete(
+                in: block, from: fromOffset, to: toOffset
+            )
         }
     }
 

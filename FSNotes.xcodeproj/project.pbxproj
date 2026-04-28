@@ -94,6 +94,8 @@
 		CBE12B30000000000000B1 /* CodeBlockBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE12B30000000000000F1 /* CodeBlockBlockEditor.swift */; };
 		HMBE12B300000000000B1 /* HtmlBlockBlockEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = HMBE12B300000000000F1 /* HtmlBlockBlockEditor.swift */; };
 		BECT12B300000000000B1 /* BlockEditorCodeBlockHtmlBlockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BECT12B300000000000F1 /* BlockEditorCodeBlockHtmlBlockTests.swift */; };
+		ABE12B40000000000000B1 /* AtomicBlockEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABE12B40000000000000F1 /* AtomicBlockEditors.swift */; };
+		BEAT12B400000000000B1 /* BlockEditorAtomicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEAT12B400000000000F1 /* BlockEditorAtomicTests.swift */; };
 		TGET000000000000000000B1 /* TableGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TGET000000000000000000F1 /* TableGeometryTests.swift */; };
 		SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVTR20260427F1 /* SubviewTableRenderTests.swift */; };
 		SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SVCR20260427F1 /* SubviewTableClickResponderTests.swift */; };
@@ -1331,6 +1333,8 @@
 		CBE12B30000000000000F1 /* CodeBlockBlockEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockEditors/CodeBlockBlockEditor.swift; sourceTree = "<group>"; };
 		HMBE12B300000000000F1 /* HtmlBlockBlockEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockEditors/HtmlBlockBlockEditor.swift; sourceTree = "<group>"; };
 		BECT12B300000000000F1 /* BlockEditorCodeBlockHtmlBlockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockEditorCodeBlockHtmlBlockTests.swift; sourceTree = "<group>"; };
+		ABE12B40000000000000F1 /* AtomicBlockEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockEditors/AtomicBlockEditors.swift; sourceTree = "<group>"; };
+		BEAT12B400000000000F1 /* BlockEditorAtomicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockEditorAtomicTests.swift; sourceTree = "<group>"; };
 		TGET000000000000000000F1 /* TableGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGeometryTests.swift; sourceTree = "<group>"; };
 		SVTR20260427F1 /* SubviewTableRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableRenderTests.swift; sourceTree = "<group>"; };
 		SVCR20260427F1 /* SubviewTableClickResponderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubviewTableClickResponderTests.swift; sourceTree = "<group>"; };
@@ -2012,6 +2016,7 @@
 				HBE12B20000000000000F1 /* HeadingBlockEditor.swift */,
 				CBE12B30000000000000F1 /* CodeBlockBlockEditor.swift */,
 				HMBE12B300000000000F1 /* HtmlBlockBlockEditor.swift */,
+				ABE12B40000000000000F1 /* AtomicBlockEditors.swift */,
 				P41S000000000000000000F1 /* SourceRenderer.swift */,
 				P41S000000000000000000F2 /* SourceLayoutFragment.swift */,
 				BSTA000000000000000000F1 /* BlockSourceTextAttachment.swift */,
@@ -2948,6 +2953,7 @@
 				BEPT12B100000000000F1 /* BlockEditorParagraphTests.swift */,
 				BEHT12B200000000000F1 /* BlockEditorHeadingTests.swift */,
 				BECT12B300000000000F1 /* BlockEditorCodeBlockHtmlBlockTests.swift */,
+				BEAT12B400000000000F1 /* BlockEditorAtomicTests.swift */,
 				SVTR20260427F1 /* SubviewTableRenderTests.swift */,
 				SVCR20260427F1 /* SubviewTableClickResponderTests.swift */,
 				SVBT20260427F1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift */,
@@ -3954,6 +3960,7 @@
 				HBE12B20000000000000B1 /* HeadingBlockEditor.swift in Sources */,
 				CBE12B30000000000000B1 /* CodeBlockBlockEditor.swift in Sources */,
 				HMBE12B300000000000B1 /* HtmlBlockBlockEditor.swift in Sources */,
+				ABE12B40000000000000B1 /* AtomicBlockEditors.swift in Sources */,
 				P41S000000000000000000B1 /* SourceRenderer.swift in Sources */,
 				P41S000000000000000000B2 /* SourceLayoutFragment.swift in Sources */,
 				BSTA000000000000000000B1 /* BlockSourceTextAttachment.swift in Sources */,
@@ -4636,6 +4643,7 @@
 				BEPT12B100000000000B1 /* BlockEditorParagraphTests.swift in Sources */,
 				BEHT12B200000000000B1 /* BlockEditorHeadingTests.swift in Sources */,
 				BECT12B300000000000B1 /* BlockEditorCodeBlockHtmlBlockTests.swift in Sources */,
+				BEAT12B400000000000B1 /* BlockEditorAtomicTests.swift in Sources */,
 				SVTR20260427B1 /* SubviewTableRenderTests.swift in Sources */,
 				SVCR20260427B1 /* SubviewTableClickResponderTests.swift in Sources */,
 				SVBT20260427B1 /* SubviewTableBodyTypingPreservesAttachmentTests.swift in Sources */,
