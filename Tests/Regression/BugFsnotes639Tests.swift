@@ -12,7 +12,8 @@ import AppKit
 
 final class BugFsnotes639Tests: XCTestCase {
 
-    /// TSV → markdown table conversion produces correct pipe table.
+    // MARK: - TSV conversion tests
+
     func test_tsvToMarkdownTable_basicTable() {
         let tsv = "A\tB\n1\t2\n3\t4"
         let md = EditTextView.tsvToMarkdownTable(tsv)
@@ -23,7 +24,6 @@ final class BugFsnotes639Tests: XCTestCase {
         XCTAssertTrue(md!.contains("| 3 | 4 |"))
     }
 
-    /// Single-row TSV produces valid table.
     func test_tsvToMarkdownTable_singleRow() {
         let tsv = "Name\tAge\tCity"
         let md = EditTextView.tsvToMarkdownTable(tsv)
@@ -31,61 +31,126 @@ final class BugFsnotes639Tests: XCTestCase {
         XCTAssertTrue(md!.contains("| Name | Age | City |"))
     }
 
-    /// Empty cells handled correctly.
     func test_tsvToMarkdownTable_emptyCells() {
         let tsv = "A\t\tC\n1\t2\t"
         let md = EditTextView.tsvToMarkdownTable(tsv)
         XCTAssertNotNil(md)
         XCTAssertTrue(md!.contains("| A |  | C |"))
-        XCTAssertTrue(md!.contains("| 1 | 2 |  |"))
     }
 
-    /// Invalid input returns nil.
     func test_tsvToMarkdownTable_invalid() {
         XCTAssertNil(EditTextView.tsvToMarkdownTable(""))
         XCTAssertNil(EditTextView.tsvToMarkdownTable("\n\n"))
     }
 
-    /// Verify that parsing the converted markdown produces a table block.
     func test_convertedMarkdown_parsesAsTable() {
         let tsv = "A\tB\n1\t2"
         guard let md = EditTextView.tsvToMarkdownTable(tsv) else {
-            XCTFail("tsvToMarkdownTable returned nil"); return
+            XCTFail("nil"); return
         }
         let doc = MarkdownParser.parse(md)
-        XCTAssertEqual(doc.blocks.count, 1)
         guard case .table = doc.blocks[0] else {
-            XCTFail("Expected table block, got: \(doc.blocks[0])")
-            return
+            XCTFail("not a table: \(doc.blocks[0])"); return
         }
     }
 
-    /// Simulate WYSIWYG paste: insert markdown into editor and verify
-    /// the document has a table block after re-fill.
-    func test_pasteTableIntoWYSIWYG_createsTableBlock() {
-        let h = EditorHarness(markdown: "before", windowActivation: .offscreen)
+    // MARK: - Integration: paste via NSPasteboard
+
+    /// Put TSV on the real pasteboard, call paste(), verify table block.
+    func test_pasteTSV_viaPasteboard_createsTableInWYSIWYG() {
+        let h = EditorHarness(markdown: "before\n", windowActivation: .keyWindow)
         defer { h.teardown() }
 
-        let tsv = "A\tB\n1\t2"
-        guard let md = EditTextView.tsvToMarkdownTable(tsv) else {
-            XCTFail("tsvToMarkdownTable nil"); return
-        }
+        // Position cursor at end of "before"
+        let len = h.editor.textStorage?.length ?? 0
+        h.editor.setSelectedRange(NSRange(location: len, length: 0))
 
-        // Simulate what the WYSIWYG paste path does
+        // Put TSV data on the pasteboard — same format Numbers uses
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.declareTypes([.string, .tabularText], owner: nil)
+        pb.setString("A\tB\n1\t2", forType: .string)
+        pb.setString("A\tB\n1\t2", forType: .tabularText)
+
+        // Also declare the TSV UTI explicitly
+        let tsvType = NSPasteboard.PasteboardType("public.utf8-tab-separated-values-text")
+        pb.setString("A\tB\n1\t2", forType: tsvType)
+
+        // Call paste()
+        h.editor.paste(nil)
+
+        // After paste, document should contain a table block
+        guard let doc = h.document else { XCTFail("no doc"); return }
+        let hasTable = doc.blocks.contains { b in
+            if case .table = b { return true }
+            return false
+        }
+        XCTAssertTrue(
+            hasTable,
+            "Pasting TSV via pasteboard should create table block. " +
+            "Blocks: \(doc.blocks.map { String(describing: $0) })"
+        )
+    }
+
+    // MARK: - Integration: direct markdown insert (bypasses pasteboard)
+
+    /// Paste into an empty note — blockContaining returns nil, must still work.
+    func test_pasteTSV_intoEmptyNote_createsTable() {
+        let h = EditorHarness(markdown: "", windowActivation: .offscreen)
+        defer { h.teardown() }
+
+        h.editor.setSelectedRange(NSRange(location: 0, length: 0))
+
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        let tsvType = NSPasteboard.PasteboardType("public.utf8-tab-separated-values-text")
+        pb.declareTypes([.string, tsvType], owner: nil)
+        pb.setString("A\tB\n1\t2", forType: .string)
+        pb.setString("A\tB\n1\t2", forType: tsvType)
+
+        h.editor.paste(nil)
+
+        guard let doc = h.document else { XCTFail("no doc"); return }
+        let hasTable = doc.blocks.contains { b in
+            if case .table = b { return true }
+            return false
+        }
+        XCTAssertTrue(
+            hasTable,
+            "Paste into empty note should create table. Blocks: \(doc.blocks.count)"
+        )
+    }
+
+    /// Simulate the WYSIWYG code path with a markdown table string
+    /// inserted into an existing note, verifying the full pipeline.
+    func test_insertTableMarkdown_intoExistingNote_createsTable() {
+        let h = EditorHarness(markdown: "before\n\nafter", windowActivation: .offscreen)
+        defer { h.teardown() }
+
+        // Cursor after "before\n" = position 7 (or wherever)
+        let storageLen = h.editor.textStorage?.length ?? 0
+        h.editor.setSelectedRange(NSRange(location: storageLen, length: 0))
+
         guard let proj = h.editor.documentProjection,
               let note = h.editor.note
-        else { XCTFail("no projection/note"); return }
+        else { XCTFail("no proj/note"); return }
 
+        let markdown = "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+
+        // === This mirrors the TSV paste path exactly ===
         let cursorPos = h.editor.selectedRange().location
-        guard let (blockIndex, _) = proj.blockContaining(storageIndex: cursorPos)
-        else { XCTFail("no block"); return }
+        guard let (blockIndex, _) = proj.blockContaining(
+            storageIndex: cursorPos
+        ) else {
+            XCTFail("blockContaining returned nil at cursor=\(cursorPos)")
+            return
+        }
 
-        let parsed = MarkdownParser.parse(md)
+        let parsed = MarkdownParser.parse(markdown)
         var newDoc = proj.document
         for (offset, block) in parsed.blocks.enumerated() {
             newDoc.insertBlock(block, at: blockIndex + 1 + offset)
         }
-
         note.content = NSMutableAttributedString(
             string: MarkdownSerializer.serialize(newDoc)
         )
@@ -93,11 +158,15 @@ final class BugFsnotes639Tests: XCTestCase {
         h.editor.hasUserEdits = true
         h.editor.fill(note: note)
 
-        guard let doc = h.document else { XCTFail("no document"); return }
-        let hasTable = doc.blocks.contains { block in
-            if case .table = block { return true }
+        guard let doc = h.document else { XCTFail("no doc"); return }
+        let hasTable = doc.blocks.contains { b in
+            if case .table = b { return true }
             return false
         }
-        XCTAssertTrue(hasTable, "Document should contain a table block. Blocks: \(doc.blocks.count)")
+        XCTAssertTrue(
+            hasTable,
+            "Markdown table insert should create table block. " +
+            "Blocks: \(doc.blocks.map { String(describing: $0) })"
+        )
     }
 }

@@ -162,12 +162,26 @@ extension EditTextView {
             // visible text in WYSIWYG mode instead of creating a table.
             if let projection = documentProjection, let note = self.note {
                 let cursorPos = selectedRange().location
-                guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursorPos) else { return }
+                // blockContaining returns nil for empty docs or cursor
+                // on inter-block separators. Fall back to inserting
+                // after the last block, or just appending for empty docs.
+                let insertAfter: Int
+                if let (bIdx, _) = projection.blockContaining(storageIndex: cursorPos) {
+                    insertAfter = bIdx
+                } else if projection.document.blocks.isEmpty {
+                    insertAfter = -1  // signals "append"
+                } else {
+                    insertAfter = projection.document.blocks.count - 1
+                }
 
                 let parsed = MarkdownParser.parse(markdown)
                 var newDoc = projection.document
                 for (offset, block) in parsed.blocks.enumerated() {
-                    newDoc.insertBlock(block, at: blockIndex + 1 + offset)
+                    if insertAfter < 0 {
+                        newDoc.appendBlock(block)
+                    } else {
+                        newDoc.insertBlock(block, at: insertAfter + 1 + offset)
+                    }
                 }
 
                 note.content = NSMutableAttributedString(
@@ -191,12 +205,23 @@ extension EditTextView {
            let markdown = Self.htmlTableToMarkdown(html) {
             if let projection = documentProjection, let note = self.note {
                 let cursorPos = selectedRange().location
-                guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursorPos) else { return }
+                let insertAfter: Int
+                if let (bIdx, _) = projection.blockContaining(storageIndex: cursorPos) {
+                    insertAfter = bIdx
+                } else if projection.document.blocks.isEmpty {
+                    insertAfter = -1
+                } else {
+                    insertAfter = projection.document.blocks.count - 1
+                }
 
                 let parsed = MarkdownParser.parse(markdown)
                 var newDoc = projection.document
                 for (offset, block) in parsed.blocks.enumerated() {
-                    newDoc.insertBlock(block, at: blockIndex + 1 + offset)
+                    if insertAfter < 0 {
+                        newDoc.appendBlock(block)
+                    } else {
+                        newDoc.insertBlock(block, at: insertAfter + 1 + offset)
+                    }
                 }
 
                 note.content = NSMutableAttributedString(
