@@ -206,6 +206,7 @@ REGRZXR000000000000000B1 /* BugFsnotesZxrTests.swift in Sources */ = {isa = PBXB
 		REGR42V000000000000000B1 /* BugFsnotes42vTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR42V000000000000000F1 /* BugFsnotes42vTests.swift */; };
 		REGRW53000000000000000B1 /* BugFsnotesW53Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGRW53000000000000000F1 /* BugFsnotesW53Tests.swift */; };
 		REGR7QD000000000000000B1 /* BugFsnotes7qdTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR7QD000000000000000F1 /* BugFsnotes7qdTests.swift */; };
+		REGR63900000000000000B1 /* BugFsnotes639Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR63900000000000000F1 /* BugFsnotes639Tests.swift */; };
 		REGR95M000000000000000B1 /* BugFsnotes95mTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR95M000000000000000F1 /* BugFsnotes95mTests.swift */; };
 		REGRIBJ000000000000000B1 /* BugFsnotesibjTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGRIBJ000000000000000F1 /* BugFsnotesibjTests.swift */; };
 		REGR64C000000000000000B1 /* BugFsnotes64cTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR64C000000000000000F1 /* BugFsnotes64cTests.swift */; };
@@ -1499,6 +1500,7 @@ REGRZXR000000000000000F1 /* BugFsnotesZxrTests.swift */ = {isa = PBXFileReferenc
 		REGR95M000000000000000F1 /* BugFsnotes95mTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes95mTests.swift; sourceTree = "<group>"; };
 		REGRW53000000000000000F1 /* BugFsnotesW53Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotesW53Tests.swift; sourceTree = "<group>"; };
 		REGR7QD000000000000000F1 /* BugFsnotes7qdTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes7qdTests.swift; sourceTree = "<group>"; };
+		REGR63900000000000000F1 /* BugFsnotes639Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes639Tests.swift; sourceTree = "<group>"; };
 		REGRIBJ000000000000000F1 /* BugFsnotesibjTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotesibjTests.swift; sourceTree = "<group>"; };
 		REGR64C000000000000000F1 /* BugFsnotes64cTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes64cTests.swift; sourceTree = "<group>"; };
 		MCPTSTFX000000000000000F1 /* MCPTestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTestFixture.swift; sourceTree = "<group>"; };
@@ -3188,6 +3190,7 @@ REGRZXR000000000000000F1 /* BugFsnotesZxrTests.swift */ = {isa = PBXFileReferenc
 				REGRIBJ000000000000000F1 /* BugFsnotesibjTests.swift */,
 				REGRW53000000000000000F1 /* BugFsnotesW53Tests.swift */,
 				REGR7QD000000000000000F1 /* BugFsnotes7qdTests.swift */,
+				REGR63900000000000000F1 /* BugFsnotes639Tests.swift */,
 				REGR64C000000000000000F1 /* BugFsnotes64cTests.swift */,
 			);
 			path = Regression;
@@ -4890,6 +4893,7 @@ REGRZXR000000000000000F1 /* BugFsnotesZxrTests.swift */ = {isa = PBXFileReferenc
 				REGR64C000000000000000B1 /* BugFsnotes64cTests.swift in Sources */,
 				REGRW53000000000000000B1 /* BugFsnotesW53Tests.swift in Sources */,
 				REGR7QD000000000000000B1 /* BugFsnotes7qdTests.swift in Sources */,
+				REGR63900000000000000B1 /* BugFsnotes639Tests.swift in Sources */,
 				MCPTSTFX000000000000000B1 /* MCPTestFixture.swift in Sources */,
 				MCPTSTRN000000000000000B1 /* ReadNoteToolTests.swift in Sources */,
 				MCPTSTSN000000000000000B1 /* SearchNotesToolTests.swift in Sources */,

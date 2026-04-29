@@ -156,9 +156,32 @@ extension EditTextView {
         if let tsvData = NSPasteboard.general.data(forType: tsvType),
            let tsv = String(data: tsvData, encoding: .utf8),
            let markdown = Self.tsvToMarkdownTable(tsv) {
-            breakUndoCoalescing()
-            insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
-            breakUndoCoalescing()
+            // WYSIWYG mode: parse table into Document blocks, re-fill.
+            // Same pattern as the HTML table path below — inserting raw
+            // markdown via insertText would render pipe characters as
+            // visible text in WYSIWYG mode instead of creating a table.
+            if let projection = documentProjection, let note = self.note {
+                let cursorPos = selectedRange().location
+                guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursorPos) else { return }
+
+                let parsed = MarkdownParser.parse(markdown)
+                var newDoc = projection.document
+                for (offset, block) in parsed.blocks.enumerated() {
+                    newDoc.insertBlock(block, at: blockIndex + 1 + offset)
+                }
+
+                note.content = NSMutableAttributedString(
+                    string: MarkdownSerializer.serialize(newDoc)
+                )
+                note.cachedDocument = nil
+                hasUserEdits = true
+                fill(note: note)
+            } else {
+                // Source mode: insert raw markdown.
+                breakUndoCoalescing()
+                insertText(NSAttributedString(string: markdown), replacementRange: selectedRange())
+                breakUndoCoalescing()
+            }
             return
         }
 
