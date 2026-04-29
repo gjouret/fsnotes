@@ -1,422 +1,163 @@
-# DEBUG.md — Root Cause Analysis for FSNotes++ Bugs 3
+# DEBUG.md — Plan for the FSNotes++ Refactor 4 bug inventory
 
-**Source**: Note "FSNotes++ Bugs 3" (2026-04-13 13:30 CET)
-**Scope**: ~40 open bugs across headers, lists, tables, links, formatting, fold, attachments
-
-## Status (2026-04-15)
-
-All 8 root causes are resolved in code. Remaining work is live verification by the user against the original "FSNotes++ Bugs 3" note.
-
-- **RC1** (typingAttributes sync): ✅ `syncTypingAttributesToCursorBlock()` implemented and called at end of `applyEditResultWithUndo`. Empty-block synthesis path handles list-exit / Return-on-heading.
-- **RC2** (blockContaining boundary): ✅ Boundary + `listEntryContaining` fixes landed; 5 regression tests in `test_rc2_*` cover toggle/type/delete at boundaries.
-- **RC3** (multi-block selection): ✅ Multi-block toolbar ops via `blockIndices(overlapping:)` + shared `applyToggleAcrossSelection` helper that skips blank lines. Multi-paragraph list/todo collapse into one list via `wrapSelectionInSingleList`. `insertCodeBlock` rewritten on top of `EditingOps.wrapInCodeBlock` primitive (preserves text before/after the selection).
-- **RC4** (inline re-rendering): ✅ `EditingOps.reparseInlinesIfNeeded` walks the current block after every multi-char insertion or closer character (`)`, `]`, `}`, `` ` ``, `>`, `*`, `_`, `~`). Three `test_rc4_*` parity tests cover typed link, pasted link, typed bold.
-- **RC5** (fold state persistence): ✅ `Note.cachedFoldState: Set<Int>?` saved in `fillViaBlockModel` for the outgoing note and restored for the incoming one.
-- **RC6** (table widget): ✅ Substantially resolved by the Stage 1–4 table cell editing refactor (commit `1ab84a1`).
-- **RC7** (batch ensureLayout): ✅ `scheduleCoalescedLayout()` exists for mermaid/math; `applyEditResultWithUndo` invalidation extends from splice point to end of storage.
-- **RC8** (HTML-parity tests): ✅ 68 `EditorHTMLParityTests` cover the original 8 plus the RC2/RC3/RC4 regression families.
+**Source**: Notes "FSNotes++ Bugs - Refactor 4" + "FSNotes++ Refactor 4" (running plan)
+**Tracker**: `bd` (beads) — 59 open issues as of 2026-04-29 (4 P1 / 42 P2 / 13 P3)
+**Scope**: define a workflow for (1) detecting bugs that are already fixed, (2) fixing the open ones, (3) handling new bugs discovered while testing or fixing.
 
 ---
 
-## Summary
+## Core insight
 
-8 root causes account for all ~40 open bugs. They are ordered by impact (bugs resolved). Fixing all 8 would resolve or substantially improve every open bug. Several interact — the fix-order section at the bottom maps dependencies.
+Each bead's contract is a *failing test* that captures its symptom.
 
-**RC8 is cross-cutting**: insufficient HTML-parity test coverage for FSM transitions means bugs in the *execution* of correct FSM decisions go undetected. The FSM pure functions are correct, but the code that applies their decisions to the Document has gaps — and there are no tests that would catch them.
+- **Definitively fixed** = the test passes on master AND there is a prior SHA where it failed (so the test isn't tautologically green).
+- **Definitively not fixed** = the test fails on master.
 
----
-
-## RC1: Missing `typingAttributes` sync after block-level operations
-
-**Impact: ~5 bugs** | **Priority: HIGH** | **Difficulty: Easy**
-
-### Description
-After `applyEditResultWithUndo()` places the cursor (line 243), **nothing** updates `self.typingAttributes` to match the block type at the new position. NSTextView inherits typingAttributes from the character *before* the cursor — which after a block split (Return) or block conversion (toggle list/heading) belongs to the **old** block. The new line shows the old block's font size, paragraph style, and checkbox state until the first character triggers re-rendering.
-
-`updateTypingAttributesForPendingTraits()` (line 762) only handles inline traits (bold/italic toggles), not block-level formatting.
-
-### Evidence
-| File | Line | What's missing |
-|------|------|----------------|
-| `EditTextView+BlockModel.swift` | 243 | `setSelectedRange` but no `typingAttributes = ...` |
-| `EditTextView+BlockModel.swift` | 812 | `applyBlockModelResult` delegates to `applyEditResultWithUndo` — same gap |
-| `EditTextView+BlockModel.swift` | 762-804 | `updateTypingAttributesForPendingTraits` only touches inline traits |
-
-### Bugs caused
-- **Headers**: Return after H2 → cursor/line height stays at H2 size until first char typed
-- **Headers**: CMD+3 on blank line after H2 → gutter shows H2 (inherited paragraph style)
-- **Headers**: Heading button on blank line → raw markdown shown (typing attrs don't match block)
-- **Lists**: New Todo checkbox appears checked when previous was checked (inherits `.todo` attribute)
-- **Lists**: Cursor stays at list indent after Delete converts empty list to body text
-
-### Where to fix
-Add `syncTypingAttributesToCursorBlock()` that reads the rendered attributes at the cursor position from the new projection. Call at end of `applyEditResultWithUndo()` (after line 278).
+User validation drops out as the close gate for any bug with a verifiable property. Only perceptual judgments ("the gray looks too bright") still need the user.
 
 ---
 
-## RC2: `blockContaining()` boundary ambiguity at block edges
+## §1 — Detect bugs already fixed (no validation needed)
 
-**Impact: ~7 bugs** | **Priority: CRITICAL** | **Difficulty: Medium**
+Pipeline per bead:
 
-### Description
-`blockContaining()` uses inclusive upper bound: `idx >= lower && idx <= upper`. When cursor is at the exact boundary (end of block A == start of separator before block B), it always maps to block A with `offsetInBlock = block.length`. This offset is out-of-bounds for list operations: `listEntryContaining()` returns `nil` when offset equals item length (exclusive check on line 1518: `offset < inlineEnd`). The `nil` return causes `clearBlockModelAndRefill()` or wrong-item selection.
+1. **Classify by test layer** (CLAUDE.md Rule 4 — pure-fn first, view glue last). The first four layers are described authoritatively in [ARCHITECTURE.md §"Test Infrastructure"](ARCHITECTURE.md) (line 604+) — go there for harness internals; the table below is just the routing decision.
 
-The fallback (line 116-121) maps cursor past all spans to the last block with `offsetInBlock = lastSpan.length` — always a boundary value.
+   | Layer | Use for | Existing infra |
+   |-------|---------|----------------|
+   | Pure-fn | `EditingOps` / `MarkdownParser` / `DocumentRenderer` output | `BlockParserTests`, `EditingOperationsTests`, `DocumentEditApplierTests`, `MarkdownSerializer*Tests`, `ListEditingFSMTests` |
+   | HTML Parity (canonical live-edit harness, ~85 tests) | live-vs-expected `Document` HTML byte-equality + round-trip identity `HTML(doc) == HTML(parse(serialize(doc)))` | `Tests/EditorHTMLParityTests.swift` |
+   | EditorHarness DSL | scripted edits, `Invariants.assertContract` after each input | `Tests/EditorHarness.swift` |
+   | TK2 fragment dispatch (~55 tests) | correct `NSTextLayoutFragment` subclass per tagged range | `Tests/TextKit2FragmentDispatchTests.swift`, `TextKit2ElementDispatchTests.swift` |
+   | Coord-space | `caretRect` / `typographicBounds` / cell rect geometric relationships | new — see below |
+   | View-snapshot | `cacheDisplay`, only where chrome lives in view (not fragment) | new |
+   | Theme-pixel | sample `(x,y)` and `XCTAssertEqual` against `Theme.shared.<key>` | new |
+   | Computer-use screenshot | running-app verification when the property is only observable on screen — redraw-timing (META glyph wipe), final rendered appearance of WKWebView-driven content (Mermaid/MathJax against editor background), dark-mode pixel colors of glyphs drawn through paths that don't expose their color in code | `computer-use` MCP — `request_access` for `~/Applications/FSNotes++.app` (full tier, native app), then `screenshot` + `key`/`type` to drive |
+   | **Perceptual** | last resort — bug stays open, `bd update <id> --notes="needs visual confirmation"` | n/a |
 
-### Evidence
-| File | Line | Issue |
-|------|------|-------|
-| `DocumentProjection.swift` | 108 | `idx <= upper` — inclusive bound creates ambiguity |
-| `DocumentProjection.swift` | 116-121 | Fallback: `offsetInBlock = lastSpan.length` — always boundary |
-| `EditingOperations.swift` | 1518 | `offset < inlineEnd` (exclusive) — fails when offset == length |
-| `EditingOperations.swift` | 1513 | `offset <= inlineEnd` (inclusive for insertion) — inconsistent |
+   For cascade closure (§3), every regression test for a bead with combinatorial siblings should also be expressible as a row in `Tests/Combinatorial/Generator.swift`. **bd is the single source of truth for which scenarios are currently failing** — the combinatorial runner queries `bd list --label=combinatorial --status=open` at startup, extracts each scenario label from the bead's `--notes`, and `XCTExpectFailure(strict: true)`-wraps that scenario. When a root-cause fix lands and a downstream scenario flips to "unexpectedly passed," the runner reports it; we then `bd close` the corresponding bead and the wrap goes away on the next run. (`Tests/Combinatorial/DiscoveredBugs.txt` is being migrated to bd — see bd-fsnotes-wlp; it is no longer authoritative.)
 
-### Bugs caused
-- **Lists**: Delete in list → cursor jumps to end of note (lookup returns nil → clearBlockModelAndRefill)
-- **Lists**: Delete in multi-level list deletes more than selected
-- **Lists**: Delete list item → cursor jumps to end of note (recurring)
-- **Lists**: Move Item Up/Down moves entire list
-- **Headers**: CMD+2 on selected paragraph converts wrong paragraph
-- **Lists**: Creating Todo after paragraphs changes line 3-4 above
-- **General**: Typing at exact block boundary appends to wrong block
+   **CI-runnable vs. one-shot.** The first six layers are regression tests that run in CI and act as the close gate. A computer-use screenshot is a one-shot observation, archived in the bead's `--notes` as visual evidence — it complements but does not replace a programmatic test. Order of preference for verification: programmatic (cheap, deterministic, runs in CI) → screenshot (the property cannot be read in code, e.g. redraw timing) → user perceptual confirmation.
 
-### Where to fix
-- `DocumentProjection.swift:108`: When `idx == upper`, check if there's a next block starting at `idx + 1` (separator). If so, return the next block at offset 0 for operations that insert/format (not for append-to-current).
-- `EditingOperations.swift:1507-1526`: Make `listEntryContaining` handle `offset == totalLength` by clamping to last entry at its end.
+2. **Write the failing test** at the chosen layer under `Tests/Regression/Bug<beadID>Tests.swift`. One file per bead.
 
----
+3. **Bisect-anchor**: run the test in a temp worktree at `master~50` (or wider). If it failed at any prior SHA, the test is real (not tautologically green). Capture the SHA where it transitioned to passing — that is the fix commit.
 
-## RC3: Toolbar operations use single cursor location, not full selection range
-
-**Impact: ~8 bugs** | **Priority: CRITICAL** | **Difficulty: Medium**
-
-### Description
-Every block-level toolbar operation extracts only `selectedRange().location` (a single `Int`) and passes it to `EditingOps`. The selection length is discarded. Multi-paragraph selections are ignored.
-
-Additionally, `insertCodeBlock` (line 389) wraps text in fence markdown and calls `insertText()`, which routes through `handleEditViaBlockModel` as a plain text replacement — not a structural code-block operation. The block model can't handle multi-line markdown syntax insertion, throws, and falls back to `clearBlockModelAndRefill()` which loses the text.
-
-### Evidence
-| File | Line | Single-point usage |
-|------|------|-------------------|
-| `EditTextView+BlockModel.swift` | 945 | `changeHeadingLevelViaBlockModel` → `selectedRange().location` |
-| `EditTextView+BlockModel.swift` | 963 | `toggleListViaBlockModel` → `selectedRange().location` |
-| `EditTextView+BlockModel.swift` | 981 | `toggleBlockquoteViaBlockModel` → `selectedRange().location` |
-| `EditTextView+BlockModel.swift` | 1018 | `toggleTodoViaBlockModel` → `selectedRange().location` |
-| `EditTextView+Formatting.swift` | 394-406 | `insertCodeBlock` → `insertText(mutable, replacementRange:)` |
-
-### Bugs caused
-- **Lists**: Select multiple paragraphs + Bullet List → only first converts
-- **Lists**: Select multiple lines in multi-level list + Delete → deletes ALL items
-- **Headers**: Select multiple paragraphs + CMD+2 → wrong one converts
-- **Formatting**: Select text + Code Block button → deletes text
-- **Lists**: Multi-paragraph selection + Todo → only first converts
-- **Lists**: Select body text paragraphs, one becomes Todo 3-4 lines above
-- **Formatting**: Move Selected Lines Up/Down → moves entire list, not selected item
-- **Lists**: Entering new Todo when below-item is completed → new item inherits checked state
-
-### Where to fix
-- All `ViaBlockModel` methods: accept `NSRange` (full selection), enumerate all blocks in range via `blockContaining`, apply operation to each.
-- `EditingOps`: Add `changeHeadingLevel(level:range:in:)`, `toggleList(marker:range:in:)` etc. that iterate blocks.
-- `insertCodeBlock`: Add `EditingOps.wrapInCodeBlock(range:in:)` that wraps the selected blocks in a code fence.
-
-### Depends on
-- **RC2**: Block boundary resolution must be correct before iterating multiple blocks.
+4. **Close gate**:
+   - Test green on master AND failed at some prior SHA → `bd close <id> --reason="regression test green at <SHA>; failed at <prior SHA>"`
+   - Test still fails on master → real bug, route to §2
+   - Bug is perceptual → flag for user review, do not auto-close
 
 ---
 
-## RC4: No live inline re-rendering after text insertion
+## §2 — Fix open bugs
 
-**Impact: ~5 bugs** | **Priority: HIGH** | **Difficulty: Hard**
+**Order**: P1 first (4 bugs), then P2 in pipeline-stage clusters so one fix can close multiple beads.
 
-### Description
-When markdown inline syntax (`[text](url)`, `[[wikilink]]`, bare URLs) is typed or inserted, `EditingOps.insert()` splices raw text into an existing `.text()` inline node. The inline tree is never re-parsed. `parseInlinesFromText()` (line 3773) wraps everything as `[.text(text)]` — no syntax detection at all.
+Per bead:
 
-Links only become clickable after `clearBlockModelAndRefill()` (note reload), which re-parses from disk through the full `MarkdownParser.parseInlines()` pipeline.
+1. `bd update <id> --claim`
+2. Confirm the regression test from §1 fails (existence proof).
+3. `gitnexus_impact` on each symbol I would modify — halt and report if HIGH or CRITICAL.
+4. Identify the owning pipeline stage (CLAUDE.md Rule 6). Fix *at* that stage, not downstream.
+5. Re-run the regression test, the full pure suite, and `scripts/rule7-gate.sh`.
+6. Build + deploy via the `xcode-build-deploy` skill. Verify with `nm` / `strings` that the changes landed in the deployed binary.
+7. For UI bugs: read the verifiable property programmatically (caret rect, layer color, fragment class) where possible. If the property is only observable in the running app (redraw timing, WKWebView-rendered Mermaid/MathJax pixels against the live editor background, dark-mode glyph colors drawn through opaque paths), drive the deployed `~/Applications/FSNotes++.app` via `computer-use` — `request_access`, scripted `key`/`type` to reproduce the symptom, `screenshot` before and after the fix, archive both in the bead's `--notes`. Still no "does it look right?" questions to the user — the screenshot pair is the evidence.
+8. `bd close <id> --reason="test green at <SHA>"` + `git commit` + `git push`.
 
-### Evidence
-| File | Line | Issue |
-|------|------|-------|
-| `EditingOperations.swift` | 3773-3778 | `parseInlinesFromText` → `[.text(text)]`, no inline parsing |
-| `EditTextView+Formatting.swift` | 57 | `linkMenu` → `insertText(markdown)` → plain text splice |
-| `EditTextView+Formatting.swift` | 236 | `wikiLinks` → `insertText("[[text]]")` → plain text splice |
+**Pipeline-stage clusters** (one fix → multiple closures, ordered roughly by leverage):
 
-### Bugs caused
-- **Links**: Insert Link via toolbar → not clickable until app reload
-- **Links**: WikiLinks `[[...]]` stay visible and not clickable
-- **Links**: Typed URLs only partially render as links (scheme not included in link)
-- **Links**: Insert Link button → markdown visible until reload
-- **Lists**: Bullet list button inserts `- ` when toggle fails → stays as text
-
-### Where to fix
-After any text insertion that completes a recognizable inline pattern, re-parse the affected block's full inline tree from its rendered text. Two approaches:
-1. **Post-edit hook**: In `handleEditViaBlockModel`, after splice, check if the block's rendered text contains link/image/wikilink patterns → re-parse inlines → re-render block.
-2. **Smart `parseInlinesFromText`**: Replace the trivial wrapper with the full `InlineParser` from `MarkdownParser`.
-
-### Depends on
-- **RC7**: Re-rendering triggers layout. Batch layout should be in place first.
+| Cluster | Beads | Owning stage |
+|---------|-------|--------------|
+| `EditingOps` caret/newline family | new-note caret height, triple-click+delete, wikilink trailing newline, HR cursor placement, mermaid block insert, last-cell `<br>` regression | `FSNotesCore/Rendering/EditingOperations.swift` |
+| `TableLayoutFragment` coord-space | column-handle box, row-handle drift, multi-line-cell handle overlap, cell text-left-of-cursor | `FSNotesCore/Rendering/TableLayoutFragment.swift` |
+| WYSIWYG↔Source bridge | toggle cursor position, toggle selection preservation | `EditTextView+Toggle.swift` (or equivalent) |
+| Wikilink resolver | trailing-newline picker, click-to-open handler | parser + URL handler |
+| URL autolink at type time | toolbar Insert Link, typed URL prefix | `EditingOps.reparseInlinesIfNeeded` |
+| Theme / dark mode | Todo glyph color, table shading, fold ellipsis gray, banner gray, mode-aware MathJax/Mermaid/QuickLook cache | `ThemeSchema.swift` + render-cache invalidator on `NSAppearance` change |
+| Attachment redraw / META glyph wipe | META glyph wipe, `ensureLayout` coalescing, possibly Todo glyph color | attachment view providers + edit applier |
+| Print pipeline | non-image attachment QuickLook in print | print path |
+| External-edit watcher | `text.md` mtime → reload | `Note` reload path |
 
 ---
 
-## RC5: Fold state not persisted across note switches
+## §3 — New bugs discovered while testing/fixing
 
-**Impact: ~2 bugs** | **Priority: LOW** | **Difficulty: Easy**
+Decision tree at the moment of discovery:
 
-### Description
-Fold state lives in `TextStorageProcessor.foldedHeaders` (in-memory `Set`). When switching notes, `fillViaBlockModel()` replaces the entire blocks array. The previous note's fold state is lost. There is no persistence to disk or cache.
+- **Same root cause as current bead** → fold into current fix; one-line mention in commit message; no new bead.
+- **Adjacent symptom, same pipeline stage, < 10 LoC delta to also fix** → fix in same commit; file the bead retroactively with `bd close --reason="folded into <commit-sha>"` and `bd dep add` to current bead so history is honest.
+- **Different pipeline stage or substantial work** → `bd create --type=bug --priority=N` immediately; capture the failing test as `Tests/Regression/Bug<newID>Tests.swift` with `XCTExpectFailure` (so the suite stays green); `bd dep add` if it blocks the current bead; return to current bead.
+- **Combinatorial-generator discovery** (Phase 11 Slice E pattern) → one bead per *root-cause cluster*, not per variant. Record all variants in `--notes`. The existing generator at `Tests/Combinatorial/Generator.swift` already does this.
+- **Cascade closure**: after fixing a P1 root cause, re-run the combinatorial matrix. Any `XCTExpectFailure` that flips to green gets `bd close --reason="cascade from <root-bead>"`. (Slice E showed bug #45's 10 variants close on bug #37's fix — the pattern is real.)
 
-### Evidence
-| File | Line | Issue |
-|------|------|-------|
-| `TextStorageProcessor.swift` | 164-169 | `previousCollapsed` keyed by block index, same-note only |
-| `EditTextView+BlockModel.swift` | 165-167 | `fillViaBlockModel` replaces blocks — old fold state gone |
-
-### Bugs caused
-- Fold state lost when switching notes and returning
-- Space between header text and `[...]` fold indicator (fold attribute range issue)
-
-### Where to fix
-- Per-note fold state cache: `Note.foldedHeaderIndices: Set<Int>?`
-- `fillViaBlockModel`: After sync, restore fold state from cache
-- `toggleFold`: After toggle, save to cache
+**Hard rule**: never silently absorb a discovered bug. Either it is named in the commit message of the current fix, or it is a new bead with a captured test. No third option.
 
 ---
 
-## RC6: Table widget layout and editing gaps
+## What runs first
 
-**Impact: ~4 bugs** | **Priority: MEDIUM** | **Difficulty: Medium**
+1. Build the regression-test scaffold for the 4 P1 beads:
+   - META: bullet/Todo glyphs disappear during edit, reappear on scroll
+   - Table cell: typed text appears left of cursor (1-2 char offset)
+   - Last table cell: typing inserts `<br>` per character (regression)
+   - `HeaderTests.test_headerFonts_areBold` hangs (existing P1 from prior session)
 
-### Description
-Table cells are `NSTextField` (line 46-48), not `NSTextView`. NSTextField doesn't support rich text editing commands. Row highlight width includes `L.leftMargin` but positions at `x: 0`, causing a 1-2px offset. Cell vertical alignment differs between display mode (custom layout) and edit mode (NSTextField baseline).
+   One `Tests/Regression/Bug<id>Tests.swift` per bead.
 
-### Evidence
-| File | Line | Issue |
-|------|------|-------|
-| `InlineTableView.swift` | 46-48 | Cells are `NSTextField` arrays |
-| `InlineTableView.swift` | 464-467 | Highlight width includes margin, position starts at 0 |
-| `InlineTableView.swift` | 769-775 | Display rendering uses custom padding; NSTextField differs |
-| `InlineTableView.swift` | 127-132 | `cellFrame` insets don't match NSTextField internal padding |
+2. Run them on master.
 
-### Bugs caused
-- Can't apply bold/italic to table cells
-- Row focus extends too far right, starts offset by 1-2px
-- Cell text shifts down when clicking to edit
-- Table under H1 without blank line doesn't render (block boundary/spacing issue)
+3. Bisect-anchor each: find the SHA where each transitioned from failing to passing (or confirm it never did).
 
-### Where to fix
-- Cell formatting: Either switch to `NSTextView` for cells, or implement markdown-marker insertion that re-renders on edit-end
-- Highlight: Adjust `x` offset to match handle padding; cap width to `L.gridWidth`
-- Vertical alignment: Set explicit NSTextField vertical alignment or match custom padding
+4. Report: which P1s are already fixed (close gate), which are real (move to fix queue).
 
----
+That cycle proves the methodology on the 4 highest-stakes beads before applying it to all 59.
 
-## RC7: `ensureLayout` called per-replacement instead of batched
+**Tradeoff to note**: bugs that need a *running* app to reproduce (META glyph wipe is the obvious one — it is about redraw timing during edits) have two verification paths:
 
-**Impact: ~2 bugs** | **Priority: LOW** | **Difficulty: Easy**
+1. **Programmatic AppKit harness in-process** — snapshot `attachmentViewProvider.view.layer.contents` after each scripted edit, assert non-nil. Reusable across all redraw-related beads, runs in CI. First choice when the property is reachable from inside the test process.
+2. **Computer-use screenshot of the deployed app** — when the in-process harness doesn't reproduce the bug because the redraw race only fires under real AppKit run-loop and graphics-driver conditions. Drive `~/Applications/FSNotes++.app` via `computer-use` MCP (full tier, no restrictions); script the edit sequence with `key` / `type`; capture before/after screenshots; archive in bead notes as evidence. Not CI-runnable — captured once during the fix, referenced thereafter.
 
-### Description
-Mermaid/math rendering loops call `ensureLayout` after each block replacement. N replacements = N full layout passes. Additionally, `applyEditResultWithUndo` (line 260-276) invalidates only `blockIdx` to `blockIdx+1`, which can be too narrow when a splice shifts all subsequent blocks.
-
-### Evidence
-| File | Line | Issue |
-|------|------|-------|
-| `EditTextView+BlockModel.swift` | ~1187 | `ensureLayout` inside mermaid rendering loop |
-| `EditTextView+BlockModel.swift` | ~1340 | `ensureLayout` inside math rendering loop |
-| `EditTextView+BlockModel.swift` | 260-276 | Invalidation range: only `blockIdx` to `blockIdx+1` |
-
-### Bugs caused
-- `ensureLayout` called 3x for 3 mermaid/math replacements
-- Juddering when editing in middle of note (narrow invalidation range)
-
-### Where to fix
-- Collect all mermaid/math replacement ranges → single `beginEditing`/`endEditing` cycle → one `ensureLayout` for union range
-- `applyEditResultWithUndo`: Extend invalidation from `spliceRange.location` to end of storage
+The META glyph wipe likely needs path 2: in-process snapshots may freeze the view tree at a moment where the redraw signal *did* arrive, masking the user-visible flicker. A real-app screenshot taken mid-typing is the honest test.
 
 ---
 
-## RC8: FSM transition execution paths lack HTML-parity test coverage
+## Conventions
 
-**Impact: cross-cutting (all ~40 bugs)** | **Priority: CRITICAL** | **Difficulty: Medium**
+- **One bead → one regression test file**. Path: `Tests/Regression/Bug<beadID>Tests.swift` (use the bd-assigned suffix, e.g. `BugFsnotes5fbTests.swift`).
+- **Commit message format**: `bd-<id>: <title> — <test-SHA>`. Bead ID as a stable cross-ref.
+- **Worktrees for bisect**: per CLAUDE.md "Worktrees: CocoaPods symlinks required" — symlink `Pods` / `Podfile` / `Podfile.lock` from main repo before first build in any new worktree. Prune after the bisect lands.
+- **`scripts/rule7-gate.sh`**: run before *any* edit under `FSNotes/Rendering/` or `FSNotesCore/Rendering/`. If the baseline is dirty, stop — pattern-matching from a violating baseline extends the violation.
+- **Build redirection**: `xcodebuild ... > /tmp/xcbuild.log 2>&1` always (CLAUDE.md context-window discipline). Same for `xcodebuild test`.
 
-### Description
-The `ListEditingFSM` pure function is 100% correct — all 13 documented transitions are implemented and have unit tests. However, the **execution layer** (code that *applies* FSM decisions to the Document and textStorage) has minimal test coverage through the HTML-parity harness.
+### Bead lifecycle (every bead must transition through these states explicitly)
 
-`EditorHTMLParityTests` has the right architecture: drive the editor through real entry points (`handleEditViaBlockModel`, toolbar `*ViaBlockModel` methods), then compare the live Document's HTML against the expected markdown's HTML. But it only has **8 edit-script tests** covering a fraction of the FSM transition space:
+> **Canonical source**: `~/.claude/skills/beadbox/SKILL.md`. The Beadbox skill defines an 8-state lifecycle for multi-agent workflows: `open → in_progress → ready_for_qa → qa_passed → ready_to_ship → closed` (plus `blocked` / `deferred` branches). Per-agent transition rules ("only the impl agent transitions in_progress → ready_for_qa") prevent two agents from claiming the same bead.
 
-| Transition | HTML Parity Test? |
-|------------|:-----------------:|
-| Return after heading → paragraph | YES |
-| Return in list → new item | YES |
-| Toggle bold on selection | YES |
-| Paragraph → heading | YES |
-| Paragraph → list | YES |
-| Type into heading | YES (2 tests) |
-| **Return on empty list → exit to body** | **NO** |
-| **Return on empty nested list → unindent** | **NO** |
-| **Tab → indent list item** | **NO** |
-| **Shift-Tab → unindent list item** | **NO** |
-| **Delete at home in list → unindent/exit** | **NO** |
-| **Delete at block boundary → merge (14 rules)** | **NO** |
-| **Toggle todo** | **NO** |
-| **Toggle blockquote** | **NO** |
-| **Insert HR** | **NO** |
-| **Heading level change (H2→H3)** | **NO** |
-| **Heading toggle off (H2→paragraph)** | **NO** |
-| **Bold toggle OFF** | **NO** |
-| **Multiple Returns (blank lines)** | **NO** |
-| **Paragraph → numbered list** | **NO** |
-| **List → paragraph (toggle off)** | **NO** |
-| **Delete in multi-level list** | **NO** |
-| **Todo checkbox toggle** | **NO** |
-| **Return on checked todo → unchecked** | **NO** |
+For solo-agent work the 3-state subset (`open / in_progress / closed`) is sufficient. For multi-agent runs (impl + QA + ops, or two parallel impl agents working different beads), use the 8-state lifecycle and pass `--actor <name>` on every transition. The lifecycle table below covers both modes — the `ready_for_qa` / `qa_passed` rows are skipped in solo mode.
 
-The FSM *decides* correctly, but the code that *executes* the decision (EditingOps methods, splice generation, cursor positioning) is where the actual bugs live. Without HTML-parity tests for each transition, regressions in the execution layer go undetected.
+| State change | Command | When |
+|--------------|---------|------|
+| open → in_progress | `bd update <id> --claim --actor <name>` | At the start of work on a bead. **Always claim before editing code or running tests** — `--claim` is what stops a parallel agent from grabbing the same bead. Never leave a bead silently in_progress without claiming. |
+| in_progress (annotate) | `bd update <id> --notes="<finding>"` | Each non-trivial discovery during work — root cause confirmed, dead end ruled out, related symptom found. Future sessions read this. |
+| in_progress (visual evidence) | `bd update <id> --notes="screenshot:<path>"` | When verification used computer-use; archive the before/after screenshot pair path. |
+| in_progress → ready_for_qa (multi-agent) | `bd update <id> --status ready_for_qa --actor <impl-agent>` | Impl agent posts `DONE: ... Commit: <sha>` in notes, then transitions. Only the impl agent makes this transition. |
+| ready_for_qa → qa_passed (multi-agent) | `bd update <id> --claim --actor <qa-agent>` then `--status qa_passed` | QA agent claims, runs the regression test on master + bisect-anchor, then transitions. If broken, transitions to `blocked` instead. |
+| qa_passed → ready_to_ship → closed (multi-agent) | `bd update <id> --status ready_to_ship --actor <ops-agent>` then `bd close <id>` | Ops agent ships and closes. |
+| in_progress → closed (solo, fix) | `bd close <id> --reason="test green at <SHA>"` | Solo workflow. After §2 step 7 verification. Must include commit SHA of the fix. |
+| in_progress → closed (solo, already-fixed §1) | `bd close <id> --reason="regression test green at <SHA>; failed at <prior SHA>"` | When the bisect-anchored test passes on master with prior-SHA failure proof. |
+| any → closed (cascade §3) | `bd close <id> --reason="cascade from <root-bead-id> at <SHA>"` | When a P1 fix flips a `Tests/Combinatorial/DiscoveredBugs.txt` `XCTExpectFailure` entry to "unexpectedly passed" for a sibling bead. |
+| any → deferred | `bd defer <id> --until="<date>"` | Discovered out-of-scope; document why in `--notes`. |
+| any → blocked | `bd update <id> --status blocked --actor <name>` | QA fails or external dependency missing. Resumes to `in_progress` when unblocked. |
+| any → human flag | `bd human <id>` | Bug is perceptual ("looks too white"); needs the user before it can close. |
+| new bead | `bd create --type=bug --priority=N --title=... --description=...` | §3 discovery path. Capture failing test as `XCTExpectFailure` in same commit so the suite stays green. |
+| dependency | `bd dep add <bead> <depends-on>` | When a discovered bead blocks the current one, or when a cascade root-bead is identified. |
 
-### Evidence
-| File | Line | What exists |
-|------|------|-------------|
-| `Tests/EditorHTMLParityTests.swift` | 152-179 | EditStep DSL supports: cursorAt, select, type, pressReturn, backspace, toggleBold/Italic, setHeading, toggleList/Quote/Todo, insertHR |
-| `Tests/EditorHTMLParityTests.swift` | 339-443 | Only 8 edit-script tests |
-| `Tests/ListEditingFSMTests.swift` | all | 44 tests — but test FSM pure function only, not the full editor pipeline |
-| `Tests/EditingOperationsTests.swift` | 483-668 | 9 merge tests — but test EditingOps directly, not through editor |
+### Session-close protocol (per CLAUDE.md)
 
-### What's needed
-The EditStep DSL already supports all the operations. What's missing is tests that:
-1. Start from specific markdown
-2. Execute a sequence of EditSteps through the real editor
-3. Assert the live Document's HTML matches expected markdown's HTML
-4. Assert the Document round-trips (serialize → parse → same HTML)
-
-Each untested transition above needs at minimum one test. The 14 block merge rules need one test each. The DSL needs one new step: `.tab` and `.shiftTab` for list indent/unindent.
-
-### Bugs this would catch
-Every bug in RC1, RC2, RC3 manifests as the live Document diverging from expected markdown after an editing operation. HTML-parity tests would have caught:
-- Return after header: line shows heading-level content (HTML would show `<h2>` where `<p>` expected)
-- Delete in list jumping to wrong position (HTML would show wrong list structure)
-- CMD+2 converting wrong paragraph (HTML would show heading on wrong block)
-- Bold toggle stuck on (HTML would show `<strong>` wrapping everything)
-- New Todo inheriting checked state (HTML would show `[x]` where `[ ]` expected)
-
-### Where to fix
-- `Tests/EditorHTMLParityTests.swift`: Add ~25 new edit-script tests (one per untested transition)
-- `Tests/EditorHTMLParityTests.swift:152`: Add `.tab` and `.shiftTab` EditStep cases that route through the FSM
-
----
-
-## Fix-Order Dependencies
-
-```
-Phase 0 — Test Infrastructure (do FIRST — catches regressions from all other fixes):
-  RC8 (HTML-parity tests)         Write tests BEFORE fixing RC1-RC7; tests prove the fix works
-
-Phase 1 — Foundation (no dependencies, unblocks everything):
-  RC1 (typingAttributes sync)     Easy, independent, immediate UX improvement
-  RC2 (blockContaining boundary)  Unblocks correct behavior for all operations
-
-Phase 2 — Core Operations (depends on Phase 1):
-  RC3 (multi-block selection)     Depends on RC2; biggest bug count
-  RC7 (batch ensureLayout)        Prepares for RC4's extra layout passes
-
-Phase 3 — Features (depends on Phase 2):
-  RC4 (inline re-rendering)       Depends on RC7 for perf; hardest fix
-  RC5 (fold persistence)          Independent, easy
-  RC6 (table widget)              Independent, medium effort
-```
-
-### Why RC8 comes first
-The HTML-parity tests should be written BEFORE fixing RC1-RC7. Each test will initially **fail** (proving the bug exists), then **pass** after the corresponding RC fix (proving the fix works). This is test-driven development: write the test that captures the bug, then fix the bug. Without RC8, we have no regression safety net — fixing RC2 could break something RC1 fixed, and we'd never know.
-
-### Interaction Matrix
-
-|     | RC1 | RC2 | RC3 | RC4 | RC5 | RC6 | RC7 | RC8 |
-|-----|-----|-----|-----|-----|-----|-----|-----|-----|
-| RC1 |  -  |     |     |     |     |     |     | RC8 tests verify |
-| RC2 |     |  -  | RC3 needs RC2 |     |     |     |     | RC8 tests verify |
-| RC3 |     | depends |  -  |     |     |     |     | RC8 tests verify |
-| RC4 |     |     |     |  -  |     |     | needs RC7 | RC8 tests verify |
-| RC5 |     |     |     |     |  -  |     |     |     |
-| RC6 |     |     |     |     |     |  -  |     |     |
-| RC7 |     |     |     | RC4 perf |     |     |  -  |     |
-| RC8 | verifies | verifies | verifies | verifies |     |     |     |  -  |
-
----
-
-## Bug-to-Root-Cause Mapping (Open Bugs Only)
-
-### Headers
-| Bug | RC |
-|-----|----|
-| Return after H2: line height wrong | RC1 |
-| CMD+3 on blank line: gutter shows H2 | RC1, RC2 |
-| H2 button on new note blank line: shows raw markdown | RC1, RC4 |
-| Fold header: space before [...] | RC5 |
-| Fold state lost on note switch | RC5 |
-
-### Note editing & formatting
-| Bug | RC |
-|-----|----|
-| Delete in empty L1 list: cursor stays indented | RC1 |
-| CMD+B toggle stuck on | RC1 (pendingInlineTraits not cleared after selection op — minor variant) |
-| Delete in Todo list removes line instead of checkbox | RC2 |
-| Remove blank line between header/code breaks rendering | RC2, RC7 |
-| Delete in list: cursor jumps to end | RC2 |
-| Juddering when typing in list | RC7 |
-| Copy list with formatting: paste loses formatting | RC3 |
-| `<kbd>` tags don't render | Separate (missing inline parser for HTML tags) |
-| `<sup>/<sub>` not implemented | Separate (feature request) |
-| Cursor position mismatch WYSIWYG ↔ Markdown mode | RC2 |
-| Select text + Code Block button deletes text | RC3 |
-
-### Lists
-| Bug | RC |
-|-----|----|
-| Bullet List button: inserts `- ` but no bullet | RC4 (or RC3 if toggle failed) |
-| Todo checkbox moves 1-2px on first char | RC1 |
-| New Todo 3-4 lines above cursor | RC2, RC3 |
-| New Todo inherits checked state | RC1 |
-| Multi-paragraph + Bullet List: only first converts | RC3 |
-| Multi-level list select + Delete: deletes all | RC2, RC3 |
-| When cursor in list + Move Up/Down: moves all | RC3 |
-
-### Tables
-| Bug | RC |
-|-----|----|
-| Row handle: focus extends too far right | RC6 |
-| Cell text shifts down on edit | RC6 |
-| Table under H1 without blank line: no render | RC6, RC2 |
-| Can't bold/italic in table cells | RC6 |
-| Multi-cell selection/clear | RC6 (feature) |
-
-### Links
-| Bug | RC |
-|-----|----|
-| Insert Link: not clickable until reload | RC4 |
-| Typed URLs: only partially linked | RC4 |
-| WikiLinks `[[...]]`: stay visible, not clickable | RC4 |
-| Move Selected Lines in list: moves all | RC3 |
-
-### Lines
-| Bug | RC |
-|-----|----|
-| HR button: cursor not positioned right of line | RC1 |
-| Checkbox moves 1-2px on first char | RC1 |
-| Delete list item: cursor jumps to end | RC2 |
-
-### Code blocks & MathJax
-| Bug | RC |
-|-----|----|
-| ensureLayout called 3x | RC7 |
-| Select + Code Block button deletes text | RC3 |
-
-### Menu/UI (not root-cause-related)
-| Bug | Notes |
-|------|-------|
-| Rename → Rename Note | Menu label change |
-| Move → Move Note | Menu label change |
-| Duplicate → Duplicate Note | Menu label change |
-| Delete Orphaned Attachments icon | Asset addition |
-| Shrinking window hides panes permanently | NSSplitView constraint issue |
-| WYSIWYG↔Markdown clears Undo | UndoManager architecture |
-| Print doesn't include QuickLook previews | Print pipeline |
-| PDF export clips right margin | Table/mermaid width calculation |
-| Remove Preview MathJax menu | Menu cleanup |
-| Various Settings questions | Investigation/cleanup |
+After every work session, before stopping:
+1. `bd preflight` — lint, stale, orphans.
+2. `git pull --rebase`.
+3. `bd dolt push` — sync beads to Dolt remote.
+4. `git push` — push code.
+5. `git status` — must show "up to date with origin". Work is **not** complete until this prints clean.
