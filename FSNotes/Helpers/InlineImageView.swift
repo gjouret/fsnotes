@@ -62,14 +62,12 @@ public final class ImageNSTextAttachment: NSTextAttachment {
         location: NSTextLocation,
         textContainer: NSTextContainer?
     ) -> NSTextAttachmentViewProvider? {
-        let provider = ImageAttachmentViewProvider(
+        return ImageAttachmentViewProvider(
             textAttachment: self,
             parentView: parentView,
             textLayoutManager: textContainer?.textLayoutManager,
             location: location
         )
-        provider.tracksTextAttachmentViewBounds = true
-        return provider
     }
 }
 
@@ -80,6 +78,24 @@ public final class ImageNSTextAttachment: NSTextAttachment {
 /// to TextKit 2. TK2 manages inserting the view into the text view's
 /// hierarchy and positioning it within the viewport.
 public final class ImageAttachmentViewProvider: NSTextAttachmentViewProvider {
+
+    /// `tracksTextAttachmentViewBounds` must be set in init, not after
+    /// construction, or TK2 can measure a hosted attachment before the
+    /// provider view has usable bounds.
+    public override init(
+        textAttachment: NSTextAttachment,
+        parentView: NSView?,
+        textLayoutManager: NSTextLayoutManager?,
+        location: any NSTextLocation
+    ) {
+        super.init(
+            textAttachment: textAttachment,
+            parentView: parentView,
+            textLayoutManager: textLayoutManager,
+            location: location
+        )
+        tracksTextAttachmentViewBounds = true
+    }
 
     public override func loadView() {
         super.loadView()

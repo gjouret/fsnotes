@@ -1099,25 +1099,8 @@ extension EditTextView {
         pendingInlineTraits = savedPendingTraits
         explicitlyOffTraits = savedOffTraits
 
-        // bd-fsnotes-ibj v4 EXPERIMENT (2026-04-29): the v3 layoutViewport-
-        // only refresh isn't fixing the flicker either — QA reports
-        // bullets/checkboxes still flicker on every keystroke when typing
-        // in a list. The harness's new attachment-identity invariant
-        // shows attachment instances ARE preserved across the splice
-        // (NSAttributedString interns isEqual values, replaceCharacters
-        // keeps the dedup'd reference), so the flicker isn't instance
-        // replacement. Hypothesis: the layoutViewport() calls in
-        // scheduleListGlyphRefresh ARE themselves the flicker source —
-        // they force TK2 to re-evaluate viewport mounting, which
-        // briefly unmounts and remounts the bullet's hosted view.
-        //
-        // Disabling the refresh entirely as the A/B-test datum. If
-        // disappearance returns without it, we know the refresh was
-        // doing real work; if both flicker AND disappearance vanish,
-        // the refresh was actively harmful. Either result tells us
-        // where the real fix has to live.
-        //
-        // scheduleListGlyphRefresh()  // DISABLED
+        // List markers are static image-backed attachments, so this
+        // path does not need any post-edit TK2 view-provider refresh.
     }
 
     /// Count U+FFFC attachment characters in an attributed string.
@@ -1131,56 +1114,6 @@ extension EditTextView {
             if s.character(at: i) == 0xFFFC { count += 1 }
         }
         return count
-    }
-
-    /// Schedule a coalesced bullet/checkbox view-provider refresh
-    /// after an edit. TK2 caches `NSTextAttachmentViewProvider`
-    /// instances and re-uses their hosted `.view` across layout
-    /// passes — even when the underlying fragment has moved. The
-    /// fold-path workaround (set `attachment.image` to a placeholder
-    /// of the same size — TextStorageProcessor.swift:756-782) forces
-    /// TK2 to invalidate its cache and call `loadView()` again on
-    /// the next layout pass. We apply the same workaround here.
-    ///
-    /// Coalesced via `pendingListGlyphRefreshScheduled` so rapid
-    /// typing only schedules ONE refresh per run-loop tick.
-    /// Synchronous walks per keystroke would force one tickle per
-    /// bullet × keystroke, which is wasted work — the visible
-    /// symptom only manifests once the run loop services pending
-    /// layout, so a deferred coalesced tickle is sufficient.
-    private func scheduleListGlyphRefresh() {
-        guard !pendingListGlyphRefreshScheduled else { return }
-        pendingListGlyphRefreshScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.pendingListGlyphRefreshScheduled = false
-            self.refreshListGlyphAttachments()
-        }
-    }
-
-    /// Re-run viewport layout so TK2 re-evaluates view-provider
-    /// mounting. This is the same Phase 1 + deferred Phase 2 dance
-    /// the fill path uses (EditTextView+BlockModel.swift:491-496).
-    /// We deliberately do NOT replace `attachment.image` here as the
-    /// fold-path workaround does — that tickle drops the cached view
-    /// and forces a remount, which is visible as a per-keystroke
-    /// flicker on every visible bullet (QA feedback fsnotes-ibj
-    /// 2026-04-29). `layoutViewport()` alone is enough for TK2 to
-    /// reposition existing providers without dropping them.
-    private func refreshListGlyphAttachments() {
-        guard let tlm = textLayoutManager else { return }
-        // Phase 1 — synchronous viewport layout.
-        tlm.textViewportLayoutController.layoutViewport()
-        // Phase 2 — deferred second pass. TK2 mounts NSTextAttachment-
-        // ViewProvider-backed subviews in a two-phase commit; without
-        // a second pass after a run-loop tick, the providers register
-        // but their hosted NSViews never get inserted under
-        // `_NSTextViewportElementView`.
-        DispatchQueue.main.async { [weak self] in
-            self?.textLayoutManager?
-                .textViewportLayoutController
-                .layoutViewport()
-        }
     }
 
     // Phase 5f: `restoreBlockModelState` was retired with the

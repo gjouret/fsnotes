@@ -283,6 +283,99 @@ public enum ListRenderer {
         placeholderCache.setObject(image, forKey: key)
         return image
     }
+
+    static func bulletMarkerImage(
+        glyph: String,
+        size: CGSize,
+        bodyPointSize: CGFloat
+    ) -> NSImage {
+        let pointSize = max(1, bodyPointSize)
+        let bodyFont = PlatformFont.systemFont(ofSize: pointSize)
+        return NSImage(size: size, flipped: false) { rect in
+            let baseline = rect.minY + abs(bodyFont.descender)
+            let capCenter = baseline + bodyFont.capHeight / 2
+
+            switch glyph {
+            case "\u{2022}", "\u{25E6}", "\u{25AA}", "\u{25AB}":
+                let diameter = bodyFont.capHeight * ListRenderer.bulletSizeScale
+                let markerRect = NSRect(
+                    x: rect.minX,
+                    y: capCenter - diameter / 2,
+                    width: diameter,
+                    height: diameter
+                )
+                PlatformColor.labelColor.setFill()
+                PlatformColor.labelColor.setStroke()
+                switch glyph {
+                case "\u{2022}":
+                    NSBezierPath(ovalIn: markerRect).fill()
+                case "\u{25E6}":
+                    let path = NSBezierPath(ovalIn: markerRect.insetBy(dx: 0.5, dy: 0.5))
+                    path.lineWidth = 1.0
+                    path.stroke()
+                case "\u{25AA}":
+                    NSBezierPath(rect: markerRect).fill()
+                default:
+                    let path = NSBezierPath(rect: markerRect.insetBy(dx: 0.5, dy: 0.5))
+                    path.lineWidth = 1.0
+                    path.stroke()
+                }
+            default:
+                let numberFont = PlatformFont.systemFont(
+                    ofSize: pointSize * ListRenderer.numberDrawScale,
+                    weight: .regular
+                )
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: numberFont,
+                    .foregroundColor: PlatformColor.labelColor,
+                ]
+                let y = baseline - abs(numberFont.descender)
+                (glyph as NSString).draw(
+                    at: NSPoint(x: rect.minX, y: y),
+                    withAttributes: attrs
+                )
+            }
+            return true
+        }
+    }
+
+    static func checkboxMarkerImage(
+        checked: Bool,
+        size: CGSize,
+        bodyPointSize: CGFloat
+    ) -> NSImage {
+        let pointSize = max(1, bodyPointSize)
+        return NSImage(size: size, flipped: false) { rect in
+            let bodyFont = PlatformFont.systemFont(ofSize: pointSize)
+            let drawSize = pointSize * ListRenderer.checkboxDrawScale
+            let symbolName = checked ? "checkmark.square" : "square"
+            guard let base = NSImage(
+                systemSymbolName: symbolName,
+                accessibilityDescription: nil
+            ) else {
+                return true
+            }
+            let config = NSImage.SymbolConfiguration(
+                pointSize: drawSize,
+                weight: .regular
+            )
+            let image = base.withSymbolConfiguration(config) ?? base
+            let baseline = rect.minY + abs(bodyFont.descender)
+            let textCenter = baseline + bodyFont.capHeight / 2
+            let imageSize = image.size
+            let imageRect = NSRect(
+                x: rect.minX,
+                y: textCenter - imageSize.height / 2,
+                width: imageSize.width,
+                height: imageSize.height
+            )
+
+            image
+                .tinted(with: NSColor.secondaryLabelColor)
+                .draw(in: imageRect)
+            return true
+        }
+    }
     #endif
 }
 
@@ -398,19 +491,18 @@ private class BulletAttachmentCell: NSTextAttachmentCell {
 /// (`BulletAttachmentCell`) via `BulletAttachment.make(...)`, which TK1
 /// asks to `draw(withFrame:in:)` at layout time.
 ///
-/// TK2 path: TK2 NEVER calls `attachmentCell.draw(...)`. Instead it asks
-/// the attachment for an `NSTextAttachmentViewProvider` via
-/// `viewProvider(for:location:textContainer:)`. The override below
-/// vends a `BulletAttachmentViewProvider` whose hosted NSView draws the
-/// same glyph shape as `BulletAttachmentCell`. The U+FFFC attachment
-/// character in the stored attributed string is unchanged — both paths
-/// attach to the same character.
+/// TK2 path: list markers are static, non-interactive graphics. They
+/// render through `NSTextAttachment.imageForBounds(...)` using the
+/// image assigned by `BulletAttachment.make(...)`, not through an
+/// `NSTextAttachmentViewProvider`. Avoiding a hosted subview removes
+/// the provider mount/unmount lifecycle that made the active edited
+/// line's glyph disappear under TextKit 2.
 public class BulletTextAttachment: NSTextAttachment {
     public let glyph: String
     public let glyphSize: CGFloat
-    /// Body font point size used by the TK2 view provider to size the
-    /// glyph. The cellWidth alone is not enough: bullet shapes scale
-    /// from `bodyFont.capHeight`, not cell width. Captured at attachment
+    /// Body font point size used by the marker image to size the glyph.
+    /// The cellWidth alone is not enough: bullet shapes scale from
+    /// `bodyFont.capHeight`, not cell width. Captured at attachment
     /// construction by `BulletAttachment.make(...)`.
     public let bodyPointSize: CGFloat
 
@@ -438,41 +530,15 @@ public class BulletTextAttachment: NSTextAttachment {
     }
 
     #if os(OSX)
-    /// TK2 view-hosting seam. Mirrors the pattern used by
-    /// `PDFNSTextAttachment`, `QuickLookNSTextAttachment`,
-    /// `ImageNSTextAttachment`. Under TK2 this is how the bullet becomes
-    /// visible; under TK1 the cell path above handles rendering.
-    ///
-    /// **TK1 line-height contract.** We gate the provider on the
-    /// presence of a TK2 `NSTextLayoutManager` on the container. Under
-    /// TK1 the container has an `NSLayoutManager` (not an
-    /// `NSTextLayoutManager`), and NSLayoutManager uses the attachment's
-    /// bounds + cell metrics to compute line-fragment heights. If we
-    /// vend a view provider unconditionally, NSLayoutManager measures
-    /// from the provider's view bounds instead — producing a slightly
-    /// different height that breaks the "empty bullet line height ==
-    /// populated line height" invariant (Bug 20 vertical component,
-    /// enforced by
-    /// `test_listLineHeight_emptyBulletVsWithText_areEqual`).
-    ///
-    /// Returning nil under TK1 is safe: NSLayoutManager falls back to
-    /// the `attachmentCell` path, which is exactly what we want.
+    /// Static list markers deliberately do not vend TK2 hosted views.
+    /// TK2 draws the attachment image directly; TK1 continues through
+    /// the `attachmentCell` path.
     public override func viewProvider(
         for parentView: NSView?,
         location: any NSTextLocation,
         textContainer: NSTextContainer?
     ) -> NSTextAttachmentViewProvider? {
-        guard let tlm = textContainer?.textLayoutManager else {
-            return nil
-        }
-        let provider = BulletAttachmentViewProvider(
-            textAttachment: self,
-            parentView: parentView,
-            textLayoutManager: tlm,
-            location: location
-        )
-        provider.tracksTextAttachmentViewBounds = true
-        return provider
+        return nil
     }
     #endif
 }
@@ -505,7 +571,11 @@ public enum BulletAttachment {
             width: cellWidth, height: cellHeight
         )
         #if os(OSX)
-        attachment.image = ListRenderer.transparentPlaceholder(size: attachment.bounds.size)
+        attachment.image = ListRenderer.bulletMarkerImage(
+            glyph: glyph,
+            size: attachment.bounds.size,
+            bodyPointSize: font.pointSize
+        )
         #endif
         let result = NSMutableAttributedString(attachment: attachment)
         result.addAttribute(.font, value: font, range: NSRange(location: 0, length: result.length))
@@ -588,9 +658,9 @@ private extension NSImage {
 /// NSTextAttachment subclass with value-based equality so that
 /// two renders of the same checkbox produce equal attachments.
 ///
-/// Same dual TK1/TK2 contract as `BulletTextAttachment`: `attachmentCell`
-/// wiring continues to serve TK1, and `viewProvider(...)` is overridden
-/// below to serve TK2 via `CheckboxAttachmentViewProvider`.
+/// Same dual TK1/TK2 contract as `BulletTextAttachment`: the cell serves
+/// TK1, while TK2 draws the marker image directly. We deliberately do
+/// not vend a view provider for static list markers.
 public class CheckboxTextAttachment: NSTextAttachment {
     public let isChecked: Bool
     public let boxSize: CGFloat
@@ -621,25 +691,13 @@ public class CheckboxTextAttachment: NSTextAttachment {
 
     #if os(OSX)
     /// See `BulletTextAttachment.viewProvider(for:location:textContainer:)`
-    /// for the rationale: returning nil under TK1 preserves
-    /// NSLayoutManager's cell-based line-height metrics. Gating on
-    /// `textContainer?.textLayoutManager != nil` isolates the TK2 path.
+    /// for the no-provider rationale.
     public override func viewProvider(
         for parentView: NSView?,
         location: any NSTextLocation,
         textContainer: NSTextContainer?
     ) -> NSTextAttachmentViewProvider? {
-        guard let tlm = textContainer?.textLayoutManager else {
-            return nil
-        }
-        let provider = CheckboxAttachmentViewProvider(
-            textAttachment: self,
-            parentView: parentView,
-            textLayoutManager: tlm,
-            location: location
-        )
-        provider.tracksTextAttachmentViewBounds = true
-        return provider
+        return nil
     }
     #endif
 }
@@ -672,278 +730,14 @@ public enum CheckboxAttachment {
             width: cellWidth, height: cellHeight
         )
         #if os(OSX)
-        attachment.image = ListRenderer.transparentPlaceholder(size: attachment.bounds.size)
+        attachment.image = ListRenderer.checkboxMarkerImage(
+            checked: checked,
+            size: attachment.bounds.size,
+            bodyPointSize: font.pointSize
+        )
         #endif
         let result = NSMutableAttributedString(attachment: attachment)
         result.addAttribute(.font, value: font, range: NSRange(location: 0, length: result.length))
         return result
     }
 }
-
-// MARK: - TK2 View Providers
-//
-// Under TK2, `NSTextAttachmentCell.draw(withFrame:in:characterIndex:
-// layoutManager:)` is never called. TK2 asks attachments for an
-// `NSTextAttachmentViewProvider` via
-// `viewProvider(for:location:textContainer:)`. The provider owns an
-// NSView that TK2 inserts into the text view's view hierarchy and
-// positions within the viewport.
-//
-// For list markers (bullets + checkboxes), the view is a thin NSView
-// subclass that mirrors the existing cell drawing (same Core Graphics
-// calls, same SF Symbol usage) so TK2 rendering is visually identical
-// to TK1 rendering. The U+FFFC attachment character and the
-// `.bulletMarker` / `.checkboxMarker` / `.listDepth` attributes on the
-// surrounding range are unchanged — nothing about the stored
-// attributed string shape shifts between TK1 and TK2.
-
-#if os(OSX)
-
-/// NSView that draws a bullet glyph (•, ◦, ▪, ▫, or ordered "1.") for
-/// TK2 list-marker rendering. Mirrors `BulletAttachmentCell.draw(...)`
-/// pixel-for-pixel: same baseline math, same shape diameter, same
-/// NSBezierPath usage.
-private final class BulletGlyphView: NSView {
-
-    let glyph: String
-    let bodyFont: PlatformFont
-
-    init(glyph: String, bodyPointSize: CGFloat, frame: NSRect) {
-        self.glyph = glyph
-        self.bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
-        super.init(frame: frame)
-        self.wantsLayer = false
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not supported")
-    }
-
-    /// Same hit-through pattern as `CheckboxGlyphView`: clicks on
-    /// the bullet glyph belong to the editor (cursor placement /
-    /// item-level interaction), not to the glyph view. Without
-    /// this, NSView's default `hitTest` claims the click for the
-    /// glyph view (which has no handlers) and the editor never
-    /// sees it.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        return nil
-    }
-
-    private enum BulletShape {
-        case filledCircle, openCircle, filledSquare, openSquare
-    }
-
-    private var bulletShape: BulletShape? {
-        switch glyph {
-        case "\u{2022}": return .filledCircle
-        case "\u{25E6}": return .openCircle
-        case "\u{25AA}": return .filledSquare
-        case "\u{25AB}": return .openSquare
-        default: return nil
-        }
-    }
-
-    override var isFlipped: Bool {
-        // The baseline math below (baseline = minY + |descender|) is
-        // the same the TK1 cell draw uses, which runs in a non-flipped
-        // coord system. Keep parity to avoid baseline skew.
-        return false
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let cellFrame = bounds
-        let baseline = cellFrame.minY + abs(bodyFont.descender)
-        let capCenter = baseline + bodyFont.capHeight / 2
-
-        if let shape = bulletShape {
-            let diameter = bodyFont.capHeight * ListRenderer.bulletSizeScale
-            let x = cellFrame.minX
-            let y = capCenter - diameter / 2
-            let rect = NSRect(x: x, y: y, width: diameter, height: diameter)
-            let color = PlatformColor.labelColor
-            color.setFill()
-            color.setStroke()
-            switch shape {
-            case .filledCircle:
-                NSBezierPath(ovalIn: rect).fill()
-            case .openCircle:
-                let path = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
-                path.lineWidth = 1.0
-                path.stroke()
-            case .filledSquare:
-                NSBezierPath(rect: rect).fill()
-            case .openSquare:
-                let path = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
-                path.lineWidth = 1.0
-                path.stroke()
-            }
-        } else {
-            let numberFont = PlatformFont.systemFont(
-                ofSize: bodyFont.pointSize * ListRenderer.numberDrawScale,
-                weight: .regular
-            )
-            let color = PlatformColor.labelColor
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: numberFont,
-                .foregroundColor: color,
-            ]
-            let str = glyph as NSString
-            let x = cellFrame.minX
-            let y = baseline - abs(numberFont.descender)
-            str.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
-        }
-    }
-}
-
-/// TK2 view provider for `BulletTextAttachment`. Constructs a
-/// `BulletGlyphView` sized to the attachment's bounds and hands it to
-/// TK2. TK2 owns view lifecycle from there.
-public final class BulletAttachmentViewProvider: NSTextAttachmentViewProvider {
-
-    public override func loadView() {
-        guard let attachment = textAttachment as? BulletTextAttachment else {
-            super.loadView()
-            return
-        }
-        let size = attachment.bounds.size
-        // `bodyPointSize` is captured at attachment construction by
-        // `BulletAttachment.make(...)`. Legacy attachments constructed
-        // without the argument default to 0 — in that case we fall back
-        // to deriving it from cellWidth / cellScale so the glyph still
-        // renders proportionally.
-        let ptSize: CGFloat = attachment.bodyPointSize > 0
-            ? attachment.bodyPointSize
-            : max(1, attachment.glyphSize / ListRenderer.cellScale)
-        let frame = NSRect(origin: .zero, size: size)
-        let view = BulletGlyphView(
-            glyph: attachment.glyph,
-            bodyPointSize: ptSize,
-            frame: frame
-        )
-        self.view = view
-    }
-}
-
-/// NSView that draws an SF Symbol checkbox for TK2 list-marker
-/// rendering. Mirrors `CheckboxAttachmentCell.draw(...)`.
-private final class CheckboxGlyphView: NSView {
-
-    let isChecked: Bool
-    let bodyFont: PlatformFont
-    let drawSize: CGFloat
-    private var cachedImage: NSImage?
-
-    init(checked: Bool, bodyPointSize: CGFloat, frame: NSRect) {
-        self.isChecked = checked
-        self.bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
-        self.drawSize = bodyPointSize * ListRenderer.checkboxDrawScale
-        super.init(frame: frame)
-        self.wantsLayer = false
-        rebuildCachedImage()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not supported")
-    }
-
-    override var isFlipped: Bool { return false }
-
-    /// bd-fsnotes-hhm: rebuild the tinted bitmap whenever the view's
-    /// effective appearance changes. `tinted(with:)` resolves
-    /// `NSColor.secondaryLabelColor` at `lockFocus` time against
-    /// `NSAppearance.currentDrawing` — at init the view has no
-    /// superview, so the resolved color is the app's *default*
-    /// appearance, not the actual window appearance. On a dark-mode
-    /// window the cached bitmap stays at the light-mode-fallback
-    /// gray, invisible against the dark editor bg. Rebuilding here
-    /// (which fires on first window attach AND on every later
-    /// light↔dark switch) keeps the bitmap aligned with whatever
-    /// appearance the editor is actually drawn against.
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        rebuildCachedImage()
-        needsDisplay = true
-    }
-
-    private func rebuildCachedImage() {
-        let symbolName = isChecked ? "checkmark.square" : "square"
-        guard let baseImage = NSImage(
-            systemSymbolName: symbolName, accessibilityDescription: nil
-        ) else {
-            cachedImage = nil
-            return
-        }
-        let config = NSImage.SymbolConfiguration(
-            pointSize: drawSize, weight: .regular
-        )
-        let configured = baseImage.withSymbolConfiguration(config) ?? baseImage
-
-        // Force the tinted bitmap to be rendered under the view's
-        // effective appearance — without this, `tinted(with:)`
-        // resolves `secondaryLabelColor` against whatever appearance
-        // happens to be current at the time of `lockFocus`, which
-        // may be the app default rather than the real window
-        // appearance.
-        var tinted: NSImage = configured
-        if #available(macOS 11.0, *) {
-            self.effectiveAppearance.performAsCurrentDrawingAppearance {
-                tinted = configured.tinted(with: NSColor.secondaryLabelColor)
-            }
-        } else {
-            tinted = configured.tinted(with: NSColor.secondaryLabelColor)
-        }
-        cachedImage = tinted
-    }
-
-    /// Pass clicks through to the parent text view. Without this,
-    /// `NSView`'s default `hitTest(_:)` returns `self` for any
-    /// point inside the glyph's bounds — which means clicking
-    /// directly on the visible checkbox is intercepted by this
-    /// view (which has no `mouseDown` handler), and the click
-    /// never reaches `EditTextView.mouseDown` → `handleTodo` →
-    /// `toggleTodoCheckboxViaBlockModel`. Users had to click
-    /// JUST OUTSIDE the checkbox glyph to toggle it.
-    /// Returning `nil` from `hitTest` makes the glyph click-
-    /// through; the editor's `mouseDown` then sees the click at
-    /// the attachment-character index and the toggle path fires.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        return nil
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let tinted = cachedImage else { return }
-        let cellFrame = bounds
-        let imgSize = tinted.size
-        let baseline = cellFrame.minY + abs(bodyFont.descender)
-        let textCenter = baseline + bodyFont.capHeight / 2
-        let x = cellFrame.minX
-        let y = textCenter - imgSize.height / 2
-        tinted.draw(in: NSRect(x: x, y: y, width: imgSize.width, height: imgSize.height))
-    }
-}
-
-/// TK2 view provider for `CheckboxTextAttachment`. Constructs a
-/// `CheckboxGlyphView` sized to the attachment's bounds and hands it
-/// to TK2.
-public final class CheckboxAttachmentViewProvider: NSTextAttachmentViewProvider {
-
-    public override func loadView() {
-        guard let attachment = textAttachment as? CheckboxTextAttachment else {
-            super.loadView()
-            return
-        }
-        let size = attachment.bounds.size
-        let ptSize: CGFloat = attachment.bodyPointSize > 0
-            ? attachment.bodyPointSize
-            : max(1, attachment.boxSize / ListRenderer.cellScale)
-        let frame = NSRect(origin: .zero, size: size)
-        let view = CheckboxGlyphView(
-            checked: attachment.isChecked,
-            bodyPointSize: ptSize,
-            frame: frame
-        )
-        self.view = view
-    }
-}
-
-#endif

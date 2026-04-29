@@ -128,24 +128,21 @@ final class UIBugRegressionTests: XCTestCase {
 
     // MARK: - Glyph-mount invariants
 
-    /// Checkbox glyphs mount as subviews on the first fill (no scroll
-    /// required). Two-phase pump in `fillViaBlockModel` satisfies the
-    /// TK2 viewport-then-runloop contract. See bug #1 (bullet glyphs)
-    /// for the parallel case.
-    func test_glyphs_checkboxList_mountsOnFill() {
+    /// Checkbox markers are present on the first fill.
+    func test_glyphs_checkboxList_presentOnFill() {
         Given.keyWindowNote(markdown: "- [ ] a\n- [x] b\n")
             .Then.glyphs.checkboxCount.equals(2)
     }
 
-    /// Todo list mounts `CheckboxGlyphView`, NOT `BulletGlyphView`.
-    func test_glyphs_todoList_mountsCheckboxNotBullet() {
+    /// Todo list renders checkbox markers, not bullet markers.
+    func test_glyphs_todoList_rendersCheckboxNotBullet() {
         Given.keyWindowNote(markdown: "- [ ] todo item\n")
             .Then.glyphs.checkboxCount.equals(1)
             .Then.glyphs.bulletCount.equals(0)
     }
 
-    /// Bullet still mounts when the list item carries inline formatting.
-    func test_glyphs_boldInsideBullet_bulletStillMounts() {
+    /// Bullet still renders when the list item carries inline formatting.
+    func test_glyphs_boldInsideBullet_bulletStillRenders() {
         Given.keyWindowNote(markdown: "- **bold** item\n")
             .Then.glyphs.bulletCount.equals(1)
     }

@@ -5,12 +5,10 @@
 //  Regression test for bd-fsnotes-ibj (P1):
 //  "META: bullet/Todo glyphs disappear during edit, reappear on scroll"
 //
-//  Verifiable property: NSTextAttachmentViewProvider instances
-//  (BulletAttachmentViewProvider, CheckboxAttachmentViewProvider) hosted
-//  by the editor must keep a non-nil drawn view across an in-place edit
-//  to a *neighbouring* line. The bead reports glyphs vanishing during
-//  edit and reappearing on scroll — i.e. the view provider's contents
-//  are dropped between the edit applier and the next display pass.
+//  Verifiable property: bullet and Todo markers are static image-backed
+//  NSTextAttachments, not hosted NSTextAttachmentViewProvider subviews.
+//  That removes the provider lifecycle from list markers entirely, so
+//  an active edited line cannot enter the "provider absent/blank" state.
 //
 //  Layer: in-process AppKit harness (per DEBUG.md §1). Per the plan's
 //  tradeoff note, the in-process harness MAY miss the redraw race
@@ -75,9 +73,8 @@ final class BugFsnotesibjTests: XCTestCase {
             "(\(bulletsBefore) -> \(bulletsAfter)) — glyphs were dropped"
         )
 
-        // Each surviving bullet attachment must be renderable —
-        // either it carries a non-nil `.image` OR (TK2) it has a view
-        // provider that returns a non-nil view via `loadView()`.
+        // Each surviving bullet attachment must be renderable through
+        // its image. List markers no longer use TK2 hosted subviews.
         var renderable = 0
         storage.enumerateAttribute(
             .attachment,
@@ -87,17 +84,8 @@ final class BugFsnotesibjTests: XCTestCase {
             guard let att = value as? NSTextAttachment else { return }
             let name = String(describing: type(of: att))
             guard name.contains("Bullet") else { return }
-            if att.image != nil { renderable += 1; return }
-            // TK2 path: ask the attachment for a view provider.
-            // The viewProvider API takes parentView/textContainer/location,
-            // so we synthesise plausible values from the harness.
-            if let provider = att.viewProvider(
-                for: harness.editor,
-                location: NSTextLocation_dummy(),
-                textContainer: harness.editor.textContainer
-            ) {
-                provider.loadView()
-                if provider.view != nil { renderable += 1 }
+            if att.image != nil {
+                renderable += 1
             }
         }
         XCTAssertGreaterThanOrEqual(
@@ -111,15 +99,13 @@ final class BugFsnotesibjTests: XCTestCase {
     /// the bullet/checkbox of the line being typed in. Root cause is
     /// the block-level splice in `DocumentEditApplier` replacing the
     /// whole list block — including the leading bullet `U+FFFC` — on
-    /// every keystroke, which drops TK2's cached view provider and
-    /// forces `loadView()` again.
+    /// every keystroke, which forces marker layout/repaint work on
+    /// unchanged items.
     ///
     /// Verifiable property: the `BulletTextAttachment` *object identity*
     /// at the start of an unchanged list item must survive a typing edit
-    /// inside that same list block. If a fresh instance shows up at the
-    /// same offset post-edit, TK2 has dropped the cached view provider
-    /// and the user sees a flash. (Object identity is the cache key TK2
-    /// uses, not value-equality.)
+    /// inside that same list block. Fresh marker attachments on every
+    /// keystroke would force attachment image re-layout and repaint.
     func test_bulletAttachmentIdentity_preservedAcrossInListEdit() {
         let harness = EditorHarness(
             markdown: Self.markdown, windowActivation: .keyWindow
@@ -158,9 +144,7 @@ final class BugFsnotesibjTests: XCTestCase {
                        "bullet count changed (\(before.count) -> \(after.count))")
 
         // The bullets at offsets 0..2 (in the unchanged-prefix sense)
-        // must be the *same instance* before and after. If any were
-        // replaced, TK2's view-provider cache misses and the user sees
-        // the per-keystroke flicker the bead reports. The first bullet
+        // must be the *same instance* before and after. The first bullet
         // is the canary — its offset doesn't move on edits inside its
         // own list item.
         let firstBefore = before.min(by: { $0.key < $1.key })
@@ -170,9 +154,191 @@ final class BugFsnotesibjTests: XCTestCase {
         XCTAssertTrue(
             firstBefore?.value === firstAfter?.value,
             "first BulletTextAttachment instance was replaced after " +
-            "in-list edit — TK2 view-provider cache will miss and the " +
-            "user sees a per-keystroke flicker (fsnotes-ibj)"
+            "in-list edit — static marker attachment identity should " +
+            "survive ordinary typing (fsnotes-ibj)"
         )
+    }
+
+    /// Live symptom from user screenshots: while the insertion point is
+    /// inside a list item, a TK2-hosted marker view for that active line
+    /// could be absent or blank. The fix is to make list markers image-
+    /// backed attachments, so no BulletGlyphView should exist at all.
+    func test_activeLineBullet_usesImageBackedAttachmentAfterTyping() {
+        let harness = EditorHarness(
+            markdown: Self.markdown, windowActivation: .keyWindow
+        )
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage,
+              let tlm = harness.editor.textLayoutManager else {
+            XCTFail("editor not initialised")
+            return
+        }
+
+        tlm.ensureLayout(for: tlm.documentRange)
+        tlm.textViewportLayoutController.layoutViewport()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        tlm.textViewportLayoutController.layoutViewport()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertEqual(countBulletAttachments(storage), 3)
+        XCTAssertEqual(
+            countHostedMarkerViews(in: harness.editor, named: "BulletGlyphView"),
+            0,
+            "bullet markers should not depend on TK2 hosted subviews"
+        )
+        XCTAssertTrue(
+            allBulletAttachmentsHaveVisibleImages(storage),
+            "seeded bullet attachments should carry visible marker images"
+        )
+
+        let gammaRange = (storage.string as NSString).range(of: "gamma")
+        XCTAssertNotEqual(gammaRange.location, NSNotFound)
+        harness.editor.setSelectedRange(NSRange(
+            location: gammaRange.location + gammaRange.length,
+            length: 0
+        ))
+        harness.type("X")
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        harness.editor.displayIfNeeded()
+
+        XCTAssertEqual(countBulletAttachments(storage), 3)
+        XCTAssertEqual(
+            countHostedMarkerViews(in: harness.editor, named: "BulletGlyphView"),
+            0,
+            "typing should not create bullet marker hosted subviews"
+        )
+        XCTAssertTrue(
+            allBulletAttachmentsHaveVisibleImages(storage),
+            "bullet marker images must remain visible after typing"
+        )
+    }
+
+    /// User QA 2026-04-29 after the fallback-image candidate: the
+    /// bullet is visible while typing, then disappears again when the
+    /// editor goes idle. This pins the stronger invariant we actually
+    /// want: after the idle layout cycle settles, the active line still
+    /// has a visible marker image and no hosted marker provider exists.
+    func test_activeLineBullet_imageBackedAttachmentAfterIdle() {
+        let harness = EditorHarness(
+            markdown: Self.markdown, windowActivation: .keyWindow
+        )
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage,
+              let tlm = harness.editor.textLayoutManager else {
+            XCTFail("editor not initialised")
+            return
+        }
+
+        tlm.ensureLayout(for: tlm.documentRange)
+        tlm.textViewportLayoutController.layoutViewport()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        tlm.textViewportLayoutController.layoutViewport()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        let gammaRange = (storage.string as NSString).range(of: "gamma")
+        XCTAssertNotEqual(gammaRange.location, NSNotFound)
+        harness.editor.setSelectedRange(NSRange(
+            location: gammaRange.location + gammaRange.length,
+            length: 0
+        ))
+        harness.type("X")
+
+        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        tlm.textViewportLayoutController.layoutViewport()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertEqual(countBulletAttachments(storage), 3)
+        XCTAssertEqual(
+            countHostedMarkerViews(in: harness.editor, named: "BulletGlyphView"),
+            0,
+            "the idle layout cycle must not create bullet marker hosted subviews"
+        )
+        XCTAssertTrue(
+            allBulletAttachmentsHaveVisibleImages(storage),
+            "bullet marker images must remain visible after idle layout"
+        )
+    }
+
+    func test_activeLineCheckbox_usesImageBackedAttachmentAfterTyping() {
+        let markdown = """
+        - [ ] alpha
+        - [x] beta
+        - [ ] gamma
+        """
+        let harness = EditorHarness(
+            markdown: markdown, windowActivation: .keyWindow
+        )
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage,
+              let tlm = harness.editor.textLayoutManager else {
+            XCTFail("editor not initialised")
+            return
+        }
+
+        tlm.ensureLayout(for: tlm.documentRange)
+        tlm.textViewportLayoutController.layoutViewport()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        tlm.textViewportLayoutController.layoutViewport()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertEqual(countCheckboxAttachments(storage), 3)
+
+        let gammaRange = (storage.string as NSString).range(of: "gamma")
+        XCTAssertNotEqual(gammaRange.location, NSNotFound)
+        harness.editor.setSelectedRange(NSRange(
+            location: gammaRange.location + gammaRange.length,
+            length: 0
+        ))
+        harness.type("X")
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        harness.editor.displayIfNeeded()
+
+        XCTAssertEqual(countCheckboxAttachments(storage), 3)
+        XCTAssertEqual(
+            countHostedMarkerViews(in: harness.editor, named: "CheckboxGlyphView"),
+            0,
+            "typing should not create checkbox marker hosted subviews"
+        )
+        XCTAssertTrue(
+            allCheckboxAttachmentsHaveVisibleImages(storage),
+            "checkbox marker images must remain visible after typing"
+        )
+    }
+
+    /// Static list markers must not enter the TK2 hosted-view lifecycle.
+    /// They draw through NSTextAttachment.image instead.
+    func test_listMarkers_doNotVendViewProviders() {
+        let tk2 = makeTK2Container()
+
+        let bullet = BulletTextAttachment(
+            glyph: "\u{2022}",
+            size: 20,
+            bodyPointSize: 14
+        )
+        let checkbox = CheckboxTextAttachment(
+            checked: false,
+            size: 20,
+            bodyPointSize: 14
+        )
+
+        let bulletProvider = bullet.viewProvider(
+            for: nil,
+            location: NSTextLocation_dummy(),
+            textContainer: tk2.container
+        )
+        let checkboxProvider = checkbox.viewProvider(
+            for: nil,
+            location: NSTextLocation_dummy(),
+            textContainer: tk2.container
+        )
+
+        XCTAssertNil(bulletProvider)
+        XCTAssertNil(checkboxProvider)
     }
 
     /// QA datum (v5, narrowing in DocumentEditApplier): user reports
@@ -236,10 +402,6 @@ final class BugFsnotesibjTests: XCTestCase {
             }
         }
         walk(items)
-        // Diagnostic dump regardless of pass/fail.
-        for (i, e) in flat.enumerated() {
-            print("[enter-mid] flat[\(i)] indent=\(e.indent) text='\(e.text)'")
-        }
 
         guard let i21 = flat.firstIndex(where: { $0.text == "L2-1" }),
               let i22 = flat.firstIndex(where: { $0.text == "L2-2" }),
@@ -272,15 +434,138 @@ final class BugFsnotesibjTests: XCTestCase {
         return result
     }
 
+    private func countHostedMarkerViews(in root: NSView, named suffix: String) -> Int {
+        var count = 0
+        func walk(_ view: NSView) {
+            if String(describing: type(of: view)).hasSuffix(suffix) {
+                count += 1
+            }
+            for child in view.subviews {
+                walk(child)
+            }
+        }
+        walk(root)
+        return count
+    }
+
+    private func allBulletAttachmentsHaveVisibleImages(
+        _ storage: NSTextStorage
+    ) -> Bool {
+        return allAttachmentsHaveVisibleImages(
+            storage,
+            classNameContains: "Bullet"
+        )
+    }
+
+    private func allCheckboxAttachmentsHaveVisibleImages(
+        _ storage: NSTextStorage
+    ) -> Bool {
+        return allAttachmentsHaveVisibleImages(
+            storage,
+            classNameContains: "Checkbox"
+        )
+    }
+
+    private func allAttachmentsHaveVisibleImages(
+        _ storage: NSTextStorage,
+        classNameContains needle: String
+    ) -> Bool {
+        var ok = true
+        storage.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, _, stop in
+            guard let att = value as? NSTextAttachment else { return }
+            let name = String(describing: type(of: att))
+            guard name.contains(needle) else { return }
+            guard let image = att.image, imageHasDrawnPixels(image) else {
+                ok = false
+                stop.pointee = true
+                return
+            }
+        }
+        return ok
+    }
+
+    private func imageHasDrawnPixels(_ image: NSImage) -> Bool {
+        let width = max(1, Int(ceil(image.size.width * 2)))
+        let height = max(1, Int(ceil(image.size.height * 2)))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            return false
+        }
+        rep.size = image.size
+        guard let context = NSGraphicsContext(bitmapImageRep: rep) else {
+            return false
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: image.size).fill()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let data = rep.bitmapData else { return false }
+        let stride = rep.bytesPerRow
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = y * stride + x * 4
+                if data[i + 3] > 8 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private func countCheckboxAttachments(_ storage: NSTextStorage) -> Int {
+        var n = 0
+        storage.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, _, _ in
+            guard let att = value as? NSTextAttachment else { return }
+            let attName = String(describing: type(of: att))
+            if attName.contains("Checkbox") { n += 1 }
+        }
+        return n
+    }
+
     /// `viewProvider(for:location:textContainer:)` requires an
     /// `NSTextLocation` argument; production code passes the live
     /// element location. For test purposes any valid `NSTextLocation`
-    /// works because `BulletAttachmentViewProvider.loadView()` doesn't
-    /// consult the location — it reads `textAttachment.bounds`.
+    /// works because static list markers must return nil regardless
+    /// of location.
     private final class NSTextLocation_dummy: NSObject, NSTextLocation {
         func compare(_ location: NSTextLocation) -> ComparisonResult {
             .orderedSame
         }
+    }
+
+    private func makeTK2Container() -> (
+        container: NSTextContainer,
+        tlm: NSTextLayoutManager,
+        cs: NSTextContentStorage
+    ) {
+        let contentStorage = NSTextContentStorage()
+        let tlm = NSTextLayoutManager()
+        contentStorage.addTextLayoutManager(tlm)
+        let container = NSTextContainer(size: NSSize(width: 1000, height: 10000))
+        tlm.textContainer = container
+        return (container, tlm, contentStorage)
     }
 
     /// Walk storage and count `BulletTextAttachment` instances. Under

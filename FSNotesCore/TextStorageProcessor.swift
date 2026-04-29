@@ -753,14 +753,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             )
             editTextView.invalidateTextKit2Layout(forCharacterRange: unionRange)
 
-            // Force every attachment in the fold range to drop its
-            // cached view provider so `loadView()` runs fresh on the
-            // next layout pass. Without this step, `BulletAttachmentViewProvider`
-            // / `CheckboxAttachmentViewProvider` re-use the previous
-            // `view` (created during the pre-fold render) — and that
-            // view never gets re-positioned, so bullets visually
-            // disappear after unfold even though the attachment runs
-            // are intact in storage.
+            // Force hosted attachments in the fold range to drop cached
+            // view providers so `loadView()` runs fresh on the next
+            // layout pass. List markers are static image-backed
+            // attachments, so they do not participate in this provider
+            // lifecycle.
             textStorage.enumerateAttribute(
                 .attachment,
                 in: foldRange,

@@ -69,7 +69,6 @@
 import AppKit
 
 private var pendingTableRefreshKey: UInt8 = 0
-private var pendingListGlyphRefreshKey: UInt8 = 0
 
 extension EditTextView {
 
@@ -250,22 +249,6 @@ extension EditTextView {
         set {
             objc_setAssociatedObject(
                 self, &pendingTableRefreshKey, newValue,
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
-        }
-    }
-
-    /// Coalescing flag for `applyEditResultWithUndo`'s deferred
-    /// bullet/checkbox view-provider refresh (bd-fsnotes-ibj). Same
-    /// pattern as `pendingTableRefreshScheduled` — one refresh per
-    /// run-loop tick regardless of keystroke rate.
-    var pendingListGlyphRefreshScheduled: Bool {
-        get {
-            objc_getAssociatedObject(self, &pendingListGlyphRefreshKey) as? Bool ?? false
-        }
-        set {
-            objc_setAssociatedObject(
-                self, &pendingListGlyphRefreshKey, newValue,
                 .OBJC_ASSOCIATION_RETAIN_NONATOMIC
             )
         }

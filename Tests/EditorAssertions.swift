@@ -134,6 +134,24 @@ fileprivate enum AssertionHelpers {
         return n
     }
 
+    static func countAttachments(
+        containing classNameNeedle: String,
+        in editor: EditTextView
+    ) -> Int {
+        guard let storage = editor.textStorage else { return 0 }
+        var n = 0
+        storage.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, _, _ in
+            guard let attachment = value as? NSTextAttachment else { return }
+            let name = String(describing: type(of: attachment))
+            if name.contains(classNameNeedle) { n += 1 }
+        }
+        return n
+    }
+
     /// Recursive subview walk; collects frames (in `editor` coords)
     /// for every subview whose class name matches `name`.
     static func collectFrames(
@@ -405,32 +423,32 @@ struct ToolbarButtonAssertion {
 struct GlyphAssertions {
     let parent: EditorAssertions
     var bulletCount: GlyphCounter {
-        return GlyphCounter(parent: parent, className: "BulletGlyphView")
+        return GlyphCounter(parent: parent, attachmentClassName: "Bullet")
     }
     var checkboxCount: GlyphCounter {
-        return GlyphCounter(parent: parent, className: "CheckboxGlyphView")
+        return GlyphCounter(parent: parent, attachmentClassName: "Checkbox")
     }
 }
 
 struct GlyphCounter {
     let parent: EditorAssertions
-    let className: String
+    let attachmentClassName: String
 
-    /// Recursive walk over the editor's subview tree; matches subviews
-    /// whose class name equals `className`. Catches the bullet/
-    /// checkbox-mount-on-fill bug class (view-provider hosts live ≥3
-    /// levels deep, so a shallow walk silently misses them).
+    /// Counts rendered list marker attachments in storage. Bullets and
+    /// checkboxes are image-backed static attachments, not hosted TK2
+    /// subviews, so storage is the load-bearing glyph source.
     @discardableResult
     func equals(
         _ expected: Int,
         file: StaticString = #filePath, line: UInt = #line
     ) -> EditorAssertions {
-        let actual = AssertionHelpers.countSubviews(
-            named: className, in: parent.scenario.editor
+        let actual = AssertionHelpers.countAttachments(
+            containing: attachmentClassName,
+            in: parent.scenario.editor
         )
         XCTAssertEqual(
             actual, expected,
-            "Then.glyphs.\(className).equals: expected \(expected), got \(actual).",
+            "Then.glyphs.\(attachmentClassName).equals: expected \(expected), got \(actual).",
             file: file, line: line
         )
         return parent

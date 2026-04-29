@@ -2052,17 +2052,15 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
     }
 
     // MARK: - Phase 2d: List marker attachments (bullets + checkboxes)
-    // via view-provider under TK2
+    // image-backed under TK2
     //
     // Context: the previous list-marker TK2 migration attempt removed the
     // U+FFFC attachment character entirely and broke several invariants
     // (list-item line height, cross-block undo formatting, ListEditingFSM
     // state). This slice takes a DIFFERENT approach: keep the attachment
     // character, keep the `attachmentCell` wiring (TK1 path) intact, and
-    // add a `viewProvider(for:location:textContainer:)` override that
-    // vends a view for TK2. Both paths coexist; both paths draw the same
-    // glyph. See `FSNotesCore/Rendering/ListRenderer.swift`, "TK2 View
-    // Providers" section for the production code.
+    // attach a primary marker image for TK2. Both paths coexist; both
+    // paths draw the same glyph without introducing a hosted subview.
 
     /// TK1 compat: `BulletTextAttachment` constructed by
     /// `BulletAttachment.make(...)` must still carry an
@@ -2084,7 +2082,7 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         ) as? BulletTextAttachment else {
             XCTFail("BulletAttachment.make must yield a BulletTextAttachment " +
                     "at offset 0 (subclass identity is how the TK1 cell " +
-                    "and TK2 view-provider paths are dispatched).")
+                    "and TK2 image paths are dispatched).")
             return
         }
         // Subclass identity round-trips through storage — this is the
@@ -2098,11 +2096,11 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         // if attachmentCell is nil). The load-bearing invariants are:
         //   (1) U+FFFC character present → tested by BugFixes3Tests
         //   (2) attachment is BulletTextAttachment → asserted above
-        //   (3) viewProvider vends a provider → separate test below
+        //   (3) TK2 image path exists → separate test below
         XCTAssertEqual(
             att.glyph, "\u{2022}",
             "BulletTextAttachment must preserve its glyph through storage " +
-            "round-trip (needed for the TK2 view provider to draw the right shape)."
+            "round-trip (needed for the TK2 image path to draw the right shape)."
         )
     }
 
@@ -2125,18 +2123,13 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         XCTAssertFalse(
             att.isChecked,
             "Unchecked checkbox attachment must preserve isChecked=false " +
-            "through the round-trip (the view provider consults this to " +
+            "through the round-trip (the image path consults this to " +
             "pick the SF Symbol name)."
         )
     }
 
     /// Build an `(NSTextContainer, NSTextLayoutManager, NSTextContentStorage)`
-    /// triple. The bullet/checkbox viewProvider(...) override is
-    /// conditional on `textContainer?.textLayoutManager != nil` —
-    /// returning nil under TK1 protects the Bug 20 line-height invariant
-    /// (see `BulletTextAttachment.viewProvider(...)` doc). To exercise
-    /// the TK2 path in a unit test we need a container whose
-    /// `textLayoutManager` resolves non-nil.
+    /// triple for tests that need a live TK2 container.
     ///
     /// **Retention**: `NSTextContainer.textLayoutManager` is a weak
     /// back-reference. The test must hold the `NSTextLayoutManager`
@@ -2157,36 +2150,28 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         return (container, tlm, contentStorage)
     }
 
-    /// TK2 path: `BulletTextAttachment` must vend a
-    /// `BulletAttachmentViewProvider` via
-    /// `viewProvider(for:location:textContainer:)`. Under TK2 the cell is
-    /// never asked to draw — only the view provider is. Nil or a generic
-    /// `NSTextAttachmentViewProvider` means the bullet is invisible under
-    /// TK2.
-    func test_phase2d_listMarker_bulletAttachmentVendsViewProvider() {
+    /// TK2 path: `BulletTextAttachment` must not vend a hosted view
+    /// provider. The marker is static and draws through the attachment
+    /// image so it cannot disappear due to provider mount/unmount timing.
+    func test_phase2d_listMarker_bulletAttachmentDoesNotVendViewProvider() {
         let tk2 = makeTK2Container()
-        let att = BulletTextAttachment(
+        let wrapped = BulletAttachment.make(
             glyph: "\u{2022}",
-            size: 20,
-            bodyPointSize: 14
+            font: NSFont.systemFont(ofSize: 14)
         )
+        guard let att = wrapped.attribute(
+            .attachment, at: 0, effectiveRange: nil
+        ) as? BulletTextAttachment else {
+            XCTFail("BulletAttachment.make must yield BulletTextAttachment")
+            return
+        }
         let provider = att.viewProvider(
             for: nil,
             location: StubLocation(),
             textContainer: tk2.container
         )
-        XCTAssertNotNil(
-            provider,
-            "BulletTextAttachment must override viewProvider(...) and " +
-            "return a non-nil provider under TK2. Nil under TK2 = falls " +
-            "back to the cell path TK2 never calls, bullet is invisible."
-        )
-        XCTAssertTrue(
-            provider is BulletAttachmentViewProvider,
-            "BulletTextAttachment must vend a BulletAttachmentViewProvider " +
-            "(got \(provider.map { String(describing: type(of: $0)) } ?? "nil")). " +
-            "Generic NSTextAttachmentViewProvider would not draw the bullet."
-        )
+        XCTAssertNil(provider)
+        XCTAssertNotNil(att.image, "TK2 draws the static marker image.")
     }
 
     /// TK1 path: under TK1 the container has an `NSLayoutManager`, not
@@ -2220,56 +2205,54 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
     }
 
     /// TK2 path mirror for checkboxes.
-    func test_phase2d_listMarker_checkboxAttachmentVendsViewProvider() {
+    func test_phase2d_listMarker_checkboxAttachmentDoesNotVendViewProvider() {
         let tk2 = makeTK2Container()
-        let att = CheckboxTextAttachment(
+        let wrapped = CheckboxAttachment.make(
             checked: false,
-            size: 20,
-            bodyPointSize: 14
+            font: NSFont.systemFont(ofSize: 14)
         )
+        guard let att = wrapped.attribute(
+            .attachment, at: 0, effectiveRange: nil
+        ) as? CheckboxTextAttachment else {
+            XCTFail("CheckboxAttachment.make must yield CheckboxTextAttachment")
+            return
+        }
         let provider = att.viewProvider(
             for: nil,
             location: StubLocation(),
             textContainer: tk2.container
         )
-        XCTAssertNotNil(
-            provider,
-            "CheckboxTextAttachment must override viewProvider(...) and " +
-            "return a non-nil provider under TK2."
-        )
-        XCTAssertTrue(
-            provider is CheckboxAttachmentViewProvider,
-            "CheckboxTextAttachment must vend a CheckboxAttachmentViewProvider " +
-            "(got \(provider.map { String(describing: type(of: $0)) } ?? "nil"))."
-        )
+        XCTAssertNil(provider)
+        XCTAssertNotNil(att.image, "TK2 draws the static marker image.")
     }
 
     /// Checked-state variant — both checked and unchecked checkbox
-    /// attachments must vend the provider (it's the class identity, not
-    /// the state, that determines dispatch).
-    func test_phase2d_listMarker_checkboxCheckedStateVendsViewProvider() {
+    /// attachments must remain image-backed and provider-free.
+    func test_phase2d_listMarker_checkboxCheckedStateDoesNotVendViewProvider() {
         let tk2 = makeTK2Container()
-        let checked = CheckboxTextAttachment(
+        let wrapped = CheckboxAttachment.make(
             checked: true,
-            size: 20,
-            bodyPointSize: 14
+            font: NSFont.systemFont(ofSize: 14)
         )
+        guard let checked = wrapped.attribute(
+            .attachment, at: 0, effectiveRange: nil
+        ) as? CheckboxTextAttachment else {
+            XCTFail("CheckboxAttachment.make must yield CheckboxTextAttachment")
+            return
+        }
         let provider = checked.viewProvider(
             for: nil,
             location: StubLocation(),
             textContainer: tk2.container
         )
-        XCTAssertTrue(
-            provider is CheckboxAttachmentViewProvider,
-            "Checked checkbox attachment must also vend a " +
-            "CheckboxAttachmentViewProvider (state-independent dispatch)."
-        )
+        XCTAssertNil(provider)
+        XCTAssertNotNil(checked.image, "TK2 draws the static marker image.")
     }
 
     /// `isTodo()` click detection in `EditTextView+Interaction.swift`
     /// checks the attachment's class (`is CheckboxTextAttachment`). The
-    /// view-provider addition must not regress that check — the class
-    /// identity is unchanged, only a new override was added.
+    /// image-backed TK2 rendering must not regress that check — the
+    /// class identity is unchanged.
     func test_phase2d_listMarker_checkboxAttachmentStillClassDetectable() {
         let font = NSFont.systemFont(ofSize: 14)
         let wrapped = CheckboxAttachment.make(checked: true, font: font)
@@ -2291,40 +2274,30 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         )
     }
 
-    /// loadView must construct a view sized to the attachment's bounds,
-    /// the same contract the image view-provider slice pinned. Without
-    /// this, the bullet is clipped or zero-sized under TK2.
-    func test_phase2d_listMarker_bulletViewProviderSizesViewToBounds() {
-        let tk2 = makeTK2Container()
-        let att = BulletTextAttachment(
+    /// The marker image must match the attachment's computed bounds so
+    /// TK2 has a stable non-zero drawing rect without consulting a view.
+    func test_phase2d_listMarker_bulletImageMatchesAttachmentBounds() {
+        let wrapped = BulletAttachment.make(
             glyph: "\u{2022}",
-            size: 28,
-            bodyPointSize: 14
+            font: NSFont.systemFont(ofSize: 14)
         )
-        att.bounds = CGRect(x: 0, y: 0, width: 28, height: 18)
-
-        guard let provider = att.viewProvider(
-            for: nil,
-            location: StubLocation(),
-            textContainer: tk2.container
-        ) else {
-            XCTFail("Provider must be non-nil")
+        guard let att = wrapped.attribute(
+            .attachment, at: 0, effectiveRange: nil
+        ) as? BulletTextAttachment else {
+            XCTFail("BulletAttachment.make must yield BulletTextAttachment")
             return
         }
-        provider.loadView()
-
-        guard let view = provider.view else {
-            XCTFail("Provider must populate `view` in loadView()")
+        guard let image = att.image else {
+            XCTFail("Bullet attachment must carry marker image")
             return
         }
         XCTAssertEqual(
-            view.frame.width, 28, accuracy: 0.01,
-            "Hosted view frame width must equal attachment bounds width " +
-            "(otherwise the bullet is clipped or mis-positioned under TK2)."
+            image.size.width, att.bounds.size.width, accuracy: 0.01,
+            "Marker image width must equal attachment bounds width."
         )
         XCTAssertEqual(
-            view.frame.height, 18, accuracy: 0.01,
-            "Hosted view frame height must equal attachment bounds height."
+            image.size.height, att.bounds.size.height, accuracy: 0.01,
+            "Marker image height must equal attachment bounds height."
         )
     }
 

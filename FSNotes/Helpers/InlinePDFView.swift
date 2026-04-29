@@ -465,14 +465,12 @@ class PDFNSTextAttachment: NSTextAttachment {
     override func viewProvider(for parentView: NSView?,
                                location: any NSTextLocation,
                                textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
-        let provider = PDFAttachmentViewProvider(
+        return PDFAttachmentViewProvider(
             textAttachment: self,
             parentView: parentView,
             textLayoutManager: textContainer?.textLayoutManager,
             location: location
         )
-        provider.tracksTextAttachmentViewBounds = true
-        return provider
     }
 }
 
@@ -488,6 +486,24 @@ class PDFNSTextAttachment: NSTextAttachment {
 /// It guarantees scroll-recycled attachments get a fully-initialized
 /// `PDFView` every time TK2 decides to re-host the attachment.
 class PDFAttachmentViewProvider: NSTextAttachmentViewProvider {
+
+    /// `tracksTextAttachmentViewBounds` must be set in init, not after
+    /// construction, or TK2 can measure a hosted attachment before the
+    /// provider view has usable bounds.
+    override init(
+        textAttachment: NSTextAttachment,
+        parentView: NSView?,
+        textLayoutManager: NSTextLayoutManager?,
+        location: any NSTextLocation
+    ) {
+        super.init(
+            textAttachment: textAttachment,
+            parentView: parentView,
+            textLayoutManager: textLayoutManager,
+            location: location
+        )
+        tracksTextAttachmentViewBounds = true
+    }
 
     override func loadView() {
         guard let attachment = textAttachment as? PDFNSTextAttachment else {
