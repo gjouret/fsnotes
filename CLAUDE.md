@@ -120,10 +120,12 @@ Before writing ANY code:
 
 ## App Identity
 
-- **Original FSNotes**: `/Applications/FSNotes.app` — don't touch this
-- **FSNotes++** (our fork): `~/Applications/FSNotes++.app` — this is what we build and deploy
-- Both share the same bundle ID (`co.fluder.FSNotes`), same notes folder, same iCloud container
+- **Original FSNotes**: `/Applications/FSNotes.app`, bundle ID `co.fluder.FSNotes` — don't touch this
+- **FSNotes++** (our fork): `~/Applications/FSNotes++.app`, bundle ID **`app.fsnotes.fork-gjouret`** (changed in `fsnotes-dbe`) — this is what we build and deploy
+- Notes folder and iCloud container are still keyed by the legacy `co.fluder.fsnotes` (entitlements unchanged); debug builds aren't sandboxed so direct path access works regardless. CFBundleName / on-screen menu-bar text are still "FSNotes++" — only the bundle ID changed
 - Quote paths in shell: `~/Applications/"FSNotes++.app"` (the `++` requires quotes)
+- The bundle-ID change eliminates LaunchServices ambiguity: `lsappinfo info -only bundlepath app.fsnotes.fork-gjouret` is now unambiguous, and `co.fluder.FSNotes` only resolves to the upstream app
+- UserDefaults migration ran once on first launch under the new ID via `UserDefaultsManagement.migrateLegacyBundleIdPreferencesIfNeeded()` — copies legacy `~/Library/Preferences/co.fluder.FSNotes.plist` into the new domain so theme, pins, fold cache survive
 
 ## Build Environment
 

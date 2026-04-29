@@ -50,6 +50,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        // bd-fsnotes-dbe: migrate from the legacy `co.fluder.FSNotes`
+        // UserDefaults domain BEFORE any other UD read. The bundle ID
+        // changed to `app.fsnotes.fork-gjouret` to eliminate
+        // LaunchServices collisions with the upstream FSNotes; without
+        // this migration, every preference (theme choice, pins,
+        // fold cache, etc.) would appear blank on first launch under
+        // the new ID.
+        UserDefaultsManagement.migrateLegacyBundleIdPreferencesIfNeeded()
+
         bmLog("🚀 FSNotes++ launched — NSHomeDirectory: \(NSHomeDirectory())")
 
         // Ensure the font panel is closed when the app starts, in case it was

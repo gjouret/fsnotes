@@ -5245,7 +5245,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fsnotes.fork-gjouret";
 				PRODUCT_MODULE_NAME = FSNotes;
 				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -5283,7 +5283,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fsnotes.fork-gjouret";
 				PRODUCT_MODULE_NAME = FSNotes;
 				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE = "";
@@ -5323,7 +5323,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 7.1.1;
 				OTHER_SWIFT_FLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fsnotes.fork-gjouret";
 				PRODUCT_MODULE_NAME = FSNotes;
 				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE = "";
@@ -5365,7 +5365,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 7.1.1;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotes;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fsnotes.fork-gjouret";
 				PRODUCT_MODULE_NAME = FSNotes;
 				PRODUCT_NAME = "FSNotes++";
 				PROVISIONING_PROFILE = "";
@@ -5402,7 +5402,7 @@
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = "$(inherited)";
 				OTHER_SWIFT_FLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotesTests;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fsnotes.fork-gjouret.Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -5433,7 +5433,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = co.fluder.FSNotesTests;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fsnotes.fork-gjouret.Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = NO;

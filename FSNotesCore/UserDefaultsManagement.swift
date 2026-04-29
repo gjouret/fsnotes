@@ -1940,6 +1940,54 @@ public class UserDefaultsManagement {
         static let bold = "boldKeyed"
     }
 
+    /// One-shot migration: copy preferences from the legacy
+    /// `co.fluder.FSNotes` UserDefaults domain into the current app's
+    /// domain. Runs ONCE per install — gated by a sentinel.
+    ///
+    /// Background (bd-fsnotes-dbe): the bundle ID was changed from
+    /// `co.fluder.FSNotes` to `app.fsnotes.fork-gjouret` to eliminate
+    /// LaunchServices ambiguity with the upstream `/Applications/FSNotes.app`
+    /// build. UserDefaults is keyed by bundle ID, so on first launch
+    /// under the new ID the user would lose every persisted setting
+    /// (theme choice, pin state, fold cache, sort order, etc.).
+    /// This helper reads the legacy plist and copies non-conflicting
+    /// keys into the new domain so the change is invisible to the user.
+    ///
+    /// Conflict policy: the new domain wins. If a key already exists
+    /// under the new bundle ID, we don't overwrite it. This keeps
+    /// re-running the migration safe (defensive — the sentinel should
+    /// prevent re-run anyway) and avoids clobbering values the user
+    /// changed after the migration first ran.
+    public static func migrateLegacyBundleIdPreferencesIfNeeded() {
+        let migrationKey = "didMigrateFromCoFluderFSNotes"
+        let new = UserDefaults.standard
+        if new.bool(forKey: migrationKey) { return }
+
+        let legacyURL = FileManager.default.urls(
+            for: .libraryDirectory, in: .userDomainMask
+        ).first?
+            .appendingPathComponent("Preferences", isDirectory: true)
+            .appendingPathComponent("co.fluder.FSNotes.plist")
+
+        guard let url = legacyURL,
+              let dict = NSDictionary(contentsOf: url) as? [String: Any] else {
+            new.set(true, forKey: migrationKey)
+            return
+        }
+
+        for (key, value) in dict {
+            // Skip Apple-managed CFPreferences keys that shouldn't be
+            // copied (these are framework-internal, not app settings).
+            if key.hasPrefix("Apple") || key.hasPrefix("NS") || key.hasPrefix("com.apple.") {
+                continue
+            }
+            // Skip keys already populated under the new bundle ID.
+            if new.object(forKey: key) != nil { continue }
+            new.set(value, forKey: key)
+        }
+        new.set(true, forKey: migrationKey)
+    }
+
     /// Copy any legacy UD values into `Theme.shared`, save the active
     /// theme, then delete the legacy keys + set the sentinel. Idempotent.
     ///
