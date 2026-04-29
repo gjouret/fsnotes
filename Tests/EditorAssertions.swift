@@ -694,3 +694,363 @@ struct BlockKindAssertion {
         }
     }
 }
+
+// MARK: - Slice F.7 readbacks
+//
+// Added to support the migration of `UIBugRegressionTests.swift` (~50
+// snapshot-based probes) onto the Given/When/Then DSL. Every readback
+// below replaces a recurrent `h.snapshot().raw.contains(...)` /
+// `assertContains(...)` / `components(separatedBy:).count` shape that
+// the probes used directly.
+//
+
+extension EditorAssertions {
+    /// Fragment-class presence + count readbacks. Replaces
+    /// `snap.assertContains("(fragment class=X")` and
+    /// `body.components(separatedBy: "(fragment class=X").count - 1`.
+    var fragments: FragmentClassAssertions {
+        FragmentClassAssertions(parent: self)
+    }
+
+    /// Raw snapshot-text readbacks. Used for content presence checks
+    /// (Unicode round-trip, link URL preservation, math source
+    /// preservation) where structural readbacks would over-promise.
+    var snapshot: SnapshotTextAssertions {
+        SnapshotTextAssertions(parent: self)
+    }
+
+    /// Document-projection block-shape readbacks. Replaces the probe
+    /// pattern of digging into `editor.documentProjection?.document.blocks`
+    /// and counting by case.
+    var document: DocumentAssertions {
+        DocumentAssertions(parent: self)
+    }
+}
+
+extension CursorAssertions {
+    /// Assert the live selection has zero length (cursor is collapsed,
+    /// not a range). Catches stale-selection bugs that pure-function
+    /// tests can't see.
+    @discardableResult
+    func selectionIsCollapsed(
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let sel = editor.selectedRange()
+        if sel.length != 0 {
+            XCTFail(
+                "Then.cursor.selectionIsCollapsed: expected length 0, " +
+                "got \(sel.length) (sel=\(sel)).",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+}
+
+// MARK: F.7 — Fragment-class assertions
+
+struct FragmentClassAssertions {
+    let parent: EditorAssertions
+    fileprivate var editor: EditTextView { parent.scenario.editor }
+
+    /// Assert at least one TK2 layout fragment of the named class
+    /// exists in the document. Class name is matched with
+    /// `String(describing: type(of: fragment))`.
+    @discardableResult
+    func contains(
+        class className: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        if classCounts(named: className) == 0 {
+            XCTFail(
+                "Then.fragments.contains(class: \(className)): " +
+                "no fragment of that class found.",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+
+    /// Assert NO fragment of the named class exists in the document.
+    @discardableResult
+    func doesNotContain(
+        class className: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let n = classCounts(named: className)
+        if n != 0 {
+            XCTFail(
+                "Then.fragments.doesNotContain(class: \(className)): " +
+                "expected 0, got \(n).",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+
+    /// Open a count assertion for the named class.
+    func countOfClass(_ className: String) -> FragmentClassCountAssertion {
+        FragmentClassCountAssertion(parent: parent, className: className)
+    }
+
+    fileprivate func classCounts(named className: String) -> Int {
+        var n = 0
+        AssertionHelpers.enumerateFragments(editor: editor) { fragment, _ in
+            if String(describing: type(of: fragment)) == className {
+                n += 1
+            }
+            return true
+        }
+        return n
+    }
+}
+
+struct FragmentClassCountAssertion {
+    let parent: EditorAssertions
+    let className: String
+
+    @discardableResult
+    func equals(
+        _ expected: Int,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let actual = FragmentClassAssertions(parent: parent)
+            .classCounts(named: className)
+        XCTAssertEqual(
+            actual, expected,
+            "Then.fragments.countOfClass(\(className)).equals: " +
+            "expected \(expected), got \(actual).",
+            file: file, line: line
+        )
+        return parent
+    }
+
+    @discardableResult
+    func isAtLeast(
+        _ minimum: Int,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let actual = FragmentClassAssertions(parent: parent)
+            .classCounts(named: className)
+        if actual < minimum {
+            XCTFail(
+                "Then.fragments.countOfClass(\(className)).isAtLeast: " +
+                "expected ≥ \(minimum), got \(actual).",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+}
+
+// MARK: F.7 — Snapshot-text assertions
+//
+// `EditorSnapshot` flattens the editor state into an S-expression. Most
+// content checks have a structural counterpart on `Document`; these
+// readbacks are the escape hatch for cases where the assertion is "the
+// rendered storage retained this literal substring" — Unicode, URLs,
+// math source. Reach for `Then.document` first.
+
+struct SnapshotTextAssertions {
+    let parent: EditorAssertions
+    fileprivate var editor: EditTextView { parent.scenario.editor }
+
+    @discardableResult
+    func contains(
+        _ needle: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let raw = EditorSnapshot.emit(from: editor).raw
+        if !raw.contains(needle) {
+            XCTFail(
+                "Then.snapshot.contains: expected to find " +
+                "'\(needle)'; not present.\nsnapshot:\n\(raw.prefix(500))",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+
+    @discardableResult
+    func doesNotContain(
+        _ needle: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let raw = EditorSnapshot.emit(from: editor).raw
+        if raw.contains(needle) {
+            XCTFail(
+                "Then.snapshot.doesNotContain: '\(needle)' was " +
+                "found.\nsnapshot:\n\(raw.prefix(500))",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+}
+
+// MARK: F.7 — Document-projection block assertions
+
+struct DocumentAssertions {
+    let parent: EditorAssertions
+    fileprivate var editor: EditTextView { parent.scenario.editor }
+
+    /// Read the live storage string. Used by tests asserting that
+    /// typed/pasted/edited content has reached `NSTextStorage`.
+    var storageText: StorageTextAssertion {
+        StorageTextAssertion(parent: parent)
+    }
+
+    /// Open a count-of-block-kind assertion.
+    func blockCount(ofKind kind: BlockKindFixture) -> BlockKindCountAssertion {
+        BlockKindCountAssertion(parent: parent, kind: kind)
+    }
+
+    /// Total block count.
+    var totalBlocks: TotalBlockCountAssertion {
+        TotalBlockCountAssertion(parent: parent)
+    }
+}
+
+struct StorageTextAssertion {
+    let parent: EditorAssertions
+    fileprivate var editor: EditTextView { parent.scenario.editor }
+
+    @discardableResult
+    func contains(
+        _ needle: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let s = editor.textStorage?.string ?? ""
+        if !s.contains(needle) {
+            XCTFail(
+                "Then.document.storageText.contains: expected " +
+                "'\(needle)'; storage='\(s.prefix(200))'.",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+
+    @discardableResult
+    func doesNotContain(
+        _ needle: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let s = editor.textStorage?.string ?? ""
+        if s.contains(needle) {
+            XCTFail(
+                "Then.document.storageText.doesNotContain: " +
+                "'\(needle)' present.\nstorage='\(s.prefix(200))'.",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+}
+
+struct BlockKindCountAssertion {
+    let parent: EditorAssertions
+    let kind: BlockKindFixture
+    fileprivate var editor: EditTextView { parent.scenario.editor }
+
+    @discardableResult
+    func equals(
+        _ expected: Int,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let actual = countMatching()
+        XCTAssertEqual(
+            actual, expected,
+            "Then.document.blockCount(ofKind: \(kind)).equals: " +
+            "expected \(expected), got \(actual).",
+            file: file, line: line
+        )
+        return parent
+    }
+
+    @discardableResult
+    func isAtLeast(
+        _ minimum: Int,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let actual = countMatching()
+        if actual < minimum {
+            XCTFail(
+                "Then.document.blockCount(ofKind: \(kind)).isAtLeast: " +
+                "expected ≥ \(minimum), got \(actual).",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+
+    private func countMatching() -> Int {
+        guard let projection = editor.documentProjection else { return 0 }
+        return projection.document.blocks.reduce(0) { acc, block in
+            acc + (matches(block) ? 1 : 0)
+        }
+    }
+
+    private func matches(_ block: Block) -> Bool {
+        switch (kind, block) {
+        case (.paragraph, .paragraph):           return true
+        case (.blockquote, .blockquote):         return true
+        case (.codeBlock, .codeBlock):           return true
+        case (.table, .table):                   return true
+        case (.horizontalRule, .horizontalRule): return true
+        case (.blankLine, .blankLine):           return true
+        case (.heading(let l), .heading(let bl, _)) where l == bl:
+            return true
+        case (.heading, .heading):
+            return false
+        case (.bulletList, .list(let items, _)):
+            guard let first = items.first else { return false }
+            return first.checkbox == nil &&
+                !first.marker.contains(where: { $0.isNumber })
+        case (.numberedList, .list(let items, _)):
+            guard let first = items.first else { return false }
+            return first.marker.contains(where: { $0.isNumber })
+        case (.todoList, .list(let items, _)):
+            guard let first = items.first else { return false }
+            return first.checkbox != nil
+        default:
+            return false
+        }
+    }
+}
+
+struct TotalBlockCountAssertion {
+    let parent: EditorAssertions
+    fileprivate var editor: EditTextView { parent.scenario.editor }
+
+    @discardableResult
+    func equals(
+        _ expected: Int,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let actual = editor.documentProjection?.document.blocks.count ?? 0
+        XCTAssertEqual(
+            actual, expected,
+            "Then.document.totalBlocks.equals: expected \(expected), " +
+            "got \(actual).",
+            file: file, line: line
+        )
+        return parent
+    }
+
+    @discardableResult
+    func isAtLeast(
+        _ minimum: Int,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> EditorAssertions {
+        let actual = editor.documentProjection?.document.blocks.count ?? 0
+        if actual < minimum {
+            XCTFail(
+                "Then.document.totalBlocks.isAtLeast: expected ≥ " +
+                "\(minimum), got \(actual).",
+                file: file, line: line
+            )
+        }
+        return parent
+    }
+}
