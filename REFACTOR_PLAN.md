@@ -140,7 +140,14 @@ Filter broadened in both `CodeBlockEditToggleOverlay.swift:295` and `GutterContr
 - ✅ **Slice C** (`5c50998`) — bitmap-based `Then` readbacks shipped in `Tests/EditorAssertions+Bitmap.swift` + `Tests/UserFlows/BitmapReadbackTests.swift`.
 - ✅ **Slice D** (`7d82fe4`) — async-hydration `Then` readbacks shipped in `Tests/EditorAssertions+Async.swift` + `Tests/UserFlows/AsyncHydrationThenTests.swift`.
 - ✅ **Slice E** (`d70cb9d`, widened by `8138174`) — combinatorial coverage generator over (block kind × cursor position × edit primitive × selection state) with sequence widening + round-trip parity invariant. Surfaced bugs #37 + #38.
-- **Slice F (outstanding)** — consolidation: collapse 7 per-suite factory functions (`makeHarness` / `makeHarnessWithTable` / `makeHarnessWith2x2Table` / `makeFullPipelineEditor` across `SubviewTableBoundaryCaretTests`, `SubviewTableInPlaceFastPathTests`, `HeaderTests`, `TableCellEditingTests`, `NewLineTransitionTests`, `TableNavigationTests`, plus the `MCPTestFixture.makeHarness`) into uses of `Given.note(...)` from `EditorScenario.swift`; absorb `EditorHTMLParityTests` `EditStep` DSL; rewrite `Tests/UIBugRegressionTests.swift` (~1,740 LoC of probes — grew since plan was last refreshed) to ~300 LoC of named regressions over the Given/When/Then API.
+- **Slice F (in flight)** — consolidation. Sub-slices:
+  - ✅ **F.1** (`0992301`) — `SubviewTableBoundaryCaretTests` migrated. Introduced `Tests/EditorScenario+Fixtures.swift` with `firstAttachment(of:)` + `firstFragmentElement(of:)` helpers used by the rest of the slice.
+  - ✅ **F.2** (`bbefb92`) — `TableCellEditingTests` migrated. Helpers extended with `tableCellOffset(row:col:)` + `tableBlock(at:)`.
+  - ✅ **F.3** (`ef8a35d`) — `TableNavigationTests` migrated (-65 LoC; 12 keyboard-command tests over the same fixture).
+  - ✅ **F.4** (`e6a096f`) — `SubviewTableInPlaceFastPathTests` migrated. Helpers extended with `firstTableBlockIndex()`.
+  - **F.5 (deferred — different code path)** — `HeaderTests` + `NewLineTransitionTests` use a `makeFullPipelineEditor` + `runFullPipeline` pattern that bypasses `EditorHarness` entirely to test the *source-mode* renderer path (no block-model activation, explicit `setAttributedString` + `RunLoop` pump). Migrating to `Given.note(...)` would change the code path under test (block-model active by default), losing fidelity. The clean fix is a `Given.sourceModeNote(...)` builder + matching pipeline pump verb — separate slice from the table-fixture consolidation.
+  - **F.6 (deferred — minimal wrapper)** — `MCPTestFixture`'s `makeHarness(at:url:markdown:)` is a 5-line `EditorHarness` wrapper that repoints `note.url` for `NotePathResolver`. Six call sites in MCP tool tests; consolidating yields ~5 LoC and adds DSL surface for an MCP-specific concern.
+  - **F.7 (outstanding — biggest scope)** — rewrite `Tests/UIBugRegressionTests.swift` (~1,740 LoC of probes) to ~300 LoC of named regressions over the Given/When/Then API; absorb `EditorHTMLParityTests` `EditStep` DSL.
 
 ### Deferred bugs / investigations
 
