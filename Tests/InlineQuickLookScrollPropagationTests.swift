@@ -178,44 +178,55 @@ final class InlineQuickLookScrollPropagationTests: XCTestCase {
 
     // MARK: - Bug #19: QuickLookThumbnailCache
 
-    /// The cache is keyed by URL and should round-trip a stored image.
-    /// Pinning this contract guards the bug-#19 thumbnail-fallback path —
-    /// if the cache stops returning the stored image, the fallback layer
-    /// goes blank and the user sees the empty preview frame again.
+    /// The cache is keyed by `(url, isDark)` and should round-trip a
+    /// stored image. Pinning this contract guards the bug-#19
+    /// thumbnail-fallback path — if the cache stops returning the
+    /// stored image, the fallback layer goes blank and the user sees
+    /// the empty preview frame again. (Appearance keying added in
+    /// fsnotes-64c; see `BugFsnotes64cTests` for the cross-mode
+    /// invariants.)
     func test_thumbnailCache_storesAndReturnsImageByURL() {
         let url = URL(fileURLWithPath: "/tmp/quicklook_cache_test_\(UUID().uuidString).bin")
         let image = NSImage(size: NSSize(width: 32, height: 32))
-        // Defensive: clear any prior entry for this URL.
-        QuickLookThumbnailCache.shared.removeObject(forKey: url as NSURL)
+        // Use the explicit-appearance test surface so the test is
+        // independent of the runner's current effectiveAppearance.
+        let isDark = false
+        QuickLookThumbnailCache.removeObject(for: url, isDark: isDark)
         XCTAssertNil(
-            QuickLookThumbnailCache.cachedThumbnail(for: url),
+            QuickLookThumbnailCache.cachedThumbnail(for: url, isDark: isDark),
             "Cache should be empty before insertion."
         )
-        QuickLookThumbnailCache.shared.setObject(image, forKey: url as NSURL)
+        QuickLookThumbnailCache.setObject(image, for: url, isDark: isDark)
         XCTAssertTrue(
-            QuickLookThumbnailCache.cachedThumbnail(for: url) === image,
+            QuickLookThumbnailCache.cachedThumbnail(for: url, isDark: isDark) === image,
             "Cache must return the same instance that was stored."
         )
         // Cleanup.
-        QuickLookThumbnailCache.shared.removeObject(forKey: url as NSURL)
+        QuickLookThumbnailCache.removeObject(for: url, isDark: isDark)
     }
 
-    /// Distinct URLs must not collide. The cache uses NSURL identity via
-    /// hash + isEqual, not pointer equality.
+    /// Distinct URLs must not collide within a mode. Composes with
+    /// the appearance discriminator in fsnotes-64c — URL identity is
+    /// preserved, mode is layered on top.
     func test_thumbnailCache_keysByURLValue() {
         let urlA = URL(fileURLWithPath: "/tmp/quicklook_cache_A_\(UUID().uuidString).bin")
         let urlB = URL(fileURLWithPath: "/tmp/quicklook_cache_B_\(UUID().uuidString).bin")
         let imageA = NSImage(size: NSSize(width: 16, height: 16))
         let imageB = NSImage(size: NSSize(width: 32, height: 32))
+        let isDark = false
 
-        QuickLookThumbnailCache.shared.setObject(imageA, forKey: urlA as NSURL)
-        QuickLookThumbnailCache.shared.setObject(imageB, forKey: urlB as NSURL)
+        QuickLookThumbnailCache.setObject(imageA, for: urlA, isDark: isDark)
+        QuickLookThumbnailCache.setObject(imageB, for: urlB, isDark: isDark)
 
-        XCTAssertTrue(QuickLookThumbnailCache.cachedThumbnail(for: urlA) === imageA)
-        XCTAssertTrue(QuickLookThumbnailCache.cachedThumbnail(for: urlB) === imageB)
+        XCTAssertTrue(
+            QuickLookThumbnailCache.cachedThumbnail(for: urlA, isDark: isDark) === imageA
+        )
+        XCTAssertTrue(
+            QuickLookThumbnailCache.cachedThumbnail(for: urlB, isDark: isDark) === imageB
+        )
 
         // Cleanup.
-        QuickLookThumbnailCache.shared.removeObject(forKey: urlA as NSURL)
-        QuickLookThumbnailCache.shared.removeObject(forKey: urlB as NSURL)
+        QuickLookThumbnailCache.removeObject(for: urlA, isDark: isDark)
+        QuickLookThumbnailCache.removeObject(for: urlB, isDark: isDark)
     }
 }

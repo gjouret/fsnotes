@@ -35,43 +35,88 @@ import QuickLookThumbnailing
 
 // MARK: - QuickLookThumbnailCache
 
-/// Process-wide cache of rendered QuickLook thumbnails keyed by URL.
-/// Used as a synchronously-displayable fallback while `QLPreviewView`
-/// re-hydrates after a scroll-recycle. Without this cache the user sees
-/// an empty preview frame for a few hundred milliseconds (or, for some
-/// file types like `.numbers`, indefinitely if QLPreviewView fails to
-/// kick its render after the view re-enters the window hierarchy).
+/// Process-wide cache of rendered QuickLook thumbnails keyed by
+/// `(url, isDark)`. Used as a synchronously-displayable fallback while
+/// `QLPreviewView` re-hydrates after a scroll-recycle. Without this
+/// cache the user sees an empty preview frame for a few hundred
+/// milliseconds (or, for some file types like `.numbers`, indefinitely
+/// if QLPreviewView fails to kick its render after the view re-enters
+/// the window hierarchy).
+///
+/// The appearance discriminator is bd-fsnotes-64c: `QLThumbnailGenerator`
+/// renders thumbnails with the process's current effectiveAppearance
+/// baked in (Numbers spreadsheet chrome, Pages page background, etc.
+/// vary between light and dark), so caching by URL alone returns a
+/// stale-mode thumbnail after a Light <-> Dark switch.
 ///
 /// The cache is cheap — a thumbnail for a typical embed is a 600x400
-/// NSImage, ~1 MB peak; we cap the cache by NSCache's count limit.
+/// NSImage, ~1 MB peak; we cap the cache by NSCache's count limit. The
+/// inactive-mode entries cost at most a 2x multiplier and are evicted
+/// under memory pressure or the count cap.
 enum QuickLookThumbnailCache {
 
     /// Process-wide cache. NSCache is thread-safe and self-evicts under
-    /// memory pressure.
-    static let shared: NSCache<NSURL, NSImage> = {
-        let cache = NSCache<NSURL, NSImage>()
+    /// memory pressure. Keys are composite `<isDark>:<url>` strings so
+    /// the same URL can hold two distinct images (light + dark).
+    private static let shared: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 64
         return cache
     }()
 
-    /// Synchronously return a cached thumbnail for `url`, or nil if not
-    /// yet rendered. Callers must tolerate a nil return — rendering is
-    /// asynchronous and the cache fills opportunistically.
+    private static func cacheKey(for url: URL, isDark: Bool) -> NSString {
+        return "\(isDark ? "dark" : "light"):\(url.absoluteString)" as NSString
+    }
+
+    /// Resolve the current process-wide appearance to a single bit.
+    /// Mirrors `BlockRenderer.render`'s discriminator so the two caches
+    /// agree on the meaning of "this mode" within a single tick.
+    private static var currentIsDark: Bool {
+        return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    /// Synchronously return a cached thumbnail for `url` under the
+    /// current process appearance, or nil if not yet rendered. Callers
+    /// must tolerate a nil return — rendering is asynchronous and the
+    /// cache fills opportunistically.
     static func cachedThumbnail(for url: URL) -> NSImage? {
-        return shared.object(forKey: url as NSURL)
+        return shared.object(forKey: cacheKey(for: url, isDark: currentIsDark))
+    }
+
+    /// Explicit-appearance lookup. Used by tests to drive both halves
+    /// of the cache deterministically; production code should use the
+    /// no-argument variant which reads the current appearance.
+    static func cachedThumbnail(for url: URL, isDark: Bool) -> NSImage? {
+        return shared.object(forKey: cacheKey(for: url, isDark: isDark))
+    }
+
+    /// Test surface — store an image under an explicit appearance.
+    /// Production fills via `renderThumbnail(for:size:completion:)`,
+    /// which captures `currentIsDark` at render time.
+    static func setObject(_ image: NSImage, for url: URL, isDark: Bool) {
+        shared.setObject(image, forKey: cacheKey(for: url, isDark: isDark))
+    }
+
+    /// Test surface — drop a single appearance slot for a URL.
+    static func removeObject(for url: URL, isDark: Bool) {
+        shared.removeObject(forKey: cacheKey(for: url, isDark: isDark))
     }
 
     /// Render a thumbnail for `url` at `size` (points) using
-    /// `QLThumbnailGenerator` and store it in the cache when ready.
-    /// `completion` runs on the main thread with the rendered image
-    /// (or nil on failure). Idempotent: if a thumbnail is already
-    /// cached, the completion fires synchronously with the cached value.
+    /// `QLThumbnailGenerator` and store it in the cache under the
+    /// appearance that was active when the render started. `completion`
+    /// runs on the main thread with the rendered image (or nil on
+    /// failure). Idempotent: if a thumbnail is already cached for the
+    /// current appearance, the completion fires synchronously with the
+    /// cached value.
     static func renderThumbnail(
         for url: URL,
         size: NSSize,
         completion: @escaping (NSImage?) -> Void
     ) {
-        if let cached = cachedThumbnail(for: url) {
+        let isDark = currentIsDark
+        let key = cacheKey(for: url, isDark: isDark)
+        if let cached = shared.object(forKey: key) {
             completion(cached)
             return
         }
@@ -91,7 +136,13 @@ enum QuickLookThumbnailCache {
             }
             DispatchQueue.main.async {
                 if let image = image {
-                    shared.setObject(image, forKey: url as NSURL)
+                    // Re-resolve the key under the appearance we
+                    // captured at request time. Switching appearance
+                    // mid-render stores under the original mode (the
+                    // generator's output reflects that mode); the next
+                    // post-switch lookup will be a miss and trigger a
+                    // fresh render under the new appearance.
+                    shared.setObject(image, forKey: key)
                 }
                 completion(image)
             }
