@@ -125,4 +125,15 @@ extension EditorScenario {
         else { return nil }
         return (h, a, r)
     }
+
+    /// Index of the first `.table` block in the live document, or nil.
+    func firstTableBlockIndex() -> Int? {
+        guard let doc = editor.documentProjection?.document else {
+            return nil
+        }
+        for (i, b) in doc.blocks.enumerated() {
+            if case .table = b { return i }
+        }
+        return nil
+    }
 }
