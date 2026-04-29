@@ -23,12 +23,23 @@
 //      bottom-anchored.
 //    • Cursor not adjacent to any TableAttachment → returns nil.
 //
+//  Phase 11 Slice F.1 — migrated off `makeHarness()` to `Given.keyWindowNote`
+//  + `firstAttachment(of:)` helper.
+//
 
 import XCTest
 import AppKit
 @testable import FSNotes
 
 final class SubviewTableBoundaryCaretTests: XCTestCase {
+
+    private static let markdown = """
+    # T
+
+    | A | B |
+    |---|---|
+    | x | y |
+    """
 
     override func setUp() {
         super.setUp()
@@ -40,59 +51,38 @@ final class SubviewTableBoundaryCaretTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Build a [heading, table] document. Returns the harness, the
-    /// table's storage offset, and the TableAttachment.
-    private func makeHarness() throws -> (EditorHarness, Int, TableAttachment) {
-        let markdown = """
-        # T
-
-        | A | B |
-        |---|---|
-        | x | y |
-        """
-        let harness = EditorHarness(markdown: markdown, windowActivation: .keyWindow)
-        let storage = harness.editor.textStorage!
-        var attachment: TableAttachment? = nil
-        var attachmentOffset: Int = -1
-        storage.enumerateAttribute(
-            .attachment, in: NSRange(location: 0, length: storage.length)
-        ) { value, range, stop in
-            if let a = value as? TableAttachment {
-                attachment = a
-                attachmentOffset = range.location
-                stop.pointee = true
-            }
-        }
-        guard let a = attachment, attachmentOffset >= 0 else {
+    /// Build a [heading, table] scenario and resolve the
+    /// `TableAttachment` produced by the subview-tables path.
+    /// Skips the test when no attachment was emitted (e.g. flag
+    /// not honored at fill time).
+    private func scenarioWithTable() throws -> (
+        scenario: EditorScenario,
+        tableOffset: Int,
+        attachment: TableAttachment
+    ) {
+        let scenario = Given.keyWindowNote(markdown: Self.markdown)
+        guard let hit = scenario.firstAttachment(of: TableAttachment.self) else {
             throw XCTSkip("no TableAttachment in storage")
         }
-        return (harness, attachmentOffset, a)
+        return (scenario, hit.offset, hit.attachment)
     }
 
     // MARK: - Cursor AFTER table (right edge)
 
     func test_caretRect_atOffsetAfterTable_isAtVisibleGridRightEdge() throws {
-        let (harness, tableOffset, _) = try makeHarness()
-        defer { harness.teardown() }
+        let (scenario, tableOffset, attachment) = try scenarioWithTable()
+        scenario.cursorAt(tableOffset + 1)
 
-        harness.moveCursor(to: tableOffset + 1)
-
-        guard let rect = harness.editor.caretRectAtSubviewTableBoundary() else {
+        guard let rect = scenario.editor.caretRectAtSubviewTableBoundary() else {
             return XCTFail("caretRectAtSubviewTableBoundary returned nil for cursor right after table")
         }
 
         // The rect's height should be a single-line height (~17pt for
         // 14pt body font), NOT the entire table height (~30-50pt for
         // 2 rows). Pin it to "less than the attachment's bounds height".
-        guard let storage = harness.editor.textStorage,
-              let attachmentAtOffset = storage.attribute(
-                .attachment, at: tableOffset, effectiveRange: nil
-              ) as? TableAttachment else {
-            return XCTFail("table attachment missing at expected offset")
-        }
         XCTAssertLessThan(
-            rect.height, attachmentAtOffset.bounds.height,
-            "caret rect height (\(rect.height)) must be less than the table's full bounds height (\(attachmentAtOffset.bounds.height)) — single-line not entire-table"
+            rect.height, attachment.bounds.height,
+            "caret rect height (\(rect.height)) must be less than the table's full bounds height (\(attachment.bounds.height)) — single-line not entire-table"
         )
         XCTAssertGreaterThan(
             rect.height, 0,
@@ -107,12 +97,10 @@ final class SubviewTableBoundaryCaretTests: XCTestCase {
     // MARK: - Cursor AT table offset (left edge)
 
     func test_caretRect_atTableOffset_returnsBoundaryRect() throws {
-        let (harness, tableOffset, _) = try makeHarness()
-        defer { harness.teardown() }
+        let (scenario, tableOffset, _) = try scenarioWithTable()
+        scenario.cursorAt(tableOffset)
 
-        harness.moveCursor(to: tableOffset)
-
-        guard let rect = harness.editor.caretRectAtSubviewTableBoundary() else {
+        guard let rect = scenario.editor.caretRectAtSubviewTableBoundary() else {
             return XCTFail("caretRectAtSubviewTableBoundary returned nil for cursor at table offset")
         }
         XCTAssertGreaterThan(rect.height, 0)
@@ -125,8 +113,7 @@ final class SubviewTableBoundaryCaretTests: XCTestCase {
     // MARK: - Cursor not adjacent → nil
 
     func test_caretRect_inHeadingBlock_returnsNil() throws {
-        let (harness, tableOffset, _) = try makeHarness()
-        defer { harness.teardown() }
+        let (scenario, tableOffset, _) = try scenarioWithTable()
 
         // Heading "T" is at offset 0; cursor inside heading shouldn't
         // touch the boundary path.
@@ -134,9 +121,9 @@ final class SubviewTableBoundaryCaretTests: XCTestCase {
             tableOffset, 1,
             "fixture sanity: heading must precede the table"
         )
-        harness.moveCursor(to: 1)  // mid-heading, well away from any attachment
+        scenario.cursorAt(1)  // mid-heading, well away from any attachment
 
-        let rect = harness.editor.caretRectAtSubviewTableBoundary()
+        let rect = scenario.editor.caretRectAtSubviewTableBoundary()
         XCTAssertNil(
             rect,
             "boundary rect should be nil when cursor isn't adjacent to a TableAttachment"
@@ -146,12 +133,11 @@ final class SubviewTableBoundaryCaretTests: XCTestCase {
     // MARK: - Flag-off → nil even at boundary
 
     func test_caretRect_returnsNil_whenFlagIsOff() throws {
-        let (harness, tableOffset, _) = try makeHarness()
-        defer { harness.teardown() }
+        let (scenario, tableOffset, _) = try scenarioWithTable()
 
         UserDefaultsManagement.useSubviewTables = false
-        harness.moveCursor(to: tableOffset + 1)
-        let rect = harness.editor.caretRectAtSubviewTableBoundary()
+        scenario.cursorAt(tableOffset + 1)
+        let rect = scenario.editor.caretRectAtSubviewTableBoundary()
         XCTAssertNil(
             rect,
             "boundary rect must be nil when useSubviewTables is off"

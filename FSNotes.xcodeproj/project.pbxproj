@@ -190,6 +190,7 @@
 		EDAS000000000000000000B1 /* EditorAssertions.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDAS000000000000000000F1 /* EditorAssertions.swift */; };
 		EABM000000000000000000B1 /* EditorAssertions+Bitmap.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABM000000000000000000F1 /* EditorAssertions+Bitmap.swift */; };
 		EAAS000000000000000000B1 /* EditorAssertions+Async.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAS000000000000000000F1 /* EditorAssertions+Async.swift */; };
+		EDSF000000000000000000B1 /* EditorScenario+Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDSF000000000000000000F1 /* EditorScenario+Fixtures.swift */; };
 		AHTT000000000000000000B1 /* AsyncHydrationThenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AHTT000000000000000000F1 /* AsyncHydrationThenTests.swift */; };
 		IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */; };
 		FSMT000000000000000000B1 /* FSMTransitions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FSMT000000000000000000F1 /* FSMTransitions.swift */; };
@@ -1469,6 +1470,7 @@
 		EDAS000000000000000000F1 /* EditorAssertions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAssertions.swift; sourceTree = "<group>"; };
 		EABM000000000000000000F1 /* EditorAssertions+Bitmap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorAssertions+Bitmap.swift"; sourceTree = "<group>"; };
 		EAAS000000000000000000F1 /* EditorAssertions+Async.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorAssertions+Async.swift"; sourceTree = "<group>"; };
+		EDSF000000000000000000F1 /* EditorScenario+Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorScenario+Fixtures.swift"; sourceTree = "<group>"; };
 		AHTT000000000000000000F1 /* AsyncHydrationThenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncHydrationThenTests.swift; sourceTree = "<group>"; };
 		IFTT000000000000000000F1 /* InsertTableThenTypeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsertTableThenTypeTests.swift; sourceTree = "<group>"; };
 		FSMT000000000000000000F1 /* FSMTransitions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSMTransitions.swift; sourceTree = "<group>"; };
@@ -3118,6 +3120,7 @@
 				EDAS000000000000000000F1 /* EditorAssertions.swift */,
 				EABM000000000000000000F1 /* EditorAssertions+Bitmap.swift */,
 				EAAS000000000000000000F1 /* EditorAssertions+Async.swift */,
+				EDSF000000000000000000F1 /* EditorScenario+Fixtures.swift */,
 				USRFLW000000000000000005 /* UserFlows */,
 				FSMTFIX0000000000000005 /* Fixtures */,
 				FSMR000000000000000000F1 /* FSMTransitionTableTests.swift */,
@@ -4824,6 +4827,7 @@
 				EDAS000000000000000000B1 /* EditorAssertions.swift in Sources */,
 				EABM000000000000000000B1 /* EditorAssertions+Bitmap.swift in Sources */,
 				EAAS000000000000000000B1 /* EditorAssertions+Async.swift in Sources */,
+				EDSF000000000000000000B1 /* EditorScenario+Fixtures.swift in Sources */,
 				AHTT000000000000000000B1 /* AsyncHydrationThenTests.swift in Sources */,
 				IFTT000000000000000000B1 /* InsertTableThenTypeTests.swift in Sources */,
 				FSMT000000000000000000B1 /* FSMTransitions.swift in Sources */,
