@@ -422,6 +422,7 @@ extension EditTextView {
                 }
                 suppressCompletion = true
                 applyBlockModelResult(result, actionName: "Tag Completion")
+                reparseCurrentBlockInlines()
                 setSelectedRange(NSRange(location: finalPos, length: 0))
                 return
             } catch {
