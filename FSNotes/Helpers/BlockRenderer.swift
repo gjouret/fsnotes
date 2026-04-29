@@ -154,7 +154,15 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     private static var activeRenderers = Set<BlockRenderer>()
 
     static func render(source: String, type: BlockType, maxWidth: CGFloat = 480, completion: @escaping (NSImage?) -> Void) {
-        let cacheKeyString = "\(type):\(source)"
+        // bd-fsnotes-237 / fsnotes-64c: include appearance in the cache
+        // key. The rendered SVG embeds text color (and for mermaid, an
+        // entire theme palette) that's appearance-specific; without
+        // this discriminator, switching Light <-> Dark would return a
+        // stale cached SVG from the previous mode. The body background
+        // itself is now transparent (see generateHTML) so only text and
+        // diagram-line colors drive the appearance dependence.
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let cacheKeyString = "\(type):\(isDark ? "dark" : "light"):\(source)"
         let cacheKey = cacheKeyString as NSString
 
         // In-memory cache — same-session hit.
@@ -203,9 +211,21 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         // diagram; tall diagrams just mean taller empty space below.
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: maxWidth, height: 4000), configuration: config)
         webView?.navigationDelegate = self
-        // Use opaque background matching the editor theme (dark/light).
-        // Transparent backgrounds caused invisible text in snapshots on
-        // some macOS versions and when fonts load asynchronously.
+        // bd-fsnotes-237: render with a transparent backing so the
+        // snapshot's alpha channel reflects the body's `background:
+        // transparent` (see generateHTML). The historical comment here
+        // warned about "invisible text in snapshots on some macOS
+        // versions" with transparent backgrounds — that was specific to
+        // a font-async-load race on Big Sur and earlier; we now wait
+        // for `document.fonts.ready` before snapshotting (see the
+        // mermaid template's run() chain), so the regression surface is
+        // closed. KVC for `drawsBackground` is a long-standing AppKit
+        // pattern; underPageBackgroundColor (macOS 12+) is the modern
+        // companion for the area beyond the page itself.
+        webView?.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 12.0, *) {
+            webView?.underPageBackgroundColor = .clear
+        }
 
         // WKWebView requires being in a window hierarchy to render content on recent macOS.
         // Add it to a hidden offscreen window.
@@ -259,7 +279,14 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
                 <meta charset="utf-8">
                 <style>
                     * { margin: 0; padding: 0; }
-                    body { background: \(bgColor); color: \(textColor); }
+                    /* bd-fsnotes-237: body background transparent so the
+                       rendered SVG composites over whatever editor / note
+                       background is in effect, instead of carrying a
+                       hardcoded white (light) / dark grey (dark) panel
+                       that doesn't match a custom theme. Text color is
+                       still appearance-specific — see render()'s cache
+                       key for why that's safe. */
+                    body { background: transparent; color: \(textColor); }
                     .mermaid { max-width: \(Int(maxWidth))px; }
                     svg { max-width: 100%; }
                 </style>
@@ -324,7 +351,9 @@ class BlockRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             <head>
                 <meta charset="utf-8">
                 <style>
-                    body { margin: 0; padding: 4px 8px; background: \(bgColor); color: \(textColor); }
+                    /* bd-fsnotes-237: body background transparent — same
+                       rationale as the mermaid case above. */
+                    body { margin: 0; padding: 4px 8px; background: transparent; color: \(textColor); }
                     #math { display: inline-block; }
                     /* Force MathJax text color to match the theme */
                     mjx-container, mjx-math, mjx-mi, mjx-mo, mjx-mn, mjx-mrow {
