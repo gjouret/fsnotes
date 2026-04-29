@@ -113,19 +113,18 @@ final class ApplyFormattingToolTests: XCTestCase {
     func testHappyPathTogglesBoldThroughWiredBridge() {
         let fixture = MCPTestFixture()
         let url = fixture.makeNote(at: "live.md", content: "Hello\n")
-        let harness = AppBridgeImplTestHelper.makeHarness(at: url, markdown: "Hello\n")
-        defer { harness.teardown() }
+        let scenario = Given.mcpNote(at: url, markdown: "Hello\n")
         // Select "Hello" so toggleBold has something to wrap.
-        harness.editor.setSelectedRange(NSRange(location: 0, length: 5))
+        scenario.editor.setSelectedRange(NSRange(location: 0, length: 5))
         let vc = ViewController()
-        vc.editor = harness.editor
+        vc.editor = scenario.editor
         let bridge = AppBridgeImpl(resolveViewController: { vc })
         let tool = ApplyFormattingTool(server: fixture.makeServer(bridge: bridge))
 
         let result = tool.executeSync(input: ["command": "bold"])
 
         XCTAssertTrue(result.isSuccess, "got \(String(describing: result.errorMessage))")
-        let serialised = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        let serialised = MarkdownSerializer.serialize(scenario.editor.documentProjection!.document)
         XCTAssertTrue(serialised.contains("**Hello**"), "got: \(serialised)")
     }
 }

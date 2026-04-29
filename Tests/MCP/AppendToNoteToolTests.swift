@@ -140,10 +140,9 @@ final class AppendToNoteToolTests: XCTestCase {
     func testHappyPathRoutesThroughWiredBridge() {
         let fixture = MCPTestFixture()
         let url = fixture.makeNote(at: "live.md", content: "Hello.\n")
-        let harness = AppBridgeImplTestHelper.makeHarness(at: url, markdown: "Hello.\n")
-        defer { harness.teardown() }
+        let scenario = Given.mcpNote(at: url, markdown: "Hello.\n")
         let vc = ViewController()
-        vc.editor = harness.editor
+        vc.editor = scenario.editor
         let bridge = AppBridgeImpl(resolveViewController: { vc })
         let tool = AppendToNoteTool(server: fixture.makeServer(bridge: bridge))
 
@@ -156,7 +155,7 @@ final class AppendToNoteToolTests: XCTestCase {
         XCTAssertEqual(result.payload?["viaBridge"] as? Bool, true)
         // Confirm the live editor projection actually contains the
         // appended text (not just that the tool returned success).
-        let serialised = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        let serialised = MarkdownSerializer.serialize(scenario.editor.documentProjection!.document)
         XCTAssertTrue(serialised.contains("Appended."))
     }
 }

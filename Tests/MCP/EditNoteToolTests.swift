@@ -221,12 +221,11 @@ final class EditNoteToolTests: XCTestCase {
     func testHappyPathRoutesReplaceBlockThroughWiredBridge() {
         let fixture = MCPTestFixture()
         let url = fixture.makeNote(at: "live.md", content: threeBlockMarkdown + "\n")
-        let harness = AppBridgeImplTestHelper.makeHarness(
+        let scenario = Given.mcpNote(
             at: url, markdown: threeBlockMarkdown + "\n"
         )
-        defer { harness.teardown() }
         let vc = ViewController()
-        vc.editor = harness.editor
+        vc.editor = scenario.editor
         let bridge = AppBridgeImpl(resolveViewController: { vc })
         let tool = EditNoteTool(server: fixture.makeServer(bridge: bridge))
 
@@ -239,7 +238,7 @@ final class EditNoteToolTests: XCTestCase {
 
         XCTAssertTrue(result.isSuccess, "got \(String(describing: result.errorMessage))")
         XCTAssertEqual(result.payload?["viaBridge"] as? Bool, true)
-        let serialised = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        let serialised = MarkdownSerializer.serialize(scenario.editor.documentProjection!.document)
         XCTAssertTrue(serialised.contains("Replaced first paragraph."))
         XCTAssertFalse(serialised.contains("First paragraph."))
     }

@@ -331,14 +331,13 @@ final class AIToolCallE2ETests: XCTestCase {
         let fixture = MCPTestFixture()
         let url = fixture.makeNote(at: "wy.md", content: "Initial.\n")
 
-        // Build a harness whose note.url matches the fixture's URL so
+        // Build a scenario whose note.url matches the fixture's URL so
         // AppBridgeImpl.isOpen(_:) will agree.
-        let harness = AppBridgeImplTestHelper.makeHarness(
+        let scenario = Given.mcpNote(
             at: url, markdown: "Initial.\n"
         )
-        defer { harness.teardown() }
 
-        let (rawBridge, vc) = makeLiveBridge(harness: harness)
+        let (rawBridge, vc) = makeLiveBridge(harness: scenario.harness)
         _ = vc  // hold strong reference; resolveViewController captures it
         let bridge = MainThreadAppBridge(rawBridge)
 
@@ -347,7 +346,7 @@ final class AIToolCallE2ETests: XCTestCase {
 
         // Snapshot the journal "before" state so we can assert exactly
         // one new entry was appended.
-        let undoCountBefore = harness.editor.undoJournal.past.count
+        let undoCountBefore = scenario.editor.undoJournal.past.count
 
         // Round 1: model calls append_to_note. Round 2: final text.
         IntegrationMockURLProtocol.install { request, count in
@@ -405,7 +404,7 @@ final class AIToolCallE2ETests: XCTestCase {
         // Editor's projection now contains the appended paragraph —
         // the bridge routed through `applyEditResultWithUndo` and
         // updated the live `documentProjection`.
-        guard let proj = harness.editor.documentProjection else {
+        guard let proj = scenario.editor.documentProjection else {
             return XCTFail("editor lost its documentProjection")
         }
         let serialised = MarkdownSerializer.serialize(proj.document)
@@ -419,16 +418,16 @@ final class AIToolCallE2ETests: XCTestCase {
         // The single-write-path went through: `hasUserEdits` is set
         // by `applyEditResultWithUndo` after the splice, and the
         // editor's textStorage reflects the new content.
-        XCTAssertTrue(harness.editor.hasUserEdits,
+        XCTAssertTrue(scenario.editor.hasUserEdits,
                       "applyEditResultWithUndo should set hasUserEdits=true")
-        let storageStr = harness.editor.textStorage?.string ?? ""
+        let storageStr = scenario.editor.textStorage?.string ?? ""
         XCTAssertTrue(storageStr.contains("New paragraph"),
                       "editor textStorage should reflect the splice, got: \(storageStr)")
 
         // Exactly ONE new UndoJournal entry was added — the bridge's
         // edit went through the canonical journal record path, not a
         // direct storage mutation that bypasses undo.
-        let undoCountAfter = harness.editor.undoJournal.past.count
+        let undoCountAfter = scenario.editor.undoJournal.past.count
         XCTAssertEqual(undoCountAfter - undoCountBefore, 1,
                        "expected exactly one new undo entry; before=\(undoCountBefore) after=\(undoCountAfter)")
     }
@@ -439,16 +438,15 @@ final class AIToolCallE2ETests: XCTestCase {
         let fixture = MCPTestFixture()
         let url = fixture.makeNote(at: "src.md", content: "Initial.\n")
 
-        // Build a harness, then force source-mode by clearing the
+        // Build a scenario, then force source-mode by clearing the
         // block-model active flag. Editor mode is then "source"
         // per AppBridgeImpl.editorMode(for:).
-        let harness = AppBridgeImplTestHelper.makeHarness(
+        let scenario = Given.mcpNote(
             at: url, markdown: "Initial.\n"
         )
-        defer { harness.teardown() }
-        harness.editor.textStorageProcessor?.blockModelActive = false
+        scenario.editor.textStorageProcessor?.blockModelActive = false
 
-        let (rawBridge, vc) = makeLiveBridge(harness: harness)
+        let (rawBridge, vc) = makeLiveBridge(harness: scenario.harness)
         _ = vc
         let bridge = MainThreadAppBridge(rawBridge)
 

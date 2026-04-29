@@ -110,12 +110,11 @@ final class ExportPDFToolTests: XCTestCase {
     func testHappyPathExportsRealPDFThroughWiredBridge() {
         let fixture = MCPTestFixture()
         let url = fixture.makeNote(at: "live.md", content: "# Heading\n\nBody.\n")
-        let harness = AppBridgeImplTestHelper.makeHarness(
+        let scenario = Given.mcpNote(
             at: url, markdown: "# Heading\n\nBody.\n"
         )
-        defer { harness.teardown() }
         let vc = ViewController()
-        vc.editor = harness.editor
+        vc.editor = scenario.editor
         let bridge = AppBridgeImpl(resolveViewController: { vc })
         let tool = ExportPDFTool(server: fixture.makeServer(bridge: bridge))
         let outURL = fixture.root.appendingPathComponent("real.pdf")
