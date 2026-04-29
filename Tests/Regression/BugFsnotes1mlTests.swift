@@ -274,4 +274,135 @@ final class BugFsnotes1mlTests: XCTestCase {
             "Char width: \(charWidth). Tolerance: ±\(tolerance)pt."
         )
     }
+
+    /// Same as above but clicks and types into a HEADER cell (row 0).
+    /// Header cells use bold body font — the bold variant's wider glyphs
+    /// can expose a caret-measurement mismatch if draw and caret paths
+    /// disagree on the font.
+    func test_clickThenType_caretRectAligns_inHeaderCell() {
+        let emptyMd = """
+        | A | B |
+        | --- | --- |
+        |  |  |
+        """
+
+        let h = EditorHarness(
+            markdown: emptyMd, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+
+        guard let tlm = h.editor.textLayoutManager,
+              let cs = tlm.textContentManager as? NSTextContentStorage
+        else { XCTFail("no tlm/cs"); return }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        var frag: TableLayoutFragment?
+        var el: TableElement?
+        var elementStart = 0
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { f in
+            if let tf = f as? TableLayoutFragment,
+               let te = f.textElement as? TableElement,
+               let range = te.elementRange {
+                frag = tf; el = te
+                elementStart = cs.offset(
+                    from: cs.documentRange.location, to: range.location
+                )
+                return false
+            }
+            return true
+        }
+        guard let fr = frag, let element = el
+        else { XCTFail("no table fragment"); return }
+        guard let geom = fr.geometryForHandleOverlay(),
+              geom.columnWidths.count >= 2,
+              geom.rowHeights.count >= 2
+        else { XCTFail("geometry missing"); return }
+
+        // Click at center of header cell (row 0, col 0).
+        let cellLocalX = TableGeometry.handleBarWidth + geom.columnWidths[0] / 2
+        let cellLocalY = TableGeometry.handleBarHeight + geom.rowHeights[0] / 2
+        let localPoint = CGPoint(x: cellLocalX, y: cellLocalY)
+        let frameOrigin = fr.layoutFragmentFrame.origin
+        let containerOrigin = h.editor.textContainerOrigin
+        let viewPoint = NSPoint(
+            x: localPoint.x + frameOrigin.x + containerOrigin.x,
+            y: localPoint.y + frameOrigin.y + containerOrigin.y
+        )
+        _ = h.clickAt(point: viewPoint)
+
+        guard let selCell = element.cellAtCursor(
+            forOffset: h.editor.selectedRange().location - elementStart
+        ) else { XCTFail("click missed cell"); return }
+        XCTAssertEqual(selCell.row, 0, "header row")
+        XCTAssertEqual(selCell.col, 0, "col 0")
+
+        // Type one character into header.
+        h.type("H")
+
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Re-read fragment.
+        var postFrag: TableLayoutFragment?
+        var postElement: TableElement?
+        var postElementStart = 0
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { f in
+            if let tf = f as? TableLayoutFragment,
+               let te = f.textElement as? TableElement,
+               let range = te.elementRange {
+                postFrag = tf; postElement = te
+                postElementStart = cs.offset(
+                    from: cs.documentRange.location, to: range.location
+                )
+                return false
+            }
+            return true
+        }
+        guard let pf = postFrag, let pe = postElement
+        else { XCTFail("no fragment after edit"); return }
+        let poFrameOrigin = pf.layoutFragmentFrame.origin
+
+        if case .table(let header, _, let rows, _) = pe.block {
+            bmLog("1ml-header: header=\(header.map{$0.rawText}) rows=\(rows.map{$0.map{$0.rawText}})")
+        }
+
+        guard let caretRect = h.editor.caretRectIfInTableCell() else {
+            XCTFail("caretRectIfInTableCell nil in header. cursor=\(h.editor.selectedRange().location)")
+            return
+        }
+
+        // Dynamically compute cellLocalOffset from actual cursor position,
+        // matching what caretRectIfInTableCell does internally.
+        let cursor = h.editor.selectedRange().location
+        let localOffset = cursor - postElementStart
+        guard let (crow, ccol) = pe.cellAtCursor(forOffset: localOffset)
+        else { XCTFail("cellAtCursor nil at localOffset=\(localOffset)"); return }
+        guard let cellStartInEl = pe.offset(forCellAt: (row: crow, col: ccol))
+        else { XCTFail("offset nil for (\(crow),\(ccol))"); return }
+        let offsetInCell = max(0, localOffset - cellStartInEl)
+        bmLog("1ml-header: cursor=\(cursor) elementStart=\(postElementStart) localOffset=\(localOffset) cell=(\(crow),\(ccol)) cellStart=\(cellStartInEl) offsetInCell=\(offsetInCell)")
+
+        // Expected: header cell uses BOLD body font.
+        let baseFont = UserDefaultsManagement.noteFont
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let boldFont = NSFontManager.shared.convert(baseFont, toHaveTrait: .boldFontMask)
+
+        guard let expectedLocal = pf.caretRectInCell(
+            row: crow, col: ccol, cellLocalOffset: offsetInCell
+        ) else { XCTFail("caretRectInCell nil header offset=\(offsetInCell)"); return }
+        let expectedX = expectedLocal.origin.x + poFrameOrigin.x + containerOrigin.x
+
+        let tolerance: CGFloat = 2.0
+        XCTAssertEqual(
+            caretRect.origin.x, expectedX, accuracy: tolerance,
+            "Header cell: caretRectIfInTableCell x (\(caretRect.origin.x)) " +
+            "vs expected (\(expectedX)). offsetInCell=\(offsetInCell). " +
+            "Tolerance: ±\(tolerance)pt."
+        )
+    }
 }
