@@ -6,7 +6,7 @@ final class HeaderFoldingTests: XCTestCase {
     private func makeProcessor(for text: String) -> (processor: TextStorageProcessor, storage: NSTextStorage) {
         let storage = NSTextStorage(string: text)
         let processor = TextStorageProcessor()
-        processor.blocks = MarkdownBlockParser.parse(string: storage.string as NSString)
+        processor._testInstallSourceBlocks(parsing: storage.string as NSString)
         return (processor, storage)
     }
 
@@ -45,10 +45,11 @@ final class HeaderFoldingTests: XCTestCase {
 
         let (processor, storage) = makeProcessor(for: text)
 
-        XCTAssertEqual(processor.blocks.count, 4)
-        XCTAssertEqual(processor.blocks[0].range.location, (text as NSString).range(of: "## Top").location)
-        XCTAssertEqual(processor.blocks[1].type, .paragraph)
-        XCTAssertEqual(processor.blocks[2].type, .headingSetext(level: 2))
+        let snapshot = processor.sourceBlocksSnapshot
+        XCTAssertEqual(snapshot.count, 4)
+        XCTAssertEqual(snapshot[0].range.location, (text as NSString).range(of: "## Top").location)
+        XCTAssertEqual(snapshot[1].type, .paragraph)
+        XCTAssertEqual(snapshot[2].type, .headingSetext(level: 2))
 
         processor.toggleFold(headerBlockIndex: 0, textStorage: storage)
 

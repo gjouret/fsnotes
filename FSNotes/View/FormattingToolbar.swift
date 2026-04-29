@@ -239,9 +239,10 @@ class FormattingToolbar: NSView {
         cachedTypingAttributesSnapshot = typingSnapshot
 
         // Determine heading level. Prefer the block-model lookup (O(log N)
-        // via binary search in `blockContaining`) over walking the
-        // source-mode `processor.blocks` array. The source-mode path is
-        // kept as a fallback for the legacy pipeline.
+        // via binary search in `blockContaining`) over the source-mode
+        // walk. Sub-slice 7.B.2.a routes the source-mode arm through
+        // `headingLevel(forParagraphRange:)` so this site no longer
+        // touches the `processor.blocks` array directly.
         var headingLevel = 0
         if let proj = editor.documentProjection,
            currentCursorBlock >= 0,
@@ -250,15 +251,7 @@ class FormattingToolbar: NSView {
                 headingLevel = level
             }
         } else if let processor = editor.textStorageProcessor {
-            for block in processor.blocks {
-                guard NSIntersectionRange(paragraphRange, block.range).length > 0 else { continue }
-                switch block.type {
-                case .heading(let level): headingLevel = level
-                case .headingSetext(let level): headingLevel = level
-                default: break
-                }
-                if headingLevel > 0 { break }
-            }
+            headingLevel = processor.headingLevel(forParagraphRange: paragraphRange)
         }
 
         setButtonState("h1", active: headingLevel == 1)

@@ -251,7 +251,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("Editor missing TextStorageProcessor")
             return
         }
-        for i in 0..<proc.blocks.count {
+        for i in 0..<proc.sourceBlocksSnapshot.count {
             XCTAssertFalse(
                 proc.isCollapsed(blockIndex: i),
                 "Fresh note should have no collapsed blocks (idx \(i))"
@@ -272,7 +272,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("Editor missing processor / storage")
             return
         }
-        let h1Idx = proc.blocks.firstIndex { block in
+        let h1Idx = proc.sourceBlocksSnapshot.firstIndex { block in
             if case .heading = block.type { return true }
             return false
         }
@@ -280,7 +280,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("No heading found")
             return
         }
-        let h1Offset = proc.blocks[h1Idx].range.location
+        let h1Offset = proc.sourceBlocksSnapshot[h1Idx].range.location
 
         // Fold.
         proc.toggleFold(headerBlockIndex: h1Idx, textStorage: storage)
@@ -307,7 +307,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("Editor missing processor / storage")
             return
         }
-        let headings = proc.blocks.enumerated().compactMap { i, b -> Int? in
+        let headings = proc.sourceBlocksSnapshot.enumerated().compactMap { i, b -> Int? in
             if case .heading = b.type { return i }
             return nil
         }
@@ -389,11 +389,100 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         )
     }
 
+    // MARK: - Phase 6 Tier B′ Sub-slice 7.B.2 — processor.blocks retirement
+
+    /// Sub-slice 7.B.2.a hid the `[MarkdownBlock]` array from external
+    /// production readers (four source-mode-fallback callers + the
+    /// note-switch reset migrated to high-level APIs). Sub-slice
+    /// 7.B.2.b completed the retirement: `TextStorageProcessor.blocks`
+    /// was demoted from `public var` to a `private var sourceBlocks`
+    /// side-table, with a read-only `sourceBlocksSnapshot` inspector
+    /// preserved for tests and a `_testInstallSourceBlocks(parsing:)`
+    /// helper for unit-test setup. Production callers route through
+    /// the narrow public APIs only:
+    /// `hasBlocks`, `block(at:)`, `headingLevel(forParagraphRange:)`,
+    /// `headingLevel(atBlockIndex:)`,
+    /// `codeBlockRange(containingStorageIndex:)`, `codeBlockRanges`,
+    /// `isCollapsed(...)`, `isRendered(...)`, `clearBlocks()`.
+    ///
+    /// This grep-discipline test enforces the post-7.B.2.b invariant:
+    /// zero production code outside `TextStorageProcessor.swift` may
+    /// reference the source-mode block array under any of its names —
+    /// `.blocks` (legacy public, removed), `.sourceBlocks` (new
+    /// private; access from outside would not compile but caught here
+    /// for defence in depth), or `.sourceBlocksSnapshot` (the test-
+    /// only inspector — its presence in production would defeat the
+    /// encapsulation). Tests legitimately use `sourceBlocksSnapshot`.
+    /// Doc-comments referencing the historical names are stripped
+    /// before scanning.
+    func test_phase6Bprime_subslice7B2_noProcessorBlocksInProduction() throws {
+        let repoRoot = findRepoRoot()
+        guard let repoRoot = repoRoot else {
+            XCTFail("Unable to locate repo root for source scan")
+            return
+        }
+        let prodDirs = [
+            repoRoot.appendingPathComponent("FSNotes"),
+            repoRoot.appendingPathComponent("FSNotesCore")
+        ]
+
+        // Match the binding names commonly used for a
+        // `TextStorageProcessor` instance (`processor` / `proc` /
+        // `textStorageProcessor`) followed by `.` or `?.` then any
+        // forbidden property name. Word-boundary excludes
+        // `.blocksFoo` / `.sourceBlocksOther`.
+        let regex = try NSRegularExpression(
+            pattern: #"\b(processor|proc|textStorageProcessor)\??\.(blocks|sourceBlocks|sourceBlocksSnapshot)\b(?![A-Za-z0-9_])"#
+        )
+        let lineCommentRegex = try NSRegularExpression(pattern: #"//.*"#)
+
+        var violations: [String] = []
+        for dir in prodDirs {
+            guard FileManager.default.fileExists(atPath: dir.path) else {
+                continue
+            }
+            let enumerator = FileManager.default.enumerator(
+                at: dir, includingPropertiesForKeys: nil
+            )
+            while let fileURL = enumerator?.nextObject() as? URL {
+                guard fileURL.pathExtension == "swift" else { continue }
+                let fileName = fileURL.lastPathComponent
+                // The processor itself is the canonical owner of the
+                // array; allow internal reads.
+                guard fileName != "TextStorageProcessor.swift" else {
+                    continue
+                }
+                guard let content = try? String(contentsOf: fileURL)
+                else { continue }
+                let stripped = lineCommentRegex.stringByReplacingMatches(
+                    in: content,
+                    range: NSRange(content.startIndex..., in: content),
+                    withTemplate: ""
+                )
+                let range = NSRange(stripped.startIndex..., in: stripped)
+                if regex.firstMatch(in: stripped, range: range) != nil {
+                    violations.append(fileName)
+                }
+            }
+        }
+        XCTAssertTrue(
+            violations.isEmpty,
+            "Production code outside `TextStorageProcessor.swift` " +
+            "references the source-mode block array directly; " +
+            "Sub-slice 7.B.2 retired the public surface. Use the " +
+            "narrow public APIs (`hasBlocks`, `block(at:)`, " +
+            "`headingLevel(...)`, `codeBlockRange(...)`, " +
+            "`codeBlockRanges`, `isCollapsed(...)`, " +
+            "`isRendered(...)`, `clearBlocks()`). " +
+            "Offending files: \(violations)."
+        )
+    }
+
     // MARK: - Phase 6 Tier B′ Sub-slice 6 — click-to-edit by storage offset
 
     /// `setRenderMode(_:forBlockAtOffset:)` is the public mutator that
     /// the click-to-edit handler uses — flip the side-table by storage
-    /// offset without the caller needing a `processor.blocks` index.
+    /// offset without the caller needing a `processor.sourceBlocksSnapshot` index.
     func test_phase6Bprime_subslice6_setRenderModeByOffset() {
         let md = """
         ```mermaid
@@ -411,15 +500,15 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("Editor missing TextStorageProcessor")
             return
         }
-        let codeBlocks = proc.blocks.enumerated().compactMap { i, b -> Int? in
+        let codeBlocks = proc.sourceBlocksSnapshot.enumerated().compactMap { i, b -> Int? in
             if case .codeBlock = b.type { return i }
             return nil
         }
         XCTAssertEqual(codeBlocks.count, 2, "Expected 2 code blocks")
 
         // Both mermaid and math blocks start as .rendered (language).
-        let firstOffset = proc.blocks[codeBlocks[0]].range.location
-        let secondOffset = proc.blocks[codeBlocks[1]].range.location
+        let firstOffset = proc.sourceBlocksSnapshot[codeBlocks[0]].range.location
+        let secondOffset = proc.sourceBlocksSnapshot[codeBlocks[1]].range.location
         XCTAssertTrue(proc.isRendered(storageOffset: firstOffset))
         XCTAssertTrue(proc.isRendered(storageOffset: secondOffset))
 
@@ -454,7 +543,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
 
     /// In WYSIWYG mode, `GutterController.visibleCodeBlocksTK2()` must
     /// resolve code blocks via `Document.blocks + blockSpans`, not via
-    /// `processor.blocks`. We verify by emptying `processor.blocks` and
+    /// `processor.sourceBlocksSnapshot`. We verify by emptying `processor.sourceBlocksSnapshot` and
     /// confirming the gutter still finds the same set of code blocks.
     func test_phase6Bprime_subslice5_gutterFindsCodeBlocks_withoutProcessorBlocks() {
         let md = """
@@ -481,7 +570,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         }
         let gutter = GutterController(textView: harness.editor)
 
-        // Baseline: with both projection and processor.blocks populated,
+        // Baseline: with both projection and processor.sourceBlocksSnapshot populated,
         // the gutter sees both code blocks.
         let baseline = gutter.visibleCodeBlocksTK2()
         XCTAssertEqual(
@@ -489,16 +578,16 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             "Expected 2 visible code blocks; got \(baseline.count)"
         )
 
-        // Wipe processor.blocks. In WYSIWYG, the gutter's code-block
+        // Wipe processor.sourceBlocksSnapshot. In WYSIWYG, the gutter's code-block
         // resolution should still work via Document.blocks + blockSpans.
-        proc.blocks = []
+        proc.clearBlocks()
 
         let afterWipe = gutter.visibleCodeBlocksTK2()
         XCTAssertEqual(
             afterWipe.count, 2,
             "Sub-slice 5: visibleCodeBlocksTK2() must resolve via " +
             "Document.blocks in WYSIWYG; got \(afterWipe.count) blocks " +
-            "after clearing processor.blocks"
+            "after clearing processor.sourceBlocksSnapshot"
         )
 
         // The two record sets should describe the same storage ranges.
@@ -507,7 +596,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         XCTAssertEqual(
             baselineRanges, afterRanges,
             "Code block ranges must match before and after clearing " +
-            "processor.blocks (sub-slice 5 invariant)"
+            "processor.sourceBlocksSnapshot (sub-slice 5 invariant)"
         )
     }
 
@@ -541,7 +630,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         }
 
         // Find the three code blocks.
-        let codeBlocks = proc.blocks.enumerated().compactMap { i, b -> (Int, String?)? in
+        let codeBlocks = proc.sourceBlocksSnapshot.enumerated().compactMap { i, b -> (Int, String?)? in
             if case .codeBlock(let lang) = b.type { return (i, lang) }
             return nil
         }
@@ -554,7 +643,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
                 proc.isRendered(blockIndex: idx), expectRendered,
                 "Block lang=\(lang ?? "nil") expected rendered=\(expectRendered)"
             )
-            let offset = proc.blocks[idx].range.location
+            let offset = proc.sourceBlocksSnapshot[idx].range.location
             XCTAssertEqual(
                 proc.renderedBlockOffsets.contains(offset), expectRendered,
                 "Side-table membership for lang=\(lang ?? "nil") " +
@@ -580,14 +669,14 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("Editor missing TextStorageProcessor")
             return
         }
-        guard let idx = proc.blocks.firstIndex(where: {
+        guard let idx = proc.sourceBlocksSnapshot.firstIndex(where: {
             if case .codeBlock = $0.type { return true }
             return false
         }) else {
             XCTFail("No code block found")
             return
         }
-        let offset = proc.blocks[idx].range.location
+        let offset = proc.sourceBlocksSnapshot[idx].range.location
 
         // Mermaid block starts as .rendered (language-based).
         XCTAssertTrue(proc.isRendered(blockIndex: idx))
@@ -621,14 +710,14 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("Editor missing TextStorageProcessor")
             return
         }
-        guard let mermaidIdx = proc.blocks.firstIndex(where: {
+        guard let mermaidIdx = proc.sourceBlocksSnapshot.firstIndex(where: {
             if case .codeBlock = $0.type { return true }
             return false
         }) else {
             XCTFail("No code block found")
             return
         }
-        let mermaidOffset = proc.blocks[mermaidIdx].range.location
+        let mermaidOffset = proc.sourceBlocksSnapshot[mermaidIdx].range.location
         XCTAssertEqual(proc.renderedBlockOffsets, Set([mermaidOffset]))
     }
 
@@ -643,7 +732,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             return
         }
         XCTAssertTrue(proc.renderedBlockOffsets.isEmpty)
-        for i in 0..<proc.blocks.count {
+        for i in 0..<proc.sourceBlocksSnapshot.count {
             XCTAssertFalse(proc.isRendered(blockIndex: i))
         }
     }
@@ -768,14 +857,14 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
             XCTFail("Editor missing TextStorageProcessor")
             return
         }
-        guard let h1Idx = proc.blocks.firstIndex(where: { block in
+        guard let h1Idx = proc.sourceBlocksSnapshot.firstIndex(where: { block in
             if case .heading = block.type { return true }
             return false
         }) else {
             XCTFail("No heading block found")
             return
         }
-        let h1Offset = proc.blocks[h1Idx].range.location
+        let h1Offset = proc.sourceBlocksSnapshot[h1Idx].range.location
 
         // Simulate a stored V1 index-keyed payload from an older app
         // version: heading 0 was folded.

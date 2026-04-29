@@ -233,7 +233,7 @@ extension EditTextView {
         documentProjection = nil
         textStorageProcessor?.blockModelActive = false
         textStorageProcessor?.sourceRendererActive = false
-        textStorageProcessor?.blocks = []
+        textStorageProcessor?.clearBlocks()
 
         if !note.isLoaded {
             note.load()

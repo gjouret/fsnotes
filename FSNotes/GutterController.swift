@@ -275,11 +275,10 @@ class GutterController {
             // attribute stamped by `DocumentRenderer` (same attribute
             // `HeadingLayoutFragment` reads for its hairline decision).
             // Phase 6 Tier B′ Sub-slice 5: fallback prefers
-            // `Document.blocks` via the projection (WYSIWYG path) and
-            // only falls back to `processor.blocks` for source mode
-            // where no projection exists. Once Sub-slice 7 retires
-            // `processor.blocks`, the source-mode arm collapses to
-            // attribute-only reads.
+            // `Document.blocks` via the projection (WYSIWYG path).
+            // Sub-slice 7.B.2.a routes the source-mode arm through
+            // `processor.headingLevel(atBlockIndex:)` so this site no
+            // longer reads the `processor.blocks` array directly.
             let level: Int = {
                 if let v = storage.attribute(
                     .headingLevel, at: heading.charIndex, effectiveRange: nil
@@ -293,14 +292,7 @@ class GutterController {
                    case .heading(let l, _) = projection.document.blocks[docIdx] {
                     return l
                 }
-                if blockIdx < processor.blocks.count {
-                    switch processor.blocks[blockIdx].type {
-                    case .heading(let l): return l
-                    case .headingSetext(let l): return l
-                    default: return 0
-                    }
-                }
-                return 0
+                return processor.headingLevel(atBlockIndex: blockIdx)
             }()
             let cursorOnThisLine = cursorParagraphRange.map {
                 heading.charIndex >= $0.location &&
@@ -451,9 +443,9 @@ class GutterController {
             // dedupe on the block's storage start. Phase 6 Tier B′
             // Sub-slice 5: in WYSIWYG (`documentProjection != nil`),
             // resolve via `Document.blocks + blockSpans` so this draw
-            // path no longer depends on `processor.blocks`. Source
-            // mode keeps the legacy lookup until Sub-slice 7 retires
-            // the per-block array entirely.
+            // path no longer depends on `processor.blocks`.
+            // Sub-slice 7.B.2.a routes the source-mode arm through
+            // `processor.codeBlockRange(containingStorageIndex:)`.
             let blockRange: NSRange
             let blockContentRange: NSRange
             if let projection = textView.documentProjection {
@@ -469,14 +461,11 @@ class GutterController {
                 // strips them); rendered range == content range.
                 blockContentRange = span
             } else {
-                guard let block = processor.blocks.first(where: {
-                    if case .codeBlock = $0.type {
-                        return NSLocationInRange(charIndex, $0.range)
-                    }
-                    return false
-                }) else { return true }
-                blockRange = block.range
-                blockContentRange = block.contentRange
+                guard let pair = processor.codeBlockRange(
+                    containingStorageIndex: charIndex
+                ) else { return true }
+                blockRange = pair.range
+                blockContentRange = pair.contentRange
             }
 
             if blockRange.location == lastSeenBlockStart {

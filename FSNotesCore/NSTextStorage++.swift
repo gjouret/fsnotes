@@ -66,7 +66,7 @@ extension NSTextStorage {
         // Skip addTabStops to avoid overwriting block-aware spacing.
         if NotesTextProcessor.hideSyntax,
            let delegate = self.delegate as? TextStorageProcessor,
-           !delegate.blocks.isEmpty {
+           delegate.hasBlocks {
             return
         }
 

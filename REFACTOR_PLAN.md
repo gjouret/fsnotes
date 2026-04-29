@@ -20,20 +20,23 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 
 ## Convergence criteria — when this plan is closed
 
-The refactor is **architecturally complete**: every invariant in [`ARCHITECTURE.md` § Architecture Invariants](ARCHITECTURE.md#architecture-invariants) (A–G) holds and is mechanically enforced where possible (DEBUG assertions + `scripts/rule7-gate.sh`). All structural phases shipped: **0, 1, 2, 3, 4, 5a–f, 7, 10, 12.A, 12.B, 12.C** (single source of truth, TK2 migration, single write path, undo journal, parser decomposition, theme, **CommonMark 100% — 652/652 as of `489b983`**).
+The refactor is **architecturally complete and closed**: every invariant in [`ARCHITECTURE.md` § Architecture Invariants](ARCHITECTURE.md#architecture-invariants) (A–G) holds and is mechanically enforced where possible (DEBUG assertions + `scripts/rule7-gate.sh` + the Phase 4.6 / 6 / 7 grep-discipline tests in `Phase46BlocksPeerDeletionTests`). All structural phases shipped: **0, 1, 2, 3, 4, 5a–f, 6, 7, 9, 10, 12.A, 12.B, 12.C** (single source of truth, TK2 migration, single write path, undo journal, parser decomposition, `processor.blocks` retirement, theme, Pod-warning silencing, **CommonMark 100% — 652/652 as of `489b983`**).
 
-**The remaining tail is non-architectural and bounded to two items**:
+**The plan is closed.** All convergence items shipped:
 
-| Item | Class | Why it is not blocking |
-|---|---|---|
-| **Phase 6 Sub-slice 7.B.2** — `processor.blocks` array retirement | Cleanup (Tier C) | Source-mode pipeline lift; the architectural invariants don't require it. |
-| **Phase 9 Pod warnings** — silence at Pod target level | Cosmetic | ~100 warnings from third-party Pods. No correctness impact. |
+- Phase 9 Pod warnings: silenced at the Pod target level.
+- Phase 6 Sub-slice 7.B.2.a: external production callers off `processor.blocks`.
+- Phase 6 Sub-slice 7.B.2.b: `processor.blocks` retired as public API, demoted to a private `sourceBlocks` side-table on `TextStorageProcessor` with a narrow public surface.
+
+The codebase satisfies every invariant in [`ARCHITECTURE.md` § Architecture Invariants](ARCHITECTURE.md#architecture-invariants) (A–G) and is mechanically gated where possible (DEBUG assertions, `scripts/rule7-gate.sh`, the Phase 4.6 / 6 / 7 grep-discipline tests in `Phase46BlocksPeerDeletionTests`). Bugs and product work continue against this stable architecture; they are normal product engineering, not refactor work.
+
+**Phase 9 Pod warnings — ✅ shipped.** Total build warnings 99 → 65 (-34) by extending the existing `libcmark_gfm` `post_install` hook to also silence `-Wno-deprecated-declarations` / `-Wno-deprecated-implementations` on `MASShortcut` and `SSZipArchive-{macOS,iOS}` and bumping the `MASShortcut-MASShortcut` resource-bundle target's deployment target from 10.6 to 26.0. All Pod-source warnings now silenced; the remaining 65 are in our own Swift code (storyboard SF Symbol deprecations + a small Tier-1 backlog) and are out-of-scope for the Pod-target Phase 9 sub-slice.
 
 Phase 11 Slice F is now ✅ closed: F.1–F.4 + F.6 + F.7 shipped (six factory consolidations + the `UIBugRegressionTests` rewrite). F.5 stays deferred as a known-different-code-path (source-mode renderer fixture). See the per-slice status further down for commit hashes.
 
-Once those three land, the plan is closed. Bugs are tracked in `BugInventoryRegressionTests.swift` and the per-bug entries below; they are normal product engineering against a stable architecture, not refactor work.
+The plan is closed. Bugs are tracked in `BugInventoryRegressionTests.swift` and the per-bug entries below; they are normal product engineering against a stable architecture, not refactor work.
 
-**No new phases without an invariant violation.** If a future task seems to require a new phase, that is a signal to either (a) demonstrate which invariant in `ARCHITECTURE.md` is being broken, in which case the work belongs here, or (b) recognise it as feature work or cleanup, which lives elsewhere (a feature plan, a cleanup ticket, or this file's existing Sub-slice 7.B.2 / Pod / Slice F slots if it fits one of those buckets).
+**No new phases without an invariant violation.** If a future task seems to require a new phase, that is a signal to either (a) demonstrate which invariant in `ARCHITECTURE.md` is being broken, in which case the work belongs here, or (b) recognise it as feature work or cleanup, which lives elsewhere (a feature plan, a cleanup ticket, or a separate plan document — this file is closed for further sub-slices).
 
 ## Phase status
 
@@ -50,10 +53,10 @@ Once those three land, the plan is closed. Bugs are tracked in `BugInventoryRegr
 | 5d — Copy / paste | ✅ shipped | `Document.slice(in:)`, `EditingOps.replaceFragment` (fused delete+insert, one undo step); `documentFromAttributedString` for cross-app paste |
 | 5e — IME composition | ✅ shipped | `CompositionSession` value type; sanctioned exemption to Invariant A inside marked range while session active |
 | 5f — Undo journal | ✅ shipped | `UndoJournal` per-editor with 5-class coalesce FSM; one `registerUndo` site survives in the editor path |
-| 6 — Cleanup | ✅ partial | Tier C delete legacy `NotesTextProcessor.highlightMarkdown` + dead `processInlineTags` / `applySyntaxHiding`. Tier B′ Sub-slices 1–7.B.1 shipped — both legacy `MarkdownBlock.collapsed` and `MarkdownBlock.renderMode` per-block fields retired in favour of offset-keyed side-tables on `TextStorageProcessor`. **Sub-slice 7.B.2 deferred** — full `processor.blocks` array retirement requires lifting the source-mode pipeline off the per-block array (Tier C scope; see Remaining Work) |
+| 6 — Cleanup | ✅ shipped | Tier C delete legacy `NotesTextProcessor.highlightMarkdown` + dead `processInlineTags` / `applySyntaxHiding`. Tier B′ Sub-slices 1–7.B.2 shipped — both legacy `MarkdownBlock.collapsed` and `MarkdownBlock.renderMode` per-block fields retired in favour of offset-keyed side-tables on `TextStorageProcessor`; `processor.blocks` retired as public API (Sub-slice 7.B.2.a external encapsulation, 7.B.2.b demotion to private `sourceBlocks` with narrow public surface). |
 | 7 — Theme system | ✅ shipped | `BlockStyleTheme` schema + bundled Default/Dark/HighContrast + user overrides; preferences write-through; UD subsumption; rule-7 gate |
 | 8 — Code-block edit toggle | ✅ shipped (slices 1-5) | `</>` hover button, cursor-leaves auto-collapse. Slice 5 broadened the overlay + gutter copy-icon filters to also accept `MermaidLayoutFragment` / `MathLayoutFragment` / `DisplayMathLayoutFragment` (the dedicated fragment classes for fenced ```mermaid``` / ```math``` / ```latex``` blocks) so the user can open them for editing. Display math via `$$…$$` is a paragraph-with-displayMath-inline, not a code block — correctly rejected by the per-block filter |
-| 9 — Compiler-warning cleanup | ✅ partial | Tier 1 mechanical sweep, Tier 2 UTType migration, Tier 3 AppKit modernization (partial). Pod warnings deferred |
+| 9 — Compiler-warning cleanup | ✅ shipped | Tier 1 mechanical sweep, Tier 2 UTType migration, Tier 3 AppKit modernization (partial), Pod warnings silenced at Pod-target level (99 → 65 total; zero Pod-source warnings remain) |
 | 10 — CommonMark Slice A | ✅ shipped | 92.2% → 95.1% via small grammar edits across 11 commits |
 | 11 — Composable user-flow harness | ✅ partial | Slices A (Given/When builder + 8 readbacks), A.5 (FSM transition table, ~95 rows in `Tests/Fixtures/FSMTransitions.swift`), B (38-bug inventory migration), C (bitmap-based Then readbacks), D (async-hydration Then readbacks), E (combinatorial coverage generator + sequence widening) all shipped. Slice F (factory consolidation) outstanding |
 | 12.A — Inline-trait toggle ladder collapse | ✅ shipped | 6-clone wrappers replaced with trait-parameterized method |
@@ -116,7 +119,9 @@ Retirement path (sliced):
 
 8. **✅ Sub-slice 7.B.1** (`6ac422d`) — `MarkdownBlock.renderMode` field retired entirely. The three parser methods (`MarkdownBlockParser.parsePreservingRendered` / `adjustBlocks` / `reparseBlocks`) now accept a `renderedOffsets: Set<Int>` parameter that the caller (`TextStorageProcessor.updateBlockModel`) sources from the `renderedStorageOffsets` side-table. The internal field reads in `codeBlockRanges`, `codeRanges` helper, and the async render skip-check switched to side-table lookups (`!renderedStorageOffsets.contains(...)` or `isRendered(blockIndex:)`). The `mb.renderMode = .rendered` writes in `rebuildBlocksFromProjection` and the dual-write in `setRendered` are gone; the redundant `syncRenderedSideTableFromBlocks` helper deleted. Side-table consistency across `adjustBlocks`'s offset-shift now comes from a UUID snapshot taken before the parse and re-derived after. New `test_phase6Bprime_subslice7B1_noMarkdownBlockRenderMode_reads` grep-discipline test enforces zero `.renderMode` reads in production code (line-comment-stripped). 22/22 Phase 6 Tier B′ tests pass; 117/0 across the broader fold/gutter/fragment-dispatch sweep.
 
-9. **Sub-slice 7.B.2 (deferred)** — `processor.blocks` array retirement. Remaining surface: source-mode editing reads `block.range`, `block.contentRange`, `block.syntaxRanges`, `block.id`, `block.type` for marker overlays, code-block range tracking, async-callback identity, layout dispatch, and the source-mode parser is the canonical writer. Retirement requires lifting the source-mode pipeline off the per-block array entirely — likely a Phase 6 Tier C scope, not a Tier B′ tail-end.
+9. **✅ Sub-slice 7.B.2.a** — encapsulate `processor.blocks` externally. Four external readers (`EditTextView.refreshParagraphRendering`'s source-mode `!processor.blocks.isEmpty` guard, `FormattingToolbar.updateButtonStates`'s source-mode heading-level walk, `GutterController.drawIconsTK2`'s source-mode H-badge fallback, `GutterController.visibleCodeBlocksTK2`'s source-mode code-block lookup) plus the note-switch `processor.blocks = []` reset migrated to high-level APIs on `TextStorageProcessor`: `hasBlocks`, `headingLevel(forParagraphRange:)`, `headingLevel(atBlockIndex:)`, `codeBlockRange(containingStorageIndex:)`, `clearBlocks()`. After this slice the only production consumers of the `[MarkdownBlock]` array live inside `TextStorageProcessor.swift` itself.
+
+10. **✅ Sub-slice 7.B.2.b** — retire `processor.blocks` as a public API. The `public var blocks: [MarkdownBlock]` property was demoted to `private var sourceBlocks: [MarkdownBlock]` (renamed to disambiguate from `Document.blocks`); also caught one missed external reader in `NSTextStorage++.addTabStops` (now routes through `delegate.hasBlocks`). A `public var sourceBlocksSnapshot: [MarkdownBlock] { sourceBlocks }` read-only inspector and a `public func _testInstallSourceBlocks(parsing:)` setup helper preserve test access. ~21 test sites migrated from direct mutation/iteration to the snapshot inspector + the test setup helper; `Tests/HeaderFoldingTests`, `Tests/FoldRangeTests`, `Tests/Phase46BlocksPeerDeletionTests`, `Tests/FoldSnapshotTests`, `Tests/NewLineTransitionTests` all updated. The 7.B.2.a discipline test was widened (and renamed `test_phase6Bprime_subslice7B2_noProcessorBlocksInProduction`) to also forbid `processor.sourceBlocks` and `processor.sourceBlocksSnapshot` in production code — the snapshot inspector is for tests/diagnostics only. 129/129 fold/gutter/code-block-overlay/rendering/Phase46 tests pass; 216/216 pure-function suite (parser/serializer/applier/contracts) green. The `[MarkdownBlock]` array is now implementation detail of the source-mode pipeline; the architecturally-canonical block model is `Document` for WYSIWYG.
 
 ### Phase 8 Slice 5 — ✅ shipped
 
@@ -125,7 +130,7 @@ Filter broadened in both `CodeBlockEditToggleOverlay.swift:295` and `GutterContr
 ### Phase 9 remnants
 
 - **9.a** — UTType-related Tier-1 sites (currently shipped: mechanical sweep + UTType migration partial, AppKit modernization partial)
-- **Pod warnings** (~100 from `libcmark_gfm`, `MASShortcut`, `SSZipArchive`) — deferred. Right mitigation is silencing at Pod target level via `OTHER_CFLAGS = -Wno-strict-prototypes -Wno-deprecated-declarations`.
+- **Pod warnings** — ✅ shipped. The `Podfile` `post_install` hook silences `-Wstrict-prototypes` on `libcmark_gfm-{macOS,iOS}`, `-Wdeprecated-declarations` + `-Wdeprecated-implementations` on `MASShortcut` and `SSZipArchive-{macOS,iOS}`, and bumps the `MASShortcut-MASShortcut` resource bundle's deployment target from 10.6 to 26.0. Total build warnings dropped from 99 to 65; zero Pod-source warnings remain. Our own ~65 Swift / storyboard warnings are unrelated to the Pod cleanup and continue to be tracked under Phase 9.a.
 
 ### Phase 11 remaining slices
 

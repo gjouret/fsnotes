@@ -18,7 +18,7 @@ class FoldRangeTests: XCTestCase {
         let processor = TextStorageProcessor()
         // Populate block model
         let string = storage.string as NSString
-        processor.blocks = MarkdownBlockParser.parse(string: string)
+        processor._testInstallSourceBlocks(parsing: string)
         return (processor, storage)
     }
 
@@ -64,7 +64,7 @@ class FoldRangeTests: XCTestCase {
 
         // Find the H2
         var h2Idx: Int?
-        for (i, block) in proc.blocks.enumerated() {
+        for (i, block) in proc.sourceBlocksSnapshot.enumerated() {
             if case .heading(2) = block.type { h2Idx = i; break }
         }
 
@@ -135,7 +135,7 @@ class FoldRangeTests: XCTestCase {
         guard let idx = headerIndex(proc, at: 0) else { XCTFail("No header"); return }
 
         let nsStr = storage.string as NSString
-        let headerLineEnd = NSMaxRange(nsStr.paragraphRange(for: proc.blocks[idx].range))
+        let headerLineEnd = NSMaxRange(nsStr.paragraphRange(for: proc.sourceBlocksSnapshot[idx].range))
         let expectedFoldLength = nsStr.length - headerLineEnd
 
         proc.toggleFold(headerBlockIndex: idx, textStorage: storage)
@@ -180,7 +180,7 @@ class FoldRangeTests: XCTestCase {
 
         // Find H2
         var h2Idx: Int?
-        for (i, block) in proc.blocks.enumerated() {
+        for (i, block) in proc.sourceBlocksSnapshot.enumerated() {
             if case .heading(2) = block.type { h2Idx = i; break }
         }
         guard let idx = h2Idx else { XCTFail("No H2 found"); return }
@@ -191,7 +191,7 @@ class FoldRangeTests: XCTestCase {
 
         // The fold range should extend to EOF — everything after H2 line is folded
         let nsStr = storage.string as NSString
-        let h2LineEnd = NSMaxRange(nsStr.paragraphRange(for: proc.blocks[idx].range))
+        let h2LineEnd = NSMaxRange(nsStr.paragraphRange(for: proc.sourceBlocksSnapshot[idx].range))
         let foldRange = NSRange(location: h2LineEnd, length: nsStr.length - h2LineEnd)
 
         // Every character in the fold range should have .foldedContent attribute

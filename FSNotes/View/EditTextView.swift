@@ -50,7 +50,7 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
 
         if NotesTextProcessor.hideSyntax,
            let processor = textStorageProcessor,
-           !processor.blocks.isEmpty {
+           processor.hasBlocks {
             processor.phase5_paragraphStyles(textStorage: storage, range: range)
         } else {
             storage.updateParagraphStyle(range: range)

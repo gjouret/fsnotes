@@ -99,7 +99,7 @@ class FoldSnapshotTests: XCTestCase {
         }
 
         // Get H2 line's visual Y position BEFORE folding
-        let h2GlyphRange = lm.glyphRange(forCharacterRange: processor.blocks[h2Idx].range, actualCharacterRange: nil)
+        let h2GlyphRange = lm.glyphRange(forCharacterRange: processor.sourceBlocksSnapshot[h2Idx].range, actualCharacterRange: nil)
         let h2Rect = lm.lineFragmentRect(forGlyphAt: h2GlyphRange.location, effectiveRange: nil)
         let h2Bottom = h2Rect.maxY + editor.textContainerOrigin.y + 60 // Well below the H2 header + ellipsis
 
@@ -154,10 +154,10 @@ class FoldSnapshotTests: XCTestCase {
             "First at (\(firstDarkPixel?.0 ?? -1), \(firstDarkPixel?.1 ?? -1)). " +
             "Snapshot saved to \(outputPath). " +
             "Check area from y=\(h2Bottom) to y=\(renderSize.height). " +
-            "blocks=\(processor.blocks.count), collapsed=\(processor.isCollapsed(blockIndex: h2Idx)), " +
+            "blocks=\(processor.sourceBlocksSnapshot.count), collapsed=\(processor.isCollapsed(blockIndex: h2Idx)), " +
             "foldedChars=\(foldedCharCount)/\(storage.length) ranges=\(foldedRanges), " +
-            "h2block=\(processor.blocks[h2Idx].range), " +
-            "allBlocks=\(processor.blocks.map { "\(describeType($0.type))@\($0.range.location)" }.joined(separator: ","))")
+            "h2block=\(processor.sourceBlocksSnapshot[h2Idx].range), " +
+            "allBlocks=\(processor.sourceBlocksSnapshot.map { "\(describeType($0.type))@\($0.range.location)" }.joined(separator: ","))")
     }
 
     func test_unfoldH2_contentReappears() {

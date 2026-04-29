@@ -175,7 +175,13 @@ enum CursorPlacementFixture: Equatable, CustomStringConvertible {
     case atStartOfNewBlock
     /// Cursor at end of the previous block (after a merge).
     case atEndOfPreviousBlock
-    /// Cursor offset unchanged in storage.
+    /// Cursor stays inside the SAME block as before, with a ±1
+    /// tolerance for the natural delete / insert side-effect of the
+    /// action (e.g. Backspace consumes the char to the left and the
+    /// cursor follows; ForwardDelete consumes the char to the right
+    /// and the cursor stays put). The runner asserts that the post-
+    /// edit cursor is within the same block as the pre-edit cursor
+    /// and that the storage offset moved by no more than 1.
     case preserved
     /// Don't assert cursor placement (row only encodes structure).
     case unchecked

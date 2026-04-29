@@ -11,34 +11,35 @@ Both paths feed a single TK2 `NSTextContentStorage` / `NSTextLayoutManager` pair
 
 ## Block-Model Pipeline
 
-```
-raw markdown ──► MarkdownParser ──► Document (block tree)
-                                        │
-                        ┌───────────────┼───────────────┐
-                        ▼               ▼               ▼
-               DocumentRenderer   SourceRenderer   MarkdownSerializer
-               (WYSIWYG path)     (source path)   (save / copy)
-                        │               │               │
-                        ▼               ▼               │
-                 NSAttributedString + .blockModelKind   │
-                        │               │               │
-                        ▼               ▼               │
-              NSTextContentStorage  ←────┘              │
-                        │   (BlockModelContentStorageDelegate)
-                        ▼   → per-kind NSTextElement subclass
-              NSTextLayoutManager
-                        │   (BlockModelLayoutManagerDelegate)
-                        ▼   → per-kind NSTextLayoutFragment subclass
-                       NSTextView
-                        │
-                        ▼
-                   DocumentProjection (blockSpans, index mapping)
-                        │
-                        ▼
-                     EditingOps (insert/delete/split/merge/format)
-                        │
-                        ▼
-                   DocumentEditApplier ──► NSTextContentStorage splice
+```mermaid
+flowchart TD
+    raw["raw markdown"] --> parser["MarkdownParser"]
+    parser --> doc["Document<br/>(block tree)"]
+
+    doc --> docR["DocumentRenderer<br/>(WYSIWYG path)"]
+    doc --> srcR["SourceRenderer<br/>(source path)"]
+    doc --> serial["MarkdownSerializer<br/>(save / copy)"]
+
+    docR --> attr["NSAttributedString<br/>+ .blockModelKind"]
+    srcR --> attr
+
+    attr --> cs["NSTextContentStorage"]
+    cs -->|"BlockModelContentStorageDelegate<br/>→ per-kind NSTextElement subclass"| lm["NSTextLayoutManager"]
+    lm -->|"BlockModelLayoutManagerDelegate<br/>→ per-kind NSTextLayoutFragment subclass"| view["NSTextView"]
+
+    view --> proj["DocumentProjection<br/>(blockSpans, index mapping)"]
+    proj --> ops["EditingOps<br/>(insert / delete / split / merge / format)"]
+    ops --> applier["DocumentEditApplier"]
+    applier -->|"minimal element-bounded splice"| cs
+
+    serial --> disk[("disk / clipboard")]
+
+    classDef pure fill:#eef,stroke:#446,stroke-width:1px;
+    classDef tk2  fill:#efe,stroke:#464,stroke-width:1px;
+    classDef io   fill:#fee,stroke:#644,stroke-width:1px;
+    class parser,doc,docR,srcR,serial,proj,ops,applier pure;
+    class attr,cs,lm,view tk2;
+    class raw,disk io;
 ```
 
 ## Architecture Invariants
@@ -190,154 +191,84 @@ After full decomposition, `MarkdownParser.swift` shrank from ~3,974 LoC to ~1,45
 
 ## Editing FSMs by Block Type
 
-Each table shows what every editing action does on that block type. "Unsupported" means no-op or throws.
+The per-block-kind FSM transitions are *not* tabulated narratively in this file. The single source of truth is the value-typed transition table at [Tests/Fixtures/FSMTransitions.swift](Tests/Fixtures/FSMTransitions.swift), driven by the parameterised runner in [Tests/FSMTransitionTableTests.swift](Tests/FSMTransitionTableTests.swift). This document describes only the schema and the alignment between the documented FSMs and the executable specification.
 
-### Paragraph
+### Schema
 
-CommonMark §4.8: paragraphs are interrupted by blank lines, headings, thematic breaks, block quotes, list items, and fenced code blocks.
+A single row is a tuple `(blockKind, cursorPosition, action) → (expectedTransition, cursorAfter)` plus a free-form `note` and an optional `bugId`:
 
-| Action | Result |
-|--------|--------|
-| **Return** | Split at cursor → two paragraphs. Cursor at start → blankLine + paragraph. Cursor at end → paragraph + blankLine. |
-| **Backspace at start** | Merge with previous block (see Cross-Block Merge). |
-| **Tab / Shift-Tab** | No block-model operation (passthrough). |
-| **Inline format** | Toggle trait on selection or set pending trait at cursor. |
-| **Set heading level** | Paragraph → heading(level). Content becomes heading suffix. |
-| **Toggle list** | Paragraph → single-item list. |
-| **Toggle blockquote** | Paragraph → blockquote with one line. |
-| **Insert HR** | Insert blankLine + HR after paragraph. |
-| **Toggle todo** | Paragraph → single-item todo list with `[ ]`. |
+```swift
+struct FSMTransition {
+    let blockKind:      BlockKindFixture       // pre-state: which kind of block owns the cursor
+    let cursorPosition: CursorPositionFixture  // pre-condition: where the cursor sits within that block
+    let action:         ActionFixture          // input: the user action being applied
+    let expected:       ExpectedTransition     // post-condition: structural outcome the FSM must produce
+    let cursorAfter:    CursorPlacementFixture // post-condition: where the cursor lands (or .unchecked)
+    let note:           String                 // human-readable rationale, may reference Slice B bug ids
+    let bugId:          Int?                   // non-nil = row encodes EXPECTED-AFTER-FIX behaviour
+}
+```
 
-### Heading
+The five enums populating the columns:
 
-CommonMark §4.2 (ATX) / §4.3 (setext). Headings are single-line; opening `#` count determines level (1-6).
+| Column | Enum | Cases |
+|--------|------|-------|
+| **blockKind** (pre-state) | `BlockKindFixture` | `paragraph`, `heading(level:)`, `bulletList`, `numberedList`, `todoList`, `blockquote`, `codeBlock`, `table`, `horizontalRule`, `blankLine` |
+| **cursorPosition** (pre-condition) | `CursorPositionFixture` | `atStart`, `midContent`, `atEnd`, `onEmptyBlock` |
+| **action** (input) | `ActionFixture` | `pressReturn`, `pressBackspace`, `pressForwardDelete`, `pressTab`, `pressShiftTab`, `selectBlockAndDelete` |
+| **expected** (structural post-condition) | `ExpectedTransition` | `stayInBlock`, `splitBlock(into:firstBecomes:)`, `mergeWithPrevious`, `exitToBlock(_)`, `noOp`, `indent`, `outdent`, `insertAtomic(_)`, `unsupported` |
+| **cursorAfter** (cursor post-condition) | `CursorPlacementFixture` | `atStartOfNewBlock`, `atEndOfPreviousBlock`, `preserved`, `unchecked` |
 
-| Action | Result |
-|--------|--------|
-| **Return** | Split → heading(same level) + paragraph. Cursor moves to the new paragraph. |
-| **Backspace at start** | Merge with previous block. |
-| **Inline format** | Toggle trait on heading suffix inlines. |
-| **Set heading level** | Change level (1-6). Same level or level 0 → convert to paragraph. |
-| **Toggle list / blockquote / todo** | Unsupported. |
-| **Insert HR** | Insert blankLine + HR after heading. |
+A row is the FSM equivalent of `(state ∧ guard) ∧ action ⇒ (post-state ∧ post-cursor)`. Coarse-grained on purpose: structural shape (block count, kind at index, list-nesting depth, cursor placement) is asserted; byte-exact suffix text is checked separately by the round-trip parity invariant (see "Test alignment" below).
 
-### Code Block
+### `ListEditingFSM` (peer FSM)
 
-CommonMark §4.5: fenced code blocks open with `` ` `` or `~` (3+). Content is verbatim — no inline parsing.
+Lists carry their own value-typed FSM at [FSNotesCore/Rendering/ListEditingFSM.swift](FSNotesCore/Rendering/ListEditingFSM.swift) with a richer state-space than the high-level transition table can capture (depth, previous-sibling presence). Pure function `transition(state:action:) -> Transition`:
 
-| Action | Result |
-|--------|--------|
-| **Return** | Insert literal newline within code content. *Special:* Return at end-of-content with trailing `\n` exits the block and inserts a new empty paragraph. |
-| **Backspace at start** | Delete within content. If content empty at boundary, merge with previous. |
-| **Tab** | Insert literal tab. |
-| **Inline format / heading / list / blockquote / todo** | Unsupported (verbatim content). |
-| **Insert HR** | Insert HR after code block. |
+- **State**: `.bodyText` | `.listItem(depth: Int, hasPreviousSibling: Bool)`
+- **Action**: `.tab` | `.shiftTab` | `.deleteAtHome` | `.returnOnEmpty` | `.returnKey`
+- **Transition**: `.indent` | `.unindent` | `.exitToBody` | `.newItem` | `.noOp`
 
-### List
+The transition value is a *command* the editor applies; the post-state is determined by which command runs (and is exercised by the `FSMTransitionTable` rows for list block kinds — see `bulletList`, `numberedList`, `todoList`, `multiItemList`, `nestedList` rows). [Tests/ListEditingFSMTests.swift](Tests/ListEditingFSMTests.swift) covers the pure-function `(state, action) → transition` relation directly.
 
-CommonMark §5.2-5.3. Structural operations route through **ListEditingFSM**.
+### Multi-block selection
 
-**Ordered list numbering**: all ordered list items store and serialize with marker `1.` regardless of rendered position. `ListRenderer` maintains a running counter at each nesting level to display sequential numbers. Split lists re-merge naturally when the separating block is deleted — no special merge logic required.
+Multi-block selection (Return, Backspace, Tab, toggle list / blockquote / todo, set heading level over a span crossing ≥ 2 blocks) is its own dispatch path on top of the per-block FSM. The combinatorial sweep covers it via `CBSelectionState ∈ {empty, intraBlock, crossBlock, fullDocument}` (see "Test alignment" below); structural rules are asserted by the round-trip parity invariant rather than tabulated here.
 
-| Action | Result |
-|--------|--------|
-| **Return (non-empty item)** | FSM `newItem`: split item at cursor. New item inherits marker; checkbox resets to unchecked. Children stay with original. |
-| **Return (empty item, depth 0)** | FSM `exitToBody`: convert empty item to paragraph. |
-| **Return (empty item, depth > 0)** | FSM `unindent`. |
-| **Backspace at start (depth 0)** | FSM `exitToBody`. |
-| **Backspace at start (depth > 0)** | FSM `unindent`. |
-| **Tab (has previous sibling)** | FSM `indent`: item becomes child of previous sibling. |
-| **Tab (no previous sibling)** | FSM `noOp`. |
-| **Shift-Tab (depth 0)** | FSM `exitToBody`. |
-| **Shift-Tab (depth > 0)** | FSM `unindent`. |
-| **Inline format** | Toggle trait on item's inline content. |
-| **Toggle list** | Convert ONLY the cursor's item to paragraph, splitting the list. (Multi-selection differs — see Multi-Selection.) |
-| **Insert HR** | Insert HR after list block. |
-| **Toggle todo** | All items have checkbox → unwrap. Otherwise → add `[ ]` to items lacking. |
+## Test alignment
 
-### ListEditingFSM
+The FSM transition table and the combinatorial sweep together provide the executable specification of the per-block FSMs. Two layers:
 
-Pure function: `(State, Action) → Transition`. State: `.bodyText` or `.listItem(depth: Int, hasPreviousSibling: Bool)`.
+### Layer A — curated transition table (Phase 11 Slice A.5)
 
-| State | Action | Transition |
-|-------|--------|------------|
-| `.bodyText` | any | `noOp` |
-| `.listItem(0, _)` | `.tab` with sibling | `indent` |
-| `.listItem(0, false)` | `.tab` | `noOp` |
-| `.listItem(0, _)` | `.shiftTab` / `.deleteAtHome` / `.returnOnEmpty` | `exitToBody` |
-| `.listItem(>0, _)` | `.tab` with sibling | `indent` |
-| `.listItem(>0, false)` | `.tab` | `noOp` |
-| `.listItem(>0, _)` | `.shiftTab` / `.deleteAtHome` / `.returnOnEmpty` | `unindent` |
-| any `.listItem` | `.returnKey` | `newItem` |
+[Tests/Fixtures/FSMTransitions.swift](Tests/Fixtures/FSMTransitions.swift) currently holds **87 rows** — one per `(blockKind, cursorPosition, action)` triple, with hand-written notes citing CommonMark sections and Slice B bug ids where relevant. [Tests/FSMTransitionTableTests.swift](Tests/FSMTransitionTableTests.swift) drives every row through `EditorScenario` (the Given/When/Then harness from Phase 11 Slice A) and asserts:
 
-### Blockquote
+1. The structural `expected` transition (block-count delta, kind at target index, list-nesting depth for `.indent` / `.outdent`).
+2. The `cursorAfter` placement (`.preserved` is strict; `.atStartOfNewBlock` is strict against the last newly-inserted block's start; `.atEndOfPreviousBlock` is asserted with ±2 slack for blank-line-separator consumption).
+3. Bug-row contract: rows with `bugId != nil` are wrapped in `XCTExpectFailure(strict: true)` so they fail-by-design today and turn red ("unexpectedly passed") once the underlying FSM is fixed.
 
-CommonMark §5.1. Lazy continuation: a line without `>` continues the blockquote if it would be a paragraph continuation. Nested blocks allowed.
+### Layer B — combinatorial sweep (Phase 11 Slice E)
 
-| Action | Result |
-|--------|--------|
-| **Return** | Split blockquote line at cursor; both lines stay in same blockquote block. |
-| **Backspace at start** | Merge with previous block. |
-| **Inline format** | Toggle trait on line's inline content. |
-| **Toggle blockquote** | Blockquote → paragraph (all lines merged). |
-| **Insert HR** | Insert HR after blockquote. |
+[Tests/Combinatorial/Generator.swift](Tests/Combinatorial/Generator.swift) + [Tests/Combinatorial/CombinatorialCoverageTests.swift](Tests/Combinatorial/CombinatorialCoverageTests.swift) extend the schema along two axes the curated table doesn't enumerate:
 
-### Horizontal Rule
+- **Single-action matrix**: `CBBlockKind × CBCursorPosition × CBEdit × CBSelectionState` ≈ 13 × 4 × 5 × 4 = ~1040 raw → ~780 valid after pruning impossible tuples (HR midContent, table midContent, etc.). Adds `mermaidBlock`, `displayMathBlock`, `multiItemList`, `nestedList` block kinds and four selection states (`empty`, `intraBlock`, `crossBlock`, `fullDocument`) on top of `BlockKindFixture`.
+- **Sequence matrix** (composability): `CBSequenceMatrix.allValid` enumerates length-2 + length-3 action sequences over 10 seed kinds — ≈ 1500 raw → ≥ 500 viable. This is the `f(g(h(x)))` axis: chained `pressReturn` / `pressDelete` / `pressTab` / `pressShiftTab` / `type` against fresh seeds.
 
-CommonMark §4.1. Read-only.
+Every scenario asserts the **strong invariant** at [Tests/Combinatorial/CombinatorialCoverageTests.swift:259–270](Tests/Combinatorial/CombinatorialCoverageTests.swift:259):
 
-| Action | Result |
-|--------|--------|
-| **Backspace at start** | Remove HR; merge surrounding blocks. |
-| **Insert HR** | Insert another HR after (with blankLine separator). |
-| All others | Unsupported. |
+```
+HTML(parse(serialize(doc))) == HTML(doc)
+```
 
-### HTML Block
+i.e. the live `Document` after the action sequence must produce the same HTML as the same document after a save→load round-trip. This links the three rendering paths (live block-model render, serialised markdown, parsed-and-rendered HTML) into one equivalence relation. A failure means the live state cannot survive save+reload — the strongest single invariant the test surface offers.
 
-CommonMark §4.6. Verbatim content; renders with code font.
+### Outstanding bugs surfaced by the sweep
 
-| Action | Result |
-|--------|--------|
-| **Return** | Insert literal newline. No structural split (unlike code blocks, no keyboard escape). |
-| **Backspace at start** | Delete within content. If empty at boundary, merge with previous (falls back to paragraph). |
-| **Tab** | Insert literal tab. |
-| All inline-formatting / structural | Unsupported. |
-| **Insert HR** | Insert HR after. |
+Combinatorial scenarios whose minimal-invariant or round-trip assertions currently fail are recorded in [Tests/Combinatorial/DiscoveredBugs.txt](Tests/Combinatorial/DiscoveredBugs.txt) (one line per `<scenario-label> → <one-line explanation>`). The runner reads that file at startup and `XCTExpectFailure(strict: true)`-wraps every listed scenario so the suite is green today; entries flip to red ("unexpectedly passed") once the underlying behaviour is fixed.
 
-### Table
+The same fail-by-design contract applies to the bug rows in `FSMTransitions.swift` (`bugId != nil`). Together, `DiscoveredBugs.txt` and the bug rows form the "what's outstanding" punch-list — anything not listed there is presumed-correct as of the last suite run.
 
-GFM extension. Cell content is an inline tree; cells are stored as `[TableCell]` where each cell is `[Inline]`. The render path is native TK2 `TableElement` + `TableLayoutFragment`.
-
-- **Element dispatch**: `DocumentRenderer` tags the table's paragraph range with `.blockModelKind = .table` plus a `.tableAuthoritativeBlock` boxed reference to the `Block.table` value. The content-storage delegate reads the attribute and constructs a `TableElement` (boxed authoritative block carries alignments and structure that flat cell text alone couldn't convey).
-- **Display**: `TableLayoutFragment` draws the grid directly on TK2 — resize handles, column separators, alignment — with no NSView attachment. Cells are rendered via `InlineRenderer.render(cell.inline, baseAttributes:)` — the same code path paragraphs use.
-- **Cell editing**: field-editor edits flow through `InlineRenderer.inlineTreeFromAttributedString(_:)` (the pure inverse of `render`) and route through `EditingOps.replaceTableCellInline(blockIndex:at:inline:in:)`. No raw-markdown round-trip.
-- **Structural editing**: `EditingOps.{insertTableRow, insertTableColumn, deleteTableRow, deleteTableColumn, setTableColumnAlignment, setTableColumnWidths}`. Hover handles invoke these via `EditingOps`, not by widget-state mutation.
-- **Column widths**: `setTableColumnWidths` persists drag-resize widths on `Block.table.columnWidths`. `MarkdownSerializer` emits an HTML-comment sentinel `<!-- fsnotes-col-widths: [100.5, 200, 150.25] -->`; the parser reads it back.
-
-| Action | Result |
-|--------|--------|
-| **Return inside cell** | Insert `<br>` (rendered as `\n`). Outside a cell: unsupported. |
-| **Backspace at start** | Remove table; merge surrounding blocks. |
-| **Tab / Shift-Tab inside cell** | Cell navigation handled by `TableLayoutFragment` focus logic. |
-| **Inline format** | Edits the cell's field-editor storage, converts to inline tree, flushes through `replaceTableCellInline`. |
-| **Insert HR** | Insert HR after table. |
-
-### Multi-Selection
-
-When multiple blocks are selected, operations apply to all selected blocks. Selection defined by `blockIndices(overlapping:)`.
-
-| Action | Result |
-|--------|--------|
-| **Return / Backspace** | Delete selection; merge first partial block with last partial block. |
-| **Delete** | Delete content without merge. |
-| **Tab / Shift-Tab** | Indent / outdent all selected (lists support; other blocks no-op). |
-| **Inline format** | Toggle trait across selection; per-block. |
-| **Set heading level** | Apply to first overlapping non-blank block only (deliberate departure from list/quote/todo). |
-| **Toggle list** | Convert all selected to a single list (one item per block). |
-| **Toggle blockquote** | Wrap all in single blockquote. |
-| **Insert HR** | Insert after last selected block. |
-| **Toggle todo** | All have checkboxes → remove; otherwise → add to items lacking. Non-list blocks → todo items. |
-| **Copy / Paste** | Serialize selection to markdown / replace with parsed `Document`. |
+When fixing one of the listed bugs, **delete the corresponding entry** (or clear the `bugId` on the row) as part of the same change — the strict expectation will otherwise flip the now-passing scenario to red.
 
 ## Cross-Block Merge Rules
 
@@ -571,6 +502,24 @@ Folded headers paint a trailing `[...]` chip via `HeadingLayoutFragment.drawFold
 Public query API: `isRendered(blockIndex:) / isRendered(storageOffset:) / renderedBlockOffsets`. Public mutators: `setRenderMode(_:forBlockAt:)` and `setRenderMode(_:forBlockAtOffset:)`. The Phase 6 Tier B′ ladder retired the per-block `MarkdownBlock.renderMode` field (Sub-slice 7.B.1); the discipline test `test_phase6Bprime_subslice7B1_noMarkdownBlockRenderMode_reads` enforces zero `.renderMode` reads in production. Source-mode parser methods (`MarkdownBlockParser.parsePreservingRendered / adjustBlocks / reparseBlocks`) accept the side-table as a `renderedOffsets: Set<Int>` parameter for their preserve / skip / splice-extension decisions.
 
 Side-table consistency across `adjustBlocks`'s offset-shift uses a UUID snapshot pattern: `updateBlockModel` captures the IDs of currently-rendered blocks before the parse, then re-derives the side-table from those IDs after — picking up each block's possibly-shifted `range.location` while gracefully dropping rendered blocks the splice replaced.
+
+## `TextStorageProcessor.sourceBlocks` (private)
+
+The source-mode parser's per-block array (`[MarkdownBlock]` produced by `MarkdownBlockParser`) is `private var sourceBlocks` on `TextStorageProcessor`. Production callers must not read or mutate it directly; every external query routes through a narrow public API:
+
+| Public API | Use |
+|---|---|
+| `hasBlocks: Bool` | guard for "the parser has produced any blocks" |
+| `block(at: Int) -> MarkdownBlock?` | lookup by character index (binary search) |
+| `headingLevel(forParagraphRange:)` | source-mode heading-level lookup by storage range |
+| `headingLevel(atBlockIndex:)` | source-mode heading-level lookup by block index |
+| `codeBlockRange(containingStorageIndex:)` | source-mode code-block range lookup by storage offset |
+| `codeBlockRanges: [NSRange]` | all source-mode code blocks excluding rendered mermaid/math swaps |
+| `isCollapsed(blockIndex:) / isCollapsed(storageOffset:)` | fold-state read |
+| `isRendered(blockIndex:) / isRendered(storageOffset:)` | render-mode read |
+| `clearBlocks()` | reset on note switch |
+
+Tests use `sourceBlocksSnapshot: [MarkdownBlock]` (read-only) for inspection and `_testInstallSourceBlocks(parsing: NSString)` to seed the array directly in pure-function fold/gutter unit tests. Both are explicitly marked as test-only in their doc-comments. The Phase 6 Tier B′ Sub-slice 7.B.2.b discipline test (`test_phase6Bprime_subslice7B2_noProcessorBlocksInProduction`) enforces that production code never touches `.blocks` / `.sourceBlocks` / `.sourceBlocksSnapshot` on a `TextStorageProcessor` instance.
 
 ## Source-Mode Pipeline (`hideSyntax == false`)
 

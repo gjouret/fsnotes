@@ -115,13 +115,29 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     // MARK: - Block Array (source-mode + fold/unfold state)
 
-    /// Block array used by fold/unfold and the source-mode rendering
-    /// pipeline. In source mode it's populated by `updateBlockModel()`
-    /// (driven by `MarkdownBlockParser`). In WYSIWYG mode it's
-    /// populated automatically by the `documentProjection` setter via
-    /// `rebuildBlocksFromProjection(_:)` — callers no longer invoke a
-    /// public sync method (Phase 4.6).
-    public var blocks: [MarkdownBlock] = []
+    /// Per-block source-mode parser output. In source mode it's
+    /// populated by `updateBlockModel()` (driven by
+    /// `MarkdownBlockParser`); in WYSIWYG mode it's populated
+    /// automatically by the `documentProjection` setter via
+    /// `rebuildBlocksFromProjection(_:)`. Phase 6 Tier B′ Sub-slice
+    /// 7.B.2.b: demoted from `public var blocks` (renamed to
+    /// disambiguate from `Document.blocks`) to a private side-table
+    /// — every external query routes through a narrow public API
+    /// (`hasBlocks`, `block(at:)`, `headingLevel(...)`,
+    /// `codeBlockRange(...)`, `codeBlockRanges`, `isCollapsed(...)`,
+    /// `isRendered(...)`, plus the test-only inspector
+    /// `sourceBlocksSnapshot`). The array is implementation detail of
+    /// the source-mode pipeline; the architecturally-canonical block
+    /// model is `Document` for WYSIWYG.
+    private var sourceBlocks: [MarkdownBlock] = []
+
+    /// Read-only snapshot for tests and diagnostics. Production code
+    /// must use the narrow public APIs (`block(at:)`, `codeBlockRanges`,
+    /// `headingLevel(...)`, etc.) — never iterate this array
+    /// directly. Discipline test
+    /// `test_phase6Bprime_subslice7B2b_noExternalSourceBlocksIteration`
+    /// enforces zero references in production code.
+    public var sourceBlocksSnapshot: [MarkdownBlock] { sourceBlocks }
 
     /// Deduplication set for mermaid/math code-block rendering (unrelated
     /// to the sync path; stays).
@@ -146,22 +162,22 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return collapsedStorageOffsets.contains(storageOffset)
     }
 
-    /// Is the block at this index in `blocks` currently collapsed?
+    /// Is the block at this index in `sourceBlocks` currently collapsed?
     public func isCollapsed(blockIndex idx: Int) -> Bool {
-        guard idx >= 0, idx < blocks.count else { return false }
-        return collapsedStorageOffsets.contains(blocks[idx].range.location)
+        guard idx >= 0, idx < sourceBlocks.count else { return false }
+        return collapsedStorageOffsets.contains(sourceBlocks[idx].range.location)
     }
 
     /// Return the set of block indices that are currently collapsed.
     ///
     /// Computed from the canonical `collapsedStorageOffsets` side-table
-    /// + the current `blocks` array. Retained for tests and gutter
-    /// readers that index the `blocks` array directly; the canonical
+    /// + the current `sourceBlocks` array. Retained for tests and gutter
+    /// readers that index the `sourceBlocks` array directly; the canonical
     /// persistence form is `collapsedBlockOffsets` (Phase 6 Tier B′
     /// Sub-slice 3).
     public var collapsedBlockIndices: Set<Int> {
         var indices: Set<Int> = []
-        for (i, block) in blocks.enumerated() {
+        for (i, block) in sourceBlocks.enumerated() {
             if collapsedStorageOffsets.contains(block.range.location) {
                 indices.insert(i)
             }
@@ -193,10 +209,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return renderedStorageOffsets.contains(storageOffset)
     }
 
-    /// Is the block at this index in `blocks` currently `.rendered`?
+    /// Is the block at this index in `sourceBlocks` currently `.rendered`?
     public func isRendered(blockIndex idx: Int) -> Bool {
-        guard idx >= 0, idx < blocks.count else { return false }
-        return renderedStorageOffsets.contains(blocks[idx].range.location)
+        guard idx >= 0, idx < sourceBlocks.count else { return false }
+        return renderedStorageOffsets.contains(sourceBlocks[idx].range.location)
     }
 
     /// Read-only accessor for the canonical render-mode set, mirroring
@@ -212,14 +228,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     public func setRenderMode(
         _ mode: BlockRenderMode, forBlockAt blockIndex: Int
     ) {
-        guard blockIndex >= 0, blockIndex < blocks.count else { return }
-        let offset = blocks[blockIndex].range.location
+        guard blockIndex >= 0, blockIndex < sourceBlocks.count else { return }
+        let offset = sourceBlocks[blockIndex].range.location
         setRendered(mode == .rendered, storageOffset: offset)
     }
 
     /// Set the render mode for the block at the given storage offset.
     /// Public entry for callers that have a storage location but no
-    /// `processor.blocks` index (Phase 6 Tier B′ Sub-slice 6 — the
+    /// `processor.sourceBlocks` index (Phase 6 Tier B′ Sub-slice 6 — the
     /// click-to-edit rendered-image handler in
     /// `EditTextView+Interaction`).
     public func setRenderMode(
@@ -264,7 +280,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     /// Restore fold state from a saved set of collapsed storage offsets
     /// (the canonical persistence form, Phase 6 Tier B′ Sub-slice 3).
-    /// Walks `blocks` once to find the index whose `range.location`
+    /// Walks `sourceBlocks` once to find the index whose `range.location`
     /// matches each offset; offsets that no longer correspond to any
     /// block (e.g. the user edited the heading away between sessions)
     /// are silently dropped.
@@ -272,7 +288,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         byOffsets offsets: Set<Int>, textStorage: NSTextStorage
     ) {
         var indices: Set<Int> = []
-        for (i, block) in blocks.enumerated() {
+        for (i, block) in sourceBlocks.enumerated() {
             if offsets.contains(block.range.location) {
                 indices.insert(i)
             }
@@ -283,8 +299,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Restore fold state from a saved set of collapsed block indices.
     public func restoreCollapsedState(_ indices: Set<Int>, textStorage: NSTextStorage) {
         for idx in indices {
-            guard idx < blocks.count else { continue }
-            let block = blocks[idx]
+            guard idx < sourceBlocks.count else { continue }
+            let block = sourceBlocks[idx]
             guard !isCollapsed(blockIndex: idx) else { continue }
             // Only fold headings.
             let headerLevel: Int
@@ -312,7 +328,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Sub-slice 7.B.1 routes the rendered-mode test through the
     /// offset-keyed side-table; the per-block field is gone.
     public var codeBlockRanges: [NSRange] {
-        return blocks.compactMap { block in
+        return sourceBlocks.compactMap { block in
             guard case .codeBlock = block.type else { return nil }
             if renderedStorageOffsets.contains(block.range.location) {
                 return nil
@@ -323,8 +339,90 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     /// Find the block at a given character index. O(log n).
     public func block(at characterIndex: Int) -> MarkdownBlock? {
-        guard let idx = MarkdownBlockParser.blockIndex(in: blocks, containing: characterIndex) else { return nil }
-        return blocks[idx]
+        guard let idx = MarkdownBlockParser.blockIndex(in: sourceBlocks, containing: characterIndex) else { return nil }
+        return sourceBlocks[idx]
+    }
+
+    // MARK: - Phase 6 Tier B′ Sub-slice 7.B.2.a — encapsulation API
+    //
+    // Narrow public queries that hide the underlying `[MarkdownBlock]`
+    // array from external readers. Each replaces a previous direct
+    // `processor.sourceBlocks` access in a source-mode-only fallback path.
+    // Once these are the only external surface, the array can be
+    // demoted to `internal` (and eventually retired entirely under
+    // Tier C / 7.B.2.b — the source-mode pipeline lift).
+
+    /// True iff the block-array is non-empty. Used by source-mode
+    /// fallbacks that gate paragraph-styling work on the parser having
+    /// produced any blocks at all (replaces `!processor.sourceBlocks.isEmpty`).
+    public var hasBlocks: Bool { !sourceBlocks.isEmpty }
+
+    /// Heading level (1–6) for the source-mode block whose storage range
+    /// intersects `paragraphRange`, or 0 if no heading overlaps. ATX and
+    /// setext headings are both honoured. Used by `FormattingToolbar`'s
+    /// source-mode fallback (the WYSIWYG path reads
+    /// `Document.blocks[i] == .heading(level, _)` directly).
+    public func headingLevel(forParagraphRange paragraphRange: NSRange) -> Int {
+        for block in sourceBlocks {
+            guard NSIntersectionRange(paragraphRange, block.range).length > 0 else { continue }
+            switch block.type {
+            case .heading(let level): return level
+            case .headingSetext(let level): return level
+            default: continue
+            }
+        }
+        return 0
+    }
+
+    /// Heading level (1–6) for the block at `blockIndex` in the
+    /// source-mode array, or 0 if the index is out of range or the
+    /// block is not a heading. Used by `GutterController`'s
+    /// source-mode fallback for the H-badge level when the
+    /// `.headingLevel` storage attribute and the WYSIWYG projection are
+    /// both unavailable.
+    public func headingLevel(atBlockIndex blockIndex: Int) -> Int {
+        guard blockIndex >= 0, blockIndex < sourceBlocks.count else { return 0 }
+        switch sourceBlocks[blockIndex].type {
+        case .heading(let level): return level
+        case .headingSetext(let level): return level
+        default: return 0
+        }
+    }
+
+    /// Source-mode lookup: code block whose `range` contains
+    /// `storageIndex`. Returns the (storage range, content range)
+    /// pair. Used by `GutterController.visibleCodeBlocksTK2`'s
+    /// source-mode fallback for the gutter copy-icon (the WYSIWYG arm
+    /// resolves via `Document.blocks + blockSpans`).
+    public func codeBlockRange(
+        containingStorageIndex storageIndex: Int
+    ) -> (range: NSRange, contentRange: NSRange)? {
+        guard let block = sourceBlocks.first(where: {
+            if case .codeBlock = $0.type {
+                return NSLocationInRange(storageIndex, $0.range)
+            }
+            return false
+        }) else { return nil }
+        return (block.range, block.contentRange)
+    }
+
+    /// Clear the block array and any associated side-tables. Called
+    /// on note switch (`EditTextView+NoteState.handover`) — the new
+    /// note will repopulate via `fillViaBlockModel` /
+    /// `fillViaSourceRenderer`. Replaces the previous
+    /// `processor.blocks = []` write site (the now-removed public API).
+    public func clearBlocks() {
+        sourceBlocks = []
+    }
+
+    /// Parse source-mode blocks from `string` and install them.
+    /// Test-only entry point — production code populates via
+    /// `process(_:)` / `updateBlockModel()` /
+    /// `rebuildBlocksFromProjection(_:)`. Replaces the previous
+    /// `processor.blocks = MarkdownBlockParser.parse(...)` test
+    /// idiom. Phase 6 Tier B′ Sub-slice 7.B.2.b.
+    public func _testInstallSourceBlocks(parsing string: NSString) {
+        sourceBlocks = MarkdownBlockParser.parse(string: string)
     }
 
     /// Count leading tabs and 4-space groups as nesting levels.
@@ -341,13 +439,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     // MARK: - Block Model Sync for Fold/Unfold (Phase 4.6 — private)
 
-    /// Populate the `blocks` array from a `DocumentProjection` so that
-    /// fold/unfold (which reads `blocks`) and gutter-draw (which
-    /// iterates `blocks` for fold carets + H-badges) work when
+    /// Populate the `sourceBlocks` array from a `DocumentProjection` so that
+    /// fold/unfold (which reads `sourceBlocks`) and gutter-draw (which
+    /// iterates `sourceBlocks` for fold carets + H-badges) work when
     /// `blockModelActive == true`.
     ///
     /// The block-model pipeline bypasses `process()` (which normally
-    /// populates `blocks`), so without this rebuild fold operations
+    /// populates `sourceBlocks`), so without this rebuild fold operations
     /// would silently no-op in WYSIWYG mode. Phase 4.6 made this method
     /// private and made the `documentProjection` setter call it
     /// automatically — app-layer callers no longer invoke a public sync.
@@ -368,9 +466,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         let doc = projection.document
         let spans = projection.blockSpans
         guard doc.blocks.count == spans.count else {
-            blocks = []
+            sourceBlocks = []
             // Side-table is offset-keyed; surviving offsets stay valid
-            // across rebuild even when blocks is empty during a guard
+            // across rebuild even when sourceBlocks is empty during a guard
             // failure. Don't clear it here — toggleFold writes it.
             return
         }
@@ -404,7 +502,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             }
             newBlocks.append(mb)
         }
-        blocks = newBlocks
+        sourceBlocks = newBlocks
     }
 
     /// Build a single `MarkdownBlock` entry from a `Document.Block` + its
@@ -445,7 +543,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         case .horizontalRule:
             blockType = .horizontalRule
         case .htmlBlock:
-            blockType = .paragraph  // HTML blocks render as plain text blocks
+            blockType = .paragraph  // HTML sourceBlocks render as plain text sourceBlocks
         case .blankLine:
             blockType = .empty
         case .table:
@@ -491,10 +589,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     // MARK: - Header Fold/Unfold
 
-    /// Toggle fold state for the header block at the given index in `blocks`.
+    /// Toggle fold state for the header block at the given index in `sourceBlocks`.
     public func toggleFold(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
-        guard idx < blocks.count else { return }
-        let header = blocks[idx]
+        guard idx < sourceBlocks.count else { return }
+        let header = sourceBlocks[idx]
 
         let headerLevel: Int
         switch header.type {
@@ -696,7 +794,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Find the range to fold: from end of the header line to the next header
     /// with the same level, matching the folding spec literally.
     private func foldRangeForHeader(at idx: Int, level: Int, in textStorage: NSTextStorage) -> NSRange {
-        let header = blocks[idx]
+        let header = sourceBlocks[idx]
         let string = textStorage.string as NSString
 
         // Fold starts after the header's line (including newline)
@@ -709,13 +807,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // whether that header is ATX or Setext. Horizontal rules must not
         // affect folding.
         var foldEnd = string.length
-        findEnd: for i in (idx + 1)..<blocks.count {
-            switch blocks[i].type {
+        findEnd: for i in (idx + 1)..<sourceBlocks.count {
+            switch sourceBlocks[i].type {
             case .heading(let l) where l == level:
-                foldEnd = blocks[i].range.location
+                foldEnd = sourceBlocks[i].range.location
                 break findEnd
             case .headingSetext(let l) where l == level:
-                foldEnd = blocks[i].range.location
+                foldEnd = sourceBlocks[i].range.location
                 break findEnd
             default:
                 continue
@@ -728,14 +826,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Fold the header block at `idx` if it is currently expanded. No-op if
     /// already collapsed.
     public func foldHeader(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
-        guard idx < blocks.count, !isCollapsed(blockIndex: idx) else { return }
+        guard idx < sourceBlocks.count, !isCollapsed(blockIndex: idx) else { return }
         toggleFold(headerBlockIndex: idx, textStorage: textStorage)
     }
 
     /// Unfold the header block at `idx` if it is currently collapsed. No-op if
     /// already expanded.
     public func unfoldHeader(headerBlockIndex idx: Int, textStorage: NSTextStorage) {
-        guard idx < blocks.count, isCollapsed(blockIndex: idx) else { return }
+        guard idx < sourceBlocks.count, isCollapsed(blockIndex: idx) else { return }
         toggleFold(headerBlockIndex: idx, textStorage: textStorage)
     }
 
@@ -745,8 +843,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     public func foldAll(textStorage: NSTextStorage) {
         // Collect header indices with their levels
         var headers: [(index: Int, level: Int)] = []
-        for i in 0..<blocks.count {
-            switch blocks[i].type {
+        for i in 0..<sourceBlocks.count {
+            switch sourceBlocks[i].type {
             case .heading(let l): headers.append((i, l))
             case .headingSetext(let l): headers.append((i, l))
             default: break
@@ -763,8 +861,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     /// Unfold all headers in the note.
     public func unfoldAll(textStorage: NSTextStorage) {
-        for i in 0..<blocks.count {
-            switch blocks[i].type {
+        for i in 0..<sourceBlocks.count {
+            switch sourceBlocks[i].type {
             case .heading, .headingSetext:
                 if isCollapsed(blockIndex: i) {
                     toggleFold(headerBlockIndex: i, textStorage: textStorage)
@@ -776,7 +874,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     /// Find the header block index for a character position.
     public func headerBlockIndex(at charIndex: Int) -> Int? {
-        for (i, block) in blocks.enumerated() {
+        for (i, block) in sourceBlocks.enumerated() {
             switch block.type {
             case .heading, .headingSetext:
                 if block.range.contains(charIndex) || block.range.location == charIndex {
@@ -910,7 +1008,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             loadImages(textStorage: textStorage, checkRange: editedRange)
 
             // Block-aware paragraph styles (spacing, indentation).
-            if !blocks.isEmpty {
+            if !sourceBlocks.isEmpty {
                 let nsString = textStorage.string as NSString
                 let paragraphRange = expandedParagraphRange(for: editedRange, in: nsString)
                 phase5_paragraphStyles(textStorage: textStorage, range: paragraphRange)
@@ -923,7 +1021,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             note.content.string.fnv1a == note.cacheHash
         ) { return }
 
-        let previousBlocks = blocks
+        let previousBlocks = sourceBlocks
         updateBlockModel(textStorage: textStorage, editedRange: editedRange, delta: delta)
 
         let renderRanges = processingRanges(
@@ -960,7 +1058,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             // Look up the block's contentRange — the authoritative content
             // bounds from MarkdownBlockParser. Passing it ensures the highlighter
             // touches ONLY code content, never fence characters.
-            let contentRange = blocks.first(where: {
+            let contentRange = sourceBlocks.first(where: {
                 if case .codeBlock = $0.type, $0.range == range { return true }
                 return false
             })?.contentRange
@@ -1047,7 +1145,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     private func updateBlockModel(textStorage: NSTextStorage, editedRange: NSRange, delta: Int) {
         let string = textStorage.string as NSString
         guard string.length > 0 else {
-            blocks = []
+            sourceBlocks = []
             renderedStorageOffsets = []
             return
         }
@@ -1063,33 +1161,33 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // without needing a per-block field.
         let renderedOffsets = renderedStorageOffsets
         let renderedIDsBefore: Set<UUID> = Set(
-            blocks.compactMap { block in
+            sourceBlocks.compactMap { block in
                 renderedOffsets.contains(block.range.location) ? block.id : nil
             }
         )
 
-        if editedRange.length == textStorage.length || blocks.isEmpty {
+        if editedRange.length == textStorage.length || sourceBlocks.isEmpty {
             // Full parse (initial load or first time).
             MarkdownBlockParser.parsePreservingRendered(
-                &blocks, string: string, renderedOffsets: renderedOffsets
+                &sourceBlocks, string: string, renderedOffsets: renderedOffsets
             )
         } else {
             // Incremental: adjust existing blocks, re-parse dirty ones
             var dirtyIndices = MarkdownBlockParser.adjustBlocks(
-                &blocks,
+                &sourceBlocks,
                 forEditAt: editedRange.location,
                 delta: delta,
                 renderedOffsets: renderedOffsets
             )
 
             // Also mark the block at the edit location as dirty
-            if let editIdx = MarkdownBlockParser.blockIndex(in: blocks, containing: min(editedRange.location, string.length - 1)) {
+            if let editIdx = MarkdownBlockParser.blockIndex(in: sourceBlocks, containing: min(editedRange.location, string.length - 1)) {
                 dirtyIndices.insert(editIdx)
             }
 
             if !dirtyIndices.isEmpty {
                 MarkdownBlockParser.reparseBlocks(
-                    &blocks,
+                    &sourceBlocks,
                     dirtyIndices: dirtyIndices,
                     string: string,
                     renderedOffsets: renderedOffsets
@@ -1103,7 +1201,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // reparse splice replaced (always source-mode by design)
         // simply drop out of the new set.
         renderedStorageOffsets = Set(
-            blocks.compactMap { block in
+            sourceBlocks.compactMap { block in
                 renderedIDsBefore.contains(block.id) ? block.range.location : nil
             }
         )
@@ -1159,8 +1257,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return paragraphRange
     }
 
-    private func codeRanges(in blocks: [MarkdownBlock]) -> [NSRange] {
-        return blocks.compactMap { block in
+    private func codeRanges(in sourceBlocks: [MarkdownBlock]) -> [NSRange] {
+        return sourceBlocks.compactMap { block in
             guard case .codeBlock = block.type else { return nil }
             if renderedStorageOffsets.contains(block.range.location) {
                 return nil
@@ -1203,16 +1301,16 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         let string = textStorage.string as NSString
 
         // Get blocks that intersect the range
-        let affectedBlocks = MarkdownBlockParser.blocks(in: blocks, intersecting: range)
+        let affectedBlocks = MarkdownBlockParser.blocks(in: sourceBlocks, intersecting: range)
 
         for block in affectedBlocks {
             guard block.range.location < string.length,
                   NSMaxRange(block.range) <= string.length else { continue }
 
             // Find this block's global index for neighbor lookups
-            let globalIdx = MarkdownBlockParser.blockIndex(in: blocks, containing: block.range.location)
-            let prevBlock = globalIdx.flatMap { $0 > 0 ? blocks[$0 - 1] : nil }
-            let nextBlock = globalIdx.flatMap { $0 < blocks.count - 1 ? blocks[$0 + 1] : nil }
+            let globalIdx = MarkdownBlockParser.blockIndex(in: sourceBlocks, containing: block.range.location)
+            let prevBlock = globalIdx.flatMap { $0 > 0 ? sourceBlocks[$0 - 1] : nil }
+            let nextBlock = globalIdx.flatMap { $0 < sourceBlocks.count - 1 ? sourceBlocks[$0 + 1] : nil }
             let isFirst = (globalIdx == 0)
 
             // Process each paragraph within the block
@@ -1464,13 +1562,13 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
             guard !source.isEmpty else { continue }
 
-            guard let blockIdx = blocks.firstIndex(where: {
+            guard let blockIdx = sourceBlocks.firstIndex(where: {
                 if case .codeBlock = $0.type { return $0.range == codeRange }
                 return false
             }) else {
                 continue
             }
-            let blockID = blocks[blockIdx].id
+            let blockID = sourceBlocks[blockIdx].id
 
             // Skip blocks that are already rendered or already scheduled.
             if isRendered(blockIndex: blockIdx)
@@ -1490,10 +1588,10 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                 DispatchQueue.main.async {
                     defer { self.pendingRenderedBlockIDs.remove(blockID) }
                     guard let image = image else { return }
-                    guard let blockIdx = self.blocks.firstIndex(where: { $0.id == blockID }) else { return }
-                    guard case .codeBlock = self.blocks[blockIdx].type else { return }
+                    guard let blockIdx = self.sourceBlocks.firstIndex(where: { $0.id == blockID }) else { return }
+                    guard case .codeBlock = self.sourceBlocks[blockIdx].type else { return }
 
-                    let codeRange = self.blocks[blockIdx].range
+                    let codeRange = self.sourceBlocks[blockIdx].range
                     guard codeRange.location < textStorage.length,
                           NSMaxRange(codeRange) <= textStorage.length else { return }
 
@@ -1530,8 +1628,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     textStorage.endEditing()
 
                     // Re-find the block by ID after endEditing, because endEditing
-                    // triggers process() which may rebuild self.blocks, invalidating blockIdx.
-                    guard let updatedIdx = self.blocks.firstIndex(where: { $0.id == blockID }) else { return }
+                    // triggers process() which may rebuild self.sourceBlocks, invalidating blockIdx.
+                    guard let updatedIdx = self.sourceBlocks.firstIndex(where: { $0.id == blockID }) else { return }
 
                     // Mark the block as rendered (not removed). The block stays in the
                     // model with updated range. codeBlockRanges filters it out so
@@ -1539,9 +1637,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
                     // Phase 6 Tier B′ Sub-slice 7.B.1: side-table is the
                     // sole source of truth — the per-block `renderMode`
                     // field is gone.
-                    self.blocks[updatedIdx].range = replacedRange
-                    self.blocks[updatedIdx].contentRange = replacedRange
-                    self.blocks[updatedIdx].syntaxRanges = []
+                    self.sourceBlocks[updatedIdx].range = replacedRange
+                    self.sourceBlocks[updatedIdx].contentRange = replacedRange
+                    self.sourceBlocks[updatedIdx].syntaxRanges = []
                     self.setRendered(
                         true,
                         storageOffset: replacedRange.location

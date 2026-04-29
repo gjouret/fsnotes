@@ -442,7 +442,7 @@ class NewLineTransitionTests: XCTestCase {
 
             // Log
             let para = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
-            let blocks = editor.textStorageProcessor?.blocks ?? []
+            let blocks = editor.textStorageProcessor?.sourceBlocksSnapshot ?? []
             print("[\(name)] headIndent=\(para?.headIndent ?? -1) firstLine=\(para?.firstLineHeadIndent ?? -1) blocks=\(blocks.map { "\($0.type)" }) string=\"\(storage.string.prefix(20))\"")
 
             // Assert: list paragraph style follows the tabs-as-metadata model.
@@ -547,7 +547,7 @@ class NewLineTransitionTests: XCTestCase {
         // Log blocks after CMD+T
         if let proc = editor.textStorageProcessor {
             print("Blocks after CMD+T:")
-            for (i, b) in proc.blocks.enumerated() {
+            for (i, b) in proc.sourceBlocksSnapshot.enumerated() {
                 print("  block[\(i)]: \(b.type) range=\(b.range)")
             }
         }
@@ -675,7 +675,7 @@ class NewLineTransitionTests: XCTestCase {
         // Log blocks
         if let processor = editorB.textStorageProcessor {
             log += "\nBlocks after Return:\n"
-            for (i, block) in processor.blocks.enumerated() {
+            for (i, block) in processor.sourceBlocksSnapshot.enumerated() {
                 log += "  block[\(i)]: \(block.type) range=\(block.range)\n"
             }
         }

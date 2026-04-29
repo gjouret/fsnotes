@@ -102,6 +102,10 @@ final class FSMTransitionTableTests: XCTestCase {
         }
         let beforeBlocks = beforeDoc.blocks
         let beforeCount = beforeBlocks.count
+        // Snapshot the pre-action block spans — needed by the cursor-
+        // placement assertion (the predecessor's pre-merge end is read
+        // from this array).
+        let beforeSpans = scenario.editor.documentProjection?.blockSpans ?? []
 
         // Resolve the cursor offset.
         guard let cursorOffset = cursorOffset(
@@ -115,6 +119,7 @@ final class FSMTransitionTableTests: XCTestCase {
             return
         }
         scenario.cursorAt(cursorOffset)
+        let cursorBefore = cursorOffset
 
         // Optionally select the entire block (for selectBlockAndDelete).
         if row.action == .selectBlockAndDelete {
@@ -144,6 +149,8 @@ final class FSMTransitionTableTests: XCTestCase {
         }
         let afterBlocks = afterDoc.blocks
         let afterCount = afterBlocks.count
+        let afterSpans = scenario.editor.documentProjection?.blockSpans ?? []
+        let cursorAfter = scenario.editor.selectedRange().location
 
         // Assert.
         switch row.expected {
@@ -309,6 +316,151 @@ final class FSMTransitionTableTests: XCTestCase {
         case .unsupported:
             // Already early-returned above.
             break
+        }
+
+        // Cursor-placement assertion. Rows that don't care leave
+        // `cursorAfter == .unchecked` and skip this. Rows that do care
+        // assert against the pre/post spans the structural switch
+        // already snapshotted.
+        assertCursorPlacement(
+            row: row,
+            cursorBefore: cursorBefore,
+            cursorAfter: cursorAfter,
+            beforeSpans: beforeSpans,
+            afterSpans: afterSpans,
+            beforeCount: beforeCount,
+            afterCount: afterCount,
+            targetIndex: seed.targetBlockIndex
+        )
+    }
+
+    // MARK: - Cursor-placement assertion
+
+    /// Assert the row's `cursorAfter` post-condition. Strict for
+    /// `.preserved` and `.atStartOfNewBlock`; ±2 slack for
+    /// `.atEndOfPreviousBlock` (a blank-line separator between the
+    /// merged blocks may or may not be consumed by the merge,
+    /// shifting the join boundary by one or two characters).
+    private func assertCursorPlacement(
+        row: FSMTransition,
+        cursorBefore: Int,
+        cursorAfter: Int,
+        beforeSpans: [NSRange],
+        afterSpans: [NSRange],
+        beforeCount: Int,
+        afterCount: Int,
+        targetIndex: Int
+    ) {
+        switch row.cursorAfter {
+        case .unchecked:
+            return
+
+        case .preserved:
+            // `.preserved` = cursor stays in the SAME block, with ±1
+            // slack for the natural delete / insert side-effect of the
+            // action (Backspace pulls cursor one left; ForwardDelete
+            // leaves cursor put; typing a char pushes it one right).
+            // Anything beyond ±1 is an FSM-level reposition, which a
+            // `.preserved` row forbids.
+            let driftOK = abs(cursorAfter - cursorBefore) <= 1
+            let beforeBlockIdx = blockIndex(
+                containing: cursorBefore, in: beforeSpans
+            )
+            let afterBlockIdx = blockIndex(
+                containing: cursorAfter, in: afterSpans
+            )
+            let sameBlock = beforeBlockIdx != nil
+                && beforeBlockIdx == afterBlockIdx
+            assertTrue(
+                driftOK,
+                row: row,
+                what: "cursor placement (preserved): drift " +
+                      "|\(cursorAfter) - \(cursorBefore)| > 1"
+            )
+            assertTrue(
+                sameBlock,
+                row: row,
+                what: "cursor placement (preserved): cursor left the " +
+                      "target block (before idx=\(String(describing: beforeBlockIdx)), " +
+                      "after idx=\(String(describing: afterBlockIdx)))"
+            )
+
+        case .atStartOfNewBlock:
+            // Split / atomic-insert: cursor lands at the start of the
+            // LAST newly-inserted block in the post-state. The runLength
+            // arithmetic mirrors the structural assertion above:
+            //   runLength = afterCount - beforeCount + 1
+            //   lastNewIdx = targetIndex + runLength - 1
+            // For `.insertAtomic` (count grows by 1, target unchanged)
+            // the last new block is at targetIndex + 1 OR targetIndex - 1
+            // depending on which side the atomic landed; the runner
+            // already located it via `locateInsertedSibling`. For the
+            // atomic case the cursor expectation is implicit (rows leave
+            // `cursorAfter == .unchecked`), so we only handle splits
+            // here.
+            let delta = afterCount - beforeCount
+            guard delta >= 1 else {
+                fail(
+                    row: row,
+                    what: "cursor placement (atStartOfNewBlock): expected " +
+                          "block-count delta ≥ 1 but got \(delta) — " +
+                          "no new block to anchor against"
+                )
+                return
+            }
+            let runLength = delta + 1
+            let lastNewIdx = targetIndex + runLength - 1
+            guard lastNewIdx < afterSpans.count else {
+                fail(
+                    row: row,
+                    what: "cursor placement (atStartOfNewBlock): " +
+                          "lastNewIdx \(lastNewIdx) is out of range " +
+                          "(afterSpans.count=\(afterSpans.count))"
+                )
+                return
+            }
+            let expected = afterSpans[lastNewIdx].location
+            assertEqual(
+                cursorAfter, expected,
+                row: row,
+                what: "cursor placement (atStartOfNewBlock): expected " +
+                      "start of new block at index \(lastNewIdx)"
+            )
+
+        case .atEndOfPreviousBlock:
+            // Merge: cursor lands at the boundary between the original
+            // predecessor's content and the merged-in content. That
+            // boundary equals the predecessor's pre-merge content end
+            // (`beforeSpans[targetIndex - 1].location + length`). When a
+            // blank-line separator sat between the two non-blank blocks
+            // and the merge consumed it, the predecessor of `target` in
+            // `beforeSpans` is at `targetIndex - 2` instead. Try both
+            // candidate predecessors; ±2 slack on each absorbs trailing-
+            // newline conventions in the span lengths.
+            let candidates = [targetIndex - 1, targetIndex - 2]
+                .filter { $0 >= 0 && $0 < beforeSpans.count }
+            guard !candidates.isEmpty else {
+                fail(
+                    row: row,
+                    what: "cursor placement (atEndOfPreviousBlock): no " +
+                          "valid predecessor index for targetIndex=\(targetIndex)"
+                )
+                return
+            }
+            let expectedOffsets = candidates.map {
+                beforeSpans[$0].location + beforeSpans[$0].length
+            }
+            let bestDiff = expectedOffsets
+                .map { abs(cursorAfter - $0) }
+                .min() ?? Int.max
+            assertTrue(
+                bestDiff <= 2,
+                row: row,
+                what: "cursor placement (atEndOfPreviousBlock): expected " +
+                      "cursor near end of pre-merge predecessor " +
+                      "(candidates \(expectedOffsets), got \(cursorAfter), " +
+                      "min diff \(bestDiff))"
+            )
         }
     }
 
@@ -672,6 +824,23 @@ final class FSMTransitionTableTests: XCTestCase {
     private func sameKindAt(_ a: [Block], _ b: [Block], atIndex idx: Int) -> Bool {
         guard idx < a.count, idx < b.count else { return false }
         return blockKindLabel(a[idx]) == blockKindLabel(b[idx])
+    }
+
+    /// Index of the block whose span contains `offset`, or nil if no
+    /// span owns it. The trailing-newline byte at the end of a span
+    /// belongs to the same block (closed interval on `[location,
+    /// location + length]`) so cursors that landed right after the
+    /// last typed character still resolve.
+    private func blockIndex(
+        containing offset: Int, in spans: [NSRange]
+    ) -> Int? {
+        for (i, span) in spans.enumerated() {
+            if offset >= span.location
+                && offset <= span.location + span.length {
+                return i
+            }
+        }
+        return nil
     }
 }
 
