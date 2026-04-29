@@ -175,6 +175,85 @@ final class BugFsnotesibjTests: XCTestCase {
         )
     }
 
+    /// QA datum (v5, narrowing in DocumentEditApplier): user reports
+    /// pressing Enter at the end of an L2 sub-item creates the new
+    /// empty item AT THE BOTTOM of the list rather than directly after
+    /// the cursor's current item. Pin the expected structure so we can
+    /// localise whether narrowing introduced the regression or it's a
+    /// pre-existing EditingOps issue.
+    func test_enterAtEndOfMiddleL2_newItemAppearsAtCursorNotBottom() {
+        let markdown = """
+        - L1
+          - L2-1
+          - L2-2
+        """
+        let harness = EditorHarness(
+            markdown: markdown, windowActivation: .keyWindow
+        )
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage,
+              let tlm = harness.editor.textLayoutManager else {
+            XCTFail("editor not initialised"); return
+        }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        let s = storage.string as NSString
+        let l21Range = s.range(of: "L2-1")
+        XCTAssertNotEqual(l21Range.location, NSNotFound)
+        let endOfL21 = NSRange(
+            location: l21Range.location + l21Range.length, length: 0
+        )
+        harness.editor.setSelectedRange(endOfL21)
+
+        harness.pressReturn()
+
+        guard let proj = harness.editor.documentProjection else {
+            XCTFail("no projection"); return
+        }
+        var listBlockIdx: Int = -1
+        for (i, block) in proj.document.blocks.enumerated() {
+            if case .list = block { listBlockIdx = i; break }
+        }
+        XCTAssertGreaterThanOrEqual(listBlockIdx, 0)
+        guard case .list(let items, _) = proj.document.blocks[listBlockIdx]
+        else { XCTFail("not a list"); return }
+
+        // Walk flat — the list may be body-nested or flat-indented.
+        var flat: [(indent: Int, text: String)] = []
+        func walk(_ ls: [ListItem]) {
+            for item in ls {
+                let plain = item.inline
+                    .compactMap { node -> String? in
+                        if case .text(let s) = node { return s }
+                        return nil
+                    }
+                    .joined()
+                flat.append((item.indent.count, plain))
+                for body in item.body {
+                    if case .list(let sub, _) = body { walk(sub) }
+                }
+            }
+        }
+        walk(items)
+        // Diagnostic dump regardless of pass/fail.
+        for (i, e) in flat.enumerated() {
+            print("[enter-mid] flat[\(i)] indent=\(e.indent) text='\(e.text)'")
+        }
+
+        guard let i21 = flat.firstIndex(where: { $0.text == "L2-1" }),
+              let i22 = flat.firstIndex(where: { $0.text == "L2-2" }),
+              let iEmpty = flat.firstIndex(where: { $0.text.isEmpty && $0.indent > 0 }) else {
+            XCTFail("expected items not found in flat list: \(flat)")
+            return
+        }
+        XCTAssertGreaterThan(iEmpty, i21,
+            "empty item should come after L2-1; got iEmpty=\(iEmpty), i21=\(i21)")
+        XCTAssertLessThan(iEmpty, i22,
+            "empty item should come BEFORE L2-2 (not at bottom); " +
+            "got iEmpty=\(iEmpty), i22=\(i22)")
+    }
+
     private func bulletAttachmentsByOffset(
         _ storage: NSTextStorage
     ) -> [Int: NSTextAttachment] {
