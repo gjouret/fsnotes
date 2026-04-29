@@ -479,6 +479,10 @@ extension EditTextView {
                 }
                 suppressCompletion = true
                 applyBlockModelResult(result, actionName: "Wiki Link Completion")
+                // Re-parse inlines so [[MyNote]] is detected as .wikilink.
+                // applyBlockModelResult bypasses handleEditViaBlockModel's
+                // reparse trigger, so we must call it explicitly.
+                reparseCurrentBlockInlines()
                 setSelectedRange(NSRange(location: newCursorPos, length: 0))
                 return
             } catch {

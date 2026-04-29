@@ -1099,18 +1099,25 @@ extension EditTextView {
         pendingInlineTraits = savedPendingTraits
         explicitlyOffTraits = savedOffTraits
 
-        // bd-fsnotes-ibj: META glyph wipe.
-        // Schedule a coalesced viewport-relayout pass after every
-        // edit so TK2 re-evaluates view-provider mounting positions.
-        // Character edits inside a list item DO trigger the bug
-        // (checkboxes vanish until scroll), so a structural-only
-        // gate is too restrictive — the v2 gate reproduced the bug
-        // for in-list typing. The current implementation calls
-        // `layoutViewport()` (Phase 1 + deferred Phase 2) but does
-        // NOT tickle `attachment.image` — that's what produced the
-        // visible drop+remount flicker the user reported (QA on
-        // 2026-04-29).
-        scheduleListGlyphRefresh()
+        // bd-fsnotes-ibj v4 EXPERIMENT (2026-04-29): the v3 layoutViewport-
+        // only refresh isn't fixing the flicker either — QA reports
+        // bullets/checkboxes still flicker on every keystroke when typing
+        // in a list. The harness's new attachment-identity invariant
+        // shows attachment instances ARE preserved across the splice
+        // (NSAttributedString interns isEqual values, replaceCharacters
+        // keeps the dedup'd reference), so the flicker isn't instance
+        // replacement. Hypothesis: the layoutViewport() calls in
+        // scheduleListGlyphRefresh ARE themselves the flicker source —
+        // they force TK2 to re-evaluate viewport mounting, which
+        // briefly unmounts and remounts the bullet's hosted view.
+        //
+        // Disabling the refresh entirely as the A/B-test datum. If
+        // disappearance returns without it, we know the refresh was
+        // doing real work; if both flicker AND disappearance vanish,
+        // the refresh was actively harmful. Either result tells us
+        // where the real fix has to live.
+        //
+        // scheduleListGlyphRefresh()  // DISABLED
     }
 
     /// Count U+FFFC attachment characters in an attributed string.
@@ -1584,7 +1591,7 @@ extension EditTextView {
     /// markdown would parse into a different inline tree. This detects
     /// completed inline patterns (links, images, bold, etc.) and
     /// re-renders the block with proper inline structure.
-    private func reparseCurrentBlockInlines() {
+    func reparseCurrentBlockInlines() {
         guard let projection = documentProjection else { return }
         let cursor = selectedRange().location
         guard let (blockIndex, _) = projection.blockContaining(storageIndex: cursor) else { return }
