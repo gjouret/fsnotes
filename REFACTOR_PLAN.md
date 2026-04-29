@@ -22,13 +22,14 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 
 The refactor is **architecturally complete**: every invariant in [`ARCHITECTURE.md` § Architecture Invariants](ARCHITECTURE.md#architecture-invariants) (A–G) holds and is mechanically enforced where possible (DEBUG assertions + `scripts/rule7-gate.sh`). All structural phases shipped: **0, 1, 2, 3, 4, 5a–f, 7, 10, 12.A, 12.B, 12.C** (single source of truth, TK2 migration, single write path, undo journal, parser decomposition, theme, CommonMark 99.8% — the practical ceiling).
 
-**The remaining tail is non-architectural and bounded to three items**:
+**The remaining tail is non-architectural and bounded to two items**:
 
 | Item | Class | Why it is not blocking |
 |---|---|---|
 | **Phase 6 Sub-slice 7.B.2** — `processor.blocks` array retirement | Cleanup (Tier C) | Source-mode pipeline lift; the architectural invariants don't require it. |
 | **Phase 9 Pod warnings** — silence at Pod target level | Cosmetic | ~100 warnings from third-party Pods. No correctness impact. |
-| **Phase 11 Slice F** — test-factory consolidation (5 of 7 factories migrated; F.7 `UIBugRegressionTests` rewrite outstanding) | Test-side productivity | F.1–F.4 + F.6 shipped (`SubviewTableBoundaryCaretTests`, `TableCellEditingTests`, `TableNavigationTests`, `SubviewTableInPlaceFastPathTests`, `MCPTestFixture` six-call-site sweep) on the new `EditorScenario+Fixtures` / `EditorScenario+MCPFixture` helpers. F.5 (`HeaderTests` / `NewLineTransitionTests`) deferred — different code path (source-mode renderer). F.7 rewrites `UIBugRegressionTests.swift` (~1,740 LoC) over the Given/When/Then API. Not architecture. |
+
+Phase 11 Slice F is now ✅ closed: F.1–F.4 + F.6 + F.7 shipped (six factory consolidations + the `UIBugRegressionTests` rewrite). F.5 stays deferred as a known-different-code-path (source-mode renderer fixture). See the per-slice status further down for commit hashes.
 
 Once those three land, the plan is closed. Bugs are tracked in `BugInventoryRegressionTests.swift` and the per-bug entries below; they are normal product engineering against a stable architecture, not refactor work.
 
@@ -140,14 +141,14 @@ Filter broadened in both `CodeBlockEditToggleOverlay.swift:295` and `GutterContr
 - ✅ **Slice C** (`5c50998`) — bitmap-based `Then` readbacks shipped in `Tests/EditorAssertions+Bitmap.swift` + `Tests/UserFlows/BitmapReadbackTests.swift`.
 - ✅ **Slice D** (`7d82fe4`) — async-hydration `Then` readbacks shipped in `Tests/EditorAssertions+Async.swift` + `Tests/UserFlows/AsyncHydrationThenTests.swift`.
 - ✅ **Slice E** (`d70cb9d`, widened by `8138174`) — combinatorial coverage generator over (block kind × cursor position × edit primitive × selection state) with sequence widening + round-trip parity invariant. Surfaced bugs #37 + #38.
-- **Slice F (in flight)** — consolidation. Sub-slices:
+- ✅ **Slice F (closed except F.5)** — consolidation. Sub-slices:
   - ✅ **F.1** (`0992301`) — `SubviewTableBoundaryCaretTests` migrated. Introduced `Tests/EditorScenario+Fixtures.swift` with `firstAttachment(of:)` + `firstFragmentElement(of:)` helpers used by the rest of the slice.
   - ✅ **F.2** (`bbefb92`) — `TableCellEditingTests` migrated. Helpers extended with `tableCellOffset(row:col:)` + `tableBlock(at:)`.
   - ✅ **F.3** (`ef8a35d`) — `TableNavigationTests` migrated (-65 LoC; 12 keyboard-command tests over the same fixture).
   - ✅ **F.4** (`e6a096f`) — `SubviewTableInPlaceFastPathTests` migrated. Helpers extended with `firstTableBlockIndex()`.
   - **F.5 (deferred — different code path)** — `HeaderTests` + `NewLineTransitionTests` use a `makeFullPipelineEditor` + `runFullPipeline` pattern that bypasses `EditorHarness` entirely to test the *source-mode* renderer path (no block-model activation, explicit `setAttributedString` + `RunLoop` pump). Migrating to `Given.note(...)` would change the code path under test (block-model active by default), losing fidelity. The clean fix is a `Given.sourceModeNote(...)` builder + matching pipeline pump verb — separate slice from the table-fixture consolidation.
   - ✅ **F.6** (`2bd86db`) — `AppBridgeImplTestHelper.makeHarness(at:url:markdown:)` retired. Six call sites (4 MCP tool tests + 2 integration tests in `AIToolCallE2ETests`) migrated to `Given.mcpNote(at:markdown:)` in `Tests/EditorScenario+MCPFixture.swift`. The MCP-specific repointing of `note.url` is now a DSL factory sibling to `Given.note(...)`.
-  - **F.7 (outstanding — biggest scope)** — rewrite `Tests/UIBugRegressionTests.swift` (~1,740 LoC of probes) to ~300 LoC of named regressions over the Given/When/Then API; absorb `EditorHTMLParityTests` `EditStep` DSL.
+  - ✅ **F.7** (`7c2eeb0`) — `UIBugRegressionTests.swift` rewritten from ~1,740 LoC of probe-based `EditorHarness` + `snapshot.assertContains(...)` calls to ~550 LoC of named-invariant DSL regressions (47 tests). New readbacks added to `EditorAssertions.swift` (`Then.fragments.contains(class:)`, `Then.fragments.countOfClass(_)`, `Then.snapshot.contains(_)`, `Then.document.storageText`, `Then.document.blockCount(ofKind:)`, `Then.document.totalBlocks`, `Then.cursor.selectionIsCollapsed`). Net: -1,581 LoC of tests + 360 LoC of reusable DSL surface every regression suite benefits from. The `EditorHTMLParityTests` `EditStep` DSL absorption (originally bundled into the F.7 brief) is left as a separate cleanup — `EditorHTMLParityTests` already has its own focused live-edit harness and is not redundant with `EditorScenario`.
 
 ### Deferred bugs / investigations
 
@@ -160,5 +161,5 @@ Filter broadened in both `CodeBlockEditToggleOverlay.swift:295` and `GutterContr
 
 ### Accepted non-fixes
 
-- **CommonMark spec #590** — wikilink-extension non-conformance. `![[foo]]` resolves to a wiki link by product design rather than literal text. 651/652 (99.8%) is the practical ceiling for FSNotes++.
+- **CommonMark spec #590** — wikilink-extension bleed-through inside image alt-text. `![[foo]]` resolves to a wiki link rather than literal text. **Re-investigated 2026-04-29**: the bug is narrow — `parseInlines` is called recursively on image alt-text in `MarkdownParser.swift:630`, and that recursion re-enters `tokenizeNonEmphasis` which dispatches to `WikilinkParser.match` at lines 657–670 with no context guard. The minimal fix is a `isImageAlt: Bool = false` parameter on `tokenizeNonEmphasis` plus a `!isImageAlt && ...` gate on the wikilink branch (≈5 lines). Risk assessment: zero regression risk for non-image contexts (link-text wikilinks, blockquote / list / strikethrough / underline, normal text). Outcome would be 652/652 (100%) CommonMark compliance. Currently still labelled "accepted non-conformance" — the fix is a candidate slice when CommonMark conformance is re-prioritised; not blocking the convergence criteria.
 
