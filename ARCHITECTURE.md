@@ -646,9 +646,9 @@ Obsidian-style `</>` hover button that swaps a code block between rendered (synt
 
 ## CommonMark Compliance
 
-Serializer compliance against CommonMark 0.31.2: **651 / 652 passing (99.8%)** — the practical ceiling for FSNotes++ given the wikilink-extension boundary case (#590 — `![[foo]]` resolves to a wikilink rather than literal text by product design).
+Serializer compliance against CommonMark 0.31.2: **652 / 652 passing (100%)**. The previously-accepted #590 non-conformance landed in `489b983` via two narrow wikilink declines (no `[[...]]` after `!`, no `[[...]]:` followed by `:`).
 
-Every bucket is at 100% except Images (21/22). The conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every commit is gated against "must not regress."
+Every bucket is at 100%. The conformance corpus is in `Tests/CommonMark/`; per-section pass/fail reports dump to `~/unit-tests/commonmark-compliance.txt`. Every commit is gated against "must not regress."
 
 Compliance was lifted from a 92.2% baseline by a series of small grammar edits and one renderer-side fix in the `LinkResolver` and `ListReader` paths. The arc is documented in `REFACTOR_PLAN.md` for archaeological purposes. Forward-looking: any new CommonMark spec failure should be reproducible as a per-bucket regression test in `Tests/CommonMark/` and gated against the bucket's current floor.
 

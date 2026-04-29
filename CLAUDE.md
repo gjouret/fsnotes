@@ -304,13 +304,7 @@ Single source of truth for every presentation literal. See `ARCHITECTURE.md` →
 
 ### CommonMark Spec Compliance (v0.31.2)
 
-Serializer compliance: **651 / 652 passing (99.8%)** — Phase 10 Slice A baseline (620) advanced by Phase 12.C.6.a–p (+31, sixteen slices closing spec examples #218, #540, #541, #548, #559, #568, #238, #524, #526, #536, #538, #518, #519, #520, #532, #533, #175, #318, #320, #321, #324, #289, #300, #278, #9, #312, #313, #325, #290, #292, #293). Seven buckets reached 100% in 12.C.6: Block quotes (25/25 via #238), Link reference definitions (27/27 via #218), **Links (90/90 via 12.C.6.h)**, **HTML blocks (44/44 via 12.C.6.i)**, **Tabs (11/11 via 12.C.6.l)**, **Lists (26/26 via 12.C.6.n)**, and **List items (48/48 via 12.C.6.o + 12.C.6.p)**.
-
-- Perfect (100%): Precedence, Textual content, Inlines, Code spans, Soft line breaks, Hard line breaks, Blank lines, ATX headings, Setext headings, Backslash escapes, Entity refs, Paragraphs, Fenced code blocks, Autolinks, Indented code blocks, Emphasis, Raw HTML, Thematic breaks, **Tabs** (12.C.6.l), **Link reference definitions** (12.C.6.a), **Block quotes** (12.C.6.f), **Links** (12.C.6.h), **HTML blocks** (12.C.6.i), **Lists** (12.C.6.n), **List items** (12.C.6.o + 12.C.6.p).
-- Near-perfect (90%+): Images (21/22, 95%).
-
-Sole remaining failing example:
-- **Images (#590)**: wikilink-extension bleed through image ref-def pattern (`![[foo]]` resolves to a wiki link rather than literal text). Accepted FSNotes++ extension non-conformance — wikilinks are a product feature, not a parser bug. 651/652 (99.8%) is the practical ceiling for FSNotes++; pure-CommonMark conformance would land at 652/652 only by removing the wikilink extension.
+Serializer compliance: **652 / 652 passing (100%)** — Phase 10 Slice A baseline (620) advanced by Phase 12.C.6.a–p (+31), with the trailing **#590 closure landing in `489b983`** (two narrow `WikilinkParser` declines: `[[…]]` after `!` is the failed-image-opener literal-text fall-through; `[[…]]:` is the malformed-ref-def shape and yields to literal text). Every CommonMark 0.31.2 bucket is at 100%, including Images (22/22).
 
 Phase 10 Slice A trajectory: **601 → 620 / 652 (+19)** in 12 commits (`f9aa284 → 3018ff0`, 2026-04-24). Each commit locks in one or more bucket fixes: short HTML comment forms, ref-def URL/title separator, multi-line ref-def labels, tight-list heuristic refinement, HR-beats-list-item precedence, setext-underline-on-lazy guard, Unicode S-category as punctuation, indented-code trailing-whitespace preservation, blockquote tab partial-consumption, list-item first-line indented-code detection, `stripLeadingSpaces` virtual-column preservation, HTML-block 3-space indent cap, first-item-blankLineBefore exclusion, empty-content item lazy continuation.
 

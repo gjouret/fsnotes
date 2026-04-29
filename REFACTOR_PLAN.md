@@ -20,7 +20,7 @@ The fix was to collapse the dual-source-of-truth into **`Document` as the sole s
 
 ## Convergence criteria — when this plan is closed
 
-The refactor is **architecturally complete**: every invariant in [`ARCHITECTURE.md` § Architecture Invariants](ARCHITECTURE.md#architecture-invariants) (A–G) holds and is mechanically enforced where possible (DEBUG assertions + `scripts/rule7-gate.sh`). All structural phases shipped: **0, 1, 2, 3, 4, 5a–f, 7, 10, 12.A, 12.B, 12.C** (single source of truth, TK2 migration, single write path, undo journal, parser decomposition, theme, CommonMark 99.8% — the practical ceiling).
+The refactor is **architecturally complete**: every invariant in [`ARCHITECTURE.md` § Architecture Invariants](ARCHITECTURE.md#architecture-invariants) (A–G) holds and is mechanically enforced where possible (DEBUG assertions + `scripts/rule7-gate.sh`). All structural phases shipped: **0, 1, 2, 3, 4, 5a–f, 7, 10, 12.A, 12.B, 12.C** (single source of truth, TK2 migration, single write path, undo journal, parser decomposition, theme, **CommonMark 100% — 652/652 as of `489b983`**).
 
 **The remaining tail is non-architectural and bounded to two items**:
 
@@ -58,7 +58,7 @@ Once those three land, the plan is closed. Bugs are tracked in `BugInventoryRegr
 | 11 — Composable user-flow harness | ✅ partial | Slices A (Given/When builder + 8 readbacks), A.5 (FSM transition table, ~95 rows in `Tests/Fixtures/FSMTransitions.swift`), B (38-bug inventory migration), C (bitmap-based Then readbacks), D (async-hydration Then readbacks), E (combinatorial coverage generator + sequence widening) all shipped. Slice F (factory consolidation) outstanding |
 | 12.A — Inline-trait toggle ladder collapse | ✅ shipped | 6-clone wrappers replaced with trait-parameterized method |
 | 12.B — `EditableBlock` per-kind extraction | ✅ shipped | All 9 block kinds have dedicated `BlockEditor` files; switches collapsed; dead scaffold deleted |
-| 12.C — Parser combinators + 100% CommonMark | ✅ shipped | `Parser.swift` lib + 18 ported combinator/reader files; compliance 95.1% → 99.8% (651/652) |
+| 12.C — Parser combinators + 100% CommonMark | ✅ shipped | `Parser.swift` lib + 18 ported combinator/reader files; compliance 95.1% → 100% (652/652) once #590 landed in `489b983` |
 
 **Architectural goals achieved**: single source of truth, TK2 migration, source-mode pipeline retirement, single write path, undo journal, parser decomposition, CommonMark 99.8% (the practical ceiling — #590 is accepted wikilink-extension non-conformance).
 
@@ -161,5 +161,9 @@ Filter broadened in both `CodeBlockEditToggleOverlay.swift:295` and `GutterContr
 
 ### Accepted non-fixes
 
-- **CommonMark spec #590** — wikilink-extension bleed-through inside image alt-text. `![[foo]]` resolves to a wiki link rather than literal text. **Re-investigated 2026-04-29**: the bug is narrow — `parseInlines` is called recursively on image alt-text in `MarkdownParser.swift:630`, and that recursion re-enters `tokenizeNonEmphasis` which dispatches to `WikilinkParser.match` at lines 657–670 with no context guard. The minimal fix is a `isImageAlt: Bool = false` parameter on `tokenizeNonEmphasis` plus a `!isImageAlt && ...` gate on the wikilink branch (≈5 lines). Risk assessment: zero regression risk for non-image contexts (link-text wikilinks, blockquote / list / strikethrough / underline, normal text). Outcome would be 652/652 (100%) CommonMark compliance. Currently still labelled "accepted non-conformance" — the fix is a candidate slice when CommonMark conformance is re-prioritised; not blocking the convergence criteria.
+- *(none open — all prior accepted non-fixes have shipped)*
+
+### Recently shipped clarifications
+
+- **CommonMark spec #590** — ✅ shipped (`489b983`). Wikilink extension now declines in two contexts: when preceded by `!` (image-opener position; covers line 1 of #590) and when followed by `:` (malformed-ref-def shape; covers line 2). Conformance: 651/652 → 652/652 (100%). Pinned by `test_image_spec590_wikilinkInsideAltDoesNotBleed`. The Images bucket reaches 22/22; the legacy "wikilink-extension non-conformance" caveat is retired.
 
