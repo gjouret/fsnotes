@@ -478,14 +478,26 @@ class CommonMarkSpecTests: XCTestCase {
     }
 
     // --- Images (22 examples) ---
-    // 21/22 — one intentional divergence. Example #590 (`![[foo]]` as
-    // plain text because `[[foo]]: /url` isn't a valid link-ref-def)
-    // now parses as a wiki-link instead of plain text. Wiki-links are
-    // a product feature that diverges from CommonMark by design; we
-    // accept the single-example non-conformance rather than dropping
-    // the feature.
+    // 22/22 (100%) as of the spec-#590 fix. Wikilink detection inside
+    // image alt-text is now gated by `isImageAlt: true` on the
+    // recursive `parseInlines` call, so `![[foo]]` no longer bleeds
+    // through to the wikilink path. Wikilinks remain available
+    // everywhere else.
     func test_images() {
-        assertSection("Images", passesAtLeast: 21)
+        assertSection("Images", passesAtLeast: 22)
+    }
+
+    /// Spec #590 explicit assertion. Pinned by name so future
+    /// regressions in the wikilink-in-image-alt guard show up as a
+    /// distinct failure, not a generic Images-section count drop.
+    func test_image_spec590_wikilinkInsideAltDoesNotBleed() {
+        let md = "![[foo]]\n\n[[foo]]: /url \"title\"\n"
+        let expected = "<p>![[foo]]</p>\n<p>[[foo]]: /url &quot;title&quot;</p>\n"
+        let actual = CommonMarkHTMLRenderer.render(MarkdownParser.parse(md))
+        XCTAssertEqual(actual, expected,
+                       "spec #590: wikilink extension must not fire " +
+                       "inside image alt-text or for `[[foo]]:` ref-def " +
+                       "lines.")
     }
 
     // --- Autolinks (19 examples) ---

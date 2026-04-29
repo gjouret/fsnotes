@@ -38,16 +38,36 @@ public enum WikilinkParser {
     /// no closing `]]` exists, or the content (split on `|` into
     /// target/display) is invalid.
     ///
-    /// Bracket-integrity rule: a wikilink also fails when an EXTRA `[`
-    /// immediately precedes the opening `[[` or an EXTRA `]`
-    /// immediately follows the closing `]]`. CommonMark spec #548
-    /// (`[[[foo]]]`) treats those bracket triples as plain text — so we
-    /// don't let the wikilink path consume the middle `[[foo]]` and
-    /// leave stray brackets behind.
+    /// Bracket-integrity rules — a wikilink also fails when:
+    ///
+    ///   1. An EXTRA `[` immediately precedes the opening `[[`, or an
+    ///      EXTRA `]` immediately follows the closing `]]`. CommonMark
+    ///      spec #548 (`[[[foo]]]`) treats those bracket triples as
+    ///      plain text — we don't let the wikilink path consume the
+    ///      middle `[[foo]]` and leave stray brackets behind.
+    ///
+    ///   2. The opening `[[` is immediately preceded by `!`. The
+    ///      `!` would otherwise be treated as a literal-text run with
+    ///      a wikilink glued onto it, but per CommonMark spec #590
+    ///      `![[foo]]` is the (failed) image-opener form and the
+    ///      whole run must stay as literal text. Wikilinks are an
+    ///      FSNotes++ extension; suppressing them after `!` keeps the
+    ///      image opener's failure mode intact.
+    ///
+    ///   3. The closing `]]` is immediately followed by `:`. CommonMark
+    ///      spec #590's second line — `[[foo]]: /url "title"` — is
+    ///      meant to be a malformed link-reference-definition, not a
+    ///      wikilink at all. Letting the wikilink fire would split the
+    ///      line into `<wikilink>foo</wikilink>: /url "title"` instead
+    ///      of preserving it as literal paragraph text. A wikilink
+    ///      glued to a `:` is overwhelmingly more likely to be a typo
+    ///      / failed ref-def than a real wikilink (real wikilinks
+    ///      don't carry trailing `:` in any FSNotes++ usage).
     public static func match(_ chars: [Character], from start: Int) -> Match? {
         guard start + 1 < chars.count,
               chars[start] == "[", chars[start + 1] == "[" else { return nil }
         if start > 0 && chars[start - 1] == "[" { return nil }
+        if start > 0 && chars[start - 1] == "!" { return nil }
 
         let slice = String(chars[start..<chars.count])
         let result = parser.parse(Substring(slice))
@@ -56,6 +76,7 @@ public enum WikilinkParser {
         let endIndex = start + consumed
 
         if endIndex < chars.count && chars[endIndex] == "]" { return nil }
+        if endIndex < chars.count && chars[endIndex] == ":" { return nil }
 
         // Split on the first `|`. Empty target rejects the match
         // (`[[|x]]` is not a valid wikilink).
