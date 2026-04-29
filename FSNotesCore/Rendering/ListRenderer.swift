@@ -830,22 +830,16 @@ private final class CheckboxGlyphView: NSView {
 
     let isChecked: Bool
     let bodyFont: PlatformFont
-    let cachedImage: NSImage?
+    let drawSize: CGFloat
+    private var cachedImage: NSImage?
 
     init(checked: Bool, bodyPointSize: CGFloat, frame: NSRect) {
         self.isChecked = checked
         self.bodyFont = PlatformFont.systemFont(ofSize: bodyPointSize)
-        let symbolName = checked ? "checkmark.square" : "square"
-        let drawSize = bodyPointSize * ListRenderer.checkboxDrawScale
-        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: drawSize, weight: .regular)
-            let configured = img.withSymbolConfiguration(config) ?? img
-            self.cachedImage = configured.tinted(with: NSColor.secondaryLabelColor)
-        } else {
-            self.cachedImage = nil
-        }
+        self.drawSize = bodyPointSize * ListRenderer.checkboxDrawScale
         super.init(frame: frame)
         self.wantsLayer = false
+        rebuildCachedImage()
     }
 
     required init?(coder: NSCoder) {
@@ -853,6 +847,53 @@ private final class CheckboxGlyphView: NSView {
     }
 
     override var isFlipped: Bool { return false }
+
+    /// bd-fsnotes-hhm: rebuild the tinted bitmap whenever the view's
+    /// effective appearance changes. `tinted(with:)` resolves
+    /// `NSColor.secondaryLabelColor` at `lockFocus` time against
+    /// `NSAppearance.currentDrawing` — at init the view has no
+    /// superview, so the resolved color is the app's *default*
+    /// appearance, not the actual window appearance. On a dark-mode
+    /// window the cached bitmap stays at the light-mode-fallback
+    /// gray, invisible against the dark editor bg. Rebuilding here
+    /// (which fires on first window attach AND on every later
+    /// light↔dark switch) keeps the bitmap aligned with whatever
+    /// appearance the editor is actually drawn against.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        rebuildCachedImage()
+        needsDisplay = true
+    }
+
+    private func rebuildCachedImage() {
+        let symbolName = isChecked ? "checkmark.square" : "square"
+        guard let baseImage = NSImage(
+            systemSymbolName: symbolName, accessibilityDescription: nil
+        ) else {
+            cachedImage = nil
+            return
+        }
+        let config = NSImage.SymbolConfiguration(
+            pointSize: drawSize, weight: .regular
+        )
+        let configured = baseImage.withSymbolConfiguration(config) ?? baseImage
+
+        // Force the tinted bitmap to be rendered under the view's
+        // effective appearance — without this, `tinted(with:)`
+        // resolves `secondaryLabelColor` against whatever appearance
+        // happens to be current at the time of `lockFocus`, which
+        // may be the app default rather than the real window
+        // appearance.
+        var tinted: NSImage = configured
+        if #available(macOS 11.0, *) {
+            self.effectiveAppearance.performAsCurrentDrawingAppearance {
+                tinted = configured.tinted(with: NSColor.secondaryLabelColor)
+            }
+        } else {
+            tinted = configured.tinted(with: NSColor.secondaryLabelColor)
+        }
+        cachedImage = tinted
+    }
 
     /// Pass clicks through to the parent text view. Without this,
     /// `NSView`'s default `hitTest(_:)` returns `self` for any
