@@ -28,7 +28,7 @@ The refactor is **architecturally complete**: every invariant in [`ARCHITECTURE.
 |---|---|---|
 | **Phase 6 Sub-slice 7.B.2** — `processor.blocks` array retirement | Cleanup (Tier C) | Source-mode pipeline lift; the architectural invariants don't require it. |
 | **Phase 9 Pod warnings** — silence at Pod target level | Cosmetic | ~100 warnings from third-party Pods. No correctness impact. |
-| **Phase 11 Slice F** — test-factory consolidation | Test-side productivity | Collapses 7 per-suite factories into `Given.note(...)` and rewrites `UIBugRegressionTests.swift` over the Slice A DSL. Not architecture. |
+| **Phase 11 Slice F** — test-factory consolidation (4 of 7 factories migrated; F.7 `UIBugRegressionTests` rewrite outstanding) | Test-side productivity | F.1–F.4 shipped (`SubviewTableBoundaryCaretTests`, `TableCellEditingTests`, `TableNavigationTests`, `SubviewTableInPlaceFastPathTests`) on the new `EditorScenario+Fixtures` helpers. F.5 (`HeaderTests` / `NewLineTransitionTests`) deferred — different code path (source-mode renderer). F.6 (`MCPTestFixture`) deferred — 5-line wrapper. F.7 rewrites `UIBugRegressionTests.swift` (~1,740 LoC) over the Given/When/Then API. Not architecture. |
 
 Once those three land, the plan is closed. Bugs are tracked in `BugInventoryRegressionTests.swift` and the per-bug entries below; they are normal product engineering against a stable architecture, not refactor work.
 
