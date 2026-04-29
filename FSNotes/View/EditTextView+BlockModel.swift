@@ -102,6 +102,46 @@ extension EditTextView {
         static var compositionSession = 8
         static var preSessionFoldState = 9
         static var setMarkedTextInFlight = 10
+        static var preEditAttachmentSnapshot = 11
+    }
+
+    /// Pre-edit storage→attachment map captured by
+    /// `applyEditResultWithUndo` just before the splice runs. Populated
+    /// alongside `preEditProjection` so the harness can assert
+    /// attachment-identity invariants after each input — see
+    /// `Invariants.assertAttachmentIdentityPreservation`. Nil when no
+    /// edit has happened in this editor yet, or when the splice was
+    /// skipped (e.g. the subview-tables fast path).
+    var preEditAttachmentSnapshot: [Int: NSTextAttachment]? {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.preEditAttachmentSnapshot) as? [Int: NSTextAttachment]
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.preEditAttachmentSnapshot, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+
+    /// Walk `storage` and return a `[storageOffset: NSTextAttachment]`
+    /// map snapshotting every attachment instance currently in storage
+    /// by character offset. Used by `applyEditResultWithUndo` to capture
+    /// pre-edit state for the harness's attachment-identity invariant.
+    /// Cheap — one `enumerateAttribute` pass; storage is small (kilobytes
+    /// for a typical note).
+    static func snapshotAttachments(
+        in storage: NSTextStorage
+    ) -> [Int: NSTextAttachment] {
+        var result: [Int: NSTextAttachment] = [:]
+        let full = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(
+            .attachment, in: full, options: []
+        ) { value, range, _ in
+            guard let attachment = value as? NSTextAttachment else { return }
+            // Each attachment occupies exactly one U+FFFC character at
+            // range.location; we key on that offset, not the range, so
+            // the post-edit lookup is a single dictionary read.
+            result[range.location] = attachment
+        }
+        return result
     }
 
     // MARK: - Phase 5e composition session
@@ -628,6 +668,7 @@ extension EditTextView {
         // skip the harness assertion).
         self.preEditProjection = oldProjection
         self.lastEditContract = result.contract
+        self.preEditAttachmentSnapshot = Self.snapshotAttachments(in: storage)
 
         // Snapshot pending inline traits so ANY selectionDidChange fired
         // during this edit cycle (setSelectedRange below + any layout-

@@ -107,6 +107,92 @@ final class BugFsnotesibjTests: XCTestCase {
         )
     }
 
+    /// QA 2026-04-29 (v3 / commit 63d3873): per-keystroke flicker on
+    /// the bullet/checkbox of the line being typed in. Root cause is
+    /// the block-level splice in `DocumentEditApplier` replacing the
+    /// whole list block — including the leading bullet `U+FFFC` — on
+    /// every keystroke, which drops TK2's cached view provider and
+    /// forces `loadView()` again.
+    ///
+    /// Verifiable property: the `BulletTextAttachment` *object identity*
+    /// at the start of an unchanged list item must survive a typing edit
+    /// inside that same list block. If a fresh instance shows up at the
+    /// same offset post-edit, TK2 has dropped the cached view provider
+    /// and the user sees a flash. (Object identity is the cache key TK2
+    /// uses, not value-equality.)
+    func test_bulletAttachmentIdentity_preservedAcrossInListEdit() {
+        let harness = EditorHarness(
+            markdown: Self.markdown, windowActivation: .keyWindow
+        )
+        defer { harness.teardown() }
+
+        guard let storage = harness.editor.textStorage,
+              let tlm = harness.editor.textLayoutManager
+        else {
+            XCTFail("editor not initialised")
+            return
+        }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Snapshot the bullet attachment instances by storage offset
+        // before the edit.
+        let before = bulletAttachmentsByOffset(storage)
+        XCTAssertEqual(before.count, 3,
+                       "expected 3 bullet attachments before edit")
+
+        // Park the caret AT THE END OF THE FIRST LIST ITEM ("alpha")
+        // and type a single character. The first bullet attachment's
+        // offset stays at 0; its instance must not be replaced.
+        let alphaRange = (storage.string as NSString).range(of: "alpha")
+        XCTAssertNotEqual(alphaRange.location, NSNotFound,
+                          "expected 'alpha' in seeded markdown")
+        let endOfAlpha = NSRange(
+            location: alphaRange.location + alphaRange.length, length: 0
+        )
+        harness.editor.setSelectedRange(endOfAlpha)
+        harness.type("X")
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        let after = bulletAttachmentsByOffset(storage)
+        XCTAssertEqual(after.count, before.count,
+                       "bullet count changed (\(before.count) -> \(after.count))")
+
+        // The bullets at offsets 0..2 (in the unchanged-prefix sense)
+        // must be the *same instance* before and after. If any were
+        // replaced, TK2's view-provider cache misses and the user sees
+        // the per-keystroke flicker the bead reports. The first bullet
+        // is the canary — its offset doesn't move on edits inside its
+        // own list item.
+        let firstBefore = before.min(by: { $0.key < $1.key })
+        let firstAfter = after.min(by: { $0.key < $1.key })
+        XCTAssertNotNil(firstBefore)
+        XCTAssertNotNil(firstAfter)
+        XCTAssertTrue(
+            firstBefore?.value === firstAfter?.value,
+            "first BulletTextAttachment instance was replaced after " +
+            "in-list edit — TK2 view-provider cache will miss and the " +
+            "user sees a per-keystroke flicker (fsnotes-ibj)"
+        )
+    }
+
+    private func bulletAttachmentsByOffset(
+        _ storage: NSTextStorage
+    ) -> [Int: NSTextAttachment] {
+        var result: [Int: NSTextAttachment] = [:]
+        storage.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: storage.length),
+            options: []
+        ) { value, range, _ in
+            guard let att = value as? NSTextAttachment else { return }
+            let name = String(describing: type(of: att))
+            if name.contains("Bullet") {
+                result[range.location] = att
+            }
+        }
+        return result
+    }
+
     /// `viewProvider(for:location:textContainer:)` requires an
     /// `NSTextLocation` argument; production code passes the live
     /// element location. For test purposes any valid `NSTextLocation`

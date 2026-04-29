@@ -507,4 +507,205 @@ enum Invariants {
             }
         }
     }
+
+    // MARK: - Attachment-identity invariant (fsnotes-ibj)
+
+    /// Assert that an edit preserved `NSTextAttachment` *object identity*
+    /// for attachments that the contract didn't claim to touch.
+    ///
+    /// **Why this matters.** TK2's `NSTextAttachmentViewProvider` cache
+    /// is keyed on attachment instance identity (`===`), not value-
+    /// equality (`isEqual`). Replacing a bullet / checkbox / image
+    /// attachment with a fresh-but-identical instance forces TK2 to
+    /// drop the cached view provider and call `loadView()` again on the
+    /// next layout pass. The user perceives that as a per-keystroke
+    /// flash on every visible glyph touched by the splice — fsnotes-ibj.
+    ///
+    /// The contract `narrowSplice` is meant to uphold (see
+    /// `EditingOperations.narrowSplice` doc comment) is exactly this
+    /// invariant, expressed in storage-byte terms. By asserting it
+    /// directly on attachment instances we sidestep the storage-layer
+    /// detail and catch the bug class regardless of which renderer or
+    /// applier path produced the splice.
+    ///
+    /// **Two clauses:**
+    /// 1. *Outside-touched-block.* For every `(offset, attachment)` in
+    ///    `beforeSnapshot` whose host block isn't named in the
+    ///    contract's declared actions, the same instance must still be
+    ///    in `afterStorage` at the corresponding (possibly-shifted)
+    ///    offset. Catches "edits to block A leaked into block B's
+    ///    attachment view providers".
+    /// 2. *Inside-touched-block, value-preserved.* For each touched
+    ///    block (`.modifyInline` / `.changeBlockKind` / `.replaceBlock`
+    ///    / `.replaceTableCell`), every attachment in the BEFORE block
+    ///    whose value-equal counterpart sits at the same within-block
+    ///    offset in the AFTER block must keep its `===` identity.
+    ///    Catches the in-list-item flicker — the original ibj symptom.
+    ///
+    /// **Limitations** (acknowledged):
+    /// - Skipped when any structural action is present
+    ///   (`.insertBlock`, `.deleteBlock`, `.mergeAdjacent`,
+    ///   `.splitBlock`, `.renumberList`, `.reindentList`). Those shift
+    ///   block indices in ways the simple before/after pairing here
+    ///   doesn't model. A v2 of this invariant could handle them.
+    /// - The within-block correspondence in clause 2 uses same-relative-
+    ///   offset matching — adequate for typing, backspace, and trait
+    ///   toggles where attachment positions don't shift, but won't
+    ///   catch every correspondence. Wrap with the bounded pairing
+    ///   when stricter coverage is needed.
+    static func assertAttachmentIdentityPreservation(
+        beforeSnapshot: [Int: NSTextAttachment],
+        afterStorage: NSTextStorage,
+        before: DocumentProjection,
+        after: DocumentProjection,
+        contract: EditContract,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        // Bail out early if the contract carries any structural action;
+        // index shifting is out of scope for this v1 invariant.
+        for action in contract.declaredActions {
+            switch action {
+            case .insertBlock, .deleteBlock,
+                 .mergeAdjacent, .splitBlock,
+                 .renumberList, .reindentList:
+                return
+            default:
+                break
+            }
+        }
+
+        // Collect the set of touched block indices (these all index into
+        // the BEFORE document, since the size-preserving actions don't
+        // shift). Multi-touch is allowed; an empty set means "no
+        // structural change declared" and triggers strict whole-storage
+        // identity preservation (clause 1 covers everything).
+        var touchedBefore: Set<Int> = []
+        for action in contract.declaredActions {
+            switch action {
+            case .modifyInline(blockIndex: let i),
+                 .changeBlockKind(let i),
+                 .replaceBlock(let i),
+                 .replaceTableCell(blockIndex: let i, _, _):
+                touchedBefore.insert(i)
+            default:
+                break  // structural actions returned above
+            }
+        }
+
+        // Helper: which BEFORE block contains this offset? Returns nil
+        // if no block covers the offset (rare; happens in inter-block
+        // separator slots).
+        func beforeBlockIndex(forOffset offset: Int) -> Int? {
+            for (i, span) in before.blockSpans.enumerated() {
+                if offset >= span.location && offset < span.location + span.length {
+                    return i
+                }
+            }
+            return nil
+        }
+
+        let afterStorageLen = afterStorage.length
+
+        // Compute the cumulative offset shift for blocks AFTER the
+        // touched range. For non-structural actions, indices don't
+        // shift, but the touched block's length can. So an attachment
+        // in a non-touched block whose index is greater than the max
+        // touched index needs to be looked up at a shifted offset.
+        let maxTouched = touchedBefore.max()
+        let beforeBlocksTotalLen: Int = before.blockSpans.last
+            .map { $0.location + $0.length } ?? 0
+        let afterBlocksTotalLen: Int = after.blockSpans.last
+            .map { $0.location + $0.length } ?? 0
+        let totalDelta = afterBlocksTotalLen - beforeBlocksTotalLen
+
+        // === Clause 1: outside-touched-block identity preservation ===
+        for (offset, beforeAttachment) in beforeSnapshot {
+            guard let i = beforeBlockIndex(forOffset: offset) else {
+                continue  // attachment outside any block — shouldn't happen, ignore
+            }
+            if touchedBefore.contains(i) {
+                continue  // handled in clause 2
+            }
+
+            // Compute the corresponding AFTER offset. Indices don't
+            // shift for non-structural actions; only the touched
+            // block's length differs, so blocks before the touched
+            // band are at unchanged offsets, blocks after are shifted
+            // by `totalDelta`.
+            let afterOffset: Int
+            if let mt = maxTouched, i > mt {
+                afterOffset = offset + totalDelta
+            } else {
+                afterOffset = offset
+            }
+            guard afterOffset >= 0, afterOffset < afterStorageLen else {
+                XCTFail(
+                    "[attachment-identity / clause 1] before offset \(offset) " +
+                    "(non-touched block \(i)) maps to after offset " +
+                    "\(afterOffset) which is out of bounds for storage " +
+                    "length \(afterStorageLen)",
+                    file: file, line: line
+                )
+                continue
+            }
+            let afterAttachment = afterStorage.attribute(
+                .attachment, at: afterOffset, effectiveRange: nil
+            ) as? NSTextAttachment
+            XCTAssertTrue(
+                beforeAttachment === afterAttachment,
+                "[attachment-identity / clause 1] non-touched block \(i)'s " +
+                "attachment at offset \(offset)→\(afterOffset) was " +
+                "replaced (instance changed). " +
+                "before=\(Unmanaged.passUnretained(beforeAttachment).toOpaque()), " +
+                "after=\(afterAttachment.map { String(describing: Unmanaged.passUnretained($0).toOpaque()) } ?? "nil")",
+                file: file, line: line
+            )
+        }
+
+        // === Clause 2: inside-touched-block, value-equal must keep === ===
+        for i in touchedBefore {
+            guard before.blockSpans.indices.contains(i),
+                  after.blockSpans.indices.contains(i)
+            else { continue }
+            let beforeBlockRange = before.blockSpans[i]
+            let afterBlockRange = after.blockSpans[i]
+            let beforeStart = beforeBlockRange.location
+            let beforeEnd = beforeStart + beforeBlockRange.length
+            let afterStart = afterBlockRange.location
+            let afterEnd = afterStart + afterBlockRange.length
+
+            // For each BEFORE attachment in the touched block, look up
+            // the AFTER attachment at the same within-block offset. If
+            // value-equal, the instance must match.
+            for (offset, beforeAttachment) in beforeSnapshot {
+                guard offset >= beforeStart, offset < beforeEnd else {
+                    continue
+                }
+                let withinOffset = offset - beforeStart
+                let afterOffset = afterStart + withinOffset
+                guard afterOffset >= afterStart, afterOffset < afterEnd,
+                      afterOffset < afterStorageLen
+                else { continue }
+                let afterAttachment = afterStorage.attribute(
+                    .attachment, at: afterOffset, effectiveRange: nil
+                ) as? NSTextAttachment
+                guard let after = afterAttachment else { continue }
+                if !beforeAttachment.isEqual(after) { continue }
+                XCTAssertTrue(
+                    beforeAttachment === after,
+                    "[attachment-identity / clause 2] touched block \(i): " +
+                    "value-equal attachment at within-block offset " +
+                    "\(withinOffset) (storage \(offset)→\(afterOffset)) " +
+                    "was replaced with a fresh instance — TK2's " +
+                    "view-provider cache will miss. " +
+                    "Symptom: visible flash on every keystroke (fsnotes-ibj). " +
+                    "Root cause: the splice covered this offset even " +
+                    "though the attachment value didn't change. The fix " +
+                    "lives in narrowSplice / DocumentEditApplier.",
+                    file: file, line: line
+                )
+            }
+        }
+    }
 }

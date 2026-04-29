@@ -537,6 +537,25 @@ final class EditorHarness {
             file: file,
             line: line
         )
+
+        // fsnotes-ibj: attachment-identity invariant. Asserts the splice
+        // didn't replace any attachment instances it wasn't claiming to
+        // touch. Skipped automatically by the invariant when the
+        // contract carries structural actions (`.insertBlock` etc.) —
+        // those shift block indices in ways the v1 invariant doesn't
+        // model. See `Invariants.assertAttachmentIdentityPreservation`.
+        if let beforeSnapshot = editor.preEditAttachmentSnapshot,
+           let afterStorage = editor.textStorage {
+            Invariants.assertAttachmentIdentityPreservation(
+                beforeSnapshot: beforeSnapshot,
+                afterStorage: afterStorage,
+                before: before,
+                after: after,
+                contract: contract,
+                file: file,
+                line: line
+            )
+        }
     }
 
     // MARK: - Mouse input
