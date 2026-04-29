@@ -187,7 +187,7 @@ extension EditTextView {
                 note.content = NSMutableAttributedString(
                     string: MarkdownSerializer.serialize(newDoc)
                 )
-                note.cachedDocument = nil
+                note.cachedDocument = newDoc
                 hasUserEdits = true
                 fill(note: note)
             } else {
@@ -227,7 +227,7 @@ extension EditTextView {
                 note.content = NSMutableAttributedString(
                     string: MarkdownSerializer.serialize(newDoc)
                 )
-                note.cachedDocument = nil
+                note.cachedDocument = newDoc
                 hasUserEdits = true
                 fill(note: note)
             } else {
