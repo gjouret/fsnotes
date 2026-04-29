@@ -89,4 +89,40 @@ extension EditorScenario {
         }
         return nil
     }
+
+    // MARK: - Table-cell helpers (TK2-native path)
+
+    /// Storage offset of the start of the cell at `(row, col)` in the
+    /// first `TableElement` in the document. `row` follows the same
+    /// convention `TableElement.offset(forCellAt:)` uses — index 0 is
+    /// the header row, index `r+1` is body row `r`. Returns `nil`
+    /// when no table is present or when the cell coordinate is out
+    /// of range.
+    func tableCellOffset(row: Int, col: Int) -> Int? {
+        guard let hit = firstFragmentElement(of: TableElement.self),
+              let local = hit.element.offset(
+                forCellAt: (row: row, col: col)
+              )
+        else { return nil }
+        return hit.elementStart + local
+    }
+
+    // MARK: - Document block extraction
+
+    /// Extract the `Block.table` at `index` from the live document.
+    /// Returns nil when the block at that index isn't a table or when
+    /// the document/projection isn't available.
+    func tableBlock(
+        at index: Int
+    ) -> (
+        header: [TableCell],
+        alignments: [TableAlignment],
+        rows: [[TableCell]]
+    )? {
+        guard let doc = editor.documentProjection?.document,
+              index < doc.blocks.count,
+              case .table(let h, let a, let r, _) = doc.blocks[index]
+        else { return nil }
+        return (h, a, r)
+    }
 }

@@ -36,11 +36,16 @@
 //       delegate synthesized a placeholder block from the flat
 //       separator text, which has no alignment data).
 //
-//  Rule 3 posture: tests 1–5 drive through `EditorHarness`
-//  (which calls `handleEditViaBlockModel` the same way NSTextView's
-//  delegate chain does) but assert on value-typed snapshots — the
-//  `Document` model's blocks array — not on widget state. Test 6
-//  asserts on the fragment's attribute-typed block payload.
+//  Rule 3 posture: tests 1–5 drive through the EditorScenario DSL
+//  (which routes typing through `handleEditViaBlockModel` the same
+//  way NSTextView's delegate chain does) but assert on value-typed
+//  snapshots — the `Document` model's blocks array — not on widget
+//  state. Test 6 asserts on the fragment's attribute-typed block
+//  payload.
+//
+//  Phase 11 Slice F.2 — migrated off `makeHarness()` factory to
+//  `Given.note(markdown:)` + `tableCellOffset` / `tableBlock(at:)`
+//  fixture helpers.
 //
 
 import XCTest
@@ -72,80 +77,29 @@ final class TableCellEditingTests: XCTestCase {
     | c10 | c11 |
     """
 
-    /// Drive a harness seeded with the 2x2 markdown.
-    /// Returns nil if the TK2 content-storage invariants aren't met.
-    private func makeHarness() -> (
-        harness: EditorHarness,
-        element: TableElement,
-        elementStart: Int,
-        offsetFor: (Int, Int) -> Int
-    )? {
-        let harness = EditorHarness(markdown: Self.markdown2x2)
-        guard let tlm = harness.editor.textLayoutManager,
-              let cs = tlm.textContentManager as? NSTextContentStorage else {
-            harness.teardown()
-            return nil
-        }
-        tlm.ensureLayout(for: tlm.documentRange)
-        var found: TableElement?
-        var foundStart = 0
-        tlm.enumerateTextLayoutFragments(
-            from: tlm.documentRange.location,
-            options: [.ensuresLayout]
-        ) { fragment in
-            if let el = fragment.textElement as? TableElement,
-               let range = el.elementRange {
-                found = el
-                foundStart = cs.offset(
-                    from: cs.documentRange.location, to: range.location
-                )
-                return false
-            }
-            return true
-        }
-        guard let element = found else {
-            harness.teardown()
-            return nil
-        }
-        let offsetFor: (Int, Int) -> Int = { row, col in
-            let local = element.offset(
-                forCellAt: (row: row, col: col)
-            ) ?? 0
-            return foundStart + local
-        }
-        return (harness, element, foundStart, offsetFor)
-    }
-
-    /// Extract the `Block.table` at the given index from the harness's
-    /// current Document.
-    private func table(
-        at index: Int,
-        harness: EditorHarness
-    ) -> (header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]])? {
-        guard let doc = harness.document,
-              index < doc.blocks.count,
-              case .table(let h, let a, let r, _) = doc.blocks[index] else {
-            return nil
-        }
-        return (h, a, r)
+    /// Build a scenario seeded with the 2x2 markdown and verify the
+    /// TK2 invariants (a `TableElement` is reachable). Returns nil if
+    /// no element materialised — every test guards on that and fails
+    /// with "Harness setup failed".
+    private func makeScenario() -> EditorScenario? {
+        let scenario = Given.note(markdown: Self.markdown2x2)
+        guard scenario.firstFragmentElement(of: TableElement.self) != nil
+        else { return nil }
+        return scenario
     }
 
     // MARK: - 1. Type at END of cell
 
     func test_T2e_typeAtEndOfCell_updatesInlineTree() throws {
-        guard let ctx = makeHarness() else {
+        guard let scenario = makeScenario() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
-        // The table is the FIRST block in this document; the harness's
-        // seed markdown is exactly the table with no preceding content.
+        // The table is the FIRST block in this document; the seed
+        // markdown is exactly the table with no preceding content.
         let tableBlockIndex = 0
-        guard let before = table(at: tableBlockIndex, harness: harness) else {
+        guard let before = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Initial table block missing")
             return
         }
@@ -153,12 +107,13 @@ final class TableCellEditingTests: XCTestCase {
         XCTAssertEqual(before.rows[0][0].rawText, "c00")
 
         // Park the cursor at the END of body (0,0) and type 'X'.
-        let cell10Start = ctx.offsetFor(1, 0) // body row 0 (display row 1)
+        guard let cell10Start = scenario.tableCellOffset(row: 1, col: 0)
+        else { XCTFail("Cell (1,0) offset unresolved"); return }
         let cell10End = cell10Start + before.rows[0][0].rawText.utf16.count
-        harness.editor.setSelectedRange(NSRange(location: cell10End, length: 0))
-        harness.type("X")
+        scenario.editor.setSelectedRange(NSRange(location: cell10End, length: 0))
+        scenario.type("X")
 
-        guard let after = table(at: tableBlockIndex, harness: harness) else {
+        guard let after = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Table block vanished after edit")
             return
         }
@@ -175,7 +130,7 @@ final class TableCellEditingTests: XCTestCase {
         XCTAssertEqual(after.header[1].rawText, before.header[1].rawText)
 
         // Serialization round-trip reflects the edit.
-        let serialized = MarkdownSerializer.serialize(harness.document!)
+        let serialized = MarkdownSerializer.serialize(scenario.harness.document!)
         XCTAssertTrue(
             serialized.contains("c00X"),
             "Serialized markdown should contain the edited cell content: \(serialized)"
@@ -185,21 +140,18 @@ final class TableCellEditingTests: XCTestCase {
     // MARK: - 2. Type at START of cell
 
     func test_T2e_typeAtStartOfCell_updatesInlineTree() throws {
-        guard let ctx = makeHarness() else {
+        guard let scenario = makeScenario() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         let tableBlockIndex = 0
-        let cell10Start = ctx.offsetFor(1, 0)
-        harness.editor.setSelectedRange(NSRange(location: cell10Start, length: 0))
-        harness.type("X")
+        guard let cell10Start = scenario.tableCellOffset(row: 1, col: 0)
+        else { XCTFail("Cell (1,0) offset unresolved"); return }
+        scenario.editor.setSelectedRange(NSRange(location: cell10Start, length: 0))
+        scenario.type("X")
 
-        guard let after = table(at: tableBlockIndex, harness: harness) else {
+        guard let after = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Table block vanished after edit")
             return
         }
@@ -212,22 +164,19 @@ final class TableCellEditingTests: XCTestCase {
     // MARK: - 3. Type in MIDDLE of cell
 
     func test_T2e_typeInMiddleOfCell_updatesInlineTree() throws {
-        guard let ctx = makeHarness() else {
+        guard let scenario = makeScenario() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         let tableBlockIndex = 0
-        let cell10Start = ctx.offsetFor(1, 0)
+        guard let cell10Start = scenario.tableCellOffset(row: 1, col: 0)
+        else { XCTFail("Cell (1,0) offset unresolved"); return }
         // "c00" — insert in the middle (offset 2 → after "c0").
-        harness.editor.setSelectedRange(NSRange(location: cell10Start + 2, length: 0))
-        harness.type("X")
+        scenario.editor.setSelectedRange(NSRange(location: cell10Start + 2, length: 0))
+        scenario.type("X")
 
-        guard let after = table(at: tableBlockIndex, harness: harness) else {
+        guard let after = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Table block vanished after edit")
             return
         }
@@ -240,30 +189,30 @@ final class TableCellEditingTests: XCTestCase {
     // MARK: - 4. Return inside a cell → hard break
 
     func test_T2e_returnInsideCell_insertsHardBreak() throws {
-        guard let ctx = makeHarness() else {
+        guard let scenario = makeScenario() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         let tableBlockIndex = 0
-        guard let before = table(at: tableBlockIndex, harness: harness) else {
+        guard let before = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Initial table block missing")
             return
         }
         // Park cursor after "c0" in cell (1,0).
-        let cell10Start = ctx.offsetFor(1, 0)
-        harness.editor.setSelectedRange(NSRange(location: cell10Start + 2, length: 0))
+        guard let cell10Start = scenario.tableCellOffset(row: 1, col: 0)
+        else { XCTFail("Cell (1,0) offset unresolved"); return }
+        scenario.editor.setSelectedRange(NSRange(location: cell10Start + 2, length: 0))
 
-        // Trigger Return via the same path NSResponder.insertNewline takes.
-        _ = harness.editor.handleTableNavCommand(
+        // Trigger Return via the same path NSResponder.insertNewline takes
+        // — `handleTableNavCommand` routes the cell-internal hard-break
+        // primitive (NOT `handleEditViaBlockModel("\n")` which would
+        // exit the cell).
+        _ = scenario.editor.handleTableNavCommand(
             #selector(NSResponder.insertNewline(_:))
         )
 
-        guard let after = table(at: tableBlockIndex, harness: harness) else {
+        guard let after = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Table block vanished after Return")
             return
         }
@@ -293,21 +242,17 @@ final class TableCellEditingTests: XCTestCase {
     // MARK: - 5. Backspace at cell start → no-op
 
     func test_T2e_backspaceAtCellStart_isNoOp() throws {
-        guard let ctx = makeHarness() else {
+        guard let scenario = makeScenario() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         let tableBlockIndex = 0
-        guard let before = table(at: tableBlockIndex, harness: harness) else {
+        guard let before = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Initial table block missing")
             return
         }
-        let beforeSerialized = MarkdownSerializer.serialize(harness.document!)
+        let beforeSerialized = MarkdownSerializer.serialize(scenario.harness.document!)
 
         // Park cursor at the START of body (1,0). The preceding
         // storage offset is either a U+001F or U+001E separator — a
@@ -318,11 +263,12 @@ final class TableCellEditingTests: XCTestCase {
         //
         // Documented behaviour: the edit is a no-op. No data loss,
         // no structural change.
-        let cell10Start = ctx.offsetFor(1, 0)
-        harness.editor.setSelectedRange(NSRange(location: cell10Start, length: 0))
-        harness.pressDelete() // backspace
+        guard let cell10Start = scenario.tableCellOffset(row: 1, col: 0)
+        else { XCTFail("Cell (1,0) offset unresolved"); return }
+        scenario.editor.setSelectedRange(NSRange(location: cell10Start, length: 0))
+        scenario.pressDelete() // backspace
 
-        guard let after = table(at: tableBlockIndex, harness: harness) else {
+        guard let after = scenario.tableBlock(at: tableBlockIndex) else {
             XCTFail("Table block vanished after backspace")
             return
         }
@@ -334,7 +280,7 @@ final class TableCellEditingTests: XCTestCase {
         XCTAssertEqual(after.rows[1][0].rawText, before.rows[1][0].rawText)
         XCTAssertEqual(after.rows[1][1].rawText, before.rows[1][1].rawText)
         // Document-level round-trip unchanged.
-        let afterSerialized = MarkdownSerializer.serialize(harness.document!)
+        let afterSerialized = MarkdownSerializer.serialize(scenario.harness.document!)
         XCTAssertEqual(
             beforeSerialized, afterSerialized,
             "Backspace at cell start must not change the Document"
@@ -362,29 +308,11 @@ final class TableCellEditingTests: XCTestCase {
         | :---: | ---: | :--- |
         | a0 | b0 | c0 |
         """
-        let harness = EditorHarness(markdown: markdown)
-        defer { harness.teardown() }
+        let scenario = Given.note(markdown: markdown)
 
-        guard let tlm = harness.editor.textLayoutManager else {
-            XCTFail("No textLayoutManager")
-            return
-        }
-        tlm.ensureLayout(for: tlm.documentRange)
-
-        var fragmentAlignments: [TableAlignment]?
-        tlm.enumerateTextLayoutFragments(
-            from: tlm.documentRange.location,
-            options: [.ensuresLayout]
-        ) { fragment in
-            if let el = fragment.textElement as? TableElement,
-               case .table(_, let aligns, _, _) = el.block {
-                fragmentAlignments = aligns
-                return false
-            }
-            return true
-        }
-
-        guard let aligns = fragmentAlignments else {
+        guard let hit = scenario.firstFragmentElement(of: TableElement.self),
+              case .table(_, let aligns, _, _) = hit.element.block
+        else {
             XCTFail("No TableElement found")
             return
         }
