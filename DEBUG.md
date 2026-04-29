@@ -130,6 +130,22 @@ The META glyph wipe likely needs path 2: in-process snapshots may freeze the vie
 - **`scripts/rule7-gate.sh`**: run before *any* edit under `FSNotes/Rendering/` or `FSNotesCore/Rendering/`. If the baseline is dirty, stop — pattern-matching from a violating baseline extends the violation.
 - **Build redirection**: `xcodebuild ... > /tmp/xcbuild.log 2>&1` always (CLAUDE.md context-window discipline). Same for `xcodebuild test`.
 
+### Parallel-agent collision rule
+
+When two agents share a working tree (no per-agent worktree), files can be observed mid-edit. A file with broken syntax or partial content is **probably Agent B writing in pieces**, not corruption to revert.
+
+**Before running `git checkout HEAD -- <file>` to "fix" a syntax error**, run:
+```bash
+ls -la <file>                    # mtime tells you whether something just touched it
+git diff HEAD <file>             # is the partial change semantically related to an open bead another actor owns?
+bd list --status=in_progress     # who's working what?
+ls Tests/Regression/Bug<id>Tests.swift  # untracked test files for the same change?
+```
+
+If the partial content corresponds to a bead claimed by another actor, **leave it alone**. `git checkout` will undo their progress.
+
+This was added 2026-04-29 after I (`claude-A`) reverted DEEPSEEK's mid-edit fix for `fsnotes-nw2` three times in a row in `EditTextView+BlockModel.swift:1379`, each time misreading their incomplete write as file corruption. The test file `BugFsnotesNw2Tests.swift` and the bead description both made the intent obvious; I didn't check.
+
 ### Bead lifecycle (every bead must transition through these states explicitly)
 
 > **Canonical source**: `~/.claude/skills/beadbox/SKILL.md`. The Beadbox skill defines an 8-state lifecycle for multi-agent workflows: `open → in_progress → ready_for_qa → qa_passed → ready_to_ship → closed` (plus `blocked` / `deferred` branches). Per-agent transition rules ("only the impl agent transitions in_progress → ready_for_qa") prevent two agents from claiming the same bead.
