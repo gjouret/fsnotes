@@ -200,8 +200,10 @@
 		CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */; };
 		REGR5FB000000000000000B1 /* BugFsnotes5fbTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR5FB000000000000000F1 /* BugFsnotes5fbTests.swift */; };
 		REGR1ML000000000000000B1 /* BugFsnotes1mlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR1ML000000000000000F1 /* BugFsnotes1mlTests.swift */; };
+REGRNW2000000000000000B1 /* BugFsnotesNw2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGRNW2000000000000000F1 /* BugFsnotesNw2Tests.swift */; };
 		REGR95M000000000000000B1 /* BugFsnotes95mTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR95M000000000000000F1 /* BugFsnotes95mTests.swift */; };
 		REGRIBJ000000000000000B1 /* BugFsnotesibjTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGRIBJ000000000000000F1 /* BugFsnotesibjTests.swift */; };
+		REGR64C000000000000000B1 /* BugFsnotes64cTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = REGR64C000000000000000F1 /* BugFsnotes64cTests.swift */; };
 		MCPTSTFX000000000000000B1 /* MCPTestFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTFX000000000000000F1 /* MCPTestFixture.swift */; };
 		MCPTSTRN000000000000000B1 /* ReadNoteToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTRN000000000000000F1 /* ReadNoteToolTests.swift */; };
 		MCPTSTSN000000000000000B1 /* SearchNotesToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MCPTSTSN000000000000000F1 /* SearchNotesToolTests.swift */; };
@@ -1485,8 +1487,10 @@
 		CBCT000000000000000000F1 /* CombinatorialCoverageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CombinatorialCoverageTests.swift; sourceTree = "<group>"; };
 		REGR5FB000000000000000F1 /* BugFsnotes5fbTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes5fbTests.swift; sourceTree = "<group>"; };
 		REGR1ML000000000000000F1 /* BugFsnotes1mlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes1mlTests.swift; sourceTree = "<group>"; };
+REGRNW2000000000000000F1 /* BugFsnotesNw2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotesNw2Tests.swift; sourceTree = "<group>"; };
 		REGR95M000000000000000F1 /* BugFsnotes95mTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes95mTests.swift; sourceTree = "<group>"; };
 		REGRIBJ000000000000000F1 /* BugFsnotesibjTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotesibjTests.swift; sourceTree = "<group>"; };
+		REGR64C000000000000000F1 /* BugFsnotes64cTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugFsnotes64cTests.swift; sourceTree = "<group>"; };
 		MCPTSTFX000000000000000F1 /* MCPTestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTestFixture.swift; sourceTree = "<group>"; };
 		MCPTSTRN000000000000000F1 /* ReadNoteToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadNoteToolTests.swift; sourceTree = "<group>"; };
 		MCPTSTSN000000000000000F1 /* SearchNotesToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchNotesToolTests.swift; sourceTree = "<group>"; };
@@ -3166,8 +3170,10 @@
 			children = (
 				REGR5FB000000000000000F1 /* BugFsnotes5fbTests.swift */,
 				REGR1ML000000000000000F1 /* BugFsnotes1mlTests.swift */,
+				REGRNW2000000000000000F1 /* BugFsnotesNw2Tests.swift */,
 				REGR95M000000000000000F1 /* BugFsnotes95mTests.swift */,
 				REGRIBJ000000000000000F1 /* BugFsnotesibjTests.swift */,
+				REGR64C000000000000000F1 /* BugFsnotes64cTests.swift */,
 			);
 			path = Regression;
 			sourceTree = "<group>";
@@ -4860,8 +4866,10 @@
 				CBCT000000000000000000B1 /* CombinatorialCoverageTests.swift in Sources */,
 				REGR5FB000000000000000B1 /* BugFsnotes5fbTests.swift in Sources */,
 				REGR1ML000000000000000B1 /* BugFsnotes1mlTests.swift in Sources */,
+				REGRNW2000000000000000B1 /* BugFsnotesNw2Tests.swift in Sources */,
 				REGR95M000000000000000B1 /* BugFsnotes95mTests.swift in Sources */,
 				REGRIBJ000000000000000B1 /* BugFsnotesibjTests.swift in Sources */,
+				REGR64C000000000000000B1 /* BugFsnotes64cTests.swift in Sources */,
 				MCPTSTFX000000000000000B1 /* MCPTestFixture.swift in Sources */,
 				MCPTSTRN000000000000000B1 /* ReadNoteToolTests.swift in Sources */,
 				MCPTSTSN000000000000000B1 /* SearchNotesToolTests.swift in Sources */,

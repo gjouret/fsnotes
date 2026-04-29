@@ -1059,13 +1059,16 @@ extension EditTextView {
         explicitlyOffTraits = savedOffTraits
 
         // bd-fsnotes-ibj: META glyph wipe.
-        // After every edit, schedule a coalesced pass that tickles
-        // bullet/checkbox attachments so TK2 drops its cached view
-        // provider on the next layout pass. Without this, the view
-        // provider's `view` survives across edits at its pre-edit
-        // frame; the user sees bullets vanish until a scroll forces
-        // TK2 to re-mount. Mirrors the proven fold-path pattern at
-        // TextStorageProcessor.swift:756-782.
+        // Schedule a coalesced viewport-relayout pass after every
+        // edit so TK2 re-evaluates view-provider mounting positions.
+        // Character edits inside a list item DO trigger the bug
+        // (checkboxes vanish until scroll), so a structural-only
+        // gate is too restrictive — the v2 gate reproduced the bug
+        // for in-list typing. The current implementation calls
+        // `layoutViewport()` (Phase 1 + deferred Phase 2) but does
+        // NOT tickle `attachment.image` — that's what produced the
+        // visible drop+remount flicker the user reported (QA on
+        // 2026-04-29).
         scheduleListGlyphRefresh()
     }
 
@@ -1107,42 +1110,24 @@ extension EditTextView {
         }
     }
 
-    /// Walk storage and tickle every bullet/checkbox attachment so
-    /// TK2 drops its cached view provider. Then re-run viewport
-    /// layout so the new providers' `loadView()` fires. Class-name
-    /// matching is used because the concrete attachment subclasses
-    /// (`BulletTextAttachment`, `CheckboxTextAttachment`) live in
-    /// FSNotesCore and are referenced here via duck-typing rather
-    /// than a tight import.
+    /// Re-run viewport layout so TK2 re-evaluates view-provider
+    /// mounting. This is the same Phase 1 + deferred Phase 2 dance
+    /// the fill path uses (EditTextView+BlockModel.swift:491-496).
+    /// We deliberately do NOT replace `attachment.image` here as the
+    /// fold-path workaround does — that tickle drops the cached view
+    /// and forces a remount, which is visible as a per-keystroke
+    /// flicker on every visible bullet (QA feedback fsnotes-ibj
+    /// 2026-04-29). `layoutViewport()` alone is enough for TK2 to
+    /// reposition existing providers without dropping them.
     private func refreshListGlyphAttachments() {
-        guard let storage = textStorage,
-              let tlm = textLayoutManager else { return }
-        let fullRange = NSRange(location: 0, length: storage.length)
-        var tickled = false
-        storage.enumerateAttribute(
-            .attachment, in: fullRange, options: []
-        ) { value, _, _ in
-            guard let attachment = value as? NSTextAttachment else { return }
-            let typeName = String(describing: type(of: attachment))
-            guard typeName.contains("BulletTextAttachment")
-                    || typeName.contains("CheckboxTextAttachment") else {
-                return
-            }
-            let size = attachment.bounds.size
-            guard size.width > 0, size.height > 0 else { return }
-            // Same-size transparent placeholder. TK2's attachment-
-            // bounds-changed path treats `image` re-assignment as a
-            // cache-invalidation event regardless of pixel content.
-            let img = NSImage(size: size, flipped: false) { _ in true }
-            attachment.image = img
-            tickled = true
-        }
-        guard tickled else { return }
-        // Phase 1 + Phase 2 layoutViewport, mirroring the fill-path
-        // pattern at line 491-496. Phase 1 registers fresh providers;
-        // Phase 2 (deferred to next run-loop tick) calls loadView()
-        // and inserts the views under `_NSTextViewportElementView`.
+        guard let tlm = textLayoutManager else { return }
+        // Phase 1 — synchronous viewport layout.
         tlm.textViewportLayoutController.layoutViewport()
+        // Phase 2 — deferred second pass. TK2 mounts NSTextAttachment-
+        // ViewProvider-backed subviews in a two-phase commit; without
+        // a second pass after a run-loop tick, the providers register
+        // but their hosted NSViews never get inserted under
+        // `_NSTextViewportElementView`.
         DispatchQueue.main.async { [weak self] in
             self?.textLayoutManager?
                 .textViewportLayoutController
@@ -1378,7 +1363,8 @@ extension EditTextView {
                 let last = replacement.last ?? Character(" ")
                 let isCloser = ")]}>`*_~".contains(last)
                 let isMultiChar = replacement.count > 1
-                if isCloser || isMultiChar {
+                let isSingleChar = replacement.count == 1
+                if isCloser || isMultiChar || isSingleChar {
                     reparseCurrentBlockInlines()
                 }
             }
