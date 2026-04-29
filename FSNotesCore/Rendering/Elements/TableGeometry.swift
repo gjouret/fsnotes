@@ -339,6 +339,60 @@ public enum TableGeometry {
 
     // MARK: - Public entry point
 
+    /// Auto-detect alignment for columns where no explicit alignment
+    /// is set (.none). If every cell in a column is numeric or currency,
+    /// right-align. If all cells are short non-numeric strings (< 5 chars),
+    /// center-align. Otherwise keep .none (left-align).
+    private static func autoDetectAlignments(
+        alignments: [TableAlignment],
+        header: [TableCell],
+        rows: [[TableCell]]
+    ) -> [TableAlignment] {
+        guard !header.isEmpty else { return alignments }
+        let colCount = header.count
+
+        // Pad short alignments array
+        var padded = alignments
+        while padded.count < colCount { padded.append(.none) }
+
+        var result = padded
+        for col in 0..<colCount {
+            guard result[col] == .none else { continue }
+
+            // Collect all non-empty cell texts for this column
+            var texts: [String] = []
+            let headerText = header[col].rawText.trimmingCharacters(in: .whitespaces)
+            if !headerText.isEmpty { texts.append(headerText) }
+            for row in rows {
+                guard col < row.count else { continue }
+                let t = row[col].rawText.trimmingCharacters(in: .whitespaces)
+                if !t.isEmpty { texts.append(t) }
+            }
+            guard !texts.isEmpty else { continue }
+
+            // Check if all texts are numeric/currency
+            let numericPattern = try! NSRegularExpression(
+                pattern: "^[-−]?[$€£¥]?\\s*[0-9,.]+\\s*[%]?$"
+            )
+            let allNumeric = texts.allSatisfy {
+                numericPattern.firstMatch(
+                    in: $0, range: NSRange(location: 0, length: $0.utf16.count)
+                ) != nil
+            }
+            if allNumeric {
+                result[col] = .right
+                continue
+            }
+
+            // Check if all texts are short (< 5 chars) → center
+            let allShort = texts.allSatisfy { $0.count < 5 }
+            if allShort {
+                result[col] = .center
+            }
+        }
+        return result
+    }
+
     /// Compute column widths, row heights, and total grid height for
     /// a block-model table given the container width and the note
     /// font. This is the public contract the T2 dispatch path will
@@ -352,7 +406,12 @@ public enum TableGeometry {
         columnWidthsOverride: [CGFloat]? = nil
     ) -> Result {
         let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-        let nsAlignments = alignments.map { nsAlignment(for: $0) }
+        // Auto-detect alignment for columns with no explicit alignment.
+        // Numeric/currency columns → right-align; short text columns → center.
+        let effectiveAlignments = autoDetectAlignments(
+            alignments: alignments, header: header, rows: rows
+        )
+        let nsAlignments = effectiveAlignments.map { nsAlignment(for: $0) }
         // T2-g.4: authoritative widths override content measurement
         // when well-shaped; otherwise fall back to content-based widths.
         let colWidths: [CGFloat]
