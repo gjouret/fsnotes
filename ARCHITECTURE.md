@@ -672,6 +672,42 @@ xcodebuild test -workspace FSNotes.xcworkspace -scheme FSNotes \
 ./scripts/rule7-gate.sh
 ```
 
+## Operational Patterns
+
+Recurring failure modes that surfaced during the refactor and their fixes. The TK2-adoption gotchas (silent fallback to TK1, adoption-time fixity, `cacheDisplay` not capturing fragment draws, element-vs-fragment attribute ownership) live inline under **TK2 Adoption** above; the attachment patterns (transparent-placeholder, value-typed view-provider state, inline-image live resize) live under **Attachment Handling**. The patterns below cut across the system and are catalogued centrally.
+
+### Attribute change without layout invalidation
+
+**Symptom**: visual element doesn't repaint after a state change (folded chip, list bullets after unfold, caret after table-cell edit). User has to scroll to force a redraw.
+
+**Cause**: setting `.foldedContent` / similar attribute on a range without firing layout invalidation. TK2's element-and-fragment dispatch only re-runs on the next layout pass.
+
+**Recipe**: after mutating an attribute that affects element/fragment dispatch, call `textLayoutManager.invalidateLayout(for: NSTextRange(location:length:))` on the affected range. For attachment-driven views, this also forces `NSTextAttachmentViewProvider.loadView` re-execution. The unfold path in `TextStorageProcessor.toggleFold` is the reference (heading line + fold range are unioned and invalidated together so both the chip and the bullet/checkbox attachments below it reload).
+
+### Coordinate-space mismatches
+
+**Symptom**: visual element drawn at a small consistent offset from where it should be (caret above the cell instead of inside; chip offset rightward; selection border one column off).
+
+**Cause**: producer returns coords in space A; consumer drew in space B; missing transform = `originOf(B in A)`.
+
+**Recipe**: identify which space each side is in. The FSNotes++ stack is fragment-local → container (+ `fragment.origin`) → view (+ `textContainerOrigin`) → window (+ frame origins) → screen. Apply this checklist FIRST when caret/chip/click is offset — it's almost always a single missing transform, not a more elaborate bug.
+
+### Stale projection drift after async storage swap
+
+**Symptom**: edit lands at the wrong storage offset after an inline-math callback or image resize completes; subsequent edits corrupt unrelated content.
+
+**Cause**: `applyDocumentEdit` assumes `DocumentRenderer.render(priorDoc)` matches what's currently in `NSTextContentStorage`. Async hydration paths (MathJax, image resize, attachment swap) mutate storage and patch `proj.rendered.attributed` + `proj.rendered.blockSpans` but leave `proj.document` stale. On the next edit, span-offset math places the splice at the wrong byte.
+
+**Recipe**: pass `priorRenderedOverride: oldProjection.rendered` to `applyDocumentEdit` from any caller whose projection might be stale. The override forces span-offset math to use the post-swap rendered layout; `priorDoc` still drives the LCS block-diff (block-value equality is unaffected by rendered-form drift). See **Edit Application → Stale-projection guard** for the parameter shape and call sites.
+
+### Lazy-continuation rule tension with editor round-trip
+
+**Symptom**: a CommonMark spec example fails because the editor's `Document` round-trip would re-merge content that was structurally separate, OR a user-typed paragraph after a list bleeds into the list.
+
+**Cause**: strict CommonMark §5.1 lazy continuation merges any non-block-starter, non-blank line into an open paragraph regardless of indent. That's wrong for editor-produced `[list, paragraph]` Documents which serialize without an explicit `.blankLine` separator and would re-merge at load time.
+
+**Recipe**: use a *narrow* lazy-continuation rule that requires `lineIndent > last.indent.count`, and add multi-block-evidence look-ahead for the spec cases that need strict behavior — scan forward through consecutive lazy-continuation candidates and any blank gap; if the next non-blank line is indented to ≥ contentCol, the item has multi-block content and lazy merge is licensed. The well-formed spec cases (#254, #286–#291) fire the narrow rule; multi-block spec cases (#290) fire the look-ahead; editor round-trip (`- foo\nbar` with no deep follower) parses as `[list, paragraph]`. Pattern lives in `ListReader.read`.
+
 ## Supporting Infrastructure
 
 `EditingOperations.swift` carries typed-safety layers used throughout the primitives:
