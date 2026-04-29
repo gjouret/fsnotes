@@ -1057,6 +1057,16 @@ extension EditTextView {
         // snapshot already reflects the intended post-edit state.
         pendingInlineTraits = savedPendingTraits
         explicitlyOffTraits = savedOffTraits
+
+        // bd-fsnotes-ibj: META glyph wipe.
+        // After every edit, schedule a coalesced pass that tickles
+        // bullet/checkbox attachments so TK2 drops its cached view
+        // provider on the next layout pass. Without this, the view
+        // provider's `view` survives across edits at its pre-edit
+        // frame; the user sees bullets vanish until a scroll forces
+        // TK2 to re-mount. Mirrors the proven fold-path pattern at
+        // TextStorageProcessor.swift:756-782.
+        scheduleListGlyphRefresh()
     }
 
     /// Count U+FFFC attachment characters in an attributed string.
@@ -1070,6 +1080,74 @@ extension EditTextView {
             if s.character(at: i) == 0xFFFC { count += 1 }
         }
         return count
+    }
+
+    /// Schedule a coalesced bullet/checkbox view-provider refresh
+    /// after an edit. TK2 caches `NSTextAttachmentViewProvider`
+    /// instances and re-uses their hosted `.view` across layout
+    /// passes — even when the underlying fragment has moved. The
+    /// fold-path workaround (set `attachment.image` to a placeholder
+    /// of the same size — TextStorageProcessor.swift:756-782) forces
+    /// TK2 to invalidate its cache and call `loadView()` again on
+    /// the next layout pass. We apply the same workaround here.
+    ///
+    /// Coalesced via `pendingListGlyphRefreshScheduled` so rapid
+    /// typing only schedules ONE refresh per run-loop tick.
+    /// Synchronous walks per keystroke would force one tickle per
+    /// bullet × keystroke, which is wasted work — the visible
+    /// symptom only manifests once the run loop services pending
+    /// layout, so a deferred coalesced tickle is sufficient.
+    private func scheduleListGlyphRefresh() {
+        guard !pendingListGlyphRefreshScheduled else { return }
+        pendingListGlyphRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.pendingListGlyphRefreshScheduled = false
+            self.refreshListGlyphAttachments()
+        }
+    }
+
+    /// Walk storage and tickle every bullet/checkbox attachment so
+    /// TK2 drops its cached view provider. Then re-run viewport
+    /// layout so the new providers' `loadView()` fires. Class-name
+    /// matching is used because the concrete attachment subclasses
+    /// (`BulletTextAttachment`, `CheckboxTextAttachment`) live in
+    /// FSNotesCore and are referenced here via duck-typing rather
+    /// than a tight import.
+    private func refreshListGlyphAttachments() {
+        guard let storage = textStorage,
+              let tlm = textLayoutManager else { return }
+        let fullRange = NSRange(location: 0, length: storage.length)
+        var tickled = false
+        storage.enumerateAttribute(
+            .attachment, in: fullRange, options: []
+        ) { value, _, _ in
+            guard let attachment = value as? NSTextAttachment else { return }
+            let typeName = String(describing: type(of: attachment))
+            guard typeName.contains("BulletTextAttachment")
+                    || typeName.contains("CheckboxTextAttachment") else {
+                return
+            }
+            let size = attachment.bounds.size
+            guard size.width > 0, size.height > 0 else { return }
+            // Same-size transparent placeholder. TK2's attachment-
+            // bounds-changed path treats `image` re-assignment as a
+            // cache-invalidation event regardless of pixel content.
+            let img = NSImage(size: size, flipped: false) { _ in true }
+            attachment.image = img
+            tickled = true
+        }
+        guard tickled else { return }
+        // Phase 1 + Phase 2 layoutViewport, mirroring the fill-path
+        // pattern at line 491-496. Phase 1 registers fresh providers;
+        // Phase 2 (deferred to next run-loop tick) calls loadView()
+        // and inserts the views under `_NSTextViewportElementView`.
+        tlm.textViewportLayoutController.layoutViewport()
+        DispatchQueue.main.async { [weak self] in
+            self?.textLayoutManager?
+                .textViewportLayoutController
+                .layoutViewport()
+        }
     }
 
     // Phase 5f: `restoreBlockModelState` was retired with the

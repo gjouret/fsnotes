@@ -110,4 +110,168 @@ final class BugFsnotes1mlTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - Click+type integration test
+    //
+    // The pure-fn test above verifies `caretRectInCell` math is correct
+    // on a pre-seeded cell. This test exercises the full click → type →
+    // `caretRectIfInTableCell` pipeline — the same path the live app
+    // uses when the user clicks in a cell and types. The bead reports
+    // "characters appear to the LEFT of cursor (1-2 char offset)" —
+    // meaning the caret's drawn x coordinate is too far right by ~1-2
+    // character widths relative to where the typed character renders.
+    //
+    // This test clicks into an empty cell, types one character, and
+    // compares the caret's view-coordinate x (from the editor's
+    // `caretRectIfInTableCell`) against the independently-computed
+    // expected position (fragment-local caret rect at offset 1,
+    // converted to view coords via the same formula the function uses).
+
+    func test_clickThenType_caretRectAlignsWithTypedCharacter() {
+        // Empty 2x2 table — matches the user's minimal repro note shape.
+        let emptyMd = """
+        | A | B |
+        | --- | --- |
+        |  |  |
+        """
+
+        let h = EditorHarness(
+            markdown: emptyMd, windowActivation: .keyWindow
+        )
+        defer { h.teardown() }
+
+        guard let tlm = h.editor.textLayoutManager,
+              let cs = tlm.textContentManager as? NSTextContentStorage
+        else { XCTFail("no tlm/cs"); return }
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        // Find the table fragment + element.
+        var tableFrag: TableLayoutFragment?
+        var element: TableElement?
+        var elementStart = 0
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { f in
+            if let tf = f as? TableLayoutFragment,
+               let el = f.textElement as? TableElement,
+               let range = el.elementRange {
+                tableFrag = tf
+                element = el
+                elementStart = cs.offset(
+                    from: cs.documentRange.location, to: range.location
+                )
+                return false
+            }
+            return true
+        }
+        guard let frag = tableFrag, let el = element
+        else { XCTFail("no table fragment"); return }
+
+        // Click at the center of the first data cell (row 1, col 0).
+        guard let geom = frag.geometryForHandleOverlay(),
+              geom.columnWidths.count >= 2,
+              geom.rowHeights.count >= 2
+        else { XCTFail("geometry missing"); return }
+
+        let cellLocalX = TableGeometry.handleBarWidth + geom.columnWidths[0] / 2
+        let cellLocalY = TableGeometry.handleBarHeight + geom.rowHeights[0] + geom.rowHeights[1] / 2
+        let localPoint = CGPoint(x: cellLocalX, y: cellLocalY)
+
+        let frameOrigin = frag.layoutFragmentFrame.origin
+        let containerOrigin = h.editor.textContainerOrigin
+        let viewPoint = NSPoint(
+            x: localPoint.x + frameOrigin.x + containerOrigin.x,
+            y: localPoint.y + frameOrigin.y + containerOrigin.y
+        )
+        _ = h.clickAt(point: viewPoint)
+
+        // Verify the click landed inside the cell.
+        guard let selCell = el.cellAtCursor(
+            forOffset: h.editor.selectedRange().location - elementStart
+        ) else { XCTFail("click did not land in a cell"); return }
+        XCTAssertEqual(selCell.row, 1, "click should land in row 1 (first data row)")
+        XCTAssertEqual(selCell.col, 0, "click should land in col 0")
+
+        // Record the pre-type cell content and storage offset.
+        let preTypeStorage = h.editor.textStorage?.string ?? ""
+        let preTypeCursor = h.editor.selectedRange().location
+        bmLog("1ml-test: pre-type cursor=\(preTypeCursor) storage='\(preTypeStorage)'")
+
+        // Type one character.
+        h.type("X")
+
+        // Force layout so `caretRectIfInTableCell` sees settled geometry.
+        tlm.ensureLayout(for: tlm.documentRange)
+
+        let postTypeStorage = h.editor.textStorage?.string ?? ""
+        let postTypeCursor = h.editor.selectedRange().location
+        bmLog("1ml-test: post-type cursor=\(postTypeCursor) storage='\(postTypeStorage)'")
+
+        // Re-read the fragment — TK2 may have rebuilt it after the edit.
+        var postFrag: TableLayoutFragment?
+        var postElement: TableElement?
+        var postElementStart = 0
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
+        ) { f in
+            if let tf = f as? TableLayoutFragment,
+               let el = f.textElement as? TableElement,
+               let range = el.elementRange {
+                postFrag = tf
+                postElement = el
+                postElementStart = cs.offset(
+                    from: cs.documentRange.location, to: range.location
+                )
+                return false
+            }
+            return true
+        }
+        guard let pfrag = postFrag, let pel = postElement
+        else { XCTFail("no table fragment after edit"); return }
+        let postFrameOrigin = pfrag.layoutFragmentFrame.origin
+
+        // Dump the post-edit Block for diagnosis.
+        if case .table(let header, _, let rows, _) = pel.block {
+            let headerTexts = header.map { $0.rawText }
+            let rowTexts = rows.map { $0.map { $0.rawText } }
+            bmLog("1ml-test: post-edit block header=\(headerTexts) rows=\(rowTexts)")
+        }
+
+        // Query the caret rect via the editor's integration function.
+        guard let caretRect = h.editor.caretRectIfInTableCell() else {
+            XCTFail("caretRectIfInTableCell returned nil after typing in cell. cursor=\(postTypeCursor)")
+            return
+        }
+        bmLog("1ml-test: caretRect=\(caretRect)")
+
+        // Build the same-attributes string `caretRectInCell` measures.
+        // Data rows use body font.
+        let bodyFont = UserDefaultsManagement.noteFont
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let attrStr = NSAttributedString(string: "X", attributes: [.font: bodyFont])
+        let charWidth = attrStr.size().width
+
+        // Independently compute the expected caret x in view coords:
+        // fragment-local caret at offset 1 (after "X") in cell (1, 0),
+        // converted to view coords. Use POST-EDIT fragment.
+        guard let expectedLocalRect = pfrag.caretRectInCell(
+            row: 1, col: 0, cellLocalOffset: 1
+        ) else {
+            XCTFail("caretRectInCell returned nil for (1,0) offset=1. " +
+                    "post-elementStart=\(postElementStart)")
+            return
+        }
+        let expectedViewX = expectedLocalRect.origin.x + postFrameOrigin.x + containerOrigin.x
+
+        let tolerance: CGFloat = 2.0  // generous for integration path
+        XCTAssertEqual(
+            caretRect.origin.x, expectedViewX, accuracy: tolerance,
+            "caretRectIfInTableCell x (\(caretRect.origin.x)) should match " +
+            "independently-computed expected x (\(expectedViewX)) " +
+            "after typing one char in an empty cell. " +
+            "Char width: \(charWidth). Tolerance: ±\(tolerance)pt."
+        )
+    }
 }
