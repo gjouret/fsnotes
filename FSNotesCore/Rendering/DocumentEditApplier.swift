@@ -272,11 +272,11 @@ public enum DocumentEditApplier {
         )
 
         // Replacement substring in the NEW rendered attributed string.
-        let replacement: NSAttributedString
+        let initialReplacement: NSAttributedString
         if newRange.length > 0 {
-            replacement = newRendered.attributed.attributedSubstring(from: newRange)
+            initialReplacement = newRendered.attributed.attributedSubstring(from: newRange)
         } else {
-            replacement = NSAttributedString(string: "")
+            initialReplacement = NSAttributedString(string: "")
         }
 
         // Apply inside a single editing transaction. This is the TK2
@@ -306,6 +306,34 @@ public enum DocumentEditApplier {
             return report
         }
 
+        // bd-fsnotes-ibj: character-level narrowing on top of the
+        // block-level priorRange / replacement. The block-level range
+        // covers the entire affected block (e.g. the whole list block
+        // when one item changes), so a one-character typing edit
+        // produces a `replaceCharacters` covering hundreds of chars —
+        // every fragment in that range gets invalidated, every
+        // attachment view-provider unmounts and remounts on the next
+        // layout pass. User-visible: bullets/checkboxes briefly
+        // disappear on every keystroke ("META glyph wipe" — fsnotes-ibj).
+        //
+        // Narrowing the splice to ONLY the actually-changed bytes means
+        // TK2 only invalidates the one fragment containing the typed
+        // char — the bullets and checkboxes in unchanged paragraphs
+        // never go through unmount/remount.
+        //
+        // U+FFFC (attachment character) is treated as common when both
+        // sides have it at the corresponding position. This is safe:
+        // NSAttributedString interns `isEqual` attachment values, so
+        // the original instance survives the `replaceCharacters` call
+        // anyway — the narrowing just keeps TK2 from invalidating its
+        // hosting fragment.
+        let (narrowedPrior, narrowedReplacement) = narrowSpliceAtCharacterLevel(
+            priorRange: priorRange,
+            replacement: initialReplacement,
+            textStorage: textStorage
+        )
+        let priorRangeForReport = priorRange  // pre-narrow, for ApplyReport
+
         let preLen = textStorage.length
         // Phase 5a: mark this mutation as authorized so the debug
         // assertion in `TextStorageProcessor.didProcessEditing` sees
@@ -318,10 +346,10 @@ public enum DocumentEditApplier {
                 // In normal use the lengths match exactly; the clamp guards
                 // against call-site drift (a caller that invoked
                 // applyDocumentEdit on a stale priorDoc).
-                let clampedLoc = max(0, min(priorRange.location, textStorage.length))
-                let clampedLen = max(0, min(priorRange.length, textStorage.length - clampedLoc))
+                let clampedLoc = max(0, min(narrowedPrior.location, textStorage.length))
+                let clampedLen = max(0, min(narrowedPrior.length, textStorage.length - clampedLoc))
                 let clampedRange = NSRange(location: clampedLoc, length: clampedLen)
-                textStorage.replaceCharacters(in: clampedRange, with: replacement)
+                textStorage.replaceCharacters(in: clampedRange, with: narrowedReplacement)
             }
         }
         let postLen = textStorage.length
@@ -342,7 +370,7 @@ public enum DocumentEditApplier {
             elementsChanged: elementsChanged,
             elementsInserted: elementsInserted,
             elementsDeleted: elementsDeleted,
-            replacedRange: priorRange,
+            replacedRange: priorRangeForReport,
             totalLenDelta: postLen - preLen,
             wasNoop: false
         )
@@ -350,6 +378,103 @@ public enum DocumentEditApplier {
         logEdit(report: report)
         #endif
         return report
+    }
+
+    // MARK: - Splice narrowing (fsnotes-ibj)
+
+    /// Shrink a block-level splice to the actual changed character span.
+    ///
+    /// `priorRange` and `replacement` start out as the entire affected
+    /// block range (computed from `EditPlan` block-level diff). For a
+    /// one-character edit inside a multi-item list block, that's
+    /// hundreds of bytes — `replaceCharacters` on that wide range
+    /// invalidates every fragment in the block, which TK2 turns into
+    /// per-fragment unmount + remount of every attachment view-provider.
+    /// The user sees that as bullets/checkboxes blinking on every
+    /// keystroke (fsnotes-ibj).
+    ///
+    /// Narrowing finds the longest common prefix and longest common
+    /// suffix between `textStorage[priorRange]` and `replacement` at
+    /// the character level. The narrowed splice covers only the
+    /// difference. Untouched paragraphs in the same block are no
+    /// longer in the splice range, so TK2 doesn't invalidate their
+    /// fragments — bullets and checkboxes in those paragraphs keep
+    /// their mounted view providers across the edit.
+    ///
+    /// **Why character-only comparison.** Attribute objects (attachments,
+    /// paragraph styles) from a fresh `DocumentRenderer.render(...)`
+    /// are different instances from the ones already in storage, even
+    /// when they're `isEqual`. Comparing attribute identity would
+    /// break the prefix at offset 0 (different `BulletTextAttachment`
+    /// instances), defeating the purpose. Character-only comparison
+    /// treats both attachment characters as common — and
+    /// `NSAttributedString` interns `isEqual` attachment values during
+    /// `replaceCharacters`, so the original attachment instance
+    /// survives the splice anyway. The narrowing's job is to keep
+    /// TK2 from invalidating the hosting fragment, not to preserve
+    /// instance identity (which is already preserved).
+    ///
+    /// **No-op cases.** If either side is empty (pure insert / pure
+    /// delete) or no common prefix/suffix exists, returns
+    /// `(priorRange, replacement)` unchanged.
+    private static func narrowSpliceAtCharacterLevel(
+        priorRange: NSRange,
+        replacement: NSAttributedString,
+        textStorage: NSTextStorage
+    ) -> (NSRange, NSAttributedString) {
+        // Cheap early exits.
+        if priorRange.length == 0 || replacement.length == 0 {
+            return (priorRange, replacement)
+        }
+        let storageLen = textStorage.length
+        let priorEnd = priorRange.location + priorRange.length
+        guard priorRange.location >= 0, priorEnd <= storageLen else {
+            return (priorRange, replacement)
+        }
+
+        let oldNS = (textStorage.string as NSString).substring(
+            with: priorRange
+        ) as NSString
+        let newNS = replacement.string as NSString
+        let oldLen = oldNS.length
+        let newLen = newNS.length
+        let minLen = min(oldLen, newLen)
+
+        // Common prefix at character (UTF-16) level.
+        var prefix = 0
+        while prefix < minLen
+            && oldNS.character(at: prefix) == newNS.character(at: prefix) {
+            prefix += 1
+        }
+
+        // Common suffix — never overlapping the prefix range on either
+        // side (so a string like "abab" doesn't double-count its tail).
+        var suffix = 0
+        while suffix < (minLen - prefix)
+            && oldNS.character(at: oldLen - 1 - suffix)
+                == newNS.character(at: newLen - 1 - suffix) {
+            suffix += 1
+        }
+
+        if prefix == 0 && suffix == 0 {
+            return (priorRange, replacement)
+        }
+
+        let narrowPriorLen = oldLen - prefix - suffix
+        let narrowPriorRange = NSRange(
+            location: priorRange.location + prefix,
+            length: narrowPriorLen
+        )
+        let narrowReplacementLen = newLen - prefix - suffix
+        let narrowReplacement: NSAttributedString
+        if narrowReplacementLen > 0 {
+            narrowReplacement = replacement.attributedSubstring(
+                from: NSRange(location: prefix, length: narrowReplacementLen)
+            )
+        } else {
+            narrowReplacement = NSAttributedString(string: "")
+        }
+        return (narrowPriorRange, narrowReplacement)
     }
 
     // MARK: - Diff
