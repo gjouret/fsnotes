@@ -195,7 +195,7 @@ final class TableNavigationTests: XCTestCase {
         }
     }
 
-    // MARK: - Harness helpers for keyboard-command tests
+    // MARK: - Scenario helpers for keyboard-command tests
 
     /// 2 cols × 2 body rows. `| A | B |` + body rows `| A0 | B0 |` /
     /// `| A1 | B1 |`. Cell text is short and distinct so the tests can
@@ -207,73 +207,40 @@ final class TableNavigationTests: XCTestCase {
     | c10 | c11 |
     """
 
-    /// Seed an editor with the 2×2 table and return the (harness,
-    /// tableElement, elementStart, rowColOffsetFn).
-    private func makeHarnessWith2x2Table() -> (
-        harness: EditorHarness,
-        element: TableElement,
-        elementStart: Int,
-        offset: (Int, Int) -> Int
+    /// Build a scenario seeded with the 2×2 markdown together with the
+    /// reachable `TableElement`. Returns nil when no element
+    /// materialised (`useSubviewTables` leaked, fill failure, etc.) —
+    /// every test guards on that and fails with "Harness setup failed".
+    /// (Phase 11 Slice F.3 — replaces the legacy 4-tuple
+    /// `makeHarnessWith2x2Table` factory.)
+    private func makeScenarioWith2x2Table() -> (
+        scenario: EditorScenario,
+        element: TableElement
     )? {
-        let harness = EditorHarness(markdown: Self.markdown2x2)
-        guard let tlm = harness.editor.textLayoutManager,
-              let cs = tlm.textContentManager as? NSTextContentStorage else {
-            harness.teardown()
-            return nil
-        }
-        tlm.ensureLayout(for: tlm.documentRange)
-        // Find the TableElement + its element-start in storage.
-        var foundElement: TableElement?
-        var foundStart = 0
-        tlm.enumerateTextLayoutFragments(
-            from: tlm.documentRange.location,
-            options: [.ensuresLayout]
-        ) { fragment in
-            if let el = fragment.textElement as? TableElement,
-               let range = el.elementRange {
-                foundElement = el
-                foundStart = cs.offset(
-                    from: cs.documentRange.location, to: range.location
-                )
-                return false
-            }
-            return true
-        }
-        guard let element = foundElement else {
-            harness.teardown()
-            return nil
-        }
-        let offsetFn: (Int, Int) -> Int = { row, col in
-            let local = element.offset(
-                forCellAt: (row: row, col: col)
-            ) ?? 0
-            return foundStart + local
-        }
-        return (harness, element, foundStart, offsetFn)
+        let scenario = Given.note(markdown: Self.markdown2x2)
+        guard let hit = scenario.firstFragmentElement(of: TableElement.self)
+        else { return nil }
+        return (scenario, hit.element)
     }
 
     // MARK: - 4. Tab moves to next cell
 
     func test_T2d_tabKey_movesToNextCell() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         // Park cursor at cell (0,0).
-        let start00 = ctx.offset(0, 0)
-        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+        let start00 = scenario.tableCellOffset(row: 0, col: 0)!
+        scenario.editor.setSelectedRange(NSRange(location: start00, length: 0))
 
         // Simulate Tab via NSResponder selector.
-        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
 
-        let expected = ctx.offset(0, 1)
+        let expected = scenario.tableCellOffset(row: 0, col: 1)!
         XCTAssertEqual(
-            harness.editor.selectedRange().location, expected,
+            scenario.editor.selectedRange().location, expected,
             "Tab from (0,0) should land at start of (0,1)"
         )
     }
@@ -286,24 +253,20 @@ final class TableNavigationTests: XCTestCase {
     /// crosses an internal row boundary, which is just the next cell
     /// in row-major sequence and still works post-clamp.)
     func test_T2d_tabKey_advancesAcrossRowBoundary() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         // Park cursor at cell (0,1) — the last header cell.
-        let start01 = ctx.offset(0, 1)
-        harness.editor.setSelectedRange(NSRange(location: start01, length: 0))
+        let start01 = scenario.tableCellOffset(row: 0, col: 1)!
+        scenario.editor.setSelectedRange(NSRange(location: start01, length: 0))
 
-        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
 
-        let expected = ctx.offset(1, 0)
+        let expected = scenario.tableCellOffset(row: 1, col: 0)!
         XCTAssertEqual(
-            harness.editor.selectedRange().location, expected,
+            scenario.editor.selectedRange().location, expected,
             "Tab from (0,1) should advance to start of (1,0) — first body cell"
         )
     }
@@ -313,24 +276,22 @@ final class TableNavigationTests: XCTestCase {
     /// Tab from the last cell of the last row must NOT wrap back to
     /// the top-left cell. The cursor stays in (lastRow, lastCol).
     func test_bug32_tabAtBottomRightCell_clampsAndStays() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer { harness.teardown() }
 
         // 2x2 body table → last cell is body row 1 (storage row 2),
         // column 1.
         let lastRow = 2
         let lastCol = 1
-        let startLast = ctx.offset(lastRow, lastCol)
-        harness.editor.setSelectedRange(NSRange(location: startLast, length: 0))
+        let startLast = scenario.tableCellOffset(row: lastRow, col: lastCol)!
+        scenario.editor.setSelectedRange(NSRange(location: startLast, length: 0))
 
-        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
 
         XCTAssertEqual(
-            harness.editor.selectedRange().location, startLast,
+            scenario.editor.selectedRange().location, startLast,
             "Tab at bottom-right must clamp (no wrap to (0,0))"
         )
     }
@@ -341,20 +302,18 @@ final class TableNavigationTests: XCTestCase {
     /// cell. The cursor stays at (0, 0). Direct user-prescribed
     /// behaviour for bug #32.
     func test_bug32_shiftTabAtTopLeftCell_clampsAndStays() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer { harness.teardown() }
 
-        let start00 = ctx.offset(0, 0)
-        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+        let start00 = scenario.tableCellOffset(row: 0, col: 0)!
+        scenario.editor.setSelectedRange(NSRange(location: start00, length: 0))
 
-        harness.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
 
         XCTAssertEqual(
-            harness.editor.selectedRange().location, start00,
+            scenario.editor.selectedRange().location, start00,
             "Shift-Tab at top-left must clamp (no wrap to bottom-right)"
         )
     }
@@ -362,24 +321,20 @@ final class TableNavigationTests: XCTestCase {
     // MARK: - 6. Shift-Tab moves to previous cell
 
     func test_T2d_shiftTabKey_movesToPreviousCell() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         // Park cursor at cell (0,1).
-        let start01 = ctx.offset(0, 1)
-        harness.editor.setSelectedRange(NSRange(location: start01, length: 0))
+        let start01 = scenario.tableCellOffset(row: 0, col: 1)!
+        scenario.editor.setSelectedRange(NSRange(location: start01, length: 0))
 
-        harness.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
 
-        let expected = ctx.offset(0, 0)
+        let expected = scenario.tableCellOffset(row: 0, col: 0)!
         XCTAssertEqual(
-            harness.editor.selectedRange().location, expected,
+            scenario.editor.selectedRange().location, expected,
             "Shift-Tab from (0,1) should land at start of (0,0)"
         )
     }
@@ -387,29 +342,25 @@ final class TableNavigationTests: XCTestCase {
     // MARK: - 7. Right-arrow at cell end moves to next cell
 
     func test_T2d_arrowRight_atCellEnd_movesToNextCell() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, tableElement) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         // Find the END of cell (0,0): its start + its text length.
-        guard case .table(let header, _, _, _) = ctx.element.block else {
+        guard case .table(let header, _, _, _) = tableElement.block else {
             XCTFail("Element block is not .table")
             return
         }
         let cell00Len = header[0].rawText.utf16.count
-        let end00 = ctx.offset(0, 0) + cell00Len
-        harness.editor.setSelectedRange(NSRange(location: end00, length: 0))
+        let end00 = scenario.tableCellOffset(row: 0, col: 0)! + cell00Len
+        scenario.editor.setSelectedRange(NSRange(location: end00, length: 0))
 
-        harness.editor.doCommand(by: #selector(NSResponder.moveRight(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.moveRight(_:)))
 
-        let expected = ctx.offset(0, 1)
+        let expected = scenario.tableCellOffset(row: 0, col: 1)!
         XCTAssertEqual(
-            harness.editor.selectedRange().location, expected,
+            scenario.editor.selectedRange().location, expected,
             "Right-arrow at end of (0,0) should land at start of (0,1)"
         )
     }
@@ -417,24 +368,20 @@ final class TableNavigationTests: XCTestCase {
     // MARK: - 8. Down-arrow moves vertically
 
     func test_T2d_arrowDown_movesVertically() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         // Cursor at cell (0,0) → down-arrow → cell (1,0).
-        let start00 = ctx.offset(0, 0)
-        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+        let start00 = scenario.tableCellOffset(row: 0, col: 0)!
+        scenario.editor.setSelectedRange(NSRange(location: start00, length: 0))
 
-        harness.editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
 
-        let expected = ctx.offset(1, 0)
+        let expected = scenario.tableCellOffset(row: 1, col: 0)!
         XCTAssertEqual(
-            harness.editor.selectedRange().location, expected,
+            scenario.editor.selectedRange().location, expected,
             "Down-arrow from (0,0) should land at (1,0) — same column, row below"
         )
     }
@@ -458,33 +405,31 @@ final class TableNavigationTests: XCTestCase {
     /// caret — must advance to start of (0, 1), NOT insert a tab
     /// character.
     func test_phase11sliceB_tabAtEndOfCell_movesToNextCell() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, tableElement) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed"); return
         }
-        let harness = ctx.harness
-        defer { harness.teardown() }
 
         // End of cell (0, 0) = its start + cell text length. For
         // header "H0" that's start00 + 2 — which is the offset of
         // the U+001F separator.
-        guard case .table(let header, _, _, _) = ctx.element.block else {
+        guard case .table(let header, _, _, _) = tableElement.block else {
             XCTFail("not a table"); return
         }
         let cell00Len = header[0].rawText.utf16.count
-        let endOfCell00 = ctx.offset(0, 0) + cell00Len
-        harness.editor.setSelectedRange(NSRange(location: endOfCell00, length: 0))
+        let endOfCell00 = scenario.tableCellOffset(row: 0, col: 0)! + cell00Len
+        scenario.editor.setSelectedRange(NSRange(location: endOfCell00, length: 0))
 
-        let storageBefore = harness.editor.textStorage?.string ?? ""
-        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        let storageBefore = scenario.editor.textStorage?.string ?? ""
+        scenario.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
 
-        let expected = ctx.offset(0, 1)
+        let expected = scenario.tableCellOffset(row: 0, col: 1)!
         XCTAssertEqual(
-            harness.editor.selectedRange().location, expected,
+            scenario.editor.selectedRange().location, expected,
             "Tab from end of (0,0) (= on the U+001F separator) " +
             "must advance to start of (0,1), not insert a tab"
         )
         // Storage must not have been mutated — no literal \t.
-        let storageAfter = harness.editor.textStorage?.string ?? ""
+        let storageAfter = scenario.editor.textStorage?.string ?? ""
         XCTAssertEqual(
             storageBefore, storageAfter,
             "Tab inside table must not modify storage (no literal \\t)"
@@ -497,19 +442,17 @@ final class TableNavigationTests: XCTestCase {
     /// above own the clamp assertion specifically; this one keeps the
     /// no-tab-character contract for the same scenario.)
     func test_phase11sliceB_shiftTabAtStartOfFirstCell_doesNotInsertTab() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed"); return
         }
-        let harness = ctx.harness
-        defer { harness.teardown() }
 
-        let start00 = ctx.offset(0, 0)
-        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
-        let storageBefore = harness.editor.textStorage?.string ?? ""
+        let start00 = scenario.tableCellOffset(row: 0, col: 0)!
+        scenario.editor.setSelectedRange(NSRange(location: start00, length: 0))
+        let storageBefore = scenario.editor.textStorage?.string ?? ""
 
-        harness.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
 
-        let storageAfter = harness.editor.textStorage?.string ?? ""
+        let storageAfter = scenario.editor.textStorage?.string ?? ""
         XCTAssertEqual(
             storageBefore, storageAfter,
             "Shift-Tab inside table must not modify storage (no literal \\t)"
@@ -518,7 +461,7 @@ final class TableNavigationTests: XCTestCase {
         // at (0, 0). This is stricter than "still in table"; the
         // dedicated bug32 test asserts identity, this one re-verifies
         // it as a side-channel check on the no-tab-character path.
-        let cursor = harness.editor.selectedRange().location
+        let cursor = scenario.editor.selectedRange().location
         XCTAssertEqual(
             cursor, start00,
             "Shift-Tab from (0,0) must clamp — cursor stays at (0,0)"
@@ -529,29 +472,27 @@ final class TableNavigationTests: XCTestCase {
     /// end of cell (1, 0) — same offset `handleTableCellClick` parks
     /// at — then Tab. Expect cell (1, 1).
     func test_phase11sliceB_tabAfterClickToCell10_movesToCell11() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, tableElement) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed"); return
         }
-        let harness = ctx.harness
-        defer { harness.teardown() }
 
-        guard case .table(_, _, let rows, _) = ctx.element.block else {
+        guard case .table(_, _, let rows, _) = tableElement.block else {
             XCTFail("not a table"); return
         }
         let cell10Len = rows[0][0].rawText.utf16.count
-        let endOfCell10 = ctx.offset(1, 0) + cell10Len
-        harness.editor.setSelectedRange(NSRange(location: endOfCell10, length: 0))
-        let storageBefore = harness.editor.textStorage?.string ?? ""
+        let endOfCell10 = scenario.tableCellOffset(row: 1, col: 0)! + cell10Len
+        scenario.editor.setSelectedRange(NSRange(location: endOfCell10, length: 0))
+        let storageBefore = scenario.editor.textStorage?.string ?? ""
 
-        harness.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
 
-        let expected = ctx.offset(1, 1)
+        let expected = scenario.tableCellOffset(row: 1, col: 1)!
         XCTAssertEqual(
-            harness.editor.selectedRange().location, expected,
+            scenario.editor.selectedRange().location, expected,
             "Tab from end of body (1,0) must move to start of (1,1)"
         )
         XCTAssertEqual(
-            harness.editor.textStorage?.string ?? "", storageBefore,
+            scenario.editor.textStorage?.string ?? "", storageBefore,
             "Storage must not be mutated"
         )
     }
@@ -565,29 +506,27 @@ final class TableNavigationTests: XCTestCase {
     /// a no-op: storage unchanged, block count unchanged, cursor
     /// stays put.
     func test_T2_backspaceAtCellStart_staysInCell() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer { harness.teardown() }
 
         // Park the cursor at offset 0 of cell (0, 0) — the top-left
         // cell, where the bug originally manifested as "the entire
         // table block disappears."
-        let start00 = ctx.offset(0, 0)
-        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+        let start00 = scenario.tableCellOffset(row: 0, col: 0)!
+        scenario.editor.setSelectedRange(NSRange(location: start00, length: 0))
 
-        let storageBefore = harness.editor.textStorage?.string ?? ""
-        let blocksBefore = harness.document?.blocks.count ?? 0
+        let storageBefore = scenario.editor.textStorage?.string ?? ""
+        let blocksBefore = scenario.harness.document?.blocks.count ?? 0
 
-        _ = harness.editor.handleEditViaBlockModel(
+        _ = scenario.editor.handleEditViaBlockModel(
             in: NSRange(location: start00 - 1, length: 1),
             replacementString: ""
         )
 
-        let storageAfter = harness.editor.textStorage?.string ?? ""
-        let blocksAfter = harness.document?.blocks.count ?? 0
+        let storageAfter = scenario.editor.textStorage?.string ?? ""
+        let blocksAfter = scenario.harness.document?.blocks.count ?? 0
         XCTAssertEqual(
             storageBefore, storageAfter,
             "Backspace at cell (0,0) start must not modify storage"
@@ -600,15 +539,15 @@ final class TableNavigationTests: XCTestCase {
 
         // And the same at an internal-cell boundary (cell (1, 0)).
         // Pre-fix this would corrupt the U+001F encoding.
-        let start10 = ctx.offset(1, 0)
-        harness.editor.setSelectedRange(NSRange(location: start10, length: 0))
+        let start10 = scenario.tableCellOffset(row: 1, col: 0)!
+        scenario.editor.setSelectedRange(NSRange(location: start10, length: 0))
 
-        let storage2Before = harness.editor.textStorage?.string ?? ""
-        _ = harness.editor.handleEditViaBlockModel(
+        let storage2Before = scenario.editor.textStorage?.string ?? ""
+        _ = scenario.editor.handleEditViaBlockModel(
             in: NSRange(location: start10 - 1, length: 1),
             replacementString: ""
         )
-        let storage2After = harness.editor.textStorage?.string ?? ""
+        let storage2After = scenario.editor.textStorage?.string ?? ""
         XCTAssertEqual(
             storage2Before, storage2After,
             "Backspace at cell (1,0) start must not modify storage " +
@@ -626,27 +565,23 @@ final class TableNavigationTests: XCTestCase {
     // include `<br>` inside the cell.
 
     func test_T2d_returnKey_inCell_insertsBr() throws {
-        guard let ctx = makeHarnessWith2x2Table() else {
+        guard let (scenario, _) = makeScenarioWith2x2Table() else {
             XCTFail("Harness setup failed")
             return
         }
-        let harness = ctx.harness
-        defer {
-            harness.teardown()
-        }
 
         // Snapshot the Document before the Return.
-        guard let before = harness.document else {
+        guard let before = scenario.harness.document else {
             XCTFail("No Document on harness")
             return
         }
 
-        let start00 = ctx.offset(0, 0)
-        harness.editor.setSelectedRange(NSRange(location: start00, length: 0))
+        let start00 = scenario.tableCellOffset(row: 0, col: 0)!
+        scenario.editor.setSelectedRange(NSRange(location: start00, length: 0))
 
-        harness.editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        scenario.editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
 
-        guard let after = harness.document else {
+        guard let after = scenario.harness.document else {
             XCTFail("Document gone after Return")
             return
         }
