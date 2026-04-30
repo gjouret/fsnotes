@@ -60,6 +60,11 @@ public final class UndoJournal {
 
     public struct UndoEntry: Equatable {
         public let strategy: EditContract.InverseStrategy
+        /// Forward replay strategy. Undo uses `strategy` to recover
+        /// the pre-edit document from the post-edit document; redo
+        /// uses this opposing snapshot to recover the post-edit
+        /// document from the pre-edit document.
+        public let redoStrategy: EditContract.InverseStrategy?
         /// Pre-edit cursor. Consumed by `undo(on:)` to position the
         /// caret in the pre-edit document after the inverse splice.
         public let selectionBefore: DocumentRange
@@ -75,6 +80,7 @@ public final class UndoJournal {
 
         public init(
             strategy: EditContract.InverseStrategy,
+            redoStrategy: EditContract.InverseStrategy? = nil,
             selectionBefore: DocumentRange,
             selectionAfter: DocumentRange,
             groupID: UUID,
@@ -83,6 +89,7 @@ public final class UndoJournal {
             coalesce: CoalesceClass
         ) {
             self.strategy = strategy
+            self.redoStrategy = redoStrategy
             self.selectionBefore = selectionBefore
             self.selectionAfter = selectionAfter
             self.groupID = groupID
@@ -221,6 +228,7 @@ public final class UndoJournal {
             // Merge into previous entry's group.
             finalEntry = UndoEntry(
                 strategy: entry.strategy,
+                redoStrategy: entry.redoStrategy,
                 selectionBefore: last.selectionBefore,
                 selectionAfter: entry.selectionAfter,
                 groupID: last.groupID,
@@ -233,6 +241,7 @@ public final class UndoJournal {
             currentGroupID = entry.groupID
             finalEntry = UndoEntry(
                 strategy: entry.strategy,
+                redoStrategy: entry.redoStrategy,
                 selectionBefore: entry.selectionBefore,
                 selectionAfter: entry.selectionAfter,
                 groupID: currentGroupID,
@@ -270,13 +279,14 @@ public final class UndoJournal {
         // `DocumentEditApplier.applyDocumentEdit` scope. The closure
         // pops this journal; it does NOT re-enter journal.record on
         // its replay path because `undo(on:)` wraps in replayDepth.
+        //
+        // Register exactly once per journal group. Coalesced typing /
+        // deletion entries still accumulate in `past` under one
+        // groupID, but they must not add duplicate AppKit undo
+        // actions; one AppKit action pops the whole journal group.
         #if os(OSX)
-        if let editor = editor as? NSResponder {
-            let um = editor.undoManager
-            um?.registerUndo(withTarget: editor) { [weak self] target in
-                self?.undo(on: target)
-            }
-            um?.setActionName(finalEntry.actionName)
+        if !coalesced, let editor = editor as? NSResponder {
+            registerInitialUndoAction(on: editor, actionName: finalEntry.actionName)
         }
         #endif
     }
@@ -396,6 +406,10 @@ public final class UndoJournal {
         // forward time).
         future.append(contentsOf: popped.reversed())
 
+        #if os(OSX)
+        registerRedoAfterUndo(on: target, entries: popped)
+        #endif
+
         // Reset FSM — an undo is a group boundary.
         finalizeGroup()
     }
@@ -418,6 +432,10 @@ public final class UndoJournal {
 
         past.append(contentsOf: popped.reversed())
 
+        #if os(OSX)
+        registerUndoAfterRedo(on: target, entries: popped)
+        #endif
+
         finalizeGroup()
     }
 
@@ -438,6 +456,61 @@ public final class UndoJournal {
     private func applyPoppedToEditorRedo(popped: [UndoEntry], target: AnyObject?) {
         applyForwardHook?(popped, target)
     }
+
+    #if os(OSX)
+    private func registerRedoAfterUndo(
+        on target: AnyObject?,
+        entries: [UndoEntry]
+    ) {
+        guard let editor = target as? NSResponder,
+              let actionName = replayActionName(for: entries) else {
+            return
+        }
+        let um = editor.undoManager
+        um?.registerUndo(withTarget: editor) { [weak self] target in
+            self?.redo(on: target)
+        }
+        um?.setActionName(actionName)
+    }
+
+    private func registerUndoAfterRedo(
+        on target: AnyObject?,
+        entries: [UndoEntry]
+    ) {
+        guard let editor = target as? NSResponder,
+              let actionName = replayActionName(for: entries) else {
+            return
+        }
+        let um = editor.undoManager
+        um?.registerUndo(withTarget: editor) { [weak self] target in
+            self?.undo(on: target)
+        }
+        um?.setActionName(actionName)
+    }
+
+    private func replayActionName(for entries: [UndoEntry]) -> String? {
+        return entries.last?.actionName ?? entries.first?.actionName
+    }
+
+    private func registerInitialUndoAction(
+        on editor: NSResponder,
+        actionName: String
+    ) {
+        guard let undoManager = editor.undoManager else { return }
+        let oldGroupsByEvent = undoManager.groupsByEvent
+        undoManager.groupsByEvent = false
+        while undoManager.groupingLevel > 0 {
+            undoManager.endUndoGrouping()
+        }
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: editor) { [weak self] target in
+            self?.undo(on: target)
+        }
+        undoManager.setActionName(actionName)
+        undoManager.endUndoGrouping()
+        undoManager.groupsByEvent = oldGroupsByEvent
+    }
+    #endif
 
     // MARK: - Reset
 

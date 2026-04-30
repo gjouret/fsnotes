@@ -150,42 +150,17 @@ extension EditTextView {
     }
 
     /// Redo reconstruction: re-derive the post-edit document from the
-    /// pre-edit document by replaying the forward change. For Tier B
-    /// this is "the forward change is literally the slot contents
-    /// that the inverse snapshot replaced" — we snapshotted the OLD
-    /// blocks, so the redo requires the NEW blocks, which we captured
-    /// at record-time on the opposing side. The UndoEntry carries
-    /// only the inverse; for redo we cache the forward at record
-    /// time by swapping strategies.
-    ///
-    /// Simplification for 5f: since the journal's `future` stack
-    /// holds the exact same strategies that moved past→future, and
-    /// the editor's document-at-undo-time was the post-edit doc, we
-    /// apply the inverse of the inverse — which is reconstructing
-    /// the after-doc we had just before the undo. We don't have it
-    /// directly; we approximate by remembering the full after-doc at
-    /// record time in a Tier C. For pure correctness we elevate all
-    /// redo reconstructions to "use priorDoc as-is and hope the user
-    /// hasn't edited between undo and redo" — which is enforced at
-    /// the journal level (new edits clear future).
-    ///
-    /// Pragmatic implementation: redo replays the ORIGINAL post-edit
-    /// doc stored via `selectionAfter`'s `blockPath`. That doesn't
-    /// work for Tier B without the opposing snapshot. The cleanest
-    /// approach: record BOTH directions at edit time.
+    /// pre-edit document using the opposing strategy recorded at edit
+    /// time. For Tier B this is the mirror snapshot of the slots that
+    /// undo restored; for Tier C it is the full post-edit document.
     private func reconstructPostEditDoc(
         entry: UndoJournal.UndoEntry,
         priorDoc: Document
     ) -> Document {
-        // Phase 5f minimal: reuse the strategy to walk forward. Since
-        // `applyInverse(to:)` on Tier B reconstructs the priorDoc
-        // from afterDoc, the forward direction re-applies the edit
-        // effect — but that effect isn't in the strategy. For now,
-        // redo uses the stored opposing doc if the journal tracked
-        // it; absent that, redo returns priorDoc (no-op). Commit 4
-        // priority is undo correctness; redo via full-round-trip
-        // lands if needed by EditorHarness coverage.
-        return priorDoc
+        guard let redoStrategy = entry.redoStrategy else {
+            return priorDoc
+        }
+        return redoStrategy.applyInverse(to: priorDoc)
     }
 
     /// Route a reconstructed document change through the 5a-authorized
@@ -296,8 +271,14 @@ extension EditTextView {
             )
         )
 
+        let redoStrategy = EditContract.InverseStrategy.buildInverse(
+            priorDoc: result.newProjection.document,
+            newDoc: priorDoc
+        )
+
         return UndoJournal.UndoEntry(
             strategy: strategy,
+            redoStrategy: redoStrategy,
             selectionBefore: selBefore,
             selectionAfter: selAfter,
             groupID: UUID(),
