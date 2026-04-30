@@ -553,7 +553,8 @@ class RenderingCorrectnessTests: XCTestCase {
         editor.textStorageProcessor?.isRendering = false
         editor.documentProjection = projection
         editor.textStorageProcessor?.blockModelActive = true
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table.
         editor.layoutManager!.ensureLayout(for: editor.textContainer!)
     }
 

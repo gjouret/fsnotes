@@ -26,6 +26,37 @@ import AppKit
 
 final class TableContainerView: NSView, NSTextViewDelegate {
 
+    struct DebugHandleRects: Equatable {
+        let column: CGRect?
+        let row: CGRect?
+    }
+
+    struct DebugSortIndicator: Equatable {
+        let column: Int
+        let ascending: Bool
+    }
+
+    private enum HandleSelection: Equatable {
+        case column(Int)
+        case row(Int)
+        case cell(row: Int, col: Int)
+    }
+
+    enum ClearTarget: Equatable {
+        case row(Int)
+        case column(Int)
+    }
+
+    private final class SortMenuPayload {
+        let column: Int
+        let ascending: Bool
+
+        init(column: Int, ascending: Bool) {
+            self.column = column
+            self.ascending = ascending
+        }
+    }
+
     /// The authoritative `Block.table` value this container renders.
     private(set) var block: Block
 
@@ -51,6 +82,9 @@ final class TableContainerView: NSView, NSTextViewDelegate {
     var onExitTable: ((_ direction: ExitTableDirection) -> Void)?
 
     enum ExitTableDirection { case up, down }
+
+    var onClearCells: ((_ target: ClearTarget) -> Void)?
+    var onSortColumn: ((_ col: Int, _ ascending: Bool) -> Void)?
 
     /// Container width — set by the view provider's
     /// `attachmentBounds(...)` so the grid spans the available text-
@@ -86,6 +120,11 @@ final class TableContainerView: NSView, NSTextViewDelegate {
     /// and repositioned in `layout()`.
     private var cellSubviews: [[TableCellTextView]] = []
 
+    private var trackingArea: NSTrackingArea?
+    private var hoveredHandleSelection: HandleSelection?
+    private var focusedHandleSelection: HandleSelection?
+    private var sortIndicator: DebugSortIndicator?
+
     init(block: Block, containerWidth: CGFloat = 600) {
         self.block = block
         self.containerWidth = containerWidth
@@ -107,6 +146,7 @@ final class TableContainerView: NSView, NSTextViewDelegate {
     func update(block: Block) {
         guard case .table = block else { return }
         self.block = block
+        clampHandleSelectionsToCurrentShape()
         invalidateIntrinsicContentSize()
         rebuildCellSubviews()
         syncFrameSizeToContent()
@@ -139,11 +179,19 @@ final class TableContainerView: NSView, NSTextViewDelegate {
             return
         }
         self.block = newBlock
+        clampHandleSelectionsToCurrentShape()
         let baseFont = bodyFont
         let boldFont = NSFontManager.shared.convert(
             baseFont, toHaveTrait: .boldFontMask
         )
-        let nsAlignments = newAlignments.map { TableGeometry.nsAlignment(for: $0) }
+        let effectiveAlignments = TableGeometry.effectiveAlignments(
+            alignments: newAlignments,
+            header: newHeader,
+            rows: newRows
+        )
+        let nsAlignments = effectiveAlignments.map {
+            TableGeometry.nsAlignment(for: $0)
+        }
 
         for (rowIdx, cellsInRow) in cellSubviews.enumerated() {
             for (colIdx, cellView) in cellsInRow.enumerated() {
@@ -299,6 +347,7 @@ final class TableContainerView: NSView, NSTextViewDelegate {
         // Tear down existing.
         for row in cellSubviews { for v in row { v.removeFromSuperview() } }
         cellSubviews.removeAll()
+        focusedHandleSelection = nil
 
         guard case .table(let header, let alignments, let rows, _) = block,
               header.count > 0 else { return }
@@ -307,7 +356,14 @@ final class TableContainerView: NSView, NSTextViewDelegate {
         let boldFont = NSFontManager.shared.convert(
             baseFont, toHaveTrait: .boldFontMask
         )
-        let nsAlignments = alignments.map { TableGeometry.nsAlignment(for: $0) }
+        let effectiveAlignments = TableGeometry.effectiveAlignments(
+            alignments: alignments,
+            header: header,
+            rows: rows
+        )
+        let nsAlignments = effectiveAlignments.map {
+            TableGeometry.nsAlignment(for: $0)
+        }
 
         // Header row.
         var headerCells: [TableCellTextView] = []
@@ -346,6 +402,238 @@ final class TableContainerView: NSView, NSTextViewDelegate {
             }
             cellSubviews.append(rowCells)
         }
+    }
+
+    // MARK: - Table handle hover/focus state
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = trackingArea {
+            removeTrackingArea(area)
+        }
+        let options: NSTrackingArea.Options = [
+            .mouseEnteredAndExited,
+            .mouseMoved,
+            .activeInKeyWindow,
+            .inVisibleRect
+        ]
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: options,
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        updateHandleHover(from: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        updateHandleHover(from: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        setHoveredHandleSelection(nil)
+    }
+
+    func noteCellFocusChanged(_ cell: TableCellTextView, isFocused: Bool) {
+        let next: HandleSelection? = isFocused
+            ? .cell(row: cell.cellRow, col: cell.cellCol)
+            : nil
+        if focusedHandleSelection != next {
+            focusedHandleSelection = next
+            needsDisplay = true
+        }
+    }
+
+    func noteMouseMoved(over cell: TableCellTextView) {
+        setHoveredHandleSelection(.cell(row: cell.cellRow, col: cell.cellCol))
+    }
+
+    func debugSetHandleHover(row: Int, col: Int) {
+        setHoveredHandleSelection(.cell(row: row, col: col))
+    }
+
+    func debugSetHandleFocus(row: Int, col: Int) {
+        focusedHandleSelection = .cell(row: row, col: col)
+        needsDisplay = true
+    }
+
+    func debugClearHandles() {
+        hoveredHandleSelection = nil
+        focusedHandleSelection = nil
+        needsDisplay = true
+    }
+
+    func debugVisibleHandleRects() -> DebugHandleRects? {
+        guard let g = geometry(),
+              let selection = activeHandleSelection()
+        else { return nil }
+        return handleRects(
+            for: selection,
+            columnWidths: g.columnWidths,
+            rowHeights: g.rowHeights,
+            gridLeft: TableGeometry.handleBarWidth,
+            gridTop: TableGeometry.handleBarHeight
+        )
+    }
+
+    func debugSortIndicator() -> DebugSortIndicator? {
+        return sortIndicator
+    }
+
+    private func updateHandleHover(from event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        setHoveredHandleSelection(handleSelection(at: point))
+    }
+
+    private func setHoveredHandleSelection(_ selection: HandleSelection?) {
+        if hoveredHandleSelection != selection {
+            hoveredHandleSelection = selection
+            needsDisplay = true
+        }
+    }
+
+    private func activeHandleSelection() -> HandleSelection? {
+        return hoveredHandleSelection ?? focusedHandleSelection
+    }
+
+    private func clampHandleSelectionsToCurrentShape() {
+        hoveredHandleSelection = validHandleSelection(hoveredHandleSelection)
+        focusedHandleSelection = validHandleSelection(focusedHandleSelection)
+    }
+
+    private func validHandleSelection(_ selection: HandleSelection?) -> HandleSelection? {
+        guard let selection = selection,
+              let g = geometry()
+        else { return nil }
+        switch selection {
+        case .column(let col):
+            return (col >= 0 && col < g.columnWidths.count) ? selection : nil
+        case .row(let row):
+            return (row >= 0 && row < g.rowHeights.count) ? selection : nil
+        case .cell(let row, let col):
+            guard row >= 0, row < g.rowHeights.count,
+                  col >= 0, col < g.columnWidths.count
+            else { return nil }
+            return selection
+        }
+    }
+
+    private func handleSelection(at point: NSPoint) -> HandleSelection? {
+        guard bounds.contains(point),
+              let g = geometry()
+        else { return nil }
+
+        let gridLeft = TableGeometry.handleBarWidth
+        let gridTop = TableGeometry.handleBarHeight
+        let gridRight = gridLeft + g.columnWidths.reduce(0, +)
+        let gridBottom = gridTop + g.totalHeight
+
+        let col = columnIndex(atX: point.x, columnWidths: g.columnWidths, gridLeft: gridLeft)
+        let row = rowIndex(atY: point.y, rowHeights: g.rowHeights, gridTop: gridTop)
+
+        if point.x >= gridLeft, point.x <= gridRight,
+           point.y >= gridTop, point.y <= gridBottom,
+           let row = row, let col = col {
+            return .cell(row: row, col: col)
+        }
+        if point.y < gridTop, point.x >= gridLeft, point.x <= gridRight,
+           let col = col {
+            return .column(col)
+        }
+        if point.x < gridLeft, point.y >= gridTop, point.y <= gridBottom,
+           let row = row {
+            return .row(row)
+        }
+        return nil
+    }
+
+    private func columnIndex(
+        atX x: CGFloat,
+        columnWidths: [CGFloat],
+        gridLeft: CGFloat
+    ) -> Int? {
+        var cursor = gridLeft
+        for (idx, width) in columnWidths.enumerated() {
+            let right = cursor + width
+            if x >= cursor && x <= right {
+                return idx
+            }
+            cursor = right
+        }
+        return nil
+    }
+
+    private func rowIndex(
+        atY y: CGFloat,
+        rowHeights: [CGFloat],
+        gridTop: CGFloat
+    ) -> Int? {
+        var cursor = gridTop
+        for (idx, height) in rowHeights.enumerated() {
+            let bottom = cursor + height
+            if y >= cursor && y <= bottom {
+                return idx
+            }
+            cursor = bottom
+        }
+        return nil
+    }
+
+    private func handleRects(
+        for selection: HandleSelection,
+        columnWidths: [CGFloat],
+        rowHeights: [CGFloat],
+        gridLeft: CGFloat,
+        gridTop: CGFloat
+    ) -> DebugHandleRects? {
+        let col: Int?
+        let row: Int?
+        switch selection {
+        case .column(let c):
+            col = c
+            row = nil
+        case .row(let r):
+            col = nil
+            row = r
+        case .cell(let r, let c):
+            col = c
+            row = r
+        }
+
+        var columnRect: CGRect? = nil
+        if let col = col, col >= 0, col < columnWidths.count {
+            var x = gridLeft
+            for i in 0..<col { x += columnWidths[i] }
+            columnRect = CGRect(
+                x: x,
+                y: 0,
+                width: columnWidths[col],
+                height: TableGeometry.handleBarHeight
+            )
+        }
+
+        var rowRect: CGRect? = nil
+        if let row = row, row >= 0, row < rowHeights.count {
+            var y = gridTop
+            for i in 0..<row { y += rowHeights[i] }
+            rowRect = CGRect(
+                x: 0,
+                y: y,
+                width: TableGeometry.handleBarWidth,
+                height: rowHeights[row]
+            )
+        }
+
+        if columnRect == nil && rowRect == nil { return nil }
+        return DebugHandleRects(column: columnRect, row: rowRect)
     }
 
     // MARK: - NSTextViewDelegate
@@ -578,6 +866,78 @@ final class TableContainerView: NSView, NSTextViewDelegate {
         onClickOutsideCells?(pt, side)
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let selection = handleSelection(at: point) else {
+            return super.menu(for: event)
+        }
+
+        let target: ClearTarget
+        let title: String
+        switch selection {
+        case .row(let row):
+            target = .row(row)
+            title = NSLocalizedString("Clear Row", comment: "")
+        case .column(let col):
+            target = .column(col)
+            title = NSLocalizedString("Clear Column", comment: "")
+        case .cell:
+            return super.menu(for: event)
+        }
+
+        let menu = NSMenu(title: "")
+        if case .column(let col) = selection {
+            let ascending = nextSortAscending(forColumn: col)
+            let sortItem = NSMenuItem(
+                title: ascending
+                    ? NSLocalizedString("Sort Ascending", comment: "")
+                    : NSLocalizedString("Sort Descending", comment: ""),
+                action: #selector(sortTableColumnFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            sortItem.target = self
+            sortItem.representedObject = SortMenuPayload(
+                column: col,
+                ascending: ascending
+            )
+            menu.addItem(sortItem)
+            menu.addItem(NSMenuItem.separator())
+        }
+
+        let clearItem = NSMenuItem(
+            title: title,
+            action: #selector(clearTableHandleSelection(_:)),
+            keyEquivalent: ""
+        )
+        clearItem.target = self
+        clearItem.representedObject = target
+        menu.addItem(clearItem)
+        return menu
+    }
+
+    @objc private func clearTableHandleSelection(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? ClearTarget else { return }
+        onClearCells?(target)
+    }
+
+    @objc private func sortTableColumnFromMenu(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? SortMenuPayload else {
+            return
+        }
+        sortIndicator = DebugSortIndicator(
+            column: payload.column,
+            ascending: payload.ascending
+        )
+        needsDisplay = true
+        onSortColumn?(payload.column, payload.ascending)
+    }
+
+    private func nextSortAscending(forColumn col: Int) -> Bool {
+        guard let indicator = sortIndicator,
+              indicator.column == col else { return true }
+        return !indicator.ascending
+    }
+
     /// Decide whether a click in the container's own area is to the
     /// LEFT of the visible cells (handle bar / before the table) or
     /// RIGHT (after the table — the most common case the user wants
@@ -679,6 +1039,19 @@ final class TableContainerView: NSView, NSTextViewDelegate {
             gridWidth: gridWidth,
             gridHeight: gridHeight
         )
+        drawHandleChrome(
+            context: context,
+            columnWidths: g.columnWidths,
+            rowHeights: g.rowHeights,
+            gridLeft: gridLeft,
+            gridTop: gridTop
+        )
+        drawSortIndicator(
+            columnWidths: g.columnWidths,
+            rowHeights: g.rowHeights,
+            gridLeft: gridLeft,
+            gridTop: gridTop
+        )
     }
 
     // MARK: - Row fills (header + zebra body shading)
@@ -771,5 +1144,97 @@ final class TableContainerView: NSView, NSTextViewDelegate {
             context.addLine(to: CGPoint(x: lineX, y: gridTop + gridHeight))
         }
         context.strokePath()
+    }
+
+    // MARK: - Row/column handles
+
+    private func drawHandleChrome(
+        context: CGContext,
+        columnWidths: [CGFloat],
+        rowHeights: [CGFloat],
+        gridLeft: CGFloat,
+        gridTop: CGFloat
+    ) {
+        guard let selection = activeHandleSelection(),
+              let rects = handleRects(
+                for: selection,
+                columnWidths: columnWidths,
+                rowHeights: rowHeights,
+                gridLeft: gridLeft,
+                gridTop: gridTop
+              )
+        else { return }
+
+        context.saveGState()
+        defer { context.restoreGState() }
+
+        if let column = rects.column {
+            drawHandleChip(in: column)
+        }
+        if let row = rects.row {
+            drawHandleChip(in: row)
+        }
+    }
+
+    private func drawHandleChip(in rect: CGRect) {
+        let fill = Theme.shared.chrome.tableHandle.resolvedForCurrentAppearance(
+            fallback: NSColor.separatorColor.withAlphaComponent(0.35)
+        )
+        fill.setFill()
+        rect.fill()
+
+        let minDim = min(rect.width, rect.height)
+        let pointSize = max(10, minDim * 0.8)
+        let grip = NSAttributedString(
+            string: "\u{283F}",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: pointSize, weight: .bold),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        )
+        let size = grip.size()
+        let origin = CGPoint(
+            x: rect.midX - size.width / 2,
+            y: rect.midY - size.height / 2
+        )
+        grip.draw(at: origin)
+    }
+
+    private func drawSortIndicator(
+        columnWidths: [CGFloat],
+        rowHeights: [CGFloat],
+        gridLeft: CGFloat,
+        gridTop: CGFloat
+    ) {
+        guard let indicator = sortIndicator,
+              indicator.column >= 0,
+              indicator.column < columnWidths.count,
+              let headerHeight = rowHeights.first
+        else { return }
+
+        var x = gridLeft
+        for idx in 0..<indicator.column {
+            x += columnWidths[idx]
+        }
+        let headerRect = CGRect(
+            x: x,
+            y: gridTop,
+            width: columnWidths[indicator.column],
+            height: headerHeight
+        )
+        let arrow = indicator.ascending ? "↑" : "↓"
+        let text = NSAttributedString(
+            string: arrow,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        )
+        let size = text.size()
+        let origin = CGPoint(
+            x: headerRect.maxX - TableGeometry.cellPaddingH() - size.width,
+            y: headerRect.midY - size.height / 2
+        )
+        text.draw(at: origin)
     }
 }

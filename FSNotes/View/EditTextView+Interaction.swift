@@ -447,7 +447,8 @@ extension EditTextView {
         guard NSMaxRange(attachmentRange) <= storage.length else { return false }
 
         // Phase 6 Tier B′ Sub-slice 6: flip the render mode by storage
-        // offset so this site no longer reads `processor.blocks`.
+        // offset so this site no longer reads the source-mode block
+        // array.
         // The attachment guard above (`.attachment` +
         // `.renderedBlockOriginalMarkdown`) is the authoritative check
         // that this offset hosts a rendered block; the side-table

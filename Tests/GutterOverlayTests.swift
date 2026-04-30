@@ -62,8 +62,9 @@ final class GutterOverlayTests: XCTestCase {
         // is now satisfied by construction — no TK1 accessor to assert
         // against.
 
-        // Phase 4.6: the `documentProjection` setter auto-syncs
-        // `processor.blocks`. The harness seeds via the setter so
+        // Phase 4.6: the `documentProjection` setter auto-syncs the
+        // processor's source-mode query table. The harness seeds via
+        // the setter so
         // fold-state queries (`headerBlockIndex(at:)`) and the gutter
         // caret hit test have a populated block list without any
         // explicit priming here.
@@ -134,7 +135,8 @@ final class GutterOverlayTests: XCTestCase {
             return
         }
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`; no priming needed.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table; no priming needed.
 
         tlm.ensureLayout(for: tlm.documentRange)
 
@@ -218,18 +220,15 @@ final class GutterOverlayTests: XCTestCase {
             "at least one character of storage"
         )
 
-        // And the heading's block itself must be marked `collapsed`.
+        // And the heading's offset must be marked collapsed in the
+        // canonical side table the draw path reads.
         guard let processor = editor.textStorageProcessor else {
             XCTFail("Expected processor")
             return
         }
-        guard let blockIdx = processor.headerBlockIndex(at: heading.charIndex) else {
-            XCTFail("Expected heading block at charIndex=\(heading.charIndex)")
-            return
-        }
         XCTAssertTrue(
-            processor.isCollapsed(blockIndex: blockIdx),
-            "Heading block must report collapsed=true after toggle"
+            processor.isCollapsed(storageOffset: heading.charIndex),
+            "Heading offset must report collapsed=true after toggle"
         )
     }
 
@@ -237,7 +236,7 @@ final class GutterOverlayTests: XCTestCase {
 
     /// Two fenced code blocks separated by a paragraph. The gutter
     /// must enumerate TWO logical code blocks under TK2 — one per
-    /// `processor.blocks` entry — even though each multi-line block
+    /// source-mode query record — even though each multi-line block
     /// produces multiple adjacent `CodeBlockLayoutFragment`s (TK2
     /// paragraph-splits on `\n`). Each record must carry a
     /// `contentRange` that, when substringed from storage, yields the
@@ -272,8 +271,9 @@ final class GutterOverlayTests: XCTestCase {
         // is now satisfied by construction — no TK1 accessor to assert
         // against.
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`; the code-block
-        // discovery path picks up the populated list without priming.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table; the code-block discovery path picks up the
+        // populated list without priming.
 
         if let tlm = editor.textLayoutManager {
             tlm.ensureLayout(for: tlm.documentRange)
@@ -368,7 +368,8 @@ final class GutterOverlayTests: XCTestCase {
         // Phase 4.5: `layoutManagerIfTK1` deleted — TK2 precondition is
         // satisfied by construction.
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`; no priming.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table; no priming.
         if let tlm = editor.textLayoutManager {
             tlm.ensureLayout(for: tlm.documentRange)
         }

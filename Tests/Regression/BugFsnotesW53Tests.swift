@@ -16,6 +16,42 @@ import AppKit
 
 final class BugFsnotesW53Tests: XCTestCase {
 
+    private func parseTable(_ md: String) -> (
+        header: [TableCell],
+        alignments: [TableAlignment],
+        rows: [[TableCell]]
+    ) {
+        let doc = MarkdownParser.parse(md)
+        guard doc.blocks.count == 1,
+              case .table(let header, let alignments, let rows, _) = doc.blocks[0]
+        else {
+            XCTFail("not a table")
+            return ([], [], [])
+        }
+        return (header, alignments, rows)
+    }
+
+    private func effectiveAlignments(_ md: String) -> [TableAlignment] {
+        let table = parseTable(md)
+        return TableGeometry.effectiveAlignments(
+            alignments: table.alignments,
+            header: table.header,
+            rows: table.rows
+        )
+    }
+
+    private func paragraphAlignment(in view: TableCellTextView) -> NSTextAlignment? {
+        guard let storage = view.textStorage,
+              storage.length > 0,
+              let style = storage.attribute(
+                .paragraphStyle,
+                at: 0,
+                effectiveRange: nil
+              ) as? NSParagraphStyle
+        else { return nil }
+        return style.alignment
+    }
+
     /// Numeric column with no explicit alignment → auto right-align
     func test_numericColumn_autoRightAlign() {
         let md = """
@@ -26,36 +62,9 @@ final class BugFsnotesW53Tests: XCTestCase {
         | Cherry | 3.75 |
         """
 
-        let doc = MarkdownParser.parse(md)
-        guard doc.blocks.count == 1,
-              case .table(let header, let alignments, let rows, _) = doc.blocks[0]
-        else { XCTFail("not a table"); return }
-
-        // Column 1 (Price) has no explicit alignment
-        // Use TableGeometry to compute effective alignments
-        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        let geo = TableGeometry.compute(
-            header: header, rows: rows,
-            alignments: alignments,
-            containerWidth: 400, font: font
-        )
-
-        // Verify by rendering: right-aligned cells should have paragraph
-        // style with .right alignment
-        let priceAttr = TableGeometry.renderCellAttributedString(
-            cell: rows[0][1], font: font, alignment: .right
-        )
-        let paraStyle = priceAttr.attribute(
-            .paragraphStyle, at: 0, effectiveRange: nil
-        ) as? NSParagraphStyle
-        // The auto-detected alignment should be .right
-        // We verify by checking the markdown round-trip preserves
-        // that the column is numeric
-        let allNumeric = rows.allSatisfy { row in
-            let text = row[1].rawText.trimmingCharacters(in: .whitespaces)
-            return Double(text) != nil
-        }
-        XCTAssertTrue(allNumeric, "All price cells should be numeric")
+        let alignments = effectiveAlignments(md)
+        XCTAssertEqual(alignments[0], .none)
+        XCTAssertEqual(alignments[1], .right)
     }
 
     /// Short text column → auto center-align
@@ -67,17 +76,8 @@ final class BugFsnotesW53Tests: XCTestCase {
         | Z | W |
         """
 
-        let doc = MarkdownParser.parse(md)
-        guard case .table(_, _, let rows, _) = doc.blocks[0]
-        else { XCTFail("not a table"); return }
-
-        // Both columns have single-char content → should auto-center
-        for row in rows {
-            for cell in row {
-                XCTAssertLessThan(cell.rawText.count, 5,
-                    "Short text should trigger center alignment")
-            }
-        }
+        let alignments = effectiveAlignments(md)
+        XCTAssertEqual(alignments, [.center, .center])
     }
 
     /// Mixed column stays left-aligned
@@ -89,15 +89,9 @@ final class BugFsnotesW53Tests: XCTestCase {
         | Bob | Designer |
         """
 
-        let doc = MarkdownParser.parse(md)
-        guard case .table(_, _, let rows, _) = doc.blocks[0]
-        else { XCTFail("not a table"); return }
-
-        // Description column has mixed-length text → should stay left
-        let hasLongText = rows.contains { row in
-            row[1].rawText.count >= 5
-        }
-        XCTAssertTrue(hasLongText, "At least one description should be long")
+        let alignments = effectiveAlignments(md)
+        XCTAssertEqual(alignments[0], .none)
+        XCTAssertEqual(alignments[1], .none)
     }
 
     /// Explicit alignment should not be overridden
@@ -127,20 +121,34 @@ final class BugFsnotesW53Tests: XCTestCase {
         | C | £5.99 |
         """
 
-        let doc = MarkdownParser.parse(md)
-        guard case .table(_, _, let rows, _) = doc.blocks[0]
-        else { XCTFail("not a table"); return }
+        let alignments = effectiveAlignments(md)
+        XCTAssertEqual(alignments[1], .right)
+    }
 
-        // Verify all cost cells match numeric pattern
-        let numericPattern = try! NSRegularExpression(
-            pattern: "^[-−]?[$€£¥]?\\s*[0-9,.]+\\s*[%]?$"
-        )
-        let allMatch = rows.allSatisfy { row in
-            let text = row[1].rawText.trimmingCharacters(in: .whitespaces)
-            return numericPattern.firstMatch(
-                in: text, range: NSRange(location: 0, length: text.utf16.count)
-            ) != nil
+    /// The live editable cell views use the same effective alignments
+    /// as TableGeometry, not just the raw markdown separator row.
+    func test_containerCellViewsUseAutoDetectedAlignment() {
+        let md = """
+        | Item | Price |
+        | --- | --- |
+        | Apple | 1.50 |
+        | Banana | 2.00 |
+        """
+
+        let doc = MarkdownParser.parse(md)
+        guard case .table = doc.blocks[0] else {
+            XCTFail("not a table")
+            return
         }
-        XCTAssertTrue(allMatch, "All currency cells should match numeric pattern")
+        let container = TableContainerView(block: doc.blocks[0], containerWidth: 400)
+        guard let price = container.cellViewAt(row: 1, col: 1),
+              let item = container.cellViewAt(row: 1, col: 0)
+        else {
+            XCTFail("missing cell views")
+            return
+        }
+
+        XCTAssertEqual(paragraphAlignment(in: item), .left)
+        XCTAssertEqual(paragraphAlignment(in: price), .right)
     }
 }

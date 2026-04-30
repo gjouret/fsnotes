@@ -9009,6 +9009,189 @@ public enum EditingOps {
         return result
     }
 
+    /// Clear every cell in one display row. `row == 0` targets the
+    /// header row; `row > 0` targets body row `row - 1`.
+    public static func clearTableRow(
+        blockIndex: Int,
+        row displayRow: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, let widths) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "clearTableRow: block \(blockIndex) is not a table"
+            )
+        }
+        guard displayRow >= 0, displayRow <= rows.count else {
+            throw EditingError.outOfBounds
+        }
+
+        var newHeader = header
+        var newRows = rows
+        let emptyRow = Array(repeating: TableCell([]), count: header.count)
+        if displayRow == 0 {
+            newHeader = emptyRow
+        } else {
+            newRows[displayRow - 1] = emptyRow
+        }
+
+        let newBlock: Block = .table(
+            header: newHeader,
+            alignments: alignments,
+            rows: newRows,
+            columnWidths: widths
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Clear every cell in one table column, including the header cell.
+    public static func clearTableColumn(
+        blockIndex: Int,
+        col: Int,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, let widths) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "clearTableColumn: block \(blockIndex) is not a table"
+            )
+        }
+        guard col >= 0, col < header.count else {
+            throw EditingError.outOfBounds
+        }
+
+        var newHeader = header
+        newHeader[col] = TableCell([])
+        var newRows = rows
+        for i in 0..<newRows.count where col < newRows[i].count {
+            newRows[i][col] = TableCell([])
+        }
+
+        let newBlock: Block = .table(
+            header: newHeader,
+            alignments: alignments,
+            rows: newRows,
+            columnWidths: widths
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    /// Sort body rows by one column. The header row stays fixed.
+    /// Numeric/currency-looking values sort numerically; other values
+    /// sort with localized standard string comparison. Ties are stable.
+    public static func sortTableRows(
+        blockIndex: Int,
+        byColumn col: Int,
+        ascending: Bool,
+        in projection: DocumentProjection
+    ) throws -> EditResult {
+        guard blockIndex >= 0,
+              blockIndex < projection.document.blocks.count else {
+            throw EditingError.outOfBounds
+        }
+        guard case .table(let header, let alignments, let rows, let widths) =
+                projection.document.blocks[blockIndex] else {
+            throw EditingError.unsupported(
+                reason: "sortTableRows: block \(blockIndex) is not a table"
+            )
+        }
+        guard col >= 0, col < header.count else {
+            throw EditingError.outOfBounds
+        }
+
+        let sortedRows = rows.enumerated().sorted { lhs, rhs in
+            let lhsText = col < lhs.element.count
+                ? lhs.element[col].rawText
+                : ""
+            let rhsText = col < rhs.element.count
+                ? rhs.element[col].rawText
+                : ""
+            let order = compareTableSortValues(
+                lhsText,
+                rhsText
+            )
+            if order == .orderedSame {
+                return lhs.offset < rhs.offset
+            }
+            return ascending
+                ? order == .orderedAscending
+                : order == .orderedDescending
+        }.map { $0.element }
+
+        let newBlock: Block = .table(
+            header: header,
+            alignments: alignments,
+            rows: sortedRows,
+            columnWidths: widths
+        )
+        var result = try replaceBlock(
+            atIndex: blockIndex, with: newBlock, in: projection
+        )
+        result.contract = EditContract(
+            declaredActions: [.replaceBlock(at: blockIndex)],
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            )
+        )
+        return result
+    }
+
+    private static func compareTableSortValues(
+        _ lhs: String,
+        _ rhs: String
+    ) -> ComparisonResult {
+        let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let leftNumber = tableSortNumber(left),
+           let rightNumber = tableSortNumber(right) {
+            if leftNumber < rightNumber { return .orderedAscending }
+            if leftNumber > rightNumber { return .orderedDescending }
+            return .orderedSame
+        }
+        return left.localizedStandardCompare(right)
+    }
+
+    private static func tableSortNumber(_ value: String) -> Double? {
+        var cleaned = value
+            .replacingOccurrences(of: "−", with: "-")
+            .replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: "€", with: "")
+            .replacingOccurrences(of: "£", with: "")
+            .replacingOccurrences(of: "¥", with: "")
+            .replacingOccurrences(of: "%", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        cleaned = cleaned.replacingOccurrences(of: " ", with: "")
+        guard !cleaned.isEmpty else { return nil }
+        return Double(cleaned)
+    }
+
     /// Set column `col`'s alignment to `alignment`. Structural shape is
     /// preserved; only the `alignments` field of the table block
     /// changes. The serializer rebuilds the separator row canonically

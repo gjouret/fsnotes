@@ -20,12 +20,8 @@ extension EditTextView {
         if let outsideRect = caretRectAtSubviewTableBoundary(default: rect) {
             // Subview-tables: when the parent's cursor sits at the
             // U+FFFC of a TableAttachment (start) or one offset past
-            // (end), TK2's natural caret rect is the FULL line-fragment
-            // height — which equals the entire table's height. That
-            // paints a giant caret on top of the table. Clamp to a
-            // single-line height so the user sees a normal cursor
-            // right next to the table, ready to press Enter for a
-            // new paragraph below or Delete to remove the table.
+            // (end), paint the caret on the table boundary instead of
+            // at the full-width line fragment edge.
             newRect = outsideRect
             newRect.size.width = caretWidth
         }
@@ -36,8 +32,10 @@ extension EditTextView {
 
     /// If the parent's selection is at the start (offset N) or just
     /// past the end (offset N+1) of a TableAttachment's U+FFFC, return
-    /// a rect with a normal single-line height so we paint a sensible
-    /// caret instead of the line-fragment-height giant.
+    /// a rect at the visible table boundary with the table's full
+    /// height. This matches table editors where clicking beside a
+    /// table shows a boundary caret as tall as the table, not a
+    /// paragraph caret below it.
     ///
     /// Returns nil when the cursor isn't adjacent to a TableAttachment
     /// (the natural-flow rect is correct in that case).
@@ -54,7 +52,7 @@ extension EditTextView {
         let len = storage.length
 
         // Case A: cursor is right after a TableAttachment's U+FFFC —
-        // paint a single-line caret at the RIGHT edge of the visible
+        // paint a table-height caret at the RIGHT edge of the visible
         // table grid (not at the line fragment's natural end, which
         // with full-width bounds is at the far right margin).
         if cursor > 0, cursor <= len {
@@ -91,8 +89,8 @@ extension EditTextView {
     private enum TableSide { case left, right }
 
     /// Compute a caret rect on either side of the visible table grid,
-    /// at single-line height anchored to the bottom of the table's
-    /// vertical extent. Returns nil if TK2 layout state isn't ready.
+    /// with the same height as the table attachment. Returns nil if
+    /// TK2 layout state isn't ready.
     private func caretRectNextToTable(
         attachment: TableAttachment,
         storage: NSTextStorage,
@@ -125,34 +123,16 @@ extension EditTextView {
         // Container → view: add textContainerOrigin.
         let xInView = xInContainer + textContainerOrigin.x
 
-        // Y: bottom-anchor the single-line caret to the table's
-        // bottom. Reads as "ready to start a new line below the table".
-        let font = UserDefaultsManagement.noteFont
-        let lineHeight = ceil(font.ascender - font.descender + font.leading)
-        let yBottomInView = fragFrame.maxY + textContainerOrigin.y
-        let yInView = yBottomInView - lineHeight
+        let tableHeight = attachment.bounds.height > 0
+            ? attachment.bounds.height
+            : fragFrame.height
+        let yInView = fragFrame.origin.y + textContainerOrigin.y
 
         return NSRect(
             x: xInView,
             y: yInView,
             width: caretWidth,
-            height: lineHeight
-        )
-    }
-
-    /// Replace the line-fragment-height rect TK2 hands us with a rect
-    /// of a single body-font line height, anchored to the BOTTOM of
-    /// the original rect. Bottom-anchored matches user expectation —
-    /// the caret reads as "ready to start a new line below the table".
-    private func clampedToSingleLine(_ rect: NSRect) -> NSRect {
-        let font = UserDefaultsManagement.noteFont
-        let lineHeight = ceil(font.ascender - font.descender + font.leading)
-        guard rect.height > lineHeight else { return rect }
-        return NSRect(
-            x: rect.origin.x,
-            y: rect.maxY - lineHeight,
-            width: rect.width,
-            height: lineHeight
+            height: tableHeight
         )
     }
 

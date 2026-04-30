@@ -16,10 +16,10 @@
 //        container width)
 //    (b) attachment.attachmentCell set to an FSNTextAttachmentCell with
 //        the loaded image
-//  - Idempotent: re-hydrating an already-hydrated attachment is a no-op.
-//    Skips attachments whose cell is already an FSNTextAttachmentCell
-//    (or any non-default cell — e.g. PDFAttachmentCell, which is
-//    hydrated separately by PDFAttachmentProcessor).
+//  - Idempotent: re-hydrating an already-hydrated image attachment is a
+//    no-op. PDFs and QuickLook previews are not hydrated through
+//    NSTextAttachmentCell; their processors install TK2 attachment
+//    subclasses with view providers.
 //  - PDFs are NOT handled here. InlineRenderer tags PDF attachments
 //    with `.renderedBlockType == "pdf"` and PDFAttachmentProcessor
 //    picks them up via its own existing-attachment scanner.

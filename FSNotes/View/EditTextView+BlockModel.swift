@@ -491,8 +491,8 @@ extension EditTextView {
         documentProjection = projection
         textStorageProcessor?.blockModelActive = true
         // Phase 4.6: the `documentProjection` setter auto-syncs
-        // `processor.blocks` from `projection`, so no explicit sync call
-        // is needed here.
+        // the processor's source-mode query table from `projection`,
+        // so no explicit sync call is needed here.
 
         // Restore fold state from the note's cache (RC5). The V2 form
         // is offset-keyed (Phase 6 Tier B′ Sub-slice 3); a legacy V1
@@ -760,6 +760,19 @@ extension EditTextView {
             }
         }
 
+        // WYSIWYG edits are TK2-only. If the editor has fallen back to
+        // a TK1 layoutManager-backed storage, do not apply a silent
+        // character-level splice; that path bypasses the canonical
+        // element-bounded DocumentEditApplier pipeline.
+        guard let tlm = self.textLayoutManager,
+              let contentStorage = tlm.textContentManager as? NSTextContentStorage
+        else {
+            bmLog("⛔ applyEditResultWithUndo: TK2 content storage unavailable; refusing block-model edit")
+            pendingInlineTraits = savedPendingTraits
+            explicitlyOffTraits = savedOffTraits
+            return
+        }
+
         // Mark that the user has made an edit — enables save().
         hasUserEdits = true
 
@@ -797,69 +810,50 @@ extension EditTextView {
         umSplice?.disableUndoRegistration()
         textStorageProcessor?.isRendering = true
 
-        // Phase 3 wire-in: on TK2, route the storage mutation through
-        // the element-level `DocumentEditApplier` primitive. It diffs
-        // the prior/new Documents and emits a single element-bounded
-        // replaceCharacters inside `performEditingTransaction` — the
-        // TK2-native equivalent of beginEditing/endEditing that
-        // batches delegate callbacks and layout invalidation across
-        // the whole mutation. On TK1 (layoutManager-backed storage),
-        // fall back to the legacy character-level splice that
-        // `EditingOps.narrowSplice` already minimized.
-        if let tlm = self.textLayoutManager,
-           let contentStorage = tlm.textContentManager as? NSTextContentStorage {
-            // Pass `oldProjection.rendered` as the prior-render
-            // override. The async inline-math renderer mutates storage
-            // (N source chars → 1 attachment char) and patches
-            // `projection.rendered.{attributed,blockSpans}` to match,
-            // but leaves `projection.document` stale. Re-rendering
-            // priorDoc here would produce the N-char form and compute
-            // a splice offset that's wrong by (N-1) — landing the
-            // splice on a neighbouring block. See
-            // `Phase6ImageResizeSpliceTests.test_resize_withStaleProjection_afterInlineMathSwap_doesNotCorruptNeighbours`
-            // for the regression shape.
-            _ = DocumentEditApplier.applyDocumentEdit(
-                priorDoc: oldProjection.document,
-                newDoc: result.newProjection.document,
-                contentStorage: contentStorage,
-                bodyFont: result.newProjection.bodyFont,
-                codeFont: result.newProjection.codeFont,
-                note: self.note,
-                priorRenderedOverride: oldProjection.rendered
-            )
-            // Subview-tables: schedule a deferred viewport-layout +
-            // table-container redisplay. The splice can dismount the
-            // table's view-provider when the splice range is in a
-            // neighbouring block (TK2 invalidates a wider range than
-            // the changed characters). Doing the remount synchronously
-            // doesn't take effect — TK2 needs the run loop to settle.
-            // Coalescing flag: only ONE refresh per run-loop tick is
-            // scheduled, so rapid typing doesn't queue N redundant
-            // refreshes (which would each force a paint and produce
-            // visible flicker on the table).
-            if !pendingTableRefreshScheduled {
-                pendingTableRefreshScheduled = true
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.pendingTableRefreshScheduled = false
-                    guard let tlm = self.textLayoutManager else { return }
-                    tlm.textViewportLayoutController.layoutViewport()
-                    self.refreshAllTableContainerViews(in: self)
-                }
-            }
-        } else {
-            // Phase 5a: TK1 splice fallback. Same logical scope as
-            // `applyDocumentEdit` — an `EditingOps`-driven mutation
-            // with prior/new projections. Mark as the canonical
-            // document-edit scope so the debug assertion treats this
-            // authorized.
-            StorageWriteGuard.performingApplyDocumentEdit {
-                storage.beginEditing()
-                storage.replaceCharacters(
-                    in: result.spliceRange,
-                    with: result.spliceReplacement
-                )
-                storage.endEditing()
+        // Route the storage mutation through the element-level
+        // `DocumentEditApplier` primitive. It diffs the prior/new
+        // Documents and emits a single element-bounded replaceCharacters
+        // inside `performEditingTransaction` — the TK2-native
+        // transaction that batches delegate callbacks and layout
+        // invalidation across the whole mutation.
+        //
+        // Pass `oldProjection.rendered` as the prior-render override.
+        // The async inline-math renderer mutates storage (N source chars
+        // → 1 attachment char) and patches
+        // `projection.rendered.{attributed,blockSpans}` to match, but
+        // leaves `projection.document` stale. Re-rendering priorDoc here
+        // would produce the N-char form and compute a splice offset
+        // that's wrong by (N-1) — landing the splice on a neighbouring
+        // block. See
+        // `Phase6ImageResizeSpliceTests.test_resize_withStaleProjection_afterInlineMathSwap_doesNotCorruptNeighbours`
+        // for the regression shape.
+        _ = DocumentEditApplier.applyDocumentEdit(
+            priorDoc: oldProjection.document,
+            newDoc: result.newProjection.document,
+            contentStorage: contentStorage,
+            bodyFont: result.newProjection.bodyFont,
+            codeFont: result.newProjection.codeFont,
+            note: self.note,
+            priorRenderedOverride: oldProjection.rendered
+        )
+        // Subview-tables: schedule a deferred viewport-layout +
+        // table-container redisplay. The splice can dismount the
+        // table's view-provider when the splice range is in a
+        // neighbouring block (TK2 invalidates a wider range than
+        // the changed characters). Doing the remount synchronously
+        // doesn't take effect — TK2 needs the run loop to settle.
+        // Coalescing flag: only ONE refresh per run-loop tick is
+        // scheduled, so rapid typing doesn't queue N redundant
+        // refreshes (which would each force a paint and produce
+        // visible flicker on the table).
+        if !pendingTableRefreshScheduled {
+            pendingTableRefreshScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.pendingTableRefreshScheduled = false
+                guard let tlm = self.textLayoutManager else { return }
+                tlm.textViewportLayoutController.layoutViewport()
+                self.refreshAllTableContainerViews(in: self)
             }
         }
         umSplice?.enableUndoRegistration()
@@ -943,8 +937,8 @@ extension EditTextView {
         bmLog("🔧 applyEditResultWithUndo AFTER: storage.length=\(storage.length), storage.string='\(storage.string)'")
 
         // Update projection.
-        // Phase 4.6: setter auto-syncs `processor.blocks` from the new
-        // projection — no explicit call needed.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table from the new projection — no explicit call needed.
         documentProjection = result.newProjection
 
         // Set cursor without triggering an implicit scroll.
@@ -2820,7 +2814,8 @@ extension EditTextView {
                             codeFont: proj.codeFont,
                             note: proj.note
                         )
-                        // Phase 4.6: setter auto-syncs `processor.blocks`.
+                        // Phase 4.6: setter auto-syncs the processor's
+                        // source-mode query table.
                         self.documentProjection = newProjection
                     }
 
@@ -3031,7 +3026,8 @@ extension EditTextView {
                             codeFont: proj.codeFont,
                             note: proj.note
                         )
-                        // Phase 4.6: setter auto-syncs `processor.blocks`.
+                        // Phase 4.6: setter auto-syncs the processor's
+                        // source-mode query table.
                         self.documentProjection = newProjection
                     }
 

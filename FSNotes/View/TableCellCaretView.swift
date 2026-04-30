@@ -149,7 +149,7 @@ extension EditTextView {
             }
             return
         }
-        // Boundary caret rect already returns a single-line-height
+        // Boundary caret rect already returns the desired table-height
         // rect. Set the width to the standard caret stripe.
         var caretRect = rect
         caretRect.size.width = max(2, caretWidth)

@@ -526,39 +526,6 @@ class InlineQuickLookView: NSView {
     }
 }
 
-// MARK: - QuickLookAttachmentCell (DEPRECATED — TK1 only)
-
-/// Legacy TK1 NSTextAttachmentCell. Under TK2, the
-/// `draw(withFrame:in:characterIndex:layoutManager:)` method is never
-/// called — Apple replaced it with `NSTextAttachmentViewProvider`. See
-/// `QuickLookAttachmentViewProvider` / `QuickLookNSTextAttachment` below.
-///
-/// Kept during TK1-fallback period; remove when TK1 source-mode is
-/// deleted (Phase 4).
-class QuickLookAttachmentCell: NSTextAttachmentCell {
-
-    let inlineView: InlineQuickLookView
-    private let desiredSize: NSSize
-
-    init(quickLookView: InlineQuickLookView, size: NSSize) {
-        self.inlineView = quickLookView
-        self.desiredSize = size
-        super.init()
-    }
-
-    required init(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func cellSize() -> NSSize {
-        return desiredSize
-    }
-
-    override func cellBaselineOffset() -> NSPoint {
-        return NSPoint(x: 0, y: -2)
-    }
-}
-
 // MARK: - QuickLookAttachmentViewProvider (TK2)
 
 /// TK2-idiomatic view provider that builds a fresh `InlineQuickLookView`
@@ -693,10 +660,10 @@ enum QuickLookAttachmentProcessor {
             guard let attachment = value as? NSTextAttachment else { return }
             attachmentCount += 1
 
-            // Skip if already rendered as a QuickLook or PDF attachment
+            // Skip if already rendered as a QuickLook attachment.
+            // PDFs are excluded by extension below and handled by
+            // PDFAttachmentProcessor.
             if attachment is QuickLookNSTextAttachment { return }
-            if attachment.attachmentCell is QuickLookAttachmentCell { return }
-            if attachment.attachmentCell is PDFAttachmentCell { return }
 
             let maybeURL = textStorage.attribute(.attachmentUrl, at: range.location, effectiveRange: nil) as? URL
             guard let url = maybeURL,

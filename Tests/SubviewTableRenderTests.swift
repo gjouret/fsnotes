@@ -41,6 +41,20 @@ final class SubviewTableRenderTests: XCTestCase {
         )
     }
 
+    private func rightMouseEvent(at point: NSPoint) -> NSEvent {
+        return NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: point,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        )!
+    }
+
     // MARK: - 1. renderAsAttachment shape
 
     func test_renderAsAttachment_emitsSingleAttachmentChar() {
@@ -85,6 +99,25 @@ final class SubviewTableRenderTests: XCTestCase {
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(rows[0].map { $0.rawText }, ["a0", "b0"])
         XCTAssertEqual(rows[1].map { $0.rawText }, ["a1", "b1"])
+    }
+
+    func test_renderAsAttachment_tagsTableMetadata() {
+        let block = sample2x2Block()
+        let attr = TableTextRenderer.renderAsAttachment(block: block)
+
+        XCTAssertEqual(
+            attr.attribute(.renderedBlockType, at: 0, effectiveRange: nil)
+                as? String,
+            RenderedBlockType.table.rawValue
+        )
+        XCTAssertEqual(
+            attr.attribute(
+                .renderedBlockOriginalMarkdown,
+                at: 0,
+                effectiveRange: nil
+            ) as? String,
+            MarkdownSerializer.serializeBlock(block)
+        )
     }
 
     // MARK: - 2. View provider lifecycles a TableContainerView
@@ -182,5 +215,279 @@ final class SubviewTableRenderTests: XCTestCase {
             accuracy: 1.0,
             "attachmentBounds width should equal text container width"
         )
+    }
+
+    func test_attachmentBounds_usesWiderProposedLineFragmentWhenContainerWidthIsStale() {
+        let block = sample2x2Block()
+        let attachment = TableAttachment(block: block)
+
+        // Reproduce first-render timing: the text container can still
+        // carry the default 600pt width while TK2 proposes the actual
+        // full line fragment for the table. The attachment must take
+        // the wider proposed width immediately, not wait for a later
+        // focus/layout pass to resize.
+        let staleContainer = NSTextContainer(
+            size: CGSize(width: 600, height: 1e6)
+        )
+        let tlm = NSTextLayoutManager()
+        tlm.textContainer = staleContainer
+        let cs = NSTextContentStorage()
+        cs.addTextLayoutManager(tlm)
+        cs.textStorage = NSTextStorage(
+            attributedString: NSAttributedString(attachment: attachment)
+        )
+        let docStart = cs.documentRange.location
+
+        guard let provider = attachment.viewProvider(
+            for: nil, location: docStart, textContainer: staleContainer
+        ) as? TableAttachmentViewProvider else {
+            XCTFail("provider"); return
+        }
+        provider.loadView()
+
+        let bounds = provider.attachmentBounds(
+            for: [:],
+            location: docStart,
+            textContainer: staleContainer,
+            proposedLineFragment: CGRect(x: 0, y: 0, width: 800, height: 17),
+            position: .zero
+        )
+
+        XCTAssertEqual(bounds.width, 800, accuracy: 0.1)
+        XCTAssertEqual(attachment.bounds.width, 800, accuracy: 0.1)
+        XCTAssertEqual(provider.view?.frame.width ?? 0, 800, accuracy: 0.1)
+    }
+
+    func test_containerShowsRowAndColumnHandlesForHoveredCell() {
+        let block = sample2x2Block()
+        let container = TableContainerView(block: block, containerWidth: 600)
+
+        XCTAssertNil(
+            container.debugVisibleHandleRects(),
+            "handles should be hidden before hover or focus"
+        )
+
+        container.debugSetHandleHover(row: 2, col: 1)
+
+        guard let rects = container.debugVisibleHandleRects(),
+              let column = rects.column,
+              let row = rects.row,
+              case .table(let header, let alignments, let rows, _) = block
+        else {
+            return XCTFail("hovered cell should expose both row and column handles")
+        }
+
+        let g = TableGeometry.compute(
+            header: header,
+            rows: rows,
+            alignments: alignments,
+            containerWidth: 600,
+            font: UserDefaultsManagement.noteFont,
+            columnWidthsOverride: nil
+        )
+
+        XCTAssertEqual(column.minY, 0, accuracy: 0.1)
+        XCTAssertEqual(column.height, TableGeometry.handleBarHeight, accuracy: 0.1)
+        XCTAssertEqual(
+            column.minX,
+            TableGeometry.handleBarWidth + g.columnWidths[0],
+            accuracy: 0.1
+        )
+        XCTAssertEqual(column.width, g.columnWidths[1], accuracy: 0.1)
+
+        XCTAssertEqual(row.minX, 0, accuracy: 0.1)
+        XCTAssertEqual(row.width, TableGeometry.handleBarWidth, accuracy: 0.1)
+        XCTAssertEqual(
+            row.minY,
+            TableGeometry.handleBarHeight + g.rowHeights[0] + g.rowHeights[1],
+            accuracy: 0.1
+        )
+        XCTAssertEqual(row.height, g.rowHeights[2], accuracy: 0.1)
+    }
+
+    func test_containerShowsHandlesForFocusedCellAndTracksGeometryUpdates() {
+        let initial = sample2x2Block()
+        let container = TableContainerView(block: initial, containerWidth: 600)
+        container.debugSetHandleFocus(row: 1, col: 0)
+
+        guard let initialRow = container.debugVisibleHandleRects()?.row else {
+            return XCTFail("focused cell should show a row handle")
+        }
+
+        let taller = Block.table(
+            header: cells(["A", "B"]),
+            alignments: [.none, .none],
+            rows: [
+                [
+                    TableCell([
+                        .text("first line"),
+                        .rawHTML("<br>"),
+                        .text("second line"),
+                        .rawHTML("<br>"),
+                        .text("third line")
+                    ]),
+                    cell("b0")
+                ],
+                cells(["a1", "b1"])
+            ],
+            columnWidths: nil
+        )
+        container.refreshCellContents(newBlock: taller)
+
+        guard let updatedRow = container.debugVisibleHandleRects()?.row,
+              case .table(let header, let alignments, let rows, _) = taller
+        else {
+            return XCTFail("focused handle should survive in-place table refresh")
+        }
+
+        let g = TableGeometry.compute(
+            header: header,
+            rows: rows,
+            alignments: alignments,
+            containerWidth: 600,
+            font: UserDefaultsManagement.noteFont,
+            columnWidthsOverride: nil
+        )
+
+        XCTAssertGreaterThan(updatedRow.height, initialRow.height)
+        XCTAssertEqual(updatedRow.height, g.rowHeights[1], accuracy: 0.1)
+    }
+
+    func test_columnHandleContextMenuOffersClearColumn() {
+        let block = sample2x2Block()
+        let container = TableContainerView(block: block, containerWidth: 600)
+        guard case .table(let header, let alignments, let rows, _) = block else {
+            return XCTFail("fixture must be a table")
+        }
+        let g = TableGeometry.compute(
+            header: header,
+            rows: rows,
+            alignments: alignments,
+            containerWidth: 600,
+            font: UserDefaultsManagement.noteFont,
+            columnWidthsOverride: nil
+        )
+        let point = NSPoint(
+            x: TableGeometry.handleBarWidth + g.columnWidths[0] + 1,
+            y: 1
+        )
+
+        guard let menu = container.menu(
+            for: rightMouseEvent(at: container.convert(point, to: nil))
+        ),
+              let item = menu.items.first(where: { $0.title == "Clear Column" })
+        else {
+            return XCTFail("column handle should provide a context menu")
+        }
+
+        XCTAssertEqual(item.title, "Clear Column")
+        var captured: TableContainerView.ClearTarget?
+        container.onClearCells = { captured = $0 }
+        guard let action = item.action,
+              let target = item.target as AnyObject?
+        else {
+            return XCTFail("Clear Column item should have an action")
+        }
+        _ = target.perform(action, with: item)
+        XCTAssertEqual(captured, .column(1))
+    }
+
+    func test_columnHandleSortMenuTogglesDirection() {
+        let block = sample2x2Block()
+        let container = TableContainerView(block: block, containerWidth: 600)
+        guard case .table(let header, let alignments, let rows, _) = block else {
+            return XCTFail("fixture must be a table")
+        }
+        let g = TableGeometry.compute(
+            header: header,
+            rows: rows,
+            alignments: alignments,
+            containerWidth: 600,
+            font: UserDefaultsManagement.noteFont,
+            columnWidthsOverride: nil
+        )
+        let point = NSPoint(
+            x: TableGeometry.handleBarWidth + g.columnWidths[0] + 1,
+            y: 1
+        )
+        let event = rightMouseEvent(at: container.convert(point, to: nil))
+
+        guard let firstMenu = container.menu(for: event),
+              let firstSort = firstMenu.items.first(where: {
+                  $0.title == "Sort Ascending"
+              }),
+              let firstAction = firstSort.action,
+              let firstTarget = firstSort.target as AnyObject?
+        else {
+            return XCTFail("column handle should offer Sort Ascending")
+        }
+
+        var calls: [(Int, Bool)] = []
+        container.onSortColumn = { calls.append(($0, $1)) }
+        _ = firstTarget.perform(firstAction, with: firstSort)
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls[0].0, 1)
+        XCTAssertEqual(calls[0].1, true)
+        XCTAssertEqual(
+            container.debugSortIndicator(),
+            TableContainerView.DebugSortIndicator(column: 1, ascending: true)
+        )
+
+        guard let secondMenu = container.menu(for: event),
+              let secondSort = secondMenu.items.first(where: {
+                  $0.title == "Sort Descending"
+              }),
+              let secondAction = secondSort.action,
+              let secondTarget = secondSort.target as AnyObject?
+        else {
+            return XCTFail("second click should offer Sort Descending")
+        }
+        _ = secondTarget.perform(secondAction, with: secondSort)
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[1].0, 1)
+        XCTAssertEqual(calls[1].1, false)
+        XCTAssertEqual(
+            container.debugSortIndicator(),
+            TableContainerView.DebugSortIndicator(column: 1, ascending: false)
+        )
+    }
+
+    func test_rowHandleContextMenuOffersClearRow() {
+        let block = sample2x2Block()
+        let container = TableContainerView(block: block, containerWidth: 600)
+        guard case .table(let header, let alignments, let rows, _) = block else {
+            return XCTFail("fixture must be a table")
+        }
+        let g = TableGeometry.compute(
+            header: header,
+            rows: rows,
+            alignments: alignments,
+            containerWidth: 600,
+            font: UserDefaultsManagement.noteFont,
+            columnWidthsOverride: nil
+        )
+        let point = NSPoint(
+            x: 1,
+            y: TableGeometry.handleBarHeight + g.rowHeights[0] + 1
+        )
+
+        guard let menu = container.menu(
+            for: rightMouseEvent(at: container.convert(point, to: nil))
+        ),
+              let item = menu.items.first
+        else {
+            return XCTFail("row handle should provide a context menu")
+        }
+
+        XCTAssertEqual(item.title, "Clear Row")
+        var captured: TableContainerView.ClearTarget?
+        container.onClearCells = { captured = $0 }
+        guard let action = item.action,
+              let target = item.target as AnyObject?
+        else {
+            return XCTFail("Clear Row item should have an action")
+        }
+        _ = target.perform(action, with: item)
+        XCTAssertEqual(captured, .row(1))
     }
 }

@@ -105,7 +105,8 @@ extension EditTextView {
                 storage.replaceCharacters(in: fullRange, with: newProjection.attributed)
             }
         }
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table.
         documentProjection = newProjection
 
         // Save the updated document.

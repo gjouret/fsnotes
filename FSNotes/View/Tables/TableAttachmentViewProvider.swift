@@ -30,7 +30,11 @@ final class TableAttachmentViewProvider: NSTextAttachmentViewProvider {
             self.view = NSView(frame: .zero)
             return
         }
-        let width = textLayoutManager?.textContainer?.size.width ?? 600
+        let width = resolvedContainerWidth(
+            textContainer: textLayoutManager?.textContainer,
+            proposedLineFragment: nil,
+            attachment: attachment
+        )
         // Reuse the existing TableContainerView if cached on the
         // attachment. TK2 dismounts and remounts the view-provider
         // on every textStorage edit (even edits in neighbouring
@@ -98,6 +102,26 @@ final class TableAttachmentViewProvider: NSTextAttachmentViewProvider {
             else { return }
             editor.placeCursorOutsideTable(attachment: attachment, side: side)
         }
+        container.onClearCells = { [weak attachment, weak container] target in
+            guard let attachment = attachment,
+                  let container = container,
+                  let editor = TableAttachmentViewProvider
+                    .findEditTextView(startingAt: container)
+            else { return }
+            editor.applyTableClearCells(attachment: attachment, target: target)
+        }
+        container.onSortColumn = { [weak attachment, weak container] col, ascending in
+            guard let attachment = attachment,
+                  let container = container,
+                  let editor = TableAttachmentViewProvider
+                    .findEditTextView(startingAt: container)
+            else { return }
+            editor.applyTableSortRows(
+                attachment: attachment,
+                col: col,
+                ascending: ascending
+            )
+        }
         container.onExitTable = { [weak attachment, weak container] direction in
             guard let attachment = attachment,
                   let container = container,
@@ -153,15 +177,43 @@ final class TableAttachmentViewProvider: NSTextAttachmentViewProvider {
               case .table = attachment.block
         else { return .zero }
 
-        let width = textContainer?.size.width
-            ?? proposedLineFragment.width
+        let width = resolvedContainerWidth(
+            textContainer: textContainer,
+            proposedLineFragment: proposedLineFragment,
+            attachment: attachment
+        )
+        let bounds: CGRect
         if let view = containerView {
             view.setContainerWidth(width)
-            return CGRect(x: 0, y: 0, width: width, height: view.totalHeight)
+            bounds = CGRect(x: 0, y: 0, width: width, height: view.totalHeight)
+        } else {
+            let probe = TableContainerView(
+                block: attachment.block, containerWidth: width
+            )
+            bounds = CGRect(x: 0, y: 0, width: width, height: probe.totalHeight)
         }
-        let probe = TableContainerView(
-            block: attachment.block, containerWidth: width
-        )
-        return CGRect(x: 0, y: 0, width: width, height: probe.totalHeight)
+        if !attachment.bounds.equalTo(bounds) {
+            attachment.bounds = bounds
+        }
+        return bounds
+    }
+
+    private func resolvedContainerWidth(
+        textContainer: NSTextContainer?,
+        proposedLineFragment: CGRect?,
+        attachment: TableAttachment
+    ) -> CGFloat {
+        let candidates = [
+            textContainer?.size.width,
+            proposedLineFragment?.width,
+            attachment.bounds.width,
+            600
+        ]
+        return candidates.compactMap { width -> CGFloat? in
+            guard let width = width,
+                  width.isFinite,
+                  width > 0 else { return nil }
+            return width
+        }.max() ?? 600
     }
 }

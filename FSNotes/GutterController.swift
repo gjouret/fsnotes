@@ -146,9 +146,10 @@ class GutterController {
         /// Heading fragment's vertical midpoint in view coords.
         let midY: CGFloat
         /// Character index into `NSTextStorage` at the start of the
-        /// heading element. This is the index we feed to
-        /// `TextStorageProcessor.headerBlockIndex(at:)` to map from a
-        /// visible fragment back to a `processor.blocks` index.
+        /// heading element. Fold-state drawing reads the canonical
+        /// offset-keyed side table at this location; click handling
+        /// maps it through `TextStorageProcessor.headerBlockIndex(at:)`
+        /// because the fold mutator remains index-based.
         let charIndex: Int
     }
 
@@ -231,9 +232,6 @@ class GutterController {
         let isEditing = textView.window?.firstResponder === textView
 
         for heading in visibleHeadingsTK2() {
-            // Find the matching block so we can read `collapsed`. The
-            // processor's block array is source-of-truth for fold state
-            // regardless of TK version.
             guard heading.charIndex < storage.length else { continue }
 
             // Skip if this heading is itself inside a folded range.
@@ -243,15 +241,13 @@ class GutterController {
                 continue
             }
 
-            guard let blockIdx = processor.headerBlockIndex(at: heading.charIndex) else {
-                continue
-            }
-            // Phase 6 Tier B′ Sub-slice 2: route fold-state read
-            // through the public side-table query instead of the
-            // dual-written per-block legacy cache. The cache stays
-            // in sync for now but will be retired once all readers
-            // (incl. tests) have migrated.
-            let isCollapsed = processor.isCollapsed(blockIndex: blockIdx)
+            // Fold state is keyed by storage offset, so draw can read
+            // the canonical side table without first mapping the
+            // visible TK2 fragment back to a source-block index.
+            let isCollapsed = processor.isCollapsed(
+                storageOffset: heading.charIndex
+            )
+            let blockIdx = processor.headerBlockIndex(at: heading.charIndex)
 
             // Fold caret
             if isMouseInGutter || isCollapsed {
@@ -278,7 +274,7 @@ class GutterController {
             // `Document.blocks` via the projection (WYSIWYG path).
             // Sub-slice 7.B.2.a routes the source-mode arm through
             // `processor.headingLevel(atBlockIndex:)` so this site no
-            // longer reads the `processor.blocks` array directly.
+            // longer reaches into the source-block array directly.
             let level: Int = {
                 if let v = storage.attribute(
                     .headingLevel, at: heading.charIndex, effectiveRange: nil
@@ -292,7 +288,10 @@ class GutterController {
                    case .heading(let l, _) = projection.document.blocks[docIdx] {
                     return l
                 }
-                return processor.headingLevel(atBlockIndex: blockIdx)
+                if let blockIdx = blockIdx {
+                    return processor.headingLevel(atBlockIndex: blockIdx)
+                }
+                return 0
             }()
             let cursorOnThisLine = cursorParagraphRange.map {
                 heading.charIndex >= $0.location &&
@@ -391,8 +390,8 @@ class GutterController {
     /// logical block collapse into a single record — that record's y
     /// values anchor at the first fragment. WYSIWYG resolution goes
     /// through `Document.blocks + blockSpans` (Sub-slice 5); source
-    /// mode keeps the legacy `processor.blocks` lookup until
-    /// Sub-slice 7 retires the per-block array.
+    /// mode goes through `processor.codeBlockRange(...)`, the narrow
+    /// public API over source-mode parser state.
     func visibleCodeBlocksTK2() -> [VisibleCodeBlockTK2] {
         guard let textView = textView,
               let tlm = textView.textLayoutManager,
@@ -443,7 +442,7 @@ class GutterController {
             // dedupe on the block's storage start. Phase 6 Tier B′
             // Sub-slice 5: in WYSIWYG (`documentProjection != nil`),
             // resolve via `Document.blocks + blockSpans` so this draw
-            // path no longer depends on `processor.blocks`.
+            // path does not depend on source-mode parser state.
             // Sub-slice 7.B.2.a routes the source-mode arm through
             // `processor.codeBlockRange(containingStorageIndex:)`.
             let blockRange: NSRange
@@ -676,8 +675,8 @@ class GutterController {
 
     /// Given a y-coordinate in the text view's coordinate space (i.e.
     /// `textView.convert(event.locationInWindow, from: nil).y`), return
-    /// the `processor.blocks` index of the heading whose vertical band
-    /// contains that y, or `nil` if no heading matches. Used by the TK2
+    /// the processor header index whose vertical band contains that y,
+    /// or `nil` if no heading matches. Used by the TK2
     /// `handleClick` path since TK2 has no equivalent to TK1's
     /// `characterIndex(for:in:)` for points outside the text container.
     func headerBlockIndexForClickYTK2(clickY: CGFloat) -> Int? {

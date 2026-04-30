@@ -389,7 +389,7 @@ final class Phase46BlocksPeerDeletionTests: XCTestCase {
         )
     }
 
-    // MARK: - Phase 6 Tier B′ Sub-slice 7.B.2 — processor.blocks retirement
+    // MARK: - Phase 6 Tier B′ Sub-slice 7.B.2 — source block retirement
 
     /// Sub-slice 7.B.2.a hid the `[MarkdownBlock]` array from external
     /// production readers (four source-mode-fallback callers + the

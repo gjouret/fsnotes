@@ -65,7 +65,8 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         let harness = EditorHarness(markdown: markdown)
         defer { harness.teardown() }
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table.
         pumpLayout(harness.editor)
 
         let overlay = CodeBlockEditToggleOverlay(editor: harness.editor)
@@ -95,7 +96,8 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table.
         pumpLayout(editor)
 
         // Mark the code block's storage range as folded. Under the
@@ -151,7 +153,8 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table.
         pumpLayout(editor)
 
         let overlay = CodeBlockEditToggleOverlay(editor: editor)
@@ -215,7 +218,8 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table.
         pumpLayout(editor)
 
         // Locate the mermaid block's ref (content-hash keyed).
@@ -289,7 +293,8 @@ final class CodeBlockEditToggleOverlayTests: XCTestCase {
         defer { harness.teardown() }
         let editor = harness.editor
 
-        // Phase 4.6: setter auto-syncs `processor.blocks`.
+        // Phase 4.6: setter auto-syncs the processor's source-mode
+        // query table.
         pumpLayout(editor)
 
         guard let proj = editor.documentProjection,

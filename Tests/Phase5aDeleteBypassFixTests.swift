@@ -175,14 +175,10 @@ final class Phase5aDeleteBypassFixTests: XCTestCase {
     // Same class: `insertText(_:replacementRange:)` invoked from an
     // IBAction/menu-item context bypasses `shouldChangeText` — so the
     // block-model gatekeeper never runs and no `StorageWriteGuard`
-    // scope is active. Six IBActions in `EditTextView+Formatting.swift`
-    // had this problem (linkMenu, showLinkDialog, insertTableMenu,
-    // insertCodeBlock, insertCodeSpan). Minimal fix: wrap each
-    // `insertText(...)` call in `StorageWriteGuard.performingLegacyStorageWrite`
-    // so the assertion acknowledges the documented exemption. Cleaner
-    // fix (routing through `handleEditViaBlockModel`) is deferred —
-    // it needs new block-model primitives like `wrapInCode` that don't
-    // yet exist.
+    // scope is active. The code-span action now uses the block-model
+    // inline-trait route for WYSIWYG edits; empty selections set a
+    // pending `.code` trait instead of inserting literal backticks into
+    // rendered storage.
     //
     // The tests below invoke each IBAction on a live `EditTextView`
     // and assert the assertion doesn't fire in DEBUG. Because the
@@ -190,7 +186,7 @@ final class Phase5aDeleteBypassFixTests: XCTestCase {
     // detect it by survival — if the test completes without crashing,
     // the scope was correctly established.
 
-    func test_insertCodeSpan_emptySelection_doesNotTripAssertion() {
+    func test_insertCodeSpan_emptySelection_setsPendingCodeTrait() {
         let harness = EditorHarness(markdown: "hello")
         defer { harness.teardown() }
 
@@ -198,22 +194,20 @@ final class Phase5aDeleteBypassFixTests: XCTestCase {
         harness.editor.setSelectedRange(NSRange(location: 5, length: 0))
 
         // Invoke the IBAction. If the Phase 5a assertion fires, the
-        // test crashes (DEBUG builds trap in assertionFailure). If it
-        // passes, the `performingLegacyStorageWrite` wrap did its job.
+        // test crashes (DEBUG builds trap in assertionFailure). In
+        // WYSIWYG mode this should be handled by the block-model
+        // pending-trait route, not by a direct storage write.
         harness.editor.insertCodeSpan(NSMenuItem())
 
-        // Storage now has backtick pair inserted.
-        XCTAssertEqual(harness.editor.textStorage?.string, "hello``")
+        XCTAssertEqual(harness.editor.textStorage?.string, "hello")
+        XCTAssertTrue(harness.editor.pendingInlineTraits.contains(.code))
     }
 
     // Additional formatting-IBAction coverage deferred: the offscreen
     // harness doesn't route `insertText(NSAttributedString, replacementRange:)`
     // or non-trivial IBAction state through the normal responder chain
-    // (no key-window status, no firstResponder). The String-based
-    // `insertText("``", ...)` path in the empty-selection case above
-    // fires through the same `performingLegacyStorageWrite` wrap, so
-    // the scope-authorization contract IS exercised — just not on every
-    // sibling IBAction. Manual verification matrix for Batch N+10 dogfood:
+    // (no key-window status, no firstResponder). Manual verification
+    // matrix for Batch N+10 dogfood:
     // linkMenu / wikiLinkMenu / insertCodeBlock / insertTableMenu /
     // insertImage (when added) with both empty and ranged selections in
     // WYSIWYG mode. The assertion should not fire on any of them.

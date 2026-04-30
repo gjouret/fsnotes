@@ -204,6 +204,46 @@ final class TextKit2BaselineTests: XCTestCase {
         )
     }
 
+    /// WYSIWYG block-model edits are TK2-only. A TK1-backed editor must
+    /// not silently fall back to a character-level splice, because that
+    /// bypasses `DocumentEditApplier` and the single write path.
+    func test_phase2a_applyEditResultWithUndo_refusesTextKit1SpliceFallback() throws {
+        let editor = makeTextKit1Editor()
+        editor.initTextStorage()
+        XCTAssertNil(editor.textLayoutManager, "precondition: TK1")
+
+        let doc = MarkdownParser.parse("hello")
+        let projection = DocumentProjection(
+            document: doc,
+            bodyFont: NSFont.systemFont(ofSize: 14),
+            codeFont: NSFont.monospacedSystemFont(
+                ofSize: 14, weight: .regular
+            )
+        )
+        StorageWriteGuard.performingFill {
+            editor.textStorage?.setAttributedString(projection.attributed)
+        }
+        editor.documentProjection = projection
+        editor.textStorageProcessor?.blockModelActive = true
+        editor.textStorageProcessor?.sourceRendererActive = false
+        editor.hasUserEdits = false
+
+        let result = try EditingOps.insert("X", at: 5, in: projection)
+        editor.applyEditResultWithUndo(result, actionName: "Typing")
+
+        XCTAssertEqual(
+            editor.textStorage?.string,
+            "hello",
+            "TK1-backed block-model edits must be refused, not applied " +
+            "through the retired character-splice fallback."
+        )
+        XCTAssertEqual(editor.documentProjection?.attributed.string, "hello")
+        XCTAssertFalse(
+            editor.hasUserEdits,
+            "Refusing the edit must not mark the note dirty."
+        )
+    }
+
     /// The storyboard editor — after migration — must be on TK2 AND
     /// still have a live `textStorage`. Detaching the TK1 stack
     /// without a working TK2 swap leaves `textStorage` nil, which is

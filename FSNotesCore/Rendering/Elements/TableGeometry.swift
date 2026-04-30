@@ -356,11 +356,11 @@ public enum TableGeometry {
 
     // MARK: - Public entry point
 
-    /// Auto-detect alignment for columns where no explicit alignment
-    /// is set (.none). If every cell in a column is numeric or currency,
-    /// right-align. If all cells are short non-numeric strings (< 5 chars),
-    /// center-align. Otherwise keep .none (left-align).
-    private static func autoDetectAlignments(
+    /// Effective alignment for columns where no explicit alignment is
+    /// set (.none). Body cells drive the heuristic; header labels like
+    /// "Price" must not prevent a numeric/currency column from
+    /// right-aligning.
+    static func effectiveAlignments(
         alignments: [TableAlignment],
         header: [TableCell],
         rows: [[TableCell]]
@@ -376,10 +376,9 @@ public enum TableGeometry {
         for col in 0..<colCount {
             guard result[col] == .none else { continue }
 
-            // Collect all non-empty cell texts for this column
+            // Collect non-empty body cell texts for this column.
+            // Header labels describe the column; they are not data.
             var texts: [String] = []
-            let headerText = header[col].rawText.trimmingCharacters(in: .whitespaces)
-            if !headerText.isEmpty { texts.append(headerText) }
             for row in rows {
                 guard col < row.count else { continue }
                 let t = row[col].rawText.trimmingCharacters(in: .whitespaces)
@@ -425,7 +424,7 @@ public enum TableGeometry {
         let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         // Auto-detect alignment for columns with no explicit alignment.
         // Numeric/currency columns → right-align; short text columns → center.
-        let effectiveAlignments = autoDetectAlignments(
+        let effectiveAlignments = effectiveAlignments(
             alignments: alignments, header: header, rows: rows
         )
         let nsAlignments = effectiveAlignments.map { nsAlignment(for: $0) }

@@ -35,7 +35,21 @@ public enum TableTextRenderer {
     public static func renderAsAttachment(block: Block) -> NSAttributedString {
         guard case .table = block else { return NSAttributedString() }
         let attachment = TableAttachment(block: block)
-        return NSAttributedString(attachment: attachment)
+        let rendered = NSMutableAttributedString(
+            attributedString: NSAttributedString(attachment: attachment)
+        )
+        let range = NSRange(location: 0, length: rendered.length)
+        rendered.addAttribute(
+            .renderedBlockType,
+            value: RenderedBlockType.table.rawValue,
+            range: range
+        )
+        rendered.addAttribute(
+            .renderedBlockOriginalMarkdown,
+            value: MarkdownSerializer.serializeBlock(block),
+            range: range
+        )
+        return rendered
     }
     #endif
 

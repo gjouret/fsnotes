@@ -99,8 +99,16 @@ final class TableCellTextView: NSTextView {
         super.mouseDown(with: event)
     }
 
+    override func mouseMoved(with event: NSEvent) {
+        parentTableContainer()?.noteMouseMoved(over: self)
+        super.mouseMoved(with: event)
+    }
+
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
+        if result {
+            parentTableContainer()?.noteCellFocusChanged(self, isFocused: true)
+        }
         // The parent EditTextView's caret view is only repositioned
         // on selection change. When this cell takes first responder
         // (e.g. via auto-focus after Insert Table), the parent's
@@ -121,6 +129,9 @@ final class TableCellTextView: NSTextView {
 
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
+        if result {
+            parentTableContainer()?.noteCellFocusChanged(self, isFocused: false)
+        }
         // Symmetric: when this cell loses FR, the parent may have
         // gained FR. Re-evaluate caret visibility.
         var v: NSView? = self.superview
@@ -132,5 +143,16 @@ final class TableCellTextView: NSTextView {
             v = cur.superview
         }
         return result
+    }
+
+    private func parentTableContainer() -> TableContainerView? {
+        var v: NSView? = self.superview
+        while let cur = v {
+            if let table = cur as? TableContainerView {
+                return table
+            }
+            v = cur.superview
+        }
+        return nil
     }
 }

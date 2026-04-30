@@ -440,6 +440,148 @@ final class TableStructuralEditingTests: XCTestCase {
         )
     }
 
+    // MARK: - clearTableRow / clearTableColumn
+
+    func test_clearTableRow_clearsBodyRowContentsOnly() throws {
+        let p = projectTable(Self.markdown3x2)
+        let result = try EditingOps.clearTableRow(
+            blockIndex: 0,
+            row: 2,
+            in: p
+        )
+        guard let after = table(in: result.newProjection) else {
+            XCTFail("Post-edit block was not a table")
+            return
+        }
+
+        XCTAssertEqual(after.header.map { $0.rawText }, ["A", "B", "C"])
+        XCTAssertEqual(after.rows[0].map { $0.rawText }, ["a0", "b0", "c0"])
+        XCTAssertEqual(after.rows[1].map { $0.rawText }, ["", "", ""])
+        XCTAssertEqual(after.alignments, [.none, .none, .none])
+    }
+
+    func test_clearTableRow_canClearHeaderRow() throws {
+        let p = projectTable(Self.markdown3x2)
+        let result = try EditingOps.clearTableRow(
+            blockIndex: 0,
+            row: 0,
+            in: p
+        )
+        guard let after = table(in: result.newProjection) else {
+            XCTFail("Post-edit block was not a table")
+            return
+        }
+
+        XCTAssertEqual(after.header.map { $0.rawText }, ["", "", ""])
+        XCTAssertEqual(after.rows[0].map { $0.rawText }, ["a0", "b0", "c0"])
+        XCTAssertEqual(after.rows[1].map { $0.rawText }, ["a1", "b1", "c1"])
+    }
+
+    func test_clearTableColumn_clearsHeaderAndBodyCells() throws {
+        let p = projectTable(Self.markdown3x2)
+        let result = try EditingOps.clearTableColumn(
+            blockIndex: 0,
+            col: 1,
+            in: p
+        )
+        guard let after = table(in: result.newProjection) else {
+            XCTFail("Post-edit block was not a table")
+            return
+        }
+
+        XCTAssertEqual(after.header.map { $0.rawText }, ["A", "", "C"])
+        XCTAssertEqual(after.rows[0].map { $0.rawText }, ["a0", "", "c0"])
+        XCTAssertEqual(after.rows[1].map { $0.rawText }, ["a1", "", "c1"])
+        XCTAssertEqual(after.alignments, [.none, .none, .none])
+    }
+
+    func test_clearTableRowAndColumn_outOfBounds_throw() {
+        let p = projectTable(Self.markdown3x2)
+        XCTAssertThrowsError(
+            try EditingOps.clearTableRow(blockIndex: 0, row: -1, in: p)
+        )
+        XCTAssertThrowsError(
+            try EditingOps.clearTableRow(blockIndex: 0, row: 3, in: p)
+        )
+        XCTAssertThrowsError(
+            try EditingOps.clearTableColumn(blockIndex: 0, col: -1, in: p)
+        )
+        XCTAssertThrowsError(
+            try EditingOps.clearTableColumn(blockIndex: 0, col: 3, in: p)
+        )
+    }
+
+    // MARK: - sortTableRows
+
+    func test_sortTableRows_numericColumnAscendingAndDescending() throws {
+        let md = """
+        | Item | Price |
+        | --- | --- |
+        | Banana | 2.00 |
+        | Cherry | 10.00 |
+        | Apple | 1.50 |
+        """
+        let p = projectTable(md)
+
+        let ascending = try EditingOps.sortTableRows(
+            blockIndex: 0,
+            byColumn: 1,
+            ascending: true,
+            in: p
+        )
+        guard let asc = table(in: ascending.newProjection) else {
+            XCTFail("Post-edit block was not a table")
+            return
+        }
+        XCTAssertEqual(
+            asc.rows.map { $0[0].rawText },
+            ["Apple", "Banana", "Cherry"]
+        )
+
+        let descending = try EditingOps.sortTableRows(
+            blockIndex: 0,
+            byColumn: 1,
+            ascending: false,
+            in: p
+        )
+        guard let desc = table(in: descending.newProjection) else {
+            XCTFail("Post-edit block was not a table")
+            return
+        }
+        XCTAssertEqual(
+            desc.rows.map { $0[0].rawText },
+            ["Cherry", "Banana", "Apple"]
+        )
+    }
+
+    func test_sortTableRows_stringColumnIsStable() throws {
+        let md = """
+        | Name | Group |
+        | --- | --- |
+        | b | x |
+        | a1 | tie |
+        | a2 | tie |
+        | c | y |
+        """
+        let p = projectTable(md)
+
+        let result = try EditingOps.sortTableRows(
+            blockIndex: 0,
+            byColumn: 1,
+            ascending: true,
+            in: p
+        )
+        guard let after = table(in: result.newProjection) else {
+            XCTFail("Post-edit block was not a table")
+            return
+        }
+        XCTAssertEqual(
+            after.rows.map { $0[0].rawText },
+            ["a1", "a2", "b", "c"],
+            "equal sort keys should preserve their original order"
+        )
+    }
+
     func test_allPrimitives_declareReplaceBlockAction() throws {
         let p = projectTable(Self.markdown3x2)
         let ops: [(String, () throws -> EditResult)] = [
@@ -447,6 +589,9 @@ final class TableStructuralEditingTests: XCTestCase {
             ("insertCol", { try EditingOps.insertTableColumn(blockIndex: 0, at: 0, alignment: .none, in: p) }),
             ("deleteRow", { try EditingOps.deleteTableRow(blockIndex: 0, at: 0, in: p) }),
             ("deleteCol", { try EditingOps.deleteTableColumn(blockIndex: 0, at: 0, in: p) }),
+            ("clearRow", { try EditingOps.clearTableRow(blockIndex: 0, row: 1, in: p) }),
+            ("clearCol", { try EditingOps.clearTableColumn(blockIndex: 0, col: 0, in: p) }),
+            ("sortRows", { try EditingOps.sortTableRows(blockIndex: 0, byColumn: 0, ascending: true, in: p) }),
             ("setAlign",  { try EditingOps.setTableColumnAlignment(blockIndex: 0, col: 0, alignment: .center, in: p) })
         ]
         for (name, op) in ops {

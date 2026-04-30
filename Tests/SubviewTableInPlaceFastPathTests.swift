@@ -77,6 +77,40 @@ final class SubviewTableInPlaceFastPathTests: XCTestCase {
         return (scenario, blockIdx, hit.attachment)
     }
 
+    /// Build an offscreen editor scenario and manually mount a live
+    /// table container in the editor's window. This keeps the test on
+    /// the same first-responder and fast-path code without relying on
+    /// TextKit's key-window provider lifecycle.
+    private func mountedScenarioWithTable(
+        markdown: String,
+        file: StaticString = #file, line: UInt = #line
+    ) -> (
+        scenario: EditorScenario,
+        attachment: TableAttachment,
+        container: TableContainerView
+    )? {
+        let scenario = Given.note(markdown: markdown)
+        guard let hit = scenario.firstAttachment(of: TableAttachment.self)
+        else {
+            XCTFail("no TableAttachment in storage; fixture broken",
+                    file: file, line: line)
+            return nil
+        }
+        let container = TableContainerView(
+            block: hit.attachment.block,
+            containerWidth: scenario.editor.bounds.width
+        )
+        container.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: scenario.editor.bounds.width,
+            height: hit.attachment.bounds.height
+        )
+        scenario.editor.addSubview(container)
+        hit.attachment.liveContainerView = container
+        return (scenario, hit.attachment, container)
+    }
+
     // MARK: - Fires for .replaceTableCell
 
     func test_fastPath_firesFor_replaceTableCell() throws {
@@ -165,6 +199,91 @@ final class SubviewTableInPlaceFastPathTests: XCTestCase {
             "fast path must fire for .replaceBlock on a table block " +
             "(structural-within-table edit, storage shape invariant)"
         )
+    }
+
+    // MARK: - Handle edits refresh focused cells
+
+    func test_handleClearColumn_refreshesFocusedCell() {
+        let markdown = """
+        # T
+
+        | A | B |
+        |---|---|
+        | keep | stale |
+        | keep2 | other |
+        """
+        guard let ctx = mountedScenarioWithTable(markdown: markdown) else { return }
+        guard let focusedCell = ctx.container.cellViewAt(row: 1, col: 1) else {
+            return XCTFail("missing focused body cell")
+        }
+        guard let window = ctx.scenario.editor.window else {
+            return XCTFail("missing editor window")
+        }
+
+        XCTAssertTrue(window.makeFirstResponder(focusedCell))
+        XCTAssertTrue(window.firstResponder === focusedCell)
+
+        ctx.scenario.editor.applyTableClearCells(
+            attachment: ctx.attachment,
+            target: .column(1)
+        )
+
+        XCTAssertTrue(window.firstResponder === ctx.scenario.editor)
+        XCTAssertEqual(focusedCell.attributedString().string, "")
+        XCTAssertEqual(
+            ctx.container.cellViewAt(row: 2, col: 1)?.attributedString().string,
+            ""
+        )
+
+        guard let blockIdx = ctx.scenario.firstTableBlockIndex(),
+              let table = ctx.scenario.tableBlock(at: blockIdx) else {
+            return XCTFail("missing table after clear")
+        }
+        XCTAssertEqual(table.rows[0][1].rawText, "")
+        XCTAssertEqual(table.rows[1][1].rawText, "")
+    }
+
+    func test_handleSortRows_refreshesFocusedCell() {
+        let markdown = """
+        # T
+
+        | Item | Qty |
+        |---|---|
+        | Banana | 2 |
+        | Apple | 1 |
+        """
+        guard let ctx = mountedScenarioWithTable(markdown: markdown) else { return }
+        guard let focusedCell = ctx.container.cellViewAt(row: 1, col: 0) else {
+            return XCTFail("missing focused body cell")
+        }
+        guard let window = ctx.scenario.editor.window else {
+            return XCTFail("missing editor window")
+        }
+
+        XCTAssertTrue(window.makeFirstResponder(focusedCell))
+        XCTAssertTrue(window.firstResponder === focusedCell)
+
+        ctx.scenario.editor.applyTableSortRows(
+            attachment: ctx.attachment,
+            col: 1,
+            ascending: true
+        )
+
+        XCTAssertTrue(window.firstResponder === ctx.scenario.editor)
+        XCTAssertEqual(focusedCell.attributedString().string, "Apple")
+        XCTAssertEqual(
+            ctx.container.cellViewAt(row: 2, col: 0)?.attributedString().string,
+            "Banana"
+        )
+
+        guard let blockIdx = ctx.scenario.firstTableBlockIndex(),
+              let table = ctx.scenario.tableBlock(at: blockIdx) else {
+            return XCTFail("missing table after sort")
+        }
+        XCTAssertEqual(table.rows.map { $0.map(\.rawText) }, [
+            ["Apple", "1"],
+            ["Banana", "2"]
+        ])
     }
 
     // MARK: - Does NOT fire for .modifyInline on non-table

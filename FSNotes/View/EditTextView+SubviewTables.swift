@@ -204,6 +204,116 @@ extension EditTextView {
         )
     }
 
+    /// Clear a row or column selected from the table handle context
+    /// menu. The operation routes through `EditingOps` and
+    /// `applyEditResultWithUndo`, so undo/redo and the in-place table
+    /// refresh path match other structural table edits.
+    func applyTableClearCells(
+        attachment: TableAttachment,
+        target: TableContainerView.ClearTarget
+    ) {
+        guard let projection = documentProjection else { return }
+        guard let storage = textStorage else { return }
+
+        var blockIdx: Int? = nil
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(
+            .attachment, in: fullRange, options: []
+        ) { value, range, stop in
+            guard let candidate = value as? TableAttachment,
+                  candidate === attachment else { return }
+            for (idx, span) in projection.blockSpans.enumerated() {
+                if NSLocationInRange(range.location, span) {
+                    blockIdx = idx
+                    stop.pointee = true
+                    return
+                }
+            }
+        }
+        guard let blockIdx = blockIdx else { return }
+
+        let result: EditResult
+        let actionName: String
+        do {
+            switch target {
+            case .row(let row):
+                result = try EditingOps.clearTableRow(
+                    blockIndex: blockIdx,
+                    row: row,
+                    in: projection
+                )
+                actionName = "Clear Table Row"
+            case .column(let col):
+                result = try EditingOps.clearTableColumn(
+                    blockIndex: blockIdx,
+                    col: col,
+                    in: projection
+                )
+                actionName = "Clear Table Column"
+            }
+        } catch {
+            bmLog("⚠️ applyTableClearCells: clear operation threw \(error)")
+            return
+        }
+
+        moveFocusToParentEditorBeforeTableHandleEdit()
+        applyEditResultWithUndo(result, actionName: actionName)
+    }
+
+    /// Sort table body rows by the selected column from the column
+    /// handle menu. Header cells stay fixed; the result routes through
+    /// the same undoable edit pipeline as other table structural
+    /// changes.
+    func applyTableSortRows(
+        attachment: TableAttachment,
+        col: Int,
+        ascending: Bool
+    ) {
+        guard let projection = documentProjection else { return }
+        guard let storage = textStorage else { return }
+
+        var blockIdx: Int? = nil
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(
+            .attachment, in: fullRange, options: []
+        ) { value, range, stop in
+            guard let candidate = value as? TableAttachment,
+                  candidate === attachment else { return }
+            for (idx, span) in projection.blockSpans.enumerated() {
+                if NSLocationInRange(range.location, span) {
+                    blockIdx = idx
+                    stop.pointee = true
+                    return
+                }
+            }
+        }
+        guard let blockIdx = blockIdx else { return }
+
+        let result: EditResult
+        do {
+            result = try EditingOps.sortTableRows(
+                blockIndex: blockIdx,
+                byColumn: col,
+                ascending: ascending,
+                in: projection
+            )
+        } catch {
+            bmLog("⚠️ applyTableSortRows: sortTableRows threw \(error)")
+            return
+        }
+
+        moveFocusToParentEditorBeforeTableHandleEdit()
+        applyEditResultWithUndo(result, actionName: "Sort Table Column")
+    }
+
+    /// Handle-menu edits change cells other than the active typing
+    /// target. Move focus back to the parent editor first so the
+    /// in-place table refresh does not skip a stale focused cell.
+    private func moveFocusToParentEditorBeforeTableHandleEdit() {
+        guard window?.firstResponder is TableCellTextView else { return }
+        window?.makeFirstResponder(self)
+    }
+
     /// Place the parent's cursor on the requested side of the given
     /// table attachment. Called from `TableContainerView.mouseDown`
     /// when the user clicks on the container's own chrome (right

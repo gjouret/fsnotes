@@ -171,10 +171,9 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Return the set of block indices that are currently collapsed.
     ///
     /// Computed from the canonical `collapsedStorageOffsets` side-table
-    /// + the current `sourceBlocks` array. Retained for tests and gutter
-    /// readers that index the `sourceBlocks` array directly; the canonical
-    /// persistence form is `collapsedBlockOffsets` (Phase 6 Tier B′
-    /// Sub-slice 3).
+    /// + the current `sourceBlocks` array. Retained for tests and
+    /// index-based fold APIs; the canonical persistence form is
+    /// `collapsedBlockOffsets` (Phase 6 Tier B′ Sub-slice 3).
     public var collapsedBlockIndices: Set<Int> {
         var indices: Set<Int> = []
         for (i, block) in sourceBlocks.enumerated() {
@@ -235,7 +234,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
 
     /// Set the render mode for the block at the given storage offset.
     /// Public entry for callers that have a storage location but no
-    /// `processor.sourceBlocks` index (Phase 6 Tier B′ Sub-slice 6 — the
+    /// source-block index (Phase 6 Tier B′ Sub-slice 6 — the
     /// click-to-edit rendered-image handler in
     /// `EditTextView+Interaction`).
     public func setRenderMode(
@@ -347,14 +346,14 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     //
     // Narrow public queries that hide the underlying `[MarkdownBlock]`
     // array from external readers. Each replaces a previous direct
-    // `processor.sourceBlocks` access in a source-mode-only fallback path.
+    // `sourceBlocks` access in a source-mode-only fallback path.
     // Once these are the only external surface, the array can be
     // demoted to `internal` (and eventually retired entirely under
     // Tier C / 7.B.2.b — the source-mode pipeline lift).
 
     /// True iff the block-array is non-empty. Used by source-mode
     /// fallbacks that gate paragraph-styling work on the parser having
-    /// produced any blocks at all (replaces `!processor.sourceBlocks.isEmpty`).
+    /// produced any blocks at all.
     public var hasBlocks: Bool { !sourceBlocks.isEmpty }
 
     /// Heading level (1–6) for the source-mode block whose storage range
@@ -406,11 +405,11 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         return (block.range, block.contentRange)
     }
 
-    /// Clear the block array and any associated side-tables. Called
-    /// on note switch (`EditTextView+NoteState.handover`) — the new
-    /// note will repopulate via `fillViaBlockModel` /
-    /// `fillViaSourceRenderer`. Replaces the previous
-    /// `processor.blocks = []` write site (the now-removed public API).
+    /// Clear the source-mode block array. Called on note switch
+    /// (`EditTextView+NoteState.handover`) before the next note
+    /// repopulates via `fillViaBlockModel` / `fillViaSourceRenderer`.
+    /// Offset-keyed side tables are owned by the fold/render restore
+    /// paths and are not reset by this parser-cache cleanup.
     public func clearBlocks() {
         sourceBlocks = []
     }
@@ -419,8 +418,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     /// Test-only entry point — production code populates via
     /// `process(_:)` / `updateBlockModel()` /
     /// `rebuildBlocksFromProjection(_:)`. Replaces the previous
-    /// `processor.blocks = MarkdownBlockParser.parse(...)` test
-    /// idiom. Phase 6 Tier B′ Sub-slice 7.B.2.b.
+    /// direct block-array assignment test idiom. Phase 6 Tier B′
+    /// Sub-slice 7.B.2.b.
     public func _testInstallSourceBlocks(parsing string: NSString) {
         sourceBlocks = MarkdownBlockParser.parse(string: string)
     }
@@ -440,8 +439,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
     // MARK: - Block Model Sync for Fold/Unfold (Phase 4.6 — private)
 
     /// Populate the `sourceBlocks` array from a `DocumentProjection` so that
-    /// fold/unfold (which reads `sourceBlocks`) and gutter-draw (which
-    /// iterates `sourceBlocks` for fold carets + H-badges) work when
+    /// index-based fold commands and source-mode fallback queries work when
     /// `blockModelActive == true`.
     ///
     /// The block-model pipeline bypasses `process()` (which normally

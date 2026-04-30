@@ -519,39 +519,6 @@ class PDFAttachmentViewProvider: NSTextAttachmentViewProvider {
     }
 }
 
-// MARK: - PDFAttachmentCell (legacy, unwired)
-
-/// Legacy TK1 attachment cell. Kept during TK1-fallback period; remove
-/// when TK1 source-mode is deleted (Phase 4). No longer wired by
-/// `PDFAttachmentProcessor` — TK2 view hosting goes through
-/// `PDFNSTextAttachment` + `PDFAttachmentViewProvider` above. This class
-/// remains referenced only by orphan-cleanup code in
-/// `EditTextView+NoteState.swift` so old PDF cells from saved state can
-/// still be found and removed if they exist.
-class PDFAttachmentCell: NSTextAttachmentCell {
-
-    let inlinePDFView: InlinePDFView
-    private let desiredSize: NSSize
-
-    init(pdfView: InlinePDFView, size: NSSize) {
-        self.inlinePDFView = pdfView
-        self.desiredSize = size
-        super.init()
-    }
-
-    required init(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func cellSize() -> NSSize {
-        return desiredSize
-    }
-
-    override func cellBaselineOffset() -> NSPoint {
-        return NSPoint(x: 0, y: -2)
-    }
-}
-
 // MARK: - PDFAttachmentProcessor
 
 /// Scans textStorage for `![title](path.pdf)` patterns and replaces

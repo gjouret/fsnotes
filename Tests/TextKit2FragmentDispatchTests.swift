@@ -1041,11 +1041,10 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
     // characterIndex:layoutManager:)` is never called — the system instead
     // asks the attachment for an `NSTextAttachmentViewProvider` via
     // `attachment.viewProvider(for:location:textContainer:)`. The legacy
-    // `PDFAttachmentCell` / `QuickLookAttachmentCell` classes can still
-    // exist in-app (TK1-era code paths), but under TK2 the attachments
-    // produced by the processors MUST be `PDFNSTextAttachment` /
-    // `QuickLookNSTextAttachment` — subclasses that override
-    // `viewProvider(...)`. Otherwise the embed is invisible.
+    // a plain `NSTextAttachment` can still carry a TK1 `attachmentCell`,
+    // but under TK2 the attachments produced by the processors MUST be
+    // `PDFNSTextAttachment` / `QuickLookNSTextAttachment` — subclasses
+    // that override `viewProvider(...)`. Otherwise the embed is invisible.
     //
     // These tests call the processor directly against a hand-seeded
     // `NSTextStorage` so they stand independent of the block-model
@@ -1106,9 +1105,9 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
     /// `.attachmentUrl` pointing at a `.pdf` file, the replacement must
     /// be a `PDFNSTextAttachment` — the subclass that overrides
     /// `viewProvider(for:location:textContainer:)`. A plain
-    /// `NSTextAttachment` (even with `attachmentCell = PDFAttachmentCell`)
-    /// is TK1-only: TK2 ignores `attachmentCell` and asks for the view
-    /// provider. Without the subclass, the PDF is invisible under TK2.
+    /// `NSTextAttachment` plus an `attachmentCell` is TK1-only: TK2
+    /// ignores the cell and asks for the view provider. Without the
+    /// subclass, the PDF is invisible under TK2.
     func test_phase2d_pdfAttachment_usesViewProviderUnderTK2() {
         let harness = EditorHarness(markdown: "")
         defer { harness.teardown() }
@@ -1142,7 +1141,7 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
             attachment is PDFNSTextAttachment,
             "After PDFAttachmentProcessor runs, the attachment must be a " +
             "PDFNSTextAttachment (got \(type(of: attachment))). A plain " +
-            "NSTextAttachment with a PDFAttachmentCell is TK1-only — TK2 " +
+            "NSTextAttachment with an attachmentCell is TK1-only — TK2 " +
             "never calls cell.draw(withFrame:in:characterIndex:layoutManager:) " +
             "and the embed is invisible."
         )
@@ -1186,8 +1185,8 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
             attachment is QuickLookNSTextAttachment,
             "After QuickLookAttachmentProcessor runs, the attachment must " +
             "be a QuickLookNSTextAttachment (got \(type(of: attachment))). " +
-            "Plain NSTextAttachment + QuickLookAttachmentCell is the " +
-            "TK1-only shape and renders nothing under TK2."
+            "Plain NSTextAttachment + attachmentCell is the TK1-only " +
+            "shape and renders nothing under TK2."
         )
     }
 
@@ -1526,9 +1525,10 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
             return
         }
 
-        // Phase 4.6: the `documentProjection` setter auto-syncs
-        // `processor.blocks` from the projection. No explicit sync call
-        // is needed for `headerBlockIndex` and `toggleFold` to work.
+        // Phase 4.6: the `documentProjection` setter auto-syncs the
+        // processor's source-mode query table from the projection. No
+        // explicit sync call is needed for `headerBlockIndex` and
+        // `toggleFold` to work.
         _ = projection
 
         func totalFragmentHeight() -> CGFloat {

@@ -15,8 +15,8 @@ class FormattingToolbar: NSView {
 
     /// Memoization state for `updateButtonStates` (Perf plan #1). Arrow
     /// keys fire `textViewDidChangeSelection` on every cursor move; the
-    /// unmemoized path walks `processor.blocks` and reads multiple
-    /// storage attributes per call. Caching by (projection identity,
+    /// unmemoized path resolves heading state and reads multiple storage
+    /// attributes per call. Caching by (projection identity,
     /// cursor block index, paragraph range) lets us skip the work
     /// entirely while the cursor stays in the same block.
     private weak var cachedProjectionAttributed: NSAttributedString?
@@ -313,7 +313,7 @@ class FormattingToolbar: NSView {
         // via binary search in `blockContaining`) over the source-mode
         // walk. Sub-slice 7.B.2.a routes the source-mode arm through
         // `headingLevel(forParagraphRange:)` so this site no longer
-        // touches the `processor.blocks` array directly.
+        // touches the source-mode block array directly.
         var headingLevel = 0
         if let proj = editor.documentProjection,
            currentCursorBlock >= 0,
