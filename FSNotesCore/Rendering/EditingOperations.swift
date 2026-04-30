@@ -5758,6 +5758,35 @@ public enum EditingOps {
             )
         }
 
+        if overlapping.count == 1,
+           let idx = overlapping.first,
+           newLevel > 0,
+           case .paragraph(let inline) = projection.document.blocks[idx],
+           selectionRange.location <= projection.blockSpans[idx].location,
+           NSMaxRange(selectionRange) >= NSMaxRange(projection.blockSpans[idx]),
+           let replacement = headingBlocksForSoftLineParagraph(
+               inline,
+               level: newLevel
+           ) {
+            var result = try replaceBlockRange(
+                idx...idx,
+                with: replacement,
+                in: projection
+            )
+            result.newCursorPosition = selectionRange.location
+            result.newSelectionLength = selectionRange.length
+            result.contract = EditContract(
+                declaredActions:
+                    [.changeBlockKind(at: idx)] +
+                    (1..<replacement.count).map { .insertBlock(at: idx + $0) },
+                postCursor: result.newProjection.cursor(
+                    atStorageIndex: result.newCursorPosition
+                ),
+                postSelectionLength: selectionRange.length
+            )
+            return result
+        }
+
         var blocks = projection.document.blocks
         var changed = Set<Int>()
 
@@ -5812,6 +5841,23 @@ public enum EditingOps {
             postSelectionLength: selectionRange.length
         )
         return result
+    }
+
+    private static func headingBlocksForSoftLineParagraph(
+        _ inline: [Inline],
+        level: Int
+    ) -> [Block]? {
+        let lines = MarkdownSerializer.serializeInlines(inline)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        guard lines.count > 1 else { return nil }
+        let headings = lines.compactMap { line -> Block? in
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
+                return nil
+            }
+            return .heading(level: level, suffix: " " + line)
+        }
+        return headings.count > 1 ? headings : nil
     }
 
     /// Toggle an HTML tag (e.g. `<u>`, `<mark>`) on the selected range.

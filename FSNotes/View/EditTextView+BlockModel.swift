@@ -1899,6 +1899,13 @@ extension EditTextView {
     func changeHeadingLevelViaBlockModel(_ level: Int) -> Bool {
         guard let projection = documentProjection else { return false }
         let sel = selectedRange()
+        if changeSoftLineParagraphSelectionToHeading(
+            level,
+            selection: sel,
+            projection: projection
+        ) {
+            return true
+        }
         do {
             guard let result = try EditingOps.changeHeadingLevelAcrossSelection(
                 level, range: sel, in: projection
@@ -2019,6 +2026,15 @@ extension EditTextView {
         guard let projection = documentProjection else { return false }
         let sel = selectedRange()
         let overlapping = projection.blockIndices(overlapping: sel)
+        if wrapSoftLineParagraphInSingleList(
+            marker: marker,
+            checkbox: checkbox,
+            selection: sel,
+            overlapping: overlapping,
+            projection: projection
+        ) {
+            return true
+        }
         guard overlapping.count >= 2 else { return false }
 
         // Only handle conversion TO a list: all overlapped blocks must
@@ -2061,9 +2077,254 @@ extension EditTextView {
         }
     }
 
+    /// Convert a selected single Markdown paragraph containing soft
+    /// line breaks into a list item per visual line. This is the live
+    /// toolbar shape for notes that users treat as "paragraph lines"
+    /// but CommonMark parses as one paragraph block.
+    private func wrapSoftLineParagraphInSingleList(
+        marker: String,
+        checkbox: Checkbox?,
+        selection: NSRange,
+        overlapping: [Int],
+        projection: DocumentProjection
+    ) -> Bool {
+        guard let soft = softLineParagraphSelection(
+            selection: selection,
+            overlapping: overlapping,
+            projection: projection
+        ) else {
+            return false
+        }
+
+        let items = soft.sourceLines[soft.selectedLineRange]
+            .compactMap { line -> ListItem? in
+                guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
+                    return nil
+                }
+                return ListItem(
+                    indent: "",
+                    marker: marker,
+                    afterMarker: " ",
+                    checkbox: checkbox,
+                    inline: MarkdownParser.parseInlines(line),
+                    children: []
+                )
+            }
+        guard !items.isEmpty else { return false }
+
+        return replaceSoftLineParagraphSelection(
+            soft,
+            with: [.list(items: items)],
+            isolateSelectedBlocks: true,
+            actionName: "List",
+            projection: projection
+        )
+    }
+
+    private struct SoftLineParagraphSelection {
+        let blockIndex: Int
+        let sourceLines: [String]
+        let selectedLineRange: ClosedRange<Int>
+    }
+
+    private func softLineParagraphSelection(
+        selection: NSRange,
+        overlapping: [Int],
+        projection: DocumentProjection
+    ) -> SoftLineParagraphSelection? {
+        guard overlapping.count == 1,
+              let blockIndex = overlapping.first,
+              case .paragraph(let inline) = projection.document.blocks[blockIndex] else {
+            return nil
+        }
+
+        let sourceLines = MarkdownSerializer.serializeInlines(inline)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        guard sourceLines.count > 1 else { return nil }
+
+        let span = projection.blockSpans[blockIndex]
+        let renderedBlock = (projection.attributed.string as NSString)
+            .substring(with: span)
+        let renderedLines = renderedBlock.components(separatedBy: "\n")
+        guard renderedLines.count == sourceLines.count else { return nil }
+
+        let rawStart = selection.location - span.location
+        let localStart = max(0, min(rawStart, span.length))
+        let rawEnd = NSMaxRange(selection) - span.location
+        let localEnd = max(localStart, min(rawEnd, span.length))
+
+        var selectedLines: [Int] = []
+        var lineStart = 0
+        for (index, line) in renderedLines.enumerated() {
+            let lineEnd = lineStart + (line as NSString).length
+            if selection.length == 0 {
+                if localStart >= lineStart && localStart <= lineEnd {
+                    selectedLines.append(index)
+                    break
+                }
+            } else if localStart < lineEnd && localEnd > lineStart {
+                selectedLines.append(index)
+            }
+            lineStart = lineEnd + 1
+        }
+
+        if selectedLines.isEmpty,
+           selection.length == 0,
+           localStart == span.length {
+            selectedLines.append(sourceLines.count - 1)
+        }
+
+        guard let first = selectedLines.first,
+              let last = selectedLines.last else {
+            return nil
+        }
+
+        return SoftLineParagraphSelection(
+            blockIndex: blockIndex,
+            sourceLines: sourceLines,
+            selectedLineRange: first...last
+        )
+    }
+
+    private func paragraphBlock(
+        fromSoftLines lines: ArraySlice<String>
+    ) -> Block? {
+        let text = lines.joined(separator: "\n")
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return .paragraph(inline: MarkdownParser.parseInlines(text))
+    }
+
+    private func replaceSoftLineParagraphSelection(
+        _ soft: SoftLineParagraphSelection,
+        with selectedBlocks: [Block],
+        isolateSelectedBlocks: Bool,
+        actionName: String,
+        projection: DocumentProjection
+    ) -> Bool {
+        guard !selectedBlocks.isEmpty else { return false }
+
+        let beforeBlock = paragraphBlock(
+            fromSoftLines: soft.sourceLines[..<soft.selectedLineRange.lowerBound]
+        )
+        let afterStart = soft.selectedLineRange.upperBound + 1
+        let afterBlock = paragraphBlock(
+            fromSoftLines: soft.sourceLines[afterStart...]
+        )
+
+        var replacement: [Block] = []
+        if let beforeBlock {
+            replacement.append(beforeBlock)
+        }
+        if isolateSelectedBlocks, beforeBlock != nil {
+            replacement.append(.blankLine)
+        }
+
+        let selectedStartIndex = replacement.count
+        replacement.append(contentsOf: selectedBlocks)
+
+        if isolateSelectedBlocks, afterBlock != nil {
+            replacement.append(.blankLine)
+        }
+        if let afterBlock {
+            replacement.append(afterBlock)
+        }
+
+        guard !replacement.isEmpty else { return false }
+
+        do {
+            var result = try EditingOps.replaceBlockRange(
+                soft.blockIndex...soft.blockIndex,
+                with: replacement,
+                in: projection
+            )
+            let landingIndex = min(
+                soft.blockIndex + selectedStartIndex,
+                result.newProjection.blockSpans.count - 1
+            )
+            let landingSpan = result.newProjection.blockSpans[landingIndex]
+            result.newCursorPosition = landingSpan.location +
+                min(1, landingSpan.length)
+            applyBlockModelResult(result, actionName: actionName)
+            return true
+        } catch {
+            bmLog("⚠️ \(actionName) soft-line replacement failed: \(error)")
+            return false
+        }
+    }
+
+    private func changeSoftLineParagraphSelectionToHeading(
+        _ level: Int,
+        selection: NSRange,
+        projection: DocumentProjection
+    ) -> Bool {
+        guard level > 0,
+              let soft = softLineParagraphSelection(
+                  selection: selection,
+                  overlapping: projection.blockIndices(overlapping: selection),
+                  projection: projection
+              ) else {
+            return false
+        }
+
+        let headings = soft.sourceLines[soft.selectedLineRange]
+            .compactMap { line -> Block? in
+                guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
+                    return nil
+                }
+                return .heading(level: level, suffix: " " + line)
+            }
+        guard !headings.isEmpty else { return false }
+
+        return replaceSoftLineParagraphSelection(
+            soft,
+            with: headings,
+            isolateSelectedBlocks: false,
+            actionName: "Heading",
+            projection: projection
+        )
+    }
+
+    private func wrapSoftLineParagraphSelectionInBlockquote() -> Bool {
+        guard let projection = documentProjection else { return false }
+        let selection = selectedRange()
+        guard let soft = softLineParagraphSelection(
+            selection: selection,
+            overlapping: projection.blockIndices(overlapping: selection),
+            projection: projection
+        ) else {
+            return false
+        }
+
+        let lines = soft.sourceLines[soft.selectedLineRange]
+            .compactMap { line -> BlockquoteLine? in
+                guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
+                    return nil
+                }
+                return BlockquoteLine(
+                    prefix: "> ",
+                    inline: MarkdownParser.parseInlines(line)
+                )
+            }
+        guard !lines.isEmpty else { return false }
+
+        return replaceSoftLineParagraphSelection(
+            soft,
+            with: [.blockquote(lines: lines)],
+            isolateSelectedBlocks: true,
+            actionName: "Blockquote",
+            projection: projection
+        )
+    }
+
     /// Toggle blockquote via the block model.
     /// When multiple blocks are selected, converts each.
     func toggleBlockquoteViaBlockModel() -> Bool {
+        if wrapSoftLineParagraphSelectionInBlockquote() {
+            return true
+        }
         return applyToggleAcrossSelection(actionName: "Blockquote") { proj, loc in
             try EditingOps.toggleBlockquote(at: loc, in: proj)
         }

@@ -11,6 +11,7 @@ class FormattingToolbar: NSView {
 
     private var stackView: NSStackView!
     private var buttons: [String: NSButton] = [:]
+    private weak var currentEditor: EditTextView?
 
     /// Memoization state for `updateButtonStates` (Perf plan #1). Arrow
     /// keys fire `textViewDidChangeSelection` on every cursor move; the
@@ -78,30 +79,32 @@ class FormattingToolbar: NSView {
 
         addSeparator()
 
-        // All buttons use target=nil to route through the first responder chain.
-        // EditTextView has @IBAction methods for each of these selectors.
+        // Formatting buttons route through this toolbar and then call the
+        // active editor's existing action methods. Keeping target=nil here
+        // is fragile: a toolbar click can leave AppKit with no editor target
+        // for some selectors even though the editor selection is still valid.
 
         // Style group
-        addButton(id: "bold", symbol: "bold", tooltip: "Bold (Cmd+B)", action: #selector(EditTextView.boldMenu(_:)), isToggle: true)
-        addButton(id: "italic", symbol: "italic", tooltip: "Italic (Cmd+I)", action: #selector(EditTextView.italicMenu(_:)), isToggle: true)
-        addButton(id: "underline", symbol: "underline", tooltip: "Underline (Cmd+U)", action: #selector(EditTextView.underlineMenu(_:)), isToggle: true)
-        addButton(id: "strikethrough", symbol: "strikethrough", tooltip: "Strikethrough", action: #selector(EditTextView.strikeMenu(_:)), isToggle: true)
-        addButton(id: "highlight", symbol: "highlighter", tooltip: "Highlight", action: #selector(EditTextView.highlightMenu(_:)), isToggle: true)
+        addButton(id: "bold", symbol: "bold", tooltip: "Bold (Cmd+B)", target: self, action: #selector(pressBoldToolbarButton(_:)), isToggle: true)
+        addButton(id: "italic", symbol: "italic", tooltip: "Italic (Cmd+I)", target: self, action: #selector(pressItalicToolbarButton(_:)), isToggle: true)
+        addButton(id: "underline", symbol: "underline", tooltip: "Underline (Cmd+U)", target: self, action: #selector(pressUnderlineToolbarButton(_:)), isToggle: true)
+        addButton(id: "strikethrough", symbol: "strikethrough", tooltip: "Strikethrough", target: self, action: #selector(pressStrikethroughToolbarButton(_:)), isToggle: true)
+        addButton(id: "highlight", symbol: "highlighter", tooltip: "Highlight", target: self, action: #selector(pressHighlightToolbarButton(_:)), isToggle: true)
 
         addSeparator()
 
         // Heading group
-        addButton(id: "h1", title: "H1", tooltip: "Heading 1", action: #selector(EditTextView.headerMenu1(_:)), isToggle: true)
-        addButton(id: "h2", title: "H2", tooltip: "Heading 2", action: #selector(EditTextView.headerMenu2(_:)), isToggle: true)
-        addButton(id: "h3", title: "H3", tooltip: "Heading 3", action: #selector(EditTextView.headerMenu3(_:)), isToggle: true)
+        addButton(id: "h1", title: "H1", tooltip: "Heading 1", target: self, action: #selector(pressHeading1ToolbarButton(_:)), isToggle: true)
+        addButton(id: "h2", title: "H2", tooltip: "Heading 2", target: self, action: #selector(pressHeading2ToolbarButton(_:)), isToggle: true)
+        addButton(id: "h3", title: "H3", tooltip: "Heading 3", target: self, action: #selector(pressHeading3ToolbarButton(_:)), isToggle: true)
 
         addSeparator()
 
         // Block group
-        addButton(id: "quote", symbol: "text.quote", tooltip: "Quote", action: #selector(EditTextView.quoteMenu(_:)), isToggle: true)
-        addButton(id: "bulletList", symbol: "list.bullet", tooltip: "Bullet List", action: #selector(EditTextView.bulletListMenu(_:)), isToggle: true)
-        addButton(id: "numberedList", symbol: "list.number", tooltip: "Numbered List", action: #selector(EditTextView.numberedListMenu(_:)), isToggle: true)
-        addButton(id: "checkbox", symbol: "checkmark.square", tooltip: "Checkbox", action: #selector(EditTextView.todo(_:)), isToggle: true)
+        addButton(id: "quote", symbol: "text.quote", tooltip: "Quote", target: self, action: #selector(pressQuoteToolbarButton(_:)), isToggle: true)
+        addButton(id: "bulletList", symbol: "list.bullet", tooltip: "Bullet List", target: self, action: #selector(pressBulletListToolbarButton(_:)), isToggle: true)
+        addButton(id: "numberedList", symbol: "list.number", tooltip: "Numbered List", target: self, action: #selector(pressNumberedListToolbarButton(_:)), isToggle: true)
+        addButton(id: "checkbox", symbol: "checkmark.square", tooltip: "Checkbox", target: self, action: #selector(pressCheckboxToolbarButton(_:)), isToggle: true)
 
         addSeparator()
 
@@ -121,7 +124,7 @@ class FormattingToolbar: NSView {
 
     // MARK: - Button Creation
 
-    private func addButton(id: String, symbol: String? = nil, title: String? = nil, tooltip: String, action: Selector, isToggle: Bool = false) {
+    private func addButton(id: String, symbol: String? = nil, title: String? = nil, tooltip: String, target: AnyObject? = nil, action: Selector, isToggle: Bool = false) {
         let button = NSButton()
         button.bezelStyle = .accessoryBarAction
         button.isBordered = true
@@ -136,7 +139,7 @@ class FormattingToolbar: NSView {
         }
 
         button.toolTip = tooltip
-        button.target = nil // routes through first responder chain
+        button.target = target // nil routes through the first responder chain
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
         button.refusesFirstResponder = true // keep focus on EditTextView
@@ -173,6 +176,72 @@ class FormattingToolbar: NSView {
         stackView.addArrangedSubview(rightSpacer)
     }
 
+    // MARK: - Editor Action Routing
+
+    private func editorForToolbarAction() -> EditTextView? {
+        if let editor = currentEditor, editor.window === window {
+            return editor
+        }
+
+        var responder = window?.firstResponder
+        while let current = responder {
+            if let editor = current as? EditTextView {
+                return editor
+            }
+            responder = current.nextResponder
+        }
+
+        return nil
+    }
+
+    @objc private func pressBoldToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.boldMenu(sender)
+    }
+
+    @objc private func pressItalicToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.italicMenu(sender)
+    }
+
+    @objc private func pressUnderlineToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.underlineMenu(sender)
+    }
+
+    @objc private func pressStrikethroughToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.strikeMenu(sender)
+    }
+
+    @objc private func pressHighlightToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.highlightMenu(sender)
+    }
+
+    @objc private func pressHeading1ToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.headerMenu1(sender)
+    }
+
+    @objc private func pressHeading2ToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.headerMenu2(sender)
+    }
+
+    @objc private func pressHeading3ToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.headerMenu3(sender)
+    }
+
+    @objc private func pressQuoteToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.quoteMenu(sender)
+    }
+
+    @objc private func pressBulletListToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.bulletListMenu(sender)
+    }
+
+    @objc private func pressNumberedListToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.numberedListMenu(sender)
+    }
+
+    @objc private func pressCheckboxToolbarButton(_ sender: Any) {
+        editorForToolbarAction()?.todo(sender)
+    }
+
     // MARK: - Button State Updates
 
     /// Capture only the inline-format-relevant bits of typingAttributes
@@ -197,6 +266,8 @@ class FormattingToolbar: NSView {
     }
 
     func updateButtonStates(for editor: EditTextView) {
+        currentEditor = editor
+
         guard let storage = editor.textStorage, storage.length > 0 else {
             resetAllButtons()
             return

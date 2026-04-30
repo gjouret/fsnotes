@@ -284,13 +284,29 @@ final class AppBridgeImpl: AppBridge {
                 }
                 result = r
             case .toggleBlockquote:
-                result = try EditingOps.toggleBlockquote(at: selection.location, in: projection)
+                guard editor.toggleBlockquoteViaBlockModel() else {
+                    return .failed(reason: "applyFormatting: selection does not cover quote-compatible blocks")
+                }
+                _ = openNote?.save()
+                return .applied(info: ["command": describe(command)])
             case .toggleUnorderedList:
-                result = try EditingOps.toggleList(marker: "-", at: selection.location, in: projection)
+                guard editor.toggleListViaBlockModel(marker: "-") else {
+                    return .failed(reason: "applyFormatting: selection does not cover list-compatible blocks")
+                }
+                _ = openNote?.save()
+                return .applied(info: ["command": describe(command)])
             case .toggleOrderedList:
-                result = try EditingOps.toggleList(marker: "1.", at: selection.location, in: projection)
+                guard editor.toggleListViaBlockModel(marker: "1.") else {
+                    return .failed(reason: "applyFormatting: selection does not cover list-compatible blocks")
+                }
+                _ = openNote?.save()
+                return .applied(info: ["command": describe(command)])
             case .toggleTodoList:
-                result = try EditingOps.toggleTodoList(at: selection.location, in: projection)
+                guard editor.toggleTodoViaBlockModel() else {
+                    return .failed(reason: "applyFormatting: selection does not cover todo-compatible blocks")
+                }
+                _ = openNote?.save()
+                return .applied(info: ["command": describe(command)])
             case .insertHorizontalRule:
                 result = try EditingOps.insertHorizontalRule(at: selection.location, in: projection)
             }

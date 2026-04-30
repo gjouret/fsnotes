@@ -366,6 +366,25 @@ final class AppBridgeImplTests: XCTestCase {
         XCTAssertTrue(serialised.contains("- Hello"), "got: \(serialised)")
     }
 
+    func testToggleListWrapsSelectedSoftLinesAsSeparateItems() {
+        let harness = EditorHarness(markdown: "First\nSecond\nThird")
+        defer { harness.teardown() }
+        let len = harness.editor.textStorage?.length ?? 0
+        harness.editor.setSelectedRange(NSRange(location: 0, length: len))
+        let (bridge, _) = makeBridge(harness: harness)
+        let path = harness.note.url.standardizedFileURL.path
+
+        let outcome = bridge.applyFormatting(toPath: path, command: .toggleUnorderedList)
+        guard case .applied = outcome else {
+            return XCTFail("expected .applied, got \(outcome)")
+        }
+        let serialised = MarkdownSerializer.serialize(harness.editor.documentProjection!.document)
+        XCTAssertEqual(
+            serialised.trimmingCharacters(in: .whitespacesAndNewlines),
+            "- First\n- Second\n- Third"
+        )
+    }
+
     func testInsertHorizontalRuleAddsHRBlock() {
         let harness = EditorHarness(markdown: "Above.\n\nBelow.\n")
         defer { harness.teardown() }
