@@ -54,6 +54,19 @@ final class BugInventoryRegressionTests: XCTestCase {
         return opts
     }
 
+    private func firstDescendant<T: NSView>(
+        of root: NSView,
+        type: T.Type
+    ) -> T? {
+        for subview in root.subviews {
+            if let typed = subview as? T { return typed }
+            if let nested = firstDescendant(of: subview, type: type) {
+                return nested
+            }
+        }
+        return nil
+    }
+
     // MARK: - Bug #1: Bullet/checkbox glyphs mount on first fill (FIXED)
 
     /// Bullet glyphs must be subview-mounted after the initial fill
@@ -181,31 +194,24 @@ final class BugInventoryRegressionTests: XCTestCase {
             .Then.cursor.isAt(storageOffset: 0)
     }
 
-    // MARK: - Bug #10: Table handle overlay mounts on fill (UNFIXED)
+    // MARK: - Bug #10: Table subview mounts on fill (FIXED)
 
-    /// XCTExpectFailure: the user-visible bug is that
-    /// `TableHandleView` subviews don't mount after fill in either
-    /// the offscreen harness or the live app. Once the responder-
-    /// chain wire-up fires, the test flips green ("unexpectedly
-    /// passed") and the wrapper drops.
-    func test_bug10_tableHandleOverlay_mountsOnFill() {
-        XCTExpectFailure(
-            "Bug #10 — TableHandleView subviews are not mounted after " +
-            "fill (responder-chain wire-up does not fire offscreen, and " +
-            "user reports it still doesn't fire in the live app).",
-            options: strict()
+    /// The retired native handle overlay is gone. The live invariant is
+    /// that the table attachment mounts its `TableContainerView` on
+    /// first fill.
+    func test_bug10_tableContainer_mountsOnFill() {
+        let scenario = Given.keyWindowNote(
+            markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n"
         )
-        Given.keyWindowNote()
-            .with(markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n")
-            .Then.tableHandle.column(0).alignsWithBoundary()
+        XCTAssertNotNil(
+            firstDescendant(of: scenario.editor, type: TableContainerView.self)
+        )
     }
 
     // MARK: - Bug #11: Code-block edit-toggle button visible on fill (UNFIXED)
 
-    /// XCTExpectFailure: the `</>` button overlay is wired the same way
-    /// as `TableHandleView` (`owningViewControllerForTableHandleOverlay`
-    /// → `vc.codeBlockEditToggleOverlay.reposition()`), so it shares
-    /// the missing-subview outcome with #10.
+    /// XCTExpectFailure: the `</>` button overlay still has its own
+    /// lazy wiring and mount timing.
     func test_bug11_codeBlockEditToggle_buttonVisibleOnFill() {
         XCTExpectFailure(
             "Bug #11 — CodeBlockEditToggleView subviews are not mounted " +
@@ -226,26 +232,17 @@ final class BugInventoryRegressionTests: XCTestCase {
 
     // MARK: - Bug #12: Table with trailing <br><br> in last cell (UNFIXED)
 
-    /// XCTExpectFailure: a `<br><br>` in the last cell causes the
-    /// table to render twice — two `TableLayoutFragment` instances
-    /// against a single `kind=table` block. The composed-shape
-    /// readback set doesn't yet expose a fragment-count predicate,
-    /// so we mark a TODO and let the wrapper fail-by-design today
-    /// (XCTFail keeps the bug visible).
-    func test_bug12_tableWithTrailingBrInLastCell_stillSingleFragment() {
-        XCTExpectFailure(
-            "Bug #12 — table with <br><br> in last cell renders twice. " +
-            "Needs a Then.fragment.countOfClass readback (downstream slice).",
-            options: strict()
+    /// A `<br><br>` in the last cell should still produce one table
+    /// attachment and preserve the cell payload.
+    func test_bug12_tableWithTrailingBrInLastCell_stillSingleAttachment() {
+        let scenario = Given.keyWindowNote(
+            markdown: "| a | b |\n|---|---|\n| 1 | 2<br><br> |\n"
         )
-        // TODO: needs Then.fragment.countOfClass("TableLayoutFragment").equals(1)
-        //       — current Then.fragment.atBlock(_).is(_) only checks ONE
-        //       block's fragment class, not the document-wide count.
-        Given.keyWindowNote()
-            .with(markdown: "| a | b |\n|---|---|\n| 1 | 2<br><br> |\n")
-        XCTFail(
-            "Bug #12 readback not yet available. " +
-            "TODO: add Then.fragment.countOfClass(_).equals(_)."
+        XCTAssertNotNil(scenario.firstAttachment(of: TableAttachment.self))
+        scenario.Then.tableContent.cell(1, 1).equals("2<br><br>")
+        XCTAssertEqual(
+            firstDescendant(of: scenario.editor, type: TableContainerView.self) == nil ? 0 : 1,
+            1
         )
     }
 
@@ -528,8 +525,9 @@ final class BugInventoryRegressionTests: XCTestCase {
     /// flow: click into cell (0,0), the cursor lands inside that cell.
     /// Covered structurally by `Then.cursor.isInCell`.
     func test_bug29_clickInTopLeftCell_paintsCaretInsideCell() {
-        Given.keyWindowNote()
-            .with(markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n")
+        Given.keyWindowNote(
+            markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n"
+        )
             .clickInCell(row: 0, col: 0)
             .Then.cursor.isInCell(row: 0, col: 0)
     }
@@ -582,8 +580,9 @@ final class BugInventoryRegressionTests: XCTestCase {
     /// `[0, totalCells - 1]` instead of taking it mod totalCells. Now
     /// Shift-Tab from (0, 0) is a no-op; cursor stays at (0, 0).
     func test_bug32_shiftTabFromTopLeftCell_doesNotWrap() {
-        Given.keyWindowNote()
-            .with(markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n")
+        Given.keyWindowNote(
+            markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n"
+        )
             .clickInCell(row: 0, col: 0)
             .pressShiftTab()
             .Then.cursor.isInCell(row: 0, col: 0)
@@ -591,12 +590,13 @@ final class BugInventoryRegressionTests: XCTestCase {
 
     // MARK: - Bug #33: Stale column-handle subview after insert (UNFIXED)
 
-    /// User-reported: ghost handle stuck at the click position after
-    /// `Insert Column Left/Right`. `TableHandleView` lifecycle bug;
-    /// the offscreen harness doesn't reproduce the lifecycle problem.
+    /// User-reported against the retired native handle overlay: ghost
+    /// handle stuck at the click position after `Insert Column
+    /// Left/Right`. The offscreen harness doesn't reproduce that live
+    /// lifecycle problem.
     func test_bug33_staleColumnHandle_afterInsert() throws {
         throw XCTSkip(
-            "Bug #33 — TableHandleView ghost-subview lifecycle bug; live-only. " +
+            "Bug #33 — retired native handle ghost-subview lifecycle bug; live-only. " +
             "Needs an XCUITest layer to reproduce the post-Insert ghost handle."
         )
     }
@@ -640,9 +640,7 @@ final class BugInventoryRegressionTests: XCTestCase {
 
     // MARK: - Bug #36: Drag-and-drop on row/column handle (FIXED)
 
-    /// `TableHandleChip.mouseDown` restored, drag tracking and
-    /// insertion line in `TableHandleOverlay.beginHandleDrag`. Pure
-    /// helpers `dropGapIndex` / `moveDestinationIndex` covered by
+    /// Pure helpers `dropGapIndex` / `moveDestinationIndex` covered by
     /// `TableDragReorderTests` (17 tests).
     func test_bug36_rowColumnHandleDragDrop_movesAndDrawsInsertionLine() throws {
         throw XCTSkip(

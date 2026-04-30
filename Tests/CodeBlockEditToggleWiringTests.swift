@@ -22,8 +22,7 @@
 //  (comments only). The overlay was therefore never instantiated, its
 //  observers never installed, and `</>` buttons never appeared.
 //
-//  Parallel to `TableHandleOverlayWiringTests` — same lazy-getter bug
-//  class that bit the table hover handles in commit `08506d3`.
+//  This pins the remaining lazy-getter overlay path.
 //
 
 import XCTest
@@ -79,8 +78,7 @@ final class CodeBlockEditToggleWiringTests: XCTestCase {
             "`editingCodeBlocksDidChange` observers never register → " +
             "the `</>` hover button never appears on any code block. " +
             "Add a `codeBlockEditToggleOverlay.reposition()` call after " +
-            "`fill(note:)` completes in the editor's load path, alongside " +
-            "the equivalent `tableHandleOverlay.reposition()` call (see " +
+            "`fill(note:)` completes in the editor's load path (see " +
             "ARCHITECTURE.md \"Code-Block Edit Toggle\" + " +
             "`ViewController+Events.swift` comment above the getter)."
         )

@@ -47,7 +47,7 @@ final class SubviewTableBoundaryCaretTests: XCTestCase {
     }
 
     override func tearDown() {
-        UserDefaultsManagement.useSubviewTables = false
+        UserDefaultsManagement.useSubviewTables = true
         super.tearDown()
     }
 
@@ -130,17 +130,17 @@ final class SubviewTableBoundaryCaretTests: XCTestCase {
         )
     }
 
-    // MARK: - Flag-off → nil even at boundary
+    // MARK: - Legacy flag cannot disable the boundary path
 
-    func test_caretRect_returnsNil_whenFlagIsOff() throws {
+    func test_caretRect_ignoresLegacyFlagFalse() throws {
         let (scenario, tableOffset, _) = try scenarioWithTable()
 
         UserDefaultsManagement.useSubviewTables = false
         scenario.cursorAt(tableOffset + 1)
         let rect = scenario.editor.caretRectAtSubviewTableBoundary()
-        XCTAssertNil(
+        XCTAssertNotNil(
             rect,
-            "boundary rect must be nil when useSubviewTables is off"
+            "the retired native-table toggle must not disable subview-table caret math"
         )
     }
 }

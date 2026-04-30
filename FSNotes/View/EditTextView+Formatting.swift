@@ -430,9 +430,9 @@ extension EditTextView {
             // symptom the previous TODO comment misdescribed as a
             // non-issue ("TK2's default hit-testing places the
             // caret in the first table cell on the next user
-            // click"). It doesn't, because `TableLayoutFragment`
-            // paints cells at custom grid positions that TK2's
-            // natural-flow hit test doesn't agree with.
+            // click"). It doesn't: the table lives in hosted cell
+            // subviews, so focus must explicitly move into the first
+            // cell.
             placeCursorInFirstCellOfTable(at: blockIndex + 1)
         } else {
             // Source-mode path. Tables only render live in block-model

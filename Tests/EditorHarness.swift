@@ -59,24 +59,22 @@ final class EditorHarness {
         /// Window is created but never made key. TK2 lays out the
         /// viewport but does NOT mount view-provider-backed subviews
         /// (BulletGlyphView, CheckboxGlyphView, InlinePDFView, ...).
-        /// The harness does NOT construct
-        /// `TableHandleOverlay` / `CodeBlockEditToggleOverlay` — these
-        /// normally hang off `ViewController`, which the harness has
-        /// no equivalent of. Default: preserves the pre-existing test
+        /// The harness does NOT construct `CodeBlockEditToggleOverlay`
+        /// — it normally hangs off `ViewController`, which the harness
+        /// has no equivalent of. Default: preserves the pre-existing test
         /// environment for ~1,640 pipeline tests.
         case offscreen
 
         /// Window is made key + front, editor is made first responder,
         /// `NSTextViewportLayoutController.layoutViewport()` runs
         /// synchronously after fill, the run loop pumps once, and the
-        /// harness constructs + repositions `TableHandleOverlay` +
-        /// `CodeBlockEditToggleOverlay` directly on the editor. These
-        /// overlays take `EditTextView` as their only dependency, so
-        /// the absence of a `ViewController` is not a blocker.
+        /// harness gives attachment view providers enough event-loop
+        /// time to mount and lets code-block overlay tests construct
+        /// their overlay directly when needed.
         ///
         /// Use this for tests that assert on `editor.subviews` —
-        /// `TableHandleView`, `CodeBlockEditToggleView`,
-        /// `BulletGlyphView`, `CheckboxGlyphView`, and other
+        /// `CodeBlockEditToggleView`, `BulletGlyphView`,
+        /// `CheckboxGlyphView`, and other
         /// attachment-host views that TK2 mounts lazily.
         case keyWindow
     }
@@ -210,15 +208,10 @@ final class EditorHarness {
     /// backed view realization) has a chance to run before any
     /// snapshot reads the subview tree.
     ///
-    /// Note on overlay views: `TableHandleOverlay` and
-    /// `CodeBlockEditToggleOverlay` hang off `ViewController` in
-    /// production via the `owningViewControllerForTableHandleOverlay()`
-    /// responder-chain walk inside `fillViaBlockModel`. The harness
-    /// has no `ViewController`, so that walk will return nil even
-    /// after activation, and the overlays will not construct. That
-    /// faithfully reproduces the production-wiring failure class
-    /// users have reported — the harness is not papering over it by
-    /// constructing overlays directly.
+    /// Note on overlay views: `CodeBlockEditToggleOverlay` hangs off
+    /// `ViewController` in production via a responder-chain walk inside
+    /// `fillViaBlockModel`. The harness has no `ViewController`, so
+    /// overlay-specific tests construct that overlay directly.
     private func activateWindowForWidgetLayer() {
         guard let window = window else { return }
 

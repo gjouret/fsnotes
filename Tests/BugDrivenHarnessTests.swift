@@ -46,19 +46,17 @@ final class BugDrivenHarnessTests: XCTestCase {
 
         Invariants.assertAll(harness)
 
-        // The NSTextFinderClient protocol exposes an optional
-        // `string` property; NSTextView's default implementation
-        // returns the current textStorage string. That is what
-        // `NSTextFinder` searches. We check it directly via the
-        // storage because the default textFinder property may be nil
-        // in an offscreen borderless window.
-        let searchable = harness.editor.textStorage?.string ?? ""
+        let storage = harness.editor.textStorage?.string ?? ""
+        let searchable = harness.editor.debugSubviewTableFindString()
 
+        XCTAssertFalse(
+            storage.contains("findmeinside"),
+            "Subview tables keep cell text out of parent NSTextStorage."
+        )
         XCTAssertTrue(
             searchable.contains("findmeinside"),
-            "Bug #60: table cell text must appear in the searchable string " +
-            "so Cmd+F can find it. As of Phase 2e-T2-f this passes by " +
-            "construction via the native TableElement path."
+            "Bug #60: the subview-table finder string must expose cell text " +
+            "so Cmd+F can find it."
         )
     }
 

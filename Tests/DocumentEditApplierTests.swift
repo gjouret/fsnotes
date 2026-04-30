@@ -364,6 +364,65 @@ final class DocumentEditApplierTests: XCTestCase {
         }
     }
 
+    func test_phase3_tableNarrowSpliceRefreshesAttachmentPayload() {
+        let prior = Document(
+            blocks: [
+                .table(
+                    header: [TableCell([.text("A")]), TableCell([])],
+                    alignments: [.none, .none],
+                    rows: [[TableCell([]), TableCell([])]],
+                    columnWidths: nil
+                )
+            ],
+            trailingNewline: false
+        )
+        let next = Document(
+            blocks: [
+                .table(
+                    header: [TableCell([.text("AB")]), TableCell([])],
+                    alignments: [.none, .none],
+                    rows: [[TableCell([]), TableCell([])]],
+                    columnWidths: nil
+                )
+            ],
+            trailingNewline: false
+        )
+
+        let (cs, _, _) = makeSeededContentStorage(for: prior)
+        _ = DocumentEditApplier.applyDocumentEdit(
+            priorDoc: prior,
+            newDoc: next,
+            contentStorage: cs,
+            bodyFont: bodyFont(),
+            codeFont: codeFont()
+        )
+
+        guard let storage = cs.textStorage else {
+            XCTFail("content storage has no textStorage")
+            return
+        }
+        let nextRendered = DocumentRenderer.render(
+            next, bodyFont: bodyFont(), codeFont: codeFont()
+        )
+        let tableSpan = nextRendered.blockSpans[0]
+
+        guard let attachment = storage.attribute(
+            .attachment, at: tableSpan.location, effectiveRange: nil
+        ) as? TableAttachment,
+              case .table(let header, _, _, _) = attachment.block,
+              let first = header.first
+        else {
+            XCTFail("touched table span did not carry a TableAttachment payload")
+            return
+        }
+
+        XCTAssertEqual(
+            first.rawText,
+            "AB",
+            "Table attachment payload must be refreshed after character-level splice narrowing."
+        )
+    }
+
     /// Invariant #3: inserting and deleting a block each produce a
     /// single structural change and a correctly-bounded splice.
     func test_phase3_applyDocumentEdit_structuralInsertDelete() {

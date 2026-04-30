@@ -16,7 +16,6 @@
 //    • Fast path FIRES for `.replaceTableCell` actions on the table.
 //    • Fast path FIRES for `.replaceBlock` on a table block.
 //    • Fast path does NOT fire for `.modifyInline` on a non-table block.
-//    • Fast path does NOT fire when `useSubviewTables` is off.
 //    • Fast path does NOT fire when the storage range covers a non-
 //      TableAttachment (e.g. a different attachment kind).
 //    • Post-conditions: storage's character at the splice range is
@@ -40,13 +39,7 @@ final class SubviewTableInPlaceFastPathTests: XCTestCase {
     }
 
     override func tearDown() {
-        // Always restore to the suite-default `false`, not whatever
-        // value was stashed in `prevFlag`. The flag is persisted in
-        // UserDefaults; if a previous test leaks `true` and we round-
-        // trip through prevFlag, native-cell tests in the same
-        // process fail because the renderer keeps using the subview
-        // path.
-        UserDefaultsManagement.useSubviewTables = false
+        UserDefaultsManagement.useSubviewTables = true
         super.tearDown()
     }
 
@@ -199,13 +192,9 @@ final class SubviewTableInPlaceFastPathTests: XCTestCase {
         )
     }
 
-    // MARK: - Does NOT fire when flag is off
+    // MARK: - Legacy flag can no longer disable the route
 
-    func test_fastPath_doesNotFire_whenFlagIsOff() throws {
-        // Build the fixture with the flag ON (so the renderer
-        // produces a TableAttachment), THEN turn the flag off
-        // before calling the fast path. Otherwise the fixture has
-        // a native-cell table and there's no TableAttachment.
+    func test_fastPath_stillFires_whenLegacyFlagSetFalse() throws {
         guard let ctx = scenarioWithTable() else { return }
         let scenario = ctx.scenario
         guard let projection = scenario.editor.documentProjection else {
@@ -220,9 +209,9 @@ final class SubviewTableInPlaceFastPathTests: XCTestCase {
         UserDefaultsManagement.useSubviewTables = false
         defer { UserDefaultsManagement.useSubviewTables = true }
         let fired = scenario.editor.tryApplyTableCellInPlace(result)
-        XCTAssertFalse(
+        XCTAssertTrue(
             fired,
-            "fast path must NOT fire when useSubviewTables is off"
+            "the retired native-table toggle must not disable subview-table editing"
         )
     }
 }

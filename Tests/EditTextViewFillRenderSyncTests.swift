@@ -34,7 +34,7 @@ final class EditTextViewFillRenderSyncTests: XCTestCase {
     /// synchronously. After fillViaBlockModel's ensureLayout call, the
     /// layout manager has laid out the document's text fragments — so
     /// TK2 view-provider integration (used by checkboxes, images with
-    /// hosted views, and native table elements) has been wired.
+    /// hosted views, and subview table attachments) has been wired.
     ///
     /// Production calls this inside `fillViaBlockModel` right after
     /// `storage.setAttributedString(projection.attributed)`; this

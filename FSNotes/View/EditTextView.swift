@@ -89,6 +89,13 @@ class EditTextView: NSTextView, NSTextFinderClient, NSSharingServicePickerDelega
         needsDisplay = true
     }
 
+    override func performFindPanelAction(_ sender: Any?) {
+        if performSubviewTableFindPanelAction(sender) {
+            return
+        }
+        super.performFindPanelAction(sender)
+    }
+
     public var note: Note?
     public var viewDelegate: ViewController?
 

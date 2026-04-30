@@ -350,6 +350,11 @@ public enum DocumentEditApplier {
                 let clampedLen = max(0, min(narrowedPrior.length, textStorage.length - clampedLoc))
                 let clampedRange = NSRange(location: clampedLoc, length: clampedLen)
                 textStorage.replaceCharacters(in: clampedRange, with: narrowedReplacement)
+                refreshTouchedTableAttributes(
+                    in: textStorage,
+                    from: newRendered,
+                    touchedNewIndices: plan.touchedNewIndices
+                )
             }
         }
         let postLen = textStorage.length
@@ -381,6 +386,57 @@ public enum DocumentEditApplier {
     }
 
     // MARK: - Splice narrowing (fsnotes-ibj)
+
+    /// Character-level narrowing preserves unchanged characters and
+    /// their old attributes. Table blocks render as one attachment
+    /// character, so a table-to-table edit can have identical strings
+    /// (`U+FFFC` before and after) while the attachment payload changed.
+    /// Refresh table attachment attributes from the newly rendered
+    /// projection inside the same editing transaction.
+    private static func refreshTouchedTableAttributes(
+        in textStorage: NSTextStorage,
+        from rendered: RenderedDocument,
+        touchedNewIndices: [Int]
+    ) {
+        guard !touchedNewIndices.isEmpty else { return }
+
+        let keys: [NSAttributedString.Key] = [
+            .attachment,
+            .blockModelKind,
+            .renderedBlockType,
+            .renderedBlockOriginalMarkdown,
+        ]
+
+        for index in Set(touchedNewIndices).sorted() {
+            guard index >= 0,
+                  index < rendered.document.blocks.count,
+                  index < rendered.blockSpans.count,
+                  case .table = rendered.document.blocks[index]
+            else { continue }
+
+            let span = rendered.blockSpans[index]
+            guard span.length > 0,
+                  span.location >= 0,
+                  NSMaxRange(span) <= textStorage.length,
+                  NSMaxRange(span) <= rendered.attributed.length
+            else { continue }
+
+            let sourceAttrs = rendered.attributed.attributes(
+                at: span.location,
+                effectiveRange: nil
+            )
+            var replacementAttrs: [NSAttributedString.Key: Any] = [:]
+            for key in keys {
+                if let value = sourceAttrs[key] {
+                    replacementAttrs[key] = value
+                }
+                textStorage.removeAttribute(key, range: span)
+            }
+            if !replacementAttrs.isEmpty {
+                textStorage.addAttributes(replacementAttrs, range: span)
+            }
+        }
+    }
 
     /// Shrink a block-level splice to the actual changed character span.
     ///
@@ -1005,4 +1061,3 @@ public enum DocumentEditApplier {
     }
     #endif
 }
-

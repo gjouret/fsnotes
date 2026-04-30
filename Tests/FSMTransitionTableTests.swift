@@ -495,10 +495,10 @@ final class FSMTransitionTableTests: XCTestCase {
         // in particular triggers an early `super.keyDown` short-
         // circuit in EditTextView+Input that bypasses the FSM check).
         // Calling `handleListTransition` directly is functionally
-        // identical for FSM rows: the production keyDown's gating
-        // logic (cursorIsInTableElement → bail; documentProjection
-        // != nil → detect state → transition → handleListTransition)
-        // collapses to the three lines below for any list-block row.
+        // identical for FSM rows: the production keyDown's list-gating
+        // logic (documentProjection != nil → detect state → transition
+        // → handleListTransition) collapses to the three lines below
+        // for any list-block row.
         guard let projection = editor.documentProjection else { return }
         let cursorPos = editor.selectedRange().location
         let state = ListEditingFSM.detectState(

@@ -104,15 +104,6 @@ public final class BlockModelLayoutManagerDelegate: NSObject, NSTextLayoutManage
             )
         }
 
-        // Native-cell-text table element: dispatch to `TableLayoutFragment`
-        // for grid rendering.
-        if textElement is TableElement {
-            return TableLayoutFragment(
-                textElement: textElement,
-                range: textElement.elementRange
-            )
-        }
-
         // Paragraph containing kbd tags: custom fragment draws a
         // rounded "keyboard key" box behind each `.kbdTag` run, then
         // delegates to super for the text. All other paragraphs fall

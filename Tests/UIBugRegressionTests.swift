@@ -26,14 +26,26 @@ import AppKit
 
 final class UIBugRegressionTests: XCTestCase {
 
+    private func tableAttachmentCount(in scenario: EditorScenario) -> Int {
+        guard let storage = scenario.editor.textStorage else { return 0 }
+        var count = 0
+        storage.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: storage.length)
+        ) { value, _, _ in
+            if value is TableAttachment { count += 1 }
+        }
+        return count
+    }
+
     // MARK: - Fragment-dispatch invariants
 
-    /// A single GFM table block emits exactly one `TableLayoutFragment`.
+    /// A single GFM table block emits exactly one `TableAttachment`.
     /// Catches the "table rendered twice" regression class.
-    func test_fragmentDispatch_singleTable_oneFragment() {
-        Given.keyWindowNote()
+    func test_tableRender_singleTable_oneAttachment() {
+        let scenario = Given.keyWindowNote()
             .with(markdown: "| a | b |\n|---|---|\n| 1 | 2 |\n")
-            .Then.fragments.countOfClass("TableLayoutFragment").equals(1)
+        XCTAssertEqual(tableAttachmentCount(in: scenario), 1)
     }
 
     /// Each TK2 fragment class fires for its corresponding block kind
@@ -62,14 +74,15 @@ final class UIBugRegressionTests: XCTestCase {
 
         Inline <kbd>Cmd</kbd> marker.
         """
-        Given.keyWindowNote().with(markdown: md)
+        let scenario = Given.keyWindowNote().with(markdown: md)
+        scenario
             .Then.fragments.contains(class: "HeadingLayoutFragment")
             .Then.fragments.contains(class: "BlockquoteLayoutFragment")
             .Then.fragments.contains(class: "CodeBlockLayoutFragment")
             .Then.fragments.contains(class: "HorizontalRuleLayoutFragment")
-            .Then.fragments.contains(class: "TableLayoutFragment")
             .Then.fragments.contains(class: "DisplayMathLayoutFragment")
             .Then.fragments.contains(class: "KbdBoxParagraphLayoutFragment")
+        XCTAssertEqual(tableAttachmentCount(in: scenario), 1)
     }
 
     /// All six ATX heading levels must dispatch to `HeadingLayoutFragment`.
@@ -149,13 +162,13 @@ final class UIBugRegressionTests: XCTestCase {
 
     // MARK: - Block-content presence
 
-    /// Table cell text lives in `NSTextContentStorage` (Phase 2e T2-f);
-    /// snapshot must reflect cell contents directly.
-    func test_blockContent_tableCellTextInSnapshot() {
+    /// Table cell text lives in the authoritative `Block.table`
+    /// payload carried by the table attachment.
+    func test_blockContent_tableCellTextInTablePayload() {
         Given.keyWindowNote()
             .with(markdown: "| A | B |\n|---|---|\n| foo | bar |\n")
-            .Then.snapshot.contains("foo")
-            .Then.snapshot.contains("bar")
+            .Then.tableContent.cell(1, 0).equals("foo")
+            .Then.tableContent.cell(1, 1).equals("bar")
     }
 
     /// Code-block info string survives to the snapshot.
@@ -249,38 +262,29 @@ final class UIBugRegressionTests: XCTestCase {
         scenario.Then.fragments.countOfClass("HeadingLayoutFragment").equals(1)
     }
 
-    /// Editing a table cell does not duplicate `TableLayoutFragment`.
-    func test_typingPreserves_tableSingleFragmentAfterCellEdit() {
-        let scenario = Given.keyWindowNote()
-            .with(markdown: "| A | B |\n|---|---|\n| foo | bar |\n")
-        guard let storage = scenario.editor.textStorage else {
-            return XCTFail("no storage")
-        }
-        let fooRange = (storage.string as NSString).range(of: "foo")
-        guard fooRange.location != NSNotFound else {
-            return XCTFail("foo not found")
-        }
+    /// Editing a table cell updates the single table attachment's
+    /// payload without duplicating the table.
+    func test_typingPreserves_tableSingleAttachmentAfterCellEdit() {
+        let scenario = Given.keyWindowNote(
+            markdown: "| A | B |\n|---|---|\n| foo | bar |\n"
+        )
         scenario
-            .cursorAt(fooRange.location + fooRange.length)
+            .clickInCell(row: 1, col: 0)
             .type("!")
-            .Then.fragments.countOfClass("TableLayoutFragment").equals(1)
+            .Then.tableContent.cell(1, 0).equals("foo!")
+        XCTAssertEqual(tableAttachmentCount(in: scenario), 1)
     }
 
-    /// Typing into a single-table doc preserves the table fragment.
+    /// Typing into a single-table doc preserves the table attachment.
     func test_typingPreserves_typeInOnlyTableDoc() {
-        let scenario = Given.keyWindowNote()
-            .with(markdown: "| A |\n|---|\n| x |\n")
-        guard let storage = scenario.editor.textStorage else {
-            return XCTFail("no storage")
-        }
-        let xRange = (storage.string as NSString).range(of: "x")
-        guard xRange.location != NSNotFound else {
-            return XCTFail("x not found")
-        }
+        let scenario = Given.keyWindowNote(
+            markdown: "| A |\n|---|\n| x |\n"
+        )
         scenario
-            .cursorAt(xRange.location + xRange.length)
+            .clickInCell(row: 1, col: 0)
             .type("y")
-            .Then.fragments.contains(class: "TableLayoutFragment")
+            .Then.tableContent.cell(1, 0).equals("xy")
+        XCTAssertEqual(tableAttachmentCount(in: scenario), 1)
     }
 
     /// Typing outside a table leaves cell text untouched.
@@ -295,9 +299,8 @@ final class UIBugRegressionTests: XCTestCase {
         Given.keyWindowNote().with(markdown: md)
             .cursorAt(9) // end of "paragraph"
             .type("!")
-            .Then.fragments.contains(class: "TableLayoutFragment")
-            .Then.snapshot.contains("foo")
-            .Then.snapshot.contains("bar")
+            .Then.tableContent.cell(1, 0).equals("foo")
+            .Then.tableContent.cell(1, 1).equals("bar")
     }
 
     // MARK: - Cursor / selection invariants

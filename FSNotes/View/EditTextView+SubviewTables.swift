@@ -300,7 +300,6 @@ extension EditTextView {
     /// instead, then advances the projection without touching
     /// storage.
     func tryApplyTableCellInPlace(_ result: EditResult) -> Bool {
-        guard UserDefaultsManagement.useSubviewTables else { return false }
         guard let storage = textStorage else { return false }
         guard let actions = result.contract?.declaredActions,
               !actions.isEmpty else { return false }
@@ -334,8 +333,8 @@ extension EditTextView {
             return false
         }
         // Existing storage attachment at splice position must be a
-        // TableAttachment (not e.g. a native-cell U+FFFC + a different
-        // attachment kind).
+        // TableAttachment, not some other attachment object that
+        // happens to occupy a U+FFFC.
         guard result.spliceRange.location < storage.length,
               let existingAttachment = storage.attribute(
                 .attachment, at: result.spliceRange.location, effectiveRange: nil
@@ -402,5 +401,513 @@ extension EditTextView {
         #endif
 
         return true
+    }
+}
+
+private var subviewTableFindClientKey: UInt8 = 0
+private var subviewTableTextFinderKey: UInt8 = 0
+
+extension EditTextView {
+
+    /// Route Cmd-F/Cmd-G through a finder client that exposes table
+    /// cell text for the subview-table path. NSTextView's default
+    /// finder only sees the parent storage string, which contains a
+    /// single U+FFFC attachment placeholder for each table.
+    func performSubviewTableFindPanelAction(_ sender: Any?) -> Bool {
+        guard documentProjection?.document.blocks.contains(where: {
+                  if case .table = $0 { return true }
+                  return false
+              }) == true else {
+            return false
+        }
+
+        let client = subviewTableFindClient()
+        let finder = subviewTableTextFinder(client: client)
+        finder.performAction(subviewTableFindAction(from: sender))
+        return true
+    }
+
+    func debugSubviewTableFindString() -> String {
+        return SubviewTableFindClient(editor: self).debugString()
+    }
+
+    private func subviewTableFindClient() -> SubviewTableFindClient {
+        if let existing = objc_getAssociatedObject(
+            self, &subviewTableFindClientKey
+        ) as? SubviewTableFindClient {
+            return existing
+        }
+        let client = SubviewTableFindClient(editor: self)
+        objc_setAssociatedObject(
+            self, &subviewTableFindClientKey, client,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        return client
+    }
+
+    private func subviewTableTextFinder(
+        client: SubviewTableFindClient
+    ) -> NSTextFinder {
+        if let existing = objc_getAssociatedObject(
+            self, &subviewTableTextFinderKey
+        ) as? NSTextFinder {
+            existing.client = client
+            if let scrollView = enclosingScrollView {
+                existing.findBarContainer = scrollView
+            }
+            return existing
+        }
+        let finder = NSTextFinder()
+        finder.client = client
+        if let scrollView = enclosingScrollView {
+            finder.findBarContainer = scrollView
+        }
+        objc_setAssociatedObject(
+            self, &subviewTableTextFinderKey, finder,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        return finder
+    }
+
+    private func subviewTableFindAction(from sender: Any?) -> NSTextFinder.Action {
+        if let menu = sender as? NSMenuItem {
+            return NSTextFinder.Action(rawValue: menu.tag) ?? .showFindInterface
+        }
+        if let control = sender as? NSControl {
+            return NSTextFinder.Action(rawValue: control.tag) ?? .showFindInterface
+        }
+        return .showFindInterface
+    }
+}
+
+private final class SubviewTableFindClient: NSObject, NSTextFinderClient {
+
+    private enum SegmentKind {
+        case storage(NSRange)
+        case tableCell(
+            attachment: TableAttachment?,
+            attachmentRange: NSRange,
+            row: Int,
+            col: Int
+        )
+        case tableDelimiter(
+            attachment: TableAttachment?,
+            attachmentRange: NSRange
+        )
+    }
+
+    private struct Segment {
+        let virtualRange: NSRange
+        let text: String
+        let kind: SegmentKind
+        let endsWithSearchBoundary: Bool
+    }
+
+    private struct Snapshot {
+        let segments: [Segment]
+        let stringLength: Int
+
+        var fullString: String {
+            segments.map(\.text).joined()
+        }
+
+        func segment(containing location: Int) -> Segment? {
+            guard !segments.isEmpty else { return nil }
+            let clamped = max(0, min(location, max(0, stringLength - 1)))
+            return segments.first { NSLocationInRange(clamped, $0.virtualRange) }
+        }
+
+        func segmentForRangeStart(_ range: NSRange) -> Segment? {
+            if let exact = segment(containing: range.location) {
+                return exact
+            }
+            return segments.last { NSMaxRange($0.virtualRange) <= range.location }
+                ?? segments.first
+        }
+    }
+
+    private weak var editor: EditTextView?
+
+    init(editor: EditTextView) {
+        self.editor = editor
+        super.init()
+    }
+
+    func debugString() -> String {
+        buildSnapshot().fullString
+    }
+
+    override var isSelectable: Bool { true }
+    var allowsMultipleSelection: Bool { true }
+    var isEditable: Bool { false }
+
+    var stringLength: Int {
+        buildSnapshot().stringLength
+    }
+
+    func string(
+        at characterIndex: Int,
+        effectiveRange outRange: NSRangePointer,
+        endsWithSearchBoundary outFlag: UnsafeMutablePointer<ObjCBool>
+    ) -> String {
+        let snapshot = buildSnapshot()
+        guard let segment = snapshot.segment(containing: characterIndex) else {
+            outRange.pointee = NSRange(location: 0, length: 0)
+            outFlag.pointee = true
+            return ""
+        }
+        outRange.pointee = segment.virtualRange
+        outFlag.pointee = ObjCBool(segment.endsWithSearchBoundary)
+        return segment.text
+    }
+
+    var firstSelectedRange: NSRange {
+        let snapshot = buildSnapshot()
+        if let cellRange = selectedTableCellRange(in: snapshot) {
+            return cellRange
+        }
+        if let parentRange = selectedParentRange(in: snapshot) {
+            return parentRange
+        }
+        return NSRange(location: 0, length: 0)
+    }
+
+    var selectedRanges: [NSValue] {
+        get { [NSValue(range: firstSelectedRange)] }
+        set {
+            guard let range = newValue.first?.rangeValue else { return }
+            applyVirtualSelection(range)
+        }
+    }
+
+    func scrollRangeToVisible(_ range: NSRange) {
+        let snapshot = buildSnapshot()
+        guard let segment = snapshot.segmentForRangeStart(range),
+              let editor = editor else { return }
+        switch segment.kind {
+        case .storage(let storageRange):
+            let mapped = mapRange(
+                range, from: segment.virtualRange, toStart: storageRange.location
+            )
+            editor.scrollRangeToVisible(mapped)
+        case .tableCell(let attachment, let attachmentRange, let row, let col):
+            editor.scrollRangeToVisible(attachmentRange)
+            guard let cell = attachment?.liveContainerView?.cellViewAt(
+                row: row, col: col
+            ) else { return }
+            let mapped = mapRange(range, from: segment.virtualRange, toStart: 0)
+            cell.scrollRangeToVisible(mapped)
+        case .tableDelimiter(_, let attachmentRange):
+            editor.scrollRangeToVisible(attachmentRange)
+        }
+    }
+
+    func contentView(
+        at index: Int,
+        effectiveCharacterRange outRange: NSRangePointer
+    ) -> NSView {
+        let snapshot = buildSnapshot()
+        guard let segment = snapshot.segment(containing: index) else {
+            outRange.pointee = NSRange(location: 0, length: 0)
+            return editor ?? NSView()
+        }
+        outRange.pointee = segment.virtualRange
+        if case .tableCell(let attachment, _, let row, let col) = segment.kind,
+           let cell = attachment?.liveContainerView?.cellViewAt(row: row, col: col) {
+            return cell
+        }
+        return editor ?? NSView()
+    }
+
+    func rects(forCharacterRange range: NSRange) -> [NSValue]? {
+        let snapshot = buildSnapshot()
+        guard let segment = snapshot.segmentForRangeStart(range),
+              let editor = editor else { return [] }
+
+        switch segment.kind {
+        case .storage(let storageRange):
+            let mapped = mapRange(
+                range, from: segment.virtualRange, toStart: storageRange.location
+            )
+            let screenRect = editor.firstRect(
+                forCharacterRange: mapped, actualRange: nil
+            )
+            return screenRect.isEmpty
+                ? []
+                : [NSValue(rect: localRect(fromScreenRect: screenRect, in: editor))]
+        case .tableCell(let attachment, _, let row, let col):
+            guard let cell = attachment?.liveContainerView?.cellViewAt(
+                row: row, col: col
+            ) else { return [] }
+            let mapped = mapRange(range, from: segment.virtualRange, toStart: 0)
+            let screenRect = cell.firstRect(
+                forCharacterRange: mapped, actualRange: nil
+            )
+            return screenRect.isEmpty
+                ? []
+                : [NSValue(rect: localRect(fromScreenRect: screenRect, in: cell))]
+        case .tableDelimiter:
+            return []
+        }
+    }
+
+    var visibleCharacterRanges: [NSValue] {
+        let length = buildSnapshot().stringLength
+        return [NSValue(range: NSRange(location: 0, length: length))]
+    }
+
+    func drawCharacters(in range: NSRange, forContentView view: NSView) {
+        _ = range
+        _ = view
+    }
+
+    private func buildSnapshot() -> Snapshot {
+        guard let editor = editor,
+              let projection = editor.documentProjection,
+              let storage = editor.textStorage else {
+            return Snapshot(segments: [], stringLength: 0)
+        }
+
+        var segments: [Segment] = []
+        var virtualLocation = 0
+        var storageCursor = 0
+        let storageString = storage.string as NSString
+
+        func appendSegment(
+            _ text: String,
+            kind: SegmentKind,
+            boundary: Bool = false
+        ) {
+            let length = (text as NSString).length
+            guard length > 0 else { return }
+            let range = NSRange(location: virtualLocation, length: length)
+            segments.append(
+                Segment(
+                    virtualRange: range,
+                    text: text,
+                    kind: kind,
+                    endsWithSearchBoundary: boundary
+                )
+            )
+            virtualLocation += length
+        }
+
+        func appendStorageRange(_ range: NSRange) {
+            guard range.length > 0 else { return }
+            appendSegment(
+                storageString.substring(with: range),
+                kind: .storage(range)
+            )
+        }
+
+        func appendTable(
+            _ block: Block,
+            attachment: TableAttachment?,
+            attachmentRange: NSRange
+        ) {
+            guard case .table(let header, _, let rows, _) = block else { return }
+
+            func appendCell(_ cell: TableCell, row: Int, col: Int) {
+                appendSegment(
+                    InlineRenderer.plainText(cell.inline),
+                    kind: .tableCell(
+                        attachment: attachment,
+                        attachmentRange: attachmentRange,
+                        row: row,
+                        col: col
+                    )
+                )
+            }
+
+            for (col, cell) in header.enumerated() {
+                appendCell(cell, row: 0, col: col)
+                if col < header.count - 1 {
+                    appendSegment(
+                        "\t",
+                        kind: .tableDelimiter(
+                            attachment: attachment,
+                            attachmentRange: attachmentRange
+                        )
+                    )
+                }
+            }
+
+            if !header.isEmpty || !rows.isEmpty {
+                appendSegment(
+                    "\n",
+                    kind: .tableDelimiter(
+                        attachment: attachment,
+                        attachmentRange: attachmentRange
+                    ),
+                    boundary: true
+                )
+            }
+
+            for (rowIdx, row) in rows.enumerated() {
+                for (col, cell) in row.enumerated() {
+                    appendCell(cell, row: rowIdx + 1, col: col)
+                    if col < row.count - 1 {
+                        appendSegment(
+                            "\t",
+                            kind: .tableDelimiter(
+                                attachment: attachment,
+                                attachmentRange: attachmentRange
+                            )
+                        )
+                    }
+                }
+                if rowIdx < rows.count - 1 {
+                    appendSegment(
+                        "\n",
+                        kind: .tableDelimiter(
+                            attachment: attachment,
+                            attachmentRange: attachmentRange
+                        ),
+                        boundary: true
+                    )
+                }
+            }
+        }
+
+        for (idx, block) in projection.document.blocks.enumerated() {
+            guard idx < projection.blockSpans.count else { continue }
+            let span = projection.blockSpans[idx]
+            let prefixLength = max(0, span.location - storageCursor)
+            appendStorageRange(
+                NSRange(location: storageCursor, length: prefixLength)
+            )
+
+            if case .table = block {
+                let attachment = tableAttachment(in: storage, span: span)
+                appendTable(block, attachment: attachment, attachmentRange: span)
+            } else {
+                appendStorageRange(span)
+            }
+            storageCursor = max(storageCursor, NSMaxRange(span))
+        }
+
+        if storageCursor < storage.length {
+            appendStorageRange(
+                NSRange(location: storageCursor, length: storage.length - storageCursor)
+            )
+        }
+
+        return Snapshot(segments: segments, stringLength: virtualLocation)
+    }
+
+    private func tableAttachment(
+        in storage: NSTextStorage,
+        span: NSRange
+    ) -> TableAttachment? {
+        guard span.length > 0,
+              span.location >= 0,
+              span.location < storage.length else { return nil }
+        return storage.attribute(
+            .attachment, at: span.location, effectiveRange: nil
+        ) as? TableAttachment
+    }
+
+    private func selectedTableCellRange(in snapshot: Snapshot) -> NSRange? {
+        guard let cell = editor?.window?.firstResponder as? TableCellTextView else {
+            return nil
+        }
+        for segment in snapshot.segments {
+            guard case .tableCell(let attachment, _, let row, let col) = segment.kind,
+                  let candidate = attachment?.liveContainerView?.cellViewAt(
+                      row: row, col: col
+                  ),
+                  candidate === cell else { continue }
+            let local = cell.selectedRange()
+            let location = segment.virtualRange.location
+                + max(0, min(local.location, segment.virtualRange.length))
+            let length = max(
+                0,
+                min(local.length, segment.virtualRange.length - (location - segment.virtualRange.location))
+            )
+            return NSRange(location: location, length: length)
+        }
+        return nil
+    }
+
+    private func selectedParentRange(in snapshot: Snapshot) -> NSRange? {
+        guard let editor = editor else { return nil }
+        let selected = editor.selectedRange()
+        for segment in snapshot.segments {
+            switch segment.kind {
+            case .storage(let storageRange):
+                if selected.location >= storageRange.location,
+                   selected.location <= NSMaxRange(storageRange) {
+                    let local = max(0, selected.location - storageRange.location)
+                    let location = segment.virtualRange.location
+                        + min(local, segment.virtualRange.length)
+                    let length = max(
+                        0,
+                        min(selected.length, segment.virtualRange.length - (location - segment.virtualRange.location))
+                    )
+                    return NSRange(location: location, length: length)
+                }
+            case .tableCell(_, let attachmentRange, _, _),
+                 .tableDelimiter(_, let attachmentRange):
+                if selected.location >= attachmentRange.location,
+                   selected.location <= NSMaxRange(attachmentRange) {
+                    return NSRange(location: segment.virtualRange.location, length: 0)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func applyVirtualSelection(_ range: NSRange) {
+        let snapshot = buildSnapshot()
+        guard let segment = snapshot.segmentForRangeStart(range),
+              let editor = editor else { return }
+
+        switch segment.kind {
+        case .storage(let storageRange):
+            let mapped = mapRange(
+                range, from: segment.virtualRange, toStart: storageRange.location
+            )
+            editor.window?.makeFirstResponder(editor)
+            editor.setSelectedRange(mapped)
+            editor.scrollRangeToVisible(mapped)
+        case .tableCell(let attachment, let attachmentRange, let row, let col):
+            guard let cell = attachment?.liveContainerView?.cellViewAt(
+                row: row, col: col
+            ) else {
+                editor.window?.makeFirstResponder(editor)
+                editor.setSelectedRange(
+                    NSRange(location: attachmentRange.location, length: 1)
+                )
+                editor.scrollRangeToVisible(attachmentRange)
+                return
+            }
+            let mapped = mapRange(range, from: segment.virtualRange, toStart: 0)
+            cell.window?.makeFirstResponder(cell)
+            cell.setSelectedRange(mapped)
+            cell.scrollRangeToVisible(mapped)
+        case .tableDelimiter(_, let attachmentRange):
+            editor.window?.makeFirstResponder(editor)
+            editor.setSelectedRange(
+                NSRange(location: attachmentRange.location, length: 1)
+            )
+            editor.scrollRangeToVisible(attachmentRange)
+        }
+    }
+
+    private func mapRange(
+        _ range: NSRange,
+        from source: NSRange,
+        toStart targetStart: Int
+    ) -> NSRange {
+        let localStart = max(0, min(range.location - source.location, source.length))
+        let available = max(0, source.length - localStart)
+        let length = max(0, min(range.length, available))
+        return NSRange(location: targetStart + localStart, length: length)
+    }
+
+    private func localRect(fromScreenRect screenRect: NSRect, in view: NSView) -> NSRect {
+        guard let window = view.window else { return screenRect }
+        let windowRect = window.convertFromScreen(screenRect)
+        return view.convert(windowRect, from: nil)
     }
 }

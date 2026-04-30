@@ -57,8 +57,8 @@ final class TableCellTextView: NSTextView {
         font: NSFont,
         alignment: NSTextAlignment
     ) {
-        // Reuse the same renderer the measurement + native-cell paint
-        // paths use, so visual height matches geometry exactly.
+        // Reuse the same renderer the measurement + cell paint paths
+        // use, so visual height matches geometry exactly.
         let rendered = TableGeometry.renderCellAttributedString(
             cell: cell, font: font, alignment: alignment
         )

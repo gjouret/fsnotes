@@ -493,8 +493,6 @@ extension EditTextView {
         // to wire the hosted views and the first layout pass was
         // deferred to the next user event.
         //
-        // Native tables render via `TableLayoutFragment` and need no
-        // separate render pass; the layout pass below is sufficient.
         if let tlm = textLayoutManager {
             // Scope the sync layout pass to the visible viewport, not
             // the whole document. A full-doc `ensureLayout` on a
@@ -535,17 +533,10 @@ extension EditTextView {
                     .textViewportLayoutController
                     .layoutViewport()
                 // Deferred to Phase 2 (after TK2 mounts view-provider
-                // subviews + fragment frames settle). Reposition
-                // inside the fill path ran BEFORE Phase 2, so
-                // `visibleTables()` saw stale / unlaid fragment
-                // frames and `reposition()` attached handles at
-                // wrong positions (or not at all). Running it here
-                // — after the second `layoutViewport()` + a
-                // run-loop tick — guarantees fragment frames are
-                // final.
-                if let vc =
-                    self.owningViewControllerForTableHandleOverlay() {
-                    vc.tableHandleOverlay.reposition()
+                // subviews + fragment frames settle). Code-block edit
+                // toggles need final fragment frames before they can
+                // position their overlay buttons.
+                if let vc = self.owningViewControllerForOverlays() {
                     vc.codeBlockEditToggleOverlay.reposition()
                 }
             }
@@ -560,7 +551,7 @@ extension EditTextView {
     // this editor. Returns nil if the editor isn't currently embedded
     // in one — e.g. during offscreen harness tests or between window
     // transitions. Callers should tolerate nil.
-    private func owningViewControllerForTableHandleOverlay() -> ViewController? {
+    private func owningViewControllerForOverlays() -> ViewController? {
         var responder: NSResponder? = self
         while let current = responder {
             if let vc = current as? ViewController {
@@ -698,7 +689,9 @@ extension EditTextView {
         // be semantically a no-op — but constructing a new attachment
         // object causes TK2 to remount the view provider and tear
         // down the live cell view (eating the user's first responder).
-        // The fast path is no-op when `useSubviewTables` is off.
+        // The retired `useSubviewTables` preference key can no
+        // longer disable this path; subview tables are the only
+        // production table-rendering route.
         if tryApplyTableCellInPlace(result) {
             pendingInlineTraits = savedPendingTraits
             explicitlyOffTraits = savedOffTraits
@@ -814,8 +807,7 @@ extension EditTextView {
             // scheduled, so rapid typing doesn't queue N redundant
             // refreshes (which would each force a paint and produce
             // visible flicker on the table).
-            if UserDefaultsManagement.useSubviewTables,
-               !pendingTableRefreshScheduled {
+            if !pendingTableRefreshScheduled {
                 pendingTableRefreshScheduled = true
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
@@ -1051,10 +1043,6 @@ extension EditTextView {
 
         // `InlinePDFView` / `InlineQuickLookView` use TK2 view providers
         // and are managed by AppKit — no manual orphan cleanup needed.
-        // Native tables render via `TableLayoutFragment` (no subview
-        // lifecycle to manage), so the pre/post attachment count tracking
-        // that previously gated the widget-orphan walk is no longer
-        // needed either.
 
         // Mark note as modified.
         note?.cacheHash = nil
@@ -1139,51 +1127,6 @@ extension EditTextView {
               let replacement = replacementString else {
             bmLog("⛔ handleEditViaBlockModel: guard failed - projection=\(documentProjection != nil), storage=\(textStorage != nil), replacement=\(replacementString != nil)")
             return false
-        }
-
-        // Phase 2e-T2-e: cell text editing inside a TableElement. The
-        // cursor can be parked in a cell via click / Tab / arrow (T2-d
-        // plumbing); character inserts and deletions now route through
-        // the cell primitive rather than the generic `EditingOps.insert`
-        // path, because the separator-encoded storage is the
-        // TableElement's flat projection — splicing characters at
-        // arbitrary offsets would corrupt the U+001F / U+001E encoding
-        // and there is no generic EditingOps path that preserves it.
-        //
-        // The cell primitive (`replaceTableCellInline`) takes the cell's
-        // full new `[Inline]` tree and the surrounding block-model
-        // pipeline rebuilds the separator-encoded storage canonically.
-        // Cursor position after the edit is computed here because
-        // `replaceBlockFast` (the fast path under the primitive) does
-        // not know where the caret should land — the caller owns that.
-        // Bug #37: Backspace at the start of a table cell must not
-        // cross the cell boundary. The harness / responder chain
-        // represents this case as `range = [cellStart - 1, 1]` with
-        // an empty replacement — the deletion straddles either the
-        // pre-table boundary (top-left cell) or an inter-cell /
-        // inter-row separator (any other cell). Before bug #37, the
-        // separator-deletion case fell through to the generic
-        // `EditingOps.delete` which corrupted the U+001F / U+001E
-        // encoding (often removing the entire table block); the
-        // pre-table boundary case merged the table away. Both modes
-        // are wrong — backspace at cell offset 0 should be a no-op,
-        // matching the corresponding cell-internal guard inside
-        // `handleTableCellEdit`.
-        if range.length == 1, replacement.isEmpty,
-           offsetIsTableCellStart(range.location + range.length) {
-            bmLog("🛑 handleEditViaBlockModel: Backspace at table cell start — no-op (bug #37)")
-            return true
-        }
-
-        if storageOffsetIsInTableElement(range.location) {
-            if handleTableCellEdit(range: range, replacement: replacement) {
-                return true
-            }
-            // Fall-through means the edit did NOT target a resolvable
-            // cell (e.g. the range straddled a separator, or the table
-            // block index couldn't be resolved). Fall through to the
-            // generic path so delete-at-boundary, cross-block backspace,
-            // and similar edge cases keep their T2-d behaviour.
         }
 
         // Detailed logging for debugging new note typing issues
@@ -1826,347 +1769,6 @@ extension EditTextView {
         guard textStorage != nil, documentProjection != nil else { return }
         applyEditResultWithUndo(result, actionName: actionName)
     }
-
-    // MARK: - Table cell editing
-
-    // NOTE: the former `pushTableBlockToProjection(from: InlineTableView, ...)`,
-    // `blockIndex(for: InlineTableView)`, and widget-specific
-    // `applyTableCellInlineEdit(from:at:inline:)` entry points were
-    // deleted in Phase 2e-T2-h along with the `InlineTableView` widget
-    // itself. Native-element cell edits flow through
-    // `handleTableCellEdit(range:replacement:)` below, which uses the
-    // TK2 layout-manager lookup to resolve the table's block index.
-    // Structural mutations (add/remove row / column, alignment change)
-    // flow through the `EditingOps.insertTableRow/Column` /
-    // `deleteTableRow/Column` / `setTableColumnAlignment` primitives
-    // invoked by `TableHandleOverlay`.
-
-    // MARK: - Phase 2e-T2-e: TableElement cell text editing
-
-    /// Handle an insertion / deletion / replacement inside a
-    /// `TableElement`'s separator-encoded storage. Returns `true` when
-    /// the edit was routed through `EditingOps.replaceTableCellInline`
-    /// (caller must not proceed with the generic path); `false` when
-    /// the edit can't be expressed as a single-cell mutation and the
-    /// caller should fall through.
-    ///
-    /// Semantics per input:
-    ///   * Pure insert of a non-Return, non-newline string → splice the
-    ///     characters into the cell's inline tree at the cell-local
-    ///     offset corresponding to `range.location`.
-    ///   * Pure insert of `"\n"` → treated as the Return key: insert
-    ///     `.rawHTML("<br>")` at the cell-local offset. This is the
-    ///     convention `InlineRenderer.inlineTreeFromAttributedString`
-    ///     uses when decoding a line break in a cell's attributed
-    ///     string, and matches the widget path (InlineTableView) which
-    ///     stores cell line breaks as `<br>`.
-    ///   * Pure deletion (replacement empty) at cell-start (offset 0 of
-    ///     cell content) → no-op (documented decision: backspace at
-    ///     start of a cell does NOT merge with the previous cell. The
-    ///     widget's behaviour is the same — backspace in an empty
-    ///     field is a no-op).
-    ///   * Pure deletion anywhere else inside the cell → delete the
-    ///     characters from the cell's inline tree.
-    ///   * Replacement (range.length > 0 and replacement non-empty) →
-    ///     delete then insert inside the cell, as a single operation.
-    ///
-    /// Edge cases that return `false` (caller falls through):
-    ///   * Range crosses a cell boundary (a separator is inside the
-    ///     range) — the cell primitive can't express this; fall through
-    ///     to the generic path, which will no-op or refuse.
-    ///   * Cursor sits on a separator itself (between cells) — no cell
-    ///     context resolvable; the range is either outside any cell or
-    ///     spans two cells.
-    private func handleTableCellEdit(
-        range: NSRange,
-        replacement: String
-    ) -> Bool {
-        // Resolve the cell context for the edit's start offset. If the
-        // offset lies on a separator, try `offset - 1` as well — a
-        // cursor at the END of a cell's content sits exactly on the
-        // next separator, which the locator (intentionally) rejects
-        // as "not inside a cell". For editing purposes, end-of-cell
-        // IS inside the preceding cell (that's where the character
-        // insert should land). This normalization is the only place
-        // in the code base that makes that decision; the nav layer
-        // continues to see end-of-cell as a separator offset because
-        // nav has no "which side of the separator" question.
-        //
-        // When we fall back to (offset - 1), we keep the ORIGINAL edit
-        // offset (not the probe offset) in the context — the cell row/
-        // col comes from the probe but the cell-local clamp is
-        // applied below against the cell's actual range.
-        var ctx = tableCursorContextForOffset(range.location)
-        if ctx == nil, range.location > 0 {
-            ctx = tableCursorContextForOffset(range.location - 1)
-        }
-        guard let ctx = ctx else {
-            return false
-        }
-
-        // Determine the cell's element-local range, so we can clamp the
-        // incoming edit to cell bounds.
-        guard let cellLocalRange = ctx.element.cellRange(
-            forCellAt: (row: ctx.row, col: ctx.col)
-        ) else {
-            return false
-        }
-
-        // Translate the edit's range from storage coordinates to
-        // cell-local coordinates.
-        let cellStorageStart = ctx.elementStorageStart + cellLocalRange.location
-        let cellStorageEnd = cellStorageStart + cellLocalRange.length
-        let editEnd = range.location + range.length
-
-        // Refuse edits that escape the cell — they'd need to touch a
-        // separator (cross-cell) or fall outside the table entirely.
-        // Fall through so the generic path can decide what to do.
-        if range.location < cellStorageStart || editEnd > cellStorageEnd {
-            bmLog("⛔ handleTableCellEdit: edit range \(range) escapes cell [\(cellStorageStart)..\(cellStorageEnd)] — fall through")
-            return false
-        }
-
-        // Backspace at cell-start: no-op. Documented choice — cells are
-        // first-class content, deleting at their start does NOT merge
-        // into the previous cell (that would lose the structural cell
-        // boundary). Mirrors the widget path.
-        //
-        // The two dead branches that used to live here (empty-range-at-
-        // cell-start; length-1-delete-at-cell-start) have been removed.
-        // Both are unreachable given the earlier `range.location <
-        // cellStorageStart` guard. If the upstream shape of `range`
-        // ever changes and this code gets wired up again as reachable,
-        // `assertionFailure` in a debug build will catch it loudly.
-        assert(
-            !(replacement.isEmpty && range.length > 0 &&
-              range.location == cellStorageStart && editEnd == cellStorageStart),
-            "cell-start empty-replacement with length > 0 — unreachable given the escape-cell guards above; audit the precondition"
-        )
-        // Backspace that deletes a character strictly inside the cell:
-        // allow through. Backspace at cell-start is represented by
-        // range.location == cellStorageStart - 1 with length 1, which
-        // is already rejected by the escape-cell check above, so we
-        // never get here for that case. Delete-forward at cell-end is
-        // represented by range.location == cellStorageEnd with length
-        // 1 — also already rejected. Both are correctly no-ops.
-
-        // Get the cell's current attributed substring from the element.
-        guard let storage = textStorage else { return false }
-        let cellRange = NSRange(
-            location: cellStorageStart, length: cellLocalRange.length
-        )
-        let currentAttr = storage.attributedSubstring(from: cellRange)
-
-        // Build the new cell attributed string by applying the edit in
-        // cell-local coordinates.
-        let mutable = NSMutableAttributedString(
-            attributedString: currentAttr
-        )
-        let localEditRange = NSRange(
-            location: range.location - cellStorageStart,
-            length: range.length
-        )
-        // Materialize the replacement string. For a Return keystroke,
-        // the replacement is "\n" and we want to land a <br> into the
-        // inline tree. We build the replacement as an attributed
-        // string here using the cell's base attributes so the inline
-        // converter sees a proper attribute run (no font drift).
-        let newText: String
-        if replacement == "\n" {
-            // Store as `\n` in the attributed string — the inline
-            // converter translates `\n` → `.rawHTML("<br>")` inside a
-            // cell segment (see `InlineRenderer.inlineTreeFromAttributedString`).
-            newText = "\n"
-        } else {
-            newText = replacement
-        }
-        // Pick attributes for the replacement from the base body font;
-        // prefer the existing cell's attributes at the edit location
-        // when possible so inline traits (bold/italic) carry across a
-        // single-character insert inside a styled run.
-        let replacementAttrs: [NSAttributedString.Key: Any]
-        if currentAttr.length > 0 {
-            let probeLoc = min(
-                max(0, localEditRange.location - (localEditRange.location == currentAttr.length ? 1 : 0)),
-                currentAttr.length - 1
-            )
-            replacementAttrs = currentAttr.attributes(at: probeLoc, effectiveRange: nil)
-        } else {
-            replacementAttrs = [
-                .font: UserDefaultsManagement.noteFont,
-                .foregroundColor: NSColor.labelColor
-            ]
-        }
-        let replacementAttr = NSAttributedString(
-            string: newText, attributes: replacementAttrs
-        )
-        mutable.replaceCharacters(in: localEditRange, with: replacementAttr)
-
-        // Decode the new cell content into an inline tree. This is the
-        // same converter paragraphs use — the cell stays "a paragraph
-        // inside a cell."
-        let newInline = InlineRenderer.inlineTreeFromAttributedString(mutable)
-
-        // Locate the table block by inspecting the projection span for
-        // the element's storage start.
-        guard let projection = documentProjection else { return false }
-        guard let (blockIdx, _) = projection.blockContaining(
-            storageIndex: ctx.elementStorageStart
-        ) else {
-            bmLog("⛔ handleTableCellEdit: projection has no block at offset \(ctx.elementStorageStart)")
-            return false
-        }
-        guard case .table = projection.document.blocks[blockIdx] else {
-            bmLog("⛔ handleTableCellEdit: block \(blockIdx) is not a table")
-            return false
-        }
-
-        // Encode (row, col) to the primitive's TableCellLocation.
-        // row 0 = header; row 1..N map to body rows 0..N-1.
-        let cellLocation: EditingOps.TableCellLocation
-        if ctx.row == 0 {
-            cellLocation = .header(col: ctx.col)
-        } else {
-            cellLocation = .body(row: ctx.row - 1, col: ctx.col)
-        }
-
-        // Compute the cell's local offset within the NEW cell content
-        // for cursor landing. For an insert at localEditRange.location,
-        // the cursor lands at localEditRange.location + newText.utf16.count.
-        // For a delete, it lands at localEditRange.location.
-        let newCellLocalOffset = localEditRange.location + (newText as NSString).length
-
-        // Run the pure primitive.
-        let result: EditResult
-        do {
-            var tmp = try EditingOps.replaceTableCellInline(
-                blockIndex: blockIdx,
-                at: cellLocation,
-                inline: newInline,
-                in: projection
-            )
-            // The primitive leaves `newCursorPosition = 0` — it has no
-            // way to know where the caret should land inside the new
-            // storage. Compute it here: start of new table block span
-            // + cell's new local offset + the cursor offset within the
-            // new cell content.
-            let newBlockSpan = tmp.newProjection.blockSpans[blockIdx]
-            // Find the new cell's element-local start within the
-            // re-rendered table. Build a throwaway TableElement from
-            // the new block's rendered substring to reuse the locator.
-            let newTableAttr = tmp.newProjection.attributed.attributedSubstring(
-                from: newBlockSpan
-            )
-            var cellStartInNewElement: Int = 0
-            if case .table = tmp.newProjection.document.blocks[blockIdx],
-               let probe = TableElement(
-                block: tmp.newProjection.document.blocks[blockIdx],
-                attributedString: newTableAttr
-               ),
-               let s = probe.offset(forCellAt: (row: ctx.row, col: ctx.col)) {
-                cellStartInNewElement = s
-            }
-            // Clamp the cursor to the cell's new length — the new cell
-            // may have more or fewer characters than the requested
-            // offset. `<br>` encodes as a single `\n` UTF-16 unit in
-            // the attributed-string form (see
-            // `InlineRenderer.isBrTag`), which matches the `+1`
-            // advance computed for a Return keystroke.
-            let newCellLen: Int
-            if case .table = tmp.newProjection.document.blocks[blockIdx],
-               let probe = TableElement(
-                block: tmp.newProjection.document.blocks[blockIdx],
-                attributedString: newTableAttr
-               ),
-               let r = probe.cellRange(forCellAt: (row: ctx.row, col: ctx.col)) {
-                newCellLen = r.length
-            } else {
-                newCellLen = 0
-            }
-            let clampedCellOffset = min(newCellLocalOffset, newCellLen)
-            let storageCursor = newBlockSpan.location + cellStartInNewElement + clampedCellOffset
-            tmp.newCursorPosition = storageCursor
-            result = tmp
-        } catch {
-            bmLog("⚠️ handleTableCellEdit: replaceTableCellInline threw \(error)")
-            // Fall through — let the generic path decide (likely no-op).
-            return false
-        }
-
-        applyEditResultWithUndo(result, actionName: replacement == "\n" ? "Insert Line Break" : "Typing")
-        return true
-    }
-
-    /// Like `tableCursorContext()` but resolves at an arbitrary storage
-    /// offset, not the current selection. Needed because the edit
-    /// range's start offset is not necessarily the selection's location
-    /// — e.g. a paste or a range-replace can target a different offset.
-    private func tableCursorContextForOffset(
-        _ storageOffset: Int
-    ) -> TableCursorContext? {
-        guard let tlm = self.textLayoutManager,
-              let contentStorage = tlm.textContentManager as? NSTextContentStorage
-        else { return nil }
-        guard storageOffset >= 0,
-              storageOffset <= (textStorage?.length ?? 0)
-        else { return nil }
-
-        guard let loc = contentStorage.location(at: storageOffset)
-        else { return nil }
-
-        // Strict fragment lookup at `storageOffset`. TK2 maps a just-
-        // past-end-of-element offset (e.g. cursor parked at end of an
-        // empty trailing cell after Tab or click-to-cell) to the
-        // FOLLOWING fragment, so the strict lookup misses the table
-        // here. Probe `offset - 1` and accept the resulting fragment
-        // when its `TableElement.elementRange` ends exactly at
-        // `storageOffset`. Use the original `storageOffset` for the
-        // cell-locator below — `cellAtCursor` correctly resolves
-        // end-of-element to the last cell.
-        var resolvedElement: TableElement?
-        var resolvedElementRange: NSTextRange?
-        if let fragment = tlm.textLayoutFragment(for: loc),
-           let element = fragment.textElement as? TableElement,
-           let elementRange = element.elementRange {
-            resolvedElement = element
-            resolvedElementRange = elementRange
-        }
-        if resolvedElement == nil, storageOffset > 0,
-           let prevLoc = contentStorage.location(at: storageOffset - 1),
-           let prevFrag = tlm.textLayoutFragment(for: prevLoc),
-           let element = prevFrag.textElement as? TableElement,
-           let elementRange = element.elementRange {
-            let elementEnd = NSRange(elementRange.endLocation, in: contentStorage).location
-            if elementEnd == storageOffset {
-                resolvedElement = element
-                resolvedElementRange = elementRange
-            }
-        }
-        guard let element = resolvedElement,
-              let elementRange = resolvedElementRange
-        else { return nil }
-
-        let elementStart = NSRange(elementRange.location, in: contentStorage).location
-        let localOffset = storageOffset - elementStart
-        // Use the cursor-aware variant so an offset parked on a
-        // separator (U+001F / U+001E) — including the trailing-edge
-        // case for an empty last cell after a Tab — resolves to the
-        // cell whose content end the caret is sitting on. The strict
-        // `cellLocation(forOffset:)` returns nil for separator-park
-        // offsets, which would route the edit through the generic
-        // fall-through path and land typed text outside the table.
-        guard let (row, col) = element.cellAtCursor(forOffset: localOffset)
-        else { return nil }
-
-        return TableCursorContext(
-            element: element,
-            elementStorageStart: elementStart,
-            localOffset: localOffset,
-            row: row,
-            col: col
-        )
-    }
-
 
     /// Insert an image (or PDF) attachment block at the current cursor
     /// position via the block model. Returns true if the block-model

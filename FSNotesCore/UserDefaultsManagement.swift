@@ -227,22 +227,19 @@ public class UserDefaultsManagement {
         }
     }
 
-    /// Phase 8 (Subview Tables): when true, table blocks render via a
+    /// Phase 8 (Subview Tables): table blocks render via a
     /// view-provider-hosted `TableContainerView` containing per-cell
-    /// `NSTextView` subviews instead of the native-cell separator-encoded
-    /// path that lives inside a single `TableLayoutFragment`. Default:
-    /// false — the native-cell path stays the active production path
-    /// throughout phases A–F. Phase G flips the default to true and
-    /// then deletes the old path.
+    /// `NSTextView` subviews.
+    ///
+    /// The old preference key is retained only as migration ballast:
+    /// older installs may have persisted `false`, but the native route
+    /// is no longer a selectable production path.
     static var useSubviewTables: Bool {
         get {
-            if let v = shared?.object(forKey: Constants.UseSubviewTables) as? Bool {
-                return v
-            }
-            return false
+            return true
         }
         set {
-            shared?.set(newValue, forKey: Constants.UseSubviewTables)
+            shared?.set(true, forKey: Constants.UseSubviewTables)
         }
     }
 

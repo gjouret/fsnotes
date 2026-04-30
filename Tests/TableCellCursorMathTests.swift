@@ -2,11 +2,10 @@
 //  TableCellCursorMathTests.swift
 //  FSNotesTests
 //
-//  Pins the invariants called out at `EditTextView+BlockModel.swift`
-//  for Return-in-cell cursor placement.
+//  Pins the invariants for Return-in-cell line-break placement.
 //
-//  History: T2-e's `handleTableCellEdit` inserts `Inline.rawHTML("<br>")`
-//  on Return. The initial design assumed `<br>` rawHTML renders to a
+//  Table cell editing inserts `Inline.rawHTML("<br>")` on Return. The
+//  original design assumed `<br>` rawHTML renders to a
 //  single `\n` UTF-16 unit, but the initial implementation of
 //  `InlineRenderer.render` emitted rawHTML verbatim, so `<br>` landed
 //  in the cell as four literal characters ("<br>"). The cursor-advance
@@ -59,12 +58,10 @@ final class TableCellCursorMathTests: XCTestCase {
 
     /// Inserting a `<br>` rawHTML into a cell increases the cell's
     /// rendered UTF-16 length by exactly **1** (one `\n`). This is the
-    /// contract `handleTableCellEdit` relies on when computing
-    /// `newCellLocalOffset = oldOffset + newText.utf16.count` for the
-    /// Return keystroke: the replacement attributed string is `\n`
-    /// (1 unit), the converter turns that `\n` into `.rawHTML("<br>")`,
-    /// and `InlineRenderer.render` brings it back to `\n` (1 unit) so
-    /// the cursor advance matches the stored length delta.
+    /// contract the subview cell editor relies on when committing a
+    /// Return keystroke: the cell text view stores `\n`, the converter
+    /// turns that `\n` into `.rawHTML("<br>")`, and
+    /// `InlineRenderer.render` brings it back to `\n` (1 unit).
     func test_phase2eT2f_brInsert_addsOneUtf16Unit() throws {
         let md = """
         | A |
@@ -118,7 +115,7 @@ final class TableCellCursorMathTests: XCTestCase {
 
         XCTAssertEqual(
             renderedNew, renderedOld + 1,
-            "<br> rawHTML renders as a single `\\n` in the cell. `handleTableCellEdit` computes `newCellLocalOffset = oldOffset + 1` and the rendered length delta must match."
+            "<br> rawHTML renders as a single `\\n` in the cell, so the rendered length delta must match."
         )
         XCTAssertEqual(
             renderedString, "he\nllo",

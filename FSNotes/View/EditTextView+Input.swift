@@ -47,18 +47,6 @@ extension EditTextView {
         if event.keyCode == kVK_Tab && !hasMarkedText() {
             breakUndoCoalescing()
 
-            // Phase 2e-T2-d — when the cursor is in a TableElement,
-            // Tab / Shift-Tab must move to the next / previous cell
-            // via `doCommand(by:)` → `handleTableNavCommand`, NOT be
-            // consumed by the list FSM or the indent-spaces path.
-            // Let super.keyDown dispatch the `insertTab:` /
-            // `insertBacktab:` selector so our doCommand override
-            // picks it up.
-            if cursorIsInTableElement() {
-                super.keyDown(with: event)
-                return
-            }
-
             // Block-model pipeline: route Tab/Shift-Tab through
             // the list editing FSM when the cursor is in a list block.
             if let projection = documentProjection {
@@ -133,15 +121,6 @@ extension EditTextView {
 
         if event.keyCode == kVK_Return && !hasMarkedText() && isEditable {
             breakUndoCoalescing()
-
-            // Phase 2e-T2-d — Return inside a TableElement is a no-op
-            // at this slice (T2-e wires `<br>` insertion). Let
-            // super.keyDown dispatch `insertNewline:` so our
-            // `doCommand(by:)` override can swallow it with a log.
-            if cursorIsInTableElement() {
-                super.keyDown(with: event)
-                return
-            }
 
             // Block-model pipeline: route Return through EditingOps
             // which handles paragraph splits, list continuation, and

@@ -58,7 +58,7 @@ enum Given {
     /// Key-window scenario. Use when the test must drive a real
     /// `mouseDown` (e.g. `clickInCell`) or when widget-layer
     /// subviews (`BulletGlyphView`, `CheckboxGlyphView`,
-    /// `TableHandleView`, `CodeBlockEditToggleView`) must mount
+    /// `TableContainerView`, `CodeBlockEditToggleView`) must mount
     /// before assertion.
     static func keyWindowNote(
         markdown: String = "",
@@ -137,7 +137,11 @@ final class EditorScenario {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> EditorScenario {
-        harness.type(text, file: file, line: line)
+        if let cell = editor.window?.firstResponder as? TableCellTextView {
+            cell.insertText(text, replacementRange: cell.selectedRange())
+        } else {
+            harness.type(text, file: file, line: line)
+        }
         return self
     }
 
@@ -171,18 +175,19 @@ final class EditorScenario {
         return self
     }
 
-    /// Press Tab. Routes through `handleTableNavCommand` so the
-    /// table-cell move semantics (advance-cell, no literal `\t`) are
-    /// exercised when the cursor is in a TableElement; falls through to
-    /// default handling otherwise.
+    /// Press Tab. If a table cell view owns first responder, route the
+    /// command through that cell's NSTextView delegate; otherwise fall
+    /// back to the parent editor.
     @discardableResult
     func pressTab(
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> EditorScenario {
-        _ = editor.handleTableNavCommand(
-            #selector(NSResponder.insertTab(_:))
-        )
+        if let cell = editor.window?.firstResponder as? NSTextView {
+            cell.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        } else {
+            editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        }
         return self
     }
 
@@ -192,9 +197,11 @@ final class EditorScenario {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> EditorScenario {
-        _ = editor.handleTableNavCommand(
-            #selector(NSResponder.insertBacktab(_:))
-        )
+        if let cell = editor.window?.firstResponder as? NSTextView {
+            cell.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+        } else {
+            editor.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
+        }
         return self
     }
 
@@ -261,10 +268,21 @@ final class EditorScenario {
         return self
     }
 
-    /// Click inside the cell `(row, col)` of the (single) table block
-    /// in the document. Drives `mouseDown` through the live event
-    /// chain — the same path `handleTableCellClick` maps via
-    /// `TableLayoutFragment.cellHit(at:)`.
+    private func allDescendants<T: NSView>(
+        of root: NSView,
+        type: T.Type
+    ) -> [T] {
+        var out: [T] = []
+        for subview in root.subviews {
+            if let typed = subview as? T { out.append(typed) }
+            out.append(contentsOf: allDescendants(of: subview, type: type))
+        }
+        return out
+    }
+
+    /// Click inside the cell `(row, col)` of the first mounted
+    /// subview-backed table. Drives `mouseDown` on the actual
+    /// `TableCellTextView`, matching AppKit's normal hit-test route.
     ///
     /// Requires the scenario to be `.keyWindow`; offscreen scenarios
     /// don't pump the event loop.
@@ -274,94 +292,59 @@ final class EditorScenario {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> EditorScenario {
-        guard let projection = editor.documentProjection else {
+        guard let window = editor.window else {
             XCTFail(
-                "EditorScenario.clickInCell: no document projection.",
+                "EditorScenario.clickInCell: editor has no window.",
                 file: file, line: line
             )
             return self
         }
-        // Find the first table block + its TK2 fragment.
-        var tableBlockIdx: Int? = nil
-        for (i, block) in projection.document.blocks.enumerated() {
-            if case .table = block { tableBlockIdx = i; break }
+        if let tlm = editor.textLayoutManager {
+            tlm.ensureLayout(for: tlm.documentRange)
+            tlm.textViewportLayoutController.layoutViewport()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            tlm.textViewportLayoutController.layoutViewport()
         }
-        guard let blockIdx = tableBlockIdx,
-              blockIdx < projection.blockSpans.count
-        else {
-            XCTFail(
-                "EditorScenario.clickInCell: no table block in document.",
-                file: file, line: line
-            )
-            return self
-        }
-        let span = projection.blockSpans[blockIdx]
-
-        guard let tlm = editor.textLayoutManager,
-              let cs = tlm.textContentManager as? NSTextContentStorage
-        else {
-            XCTFail(
-                "EditorScenario.clickInCell: no TK2 layout manager.",
-                file: file, line: line
-            )
-            return self
-        }
-        tlm.ensureLayout(for: tlm.documentRange)
-        let docStart = cs.documentRange.location
-
-        var fragment: TableLayoutFragment? = nil
-        var fragOrigin: CGPoint = .zero
-        tlm.enumerateTextLayoutFragments(
-            from: tlm.documentRange.location,
-            options: [.ensuresLayout]
-        ) { f in
-            guard let er = f.textElement?.elementRange else { return true }
-            let charIndex = cs.offset(from: docStart, to: er.location)
-            if charIndex == span.location, let tf = f as? TableLayoutFragment {
-                fragment = tf
-                fragOrigin = f.layoutFragmentFrame.origin
-                return false
-            }
-            return true
-        }
-        guard let frag = fragment, let geom = frag.geometryForHandleOverlay()
-        else {
-            XCTFail(
-                "EditorScenario.clickInCell: could not locate TableLayoutFragment.",
-                file: file, line: line
-            )
-            return self
-        }
-
-        // Compute the click point in fragment-local coordinates.
-        // rowHeights[0] is the header row; rowHeights[r+1] is body
-        // row r. For the demo flow, row==0 means header — match
-        // the existing `cellHit(at:)` semantics in TableCellHitTestTests.
-        guard col >= 0, col < geom.columnWidths.count,
-              row >= 0, row < geom.rowHeights.count
-        else {
+        let cells = allDescendants(of: editor, type: TableCellTextView.self)
+        guard let cell = cells.first(where: {
+            $0.cellRow == row && $0.cellCol == col
+        }) else {
             XCTFail(
                 "EditorScenario.clickInCell: (row=\(row), col=\(col)) " +
-                "out of range cols=\(geom.columnWidths.count) " +
-                "rows=\(geom.rowHeights.count).",
+                "not found. Mounted cells=\(cells.map { ($0.cellRow, $0.cellCol) })",
                 file: file, line: line
             )
             return self
         }
-        var localX = TableGeometry.handleBarWidth
-        for c in 0..<col { localX += geom.columnWidths[c] }
-        localX += geom.columnWidths[col] / 2
-        var localY = TableGeometry.handleBarHeight
-        for r in 0..<row { localY += geom.rowHeights[r] }
-        localY += geom.rowHeights[row] / 2
-
-        // Translate to view-local coordinates: fragment origin +
-        // textContainerInset.
-        let viewPoint = NSPoint(
-            x: localX + fragOrigin.x + editor.textContainerInset.width,
-            y: localY + fragOrigin.y + editor.textContainerInset.height
-        )
-        harness.clickAt(point: viewPoint)
+        let cellPoint = NSPoint(x: cell.bounds.midX, y: cell.bounds.midY)
+        let windowPoint = cell.convert(cellPoint, to: nil)
+        guard let downEvent = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: windowPoint,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        ),
+        let upEvent = NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: windowPoint,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 0.0
+        ) else {
+            XCTFail("EditorScenario.clickInCell: could not synthesize mouse event", file: file, line: line)
+            return self
+        }
+        window.postEvent(upEvent, atStart: false)
+        cell.mouseDown(with: downEvent)
         return self
     }
 

@@ -6,9 +6,8 @@
 //  for table grids. Originally ported verbatim from the geometry
 //  methods of the since-deleted `InlineTableView` widget
 //  (`contentBasedColumnWidths`, `rowHeights`, `wrappedCellHeight`) so
-//  that pixel-for-pixel identical grid sizing is available to the TK2
-//  native-cell path without having to stand up an `NSWindow` +
-//  `NSView` pair.
+//  that pixel-for-pixel identical grid sizing is available to the
+//  subview-backed table path.
 //
 //  This type is a value type with no mutable state. Input is a
 //  block-model table plus the container width and note font; output is
@@ -25,8 +24,7 @@ import AppKit
 
 public enum TableGeometry {
 
-    /// Result bundle — matches the shape slice 2e-T2-c needs for
-    /// `TableLayoutFragment.draw(at:in:)`.
+    /// Result bundle used by the subview-backed table renderer.
     public struct Result: Equatable {
         public let columnWidths: [CGFloat]
         /// Row heights in natural grid order: `[0]` is the header row,
@@ -49,10 +47,10 @@ public enum TableGeometry {
     /// Horizontal cell padding, derived from `marginSize`. Matches
     /// `InlineTableView.cellPaddingH`.
     ///
-    /// Public as of 2e-T2-c so `TableLayoutFragment.draw(at:in:)` can
-    /// inset per-cell rects by the same horizontal padding that
-    /// `wrappedCellHeight` used during measurement. Keeping the source
-    /// of truth in one place prevents measure/draw drift.
+    /// Public so table painting can inset per-cell rects by the same
+    /// horizontal padding that `wrappedCellHeight` used during
+    /// measurement. Keeping the source of truth in one place prevents
+    /// measure/draw drift.
     public static func cellPaddingH() -> CGFloat {
         return max(3, ceil(CGFloat(UserDefaultsManagement.marginSize) * 0.2))
     }
@@ -77,9 +75,8 @@ public enum TableGeometry {
 
     /// The `focusRingPadding` constant from `InlineTableView`. Used by
     /// the width-auto-wrap path to compute available column space.
-    /// Public for 2e-T2-c: `TableLayoutFragment` adds the same padding
-    /// to its rendering-surface width so grid strokes at the right edge
-    /// don't get clipped.
+    /// Padding around the visual grid so edge strokes do not get
+    /// clipped.
     public static let focusRingPadding: CGFloat = 8
 
     /// Left margin reserved for drag handles. Matches
@@ -88,11 +85,33 @@ public enum TableGeometry {
     /// x-offset the widget uses, preserving visual parity.
     public static let handleBarWidth: CGFloat = 18
 
-    /// Top margin reserved for column drag handles. Mirrors
-    /// `InlineTableView.handleBarHeight`. Public as of 2e-T2-g so
-    /// `TableLayoutFragment` and the `TableHandleOverlay` agree on the
-    /// strip height above the header row where column handles sit.
+    /// Top margin reserved above the header row. Mirrors
+    /// `InlineTableView.handleBarHeight`.
     public static let handleBarHeight: CGFloat = 18
+
+    /// Grid stroke width used by the table container.
+    public static let gridLineWidth: CGFloat = 0.5
+
+    /// Grid stroke color used by the table container.
+    public static var gridLineColor: NSColor {
+        Theme.shared.chrome.tableGridLine.resolvedForCurrentAppearance(
+            fallback: NSColor(calibratedWhite: 0.4, alpha: 1.0)
+        )
+    }
+
+    /// Header-row fill color used by the table container.
+    public static var headerFillColor: NSColor {
+        Theme.shared.chrome.tableHeaderFill.resolvedForCurrentAppearance(
+            fallback: NSColor(calibratedWhite: 0.85, alpha: 1.0)
+        )
+    }
+
+    /// Alternating body-row fill color used by the table container.
+    public static var zebraFillColor: NSColor {
+        Theme.shared.chrome.tableZebraFill.resolvedForCurrentAppearance(
+            fallback: NSColor(calibratedWhite: 0.95, alpha: 1.0)
+        )
+    }
 
     // MARK: - Rendered cell text
     //
@@ -103,9 +122,9 @@ public enum TableGeometry {
     // for measurement: cells store multi-line content as `<br>` but
     // measure as wrapped lines.
     //
-    // Shared between `TableGeometry`'s measurement path and
-    // `TableLayoutFragment`'s draw path so measured heights always
-    // match painted heights.
+    // Shared between `TableGeometry`'s measurement path and the
+    // container draw path so measured heights always match painted
+    // heights.
 
     internal static func renderCellAttributedString(
         cell: TableCell,
@@ -170,10 +189,8 @@ public enum TableGeometry {
     /// Block-model `TableAlignment` → AppKit `NSTextAlignment`.
     /// Mirrors `InlineTableView.nsAlignment(for:)`.
     ///
-    /// Public as of 2e-T2-c so `TableLayoutFragment` can use the same
-    /// alignment-mapping function when it renders per-cell text. Keeping
-    /// the mapping in one place prevents drift between geometry
-    /// measurement and the draw path.
+    /// Public so table rendering can use the same alignment mapping as
+    /// measurement. Keeping the mapping in one place prevents drift.
     public static func nsAlignment(for a: TableAlignment) -> NSTextAlignment {
         switch a {
         case .left, .none: return .left

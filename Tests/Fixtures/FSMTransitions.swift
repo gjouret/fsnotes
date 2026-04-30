@@ -619,18 +619,16 @@ enum FSMTransitionTable {
         ),
 
         // MARK: table (atomic — its inline content is a 2D grid, not a
-        // simple inline tree). The harness's pressReturn / pressBackspace
-        // / pressForwardDelete at the storage offset mapping to the table
-        // header / body cells route through cell-aware paths in the
-        // production code (`handleTableNavCommand`) when the cell is the
-        // first responder. The table-level rows below cover only the
-        // block-boundary cases the FSM owns.
+        // simple inline tree). Table-cell keystrokes are handled by the
+        // subview cell editor when a cell is first responder. The
+        // table-level rows below cover only the block-boundary cases
+        // the FSM owns.
         FSMTransition(
             blockKind: .table,
             cursorPosition: .atStart,
             action: .pressReturn,
             expected: .stayInBlock,
-            note: "Return inside the table's first cell is consumed by handleTableCellEdit; the table block is unchanged. The pure-function `insertAroundAtomicBlock` would create a paragraph sibling, but the live path routes through the cell intercept first."
+            note: "Return inside the table's first cell is consumed by the subview cell editor; the table block is unchanged. The pure-function `insertAroundAtomicBlock` would create a paragraph sibling, but the live path routes through the cell intercept first."
         ),
         FSMTransition(
             blockKind: .table,
@@ -883,8 +881,8 @@ enum FSMTransitionTable {
         ),
 
         // MARK: table (extra: pressTab inside the table's first cell
-        // routes to handleTableNavCommand — the table FSM handles it,
-        // not the list FSM. Slice B #30 wraps this as a bug-row.)
+        // is owned by the table cell editor, not the list FSM. Slice B
+        // #30 wraps this as a bug-row.)
         FSMTransition(
             blockKind: .table,
             cursorPosition: .atStart,

@@ -577,19 +577,16 @@ public enum DocumentRenderer {
             // Render HTML blocks as plain text with code font.
             return CodeBlockRenderer.render(language: nil, content: raw, codeFont: codeFont)
         case .table(let header, let alignments, let rows, let widths):
+            #if os(OSX)
+            // Subview tables are the production macOS route: a single
+            // U+FFFC attachment carries the authoritative Block.table
+            // payload, and the finder client expands that attachment
+            // into searchable cell text for Cmd-F/Cmd-G.
+            return TableTextRenderer.renderAsAttachment(block: block)
+            #else
             let raw = EditingOps.rebuildTableRaw(
                 header: header, alignments: alignments, rows: rows
             )
-            #if os(OSX)
-            // Phase 8 / Subview Tables: when the flag is on, emit a
-            // single U+FFFC attachment carrying the `Block.table`
-            // payload. TK2's view provider on the attachment renders
-            // the table via `TableContainerView`. Default (flag off)
-            // is the native-cell separator-encoded path below.
-            if UserDefaultsManagement.useSubviewTables {
-                return TableTextRenderer.renderAsAttachment(block: block)
-            }
-            #endif
             return TableTextRenderer.render(
                 header: header,
                 rows: rows,
@@ -598,6 +595,7 @@ public enum DocumentRenderer {
                 bodyFont: bodyFont,
                 columnWidths: widths
             )
+            #endif
         case .blankLine:
             // A blank line has no rendered content — it is represented
             // purely by the inter-block "\n" separators on either side.

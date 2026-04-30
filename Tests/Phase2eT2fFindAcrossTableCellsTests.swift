@@ -2,19 +2,13 @@
 //  Phase2eT2fFindAcrossTableCellsTests.swift
 //  FSNotesTests
 //
-//  Bug #60 verification — find across table cells.
+//  Bug #60 verification - find across table cells.
 //
-//  Pins the end-to-end Bug #60 invariant: searching for text that
-//  spans adjacent cells succeeds because cell content lives in
-//  `NSTextContentStorage` as real characters, not behind an
-//  `NSTextAttachment` placeholder.
-//
-//  The "by construction" mechanism: `TableTextRenderer.renderNative`
-//  emits cell text separated by U+001F (cell) and U+001E (row). An
-//  `NSTextFinder` walking `NSTextView.string` (which forwards from
-//  `textStorage.string`) sees those characters natively — it would
-//  have to explicitly filter out the separators to miss cell content,
-//  which it does not.
+//  Pins the end-to-end Bug #60 invariant for the subview-table route:
+//  searching for text inside table cells succeeds even though the
+//  parent NSTextStorage contains only one U+FFFC attachment character
+//  for the table. The custom finder client exposes a virtual search
+//  string that expands each table attachment into its cell text.
 //
 
 import XCTest
@@ -32,136 +26,79 @@ final class Phase2eT2fFindAcrossTableCellsTests: XCTestCase {
     | Bob   | plain        |
     """
 
-    // MARK: - 1. Bug #60 — searchable text contains cell content
-
-    /// The canonical Bug #60 assertion: `textStorage.string` —
-    /// which `NSTextFinder` walks via `NSTextFinderClient.string` —
-    /// contains text from a cell that would otherwise be hidden behind
-    /// an attachment. No flag manipulation: this is the default.
-    func test_phase2eT2f_findAcrossTableCells_defaultFlagOn() throws {
-        let harness = EditorHarness(markdown: Self.tableMarkdown)
-        defer { harness.teardown() }
-
-        let searchable = harness.editor.textStorage?.string ?? ""
-
-        XCTAssertTrue(
-            searchable.contains("findmeinside"),
-            "Bug #60: cell text must appear in textStorage.string so " +
-            "NSTextFinder / Cmd+F finds it. Got: \(searchable.debugDescription)"
-        )
-        XCTAssertTrue(
-            searchable.contains("Alice"),
-            "Body cell text must appear in searchable storage."
-        )
-        XCTAssertTrue(
-            searchable.contains("Bob"),
-            "Body cell text must appear in searchable storage."
-        )
-        XCTAssertTrue(
-            searchable.contains("Name"),
-            "Header cell text must appear in searchable storage."
-        )
+    private func withSubviewTablesEnabled(_ body: () throws -> Void) rethrows {
+        let old = UserDefaultsManagement.useSubviewTables
+        UserDefaultsManagement.useSubviewTables = true
+        defer { UserDefaultsManagement.useSubviewTables = old }
+        try body()
     }
 
-    // MARK: - 3. No legacy U+FFFC inside the table range
+    // MARK: - 1. Bug #60 - searchable text contains cell content
 
-    /// Architectural guard: the default-on native path must not leak
-    /// `U+FFFC` attachment characters into storage for the table. If
-    /// any U+FFFC slips in, NSTextFinder sees it as a word boundary
-    /// and won't find text spanning it (the legacy symptom).
-    func test_phase2eT2f_noAttachmentCharInTableStorage() throws {
-        let harness = EditorHarness(markdown: Self.tableMarkdown)
-        defer { harness.teardown() }
+    /// The canonical Bug #60 assertion for subview tables: the parent
+    /// storage keeps the table as an attachment, while the finder
+    /// adapter expands that attachment into searchable cell text.
+    func test_phase2eT2f_subviewFindClientExposesTableCells() throws {
+        try withSubviewTablesEnabled {
+            let harness = EditorHarness(markdown: Self.tableMarkdown)
+            defer { harness.teardown() }
 
-        guard let storage = harness.editor.textStorage else {
-            XCTFail("No textStorage on harness editor")
-            return
+            let storageString = harness.editor.textStorage?.string ?? ""
+            let searchable = harness.editor.debugSubviewTableFindString()
+
+            XCTAssertTrue(
+                storageString.contains("\u{FFFC}"),
+                "Subview table storage must carry the table as an attachment."
+            )
+            XCTAssertFalse(
+                storageString.contains("findmeinside"),
+                "The parent storage no longer carries table cell text directly."
+            )
+            XCTAssertTrue(
+                searchable.contains("findmeinside"),
+                "Bug #60: subview-table finder string must expose body cell text. " +
+                "Got: \(searchable.debugDescription)"
+            )
+            XCTAssertTrue(searchable.contains("Alice"))
+            XCTAssertTrue(searchable.contains("Bob"))
+            XCTAssertTrue(searchable.contains("Name"))
         }
-        let s = storage.string
-        XCTAssertFalse(
-            s.contains("\u{FFFC}"),
-            "Phase 2e-T2-f default (flag ON) must render zero U+FFFC " +
-            "characters for a pure-table note. Got string: \(s.debugDescription)"
-        )
     }
 
-    // MARK: - 4. Cross-cell substring span
+    // MARK: - 2. Virtual cell separators
 
-    /// Stronger guarantee: substrings that cross cell boundaries are
-    /// reachable via `String.range(of:)` too. The native path uses
-    /// U+001F as the cell separator; a substring that spans two cells
-    /// will include that separator — `NSTextFinder`'s user-visible
-    /// "Find" wraps lines but doesn't strip control chars, so this
-    /// test pins that the separators are exactly where the renderer
-    /// put them.
-    func test_phase2eT2f_cellSeparatorsAreU001F() throws {
-        let harness = EditorHarness(markdown: Self.tableMarkdown)
-        defer { harness.teardown() }
+    /// The virtual finder string uses natural table text boundaries:
+    /// tabs between cells, newlines between rows.
+    func test_phase2eT2f_subviewFindStringKeepsCellAndRowBoundaries() throws {
+        try withSubviewTablesEnabled {
+            let harness = EditorHarness(markdown: Self.tableMarkdown)
+            defer { harness.teardown() }
 
-        let s = harness.editor.textStorage?.string ?? ""
-        // "Alice" and "findmeinside" are in the same body row, same
-        // cell separator (U+001F) apart. The parser trims cell padding,
-        // so the encoded cells are the unpadded strings.
-        let expected = "Alice\u{001F}findmeinside"
-        XCTAssertTrue(
-            s.contains(expected),
-            "Body row cells must be separated by U+001F. Got: \(s.debugDescription)"
-        )
-
-        // Header row ends at U+001E (row separator) before body starts.
-        // Parser trims header cell padding too.
-        let expectedHeaderEnd = "Note\u{001E}"
-        XCTAssertTrue(
-            s.contains(expectedHeaderEnd),
-            "Header row must end at a U+001E before the first body row. " +
-            "Got: \(s.debugDescription)"
-        )
+            let searchable = harness.editor.debugSubviewTableFindString()
+            XCTAssertTrue(
+                searchable.contains("Name\tNote\nAlice\tfindmeinside\nBob\tplain"),
+                "Finder string should expose the table as readable text. " +
+                "Got: \(searchable.debugDescription)"
+            )
+        }
     }
 
-    // MARK: - 5. TableElement is the vended NSTextParagraph
+    // MARK: - 3. Default route
 
-    /// End-to-end dispatch check: the content-storage delegate must
-    /// vend a `TableElement` for the `.blockModelKind = .table` range.
-    /// This is what makes the cell text part of the layout — and
-    /// therefore Find-able.
-    func test_phase2eT2f_delegateVendsTableElement() throws {
-        let harness = EditorHarness(markdown: Self.tableMarkdown)
-        defer { harness.teardown() }
-
-        guard let contentStorage =
-                harness.editor.textLayoutManager?.textContentManager
-                as? NSTextContentStorage,
-              let delegate = harness.editor.blockModelContentDelegate,
-              let storage = harness.editor.textStorage else {
-            XCTFail("Harness missing TK2 content storage / delegate / textStorage")
-            return
+    func test_phase2eT2f_subviewTablesAreDefaultWhenUnset() throws {
+        let oldDefaults = UserDefaultsManagement.shared
+        let suiteName = "Phase2eT2fFindAcrossTableCellsTests.\(UUID().uuidString)"
+        let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        suite.removePersistentDomain(forName: suiteName)
+        UserDefaultsManagement.shared = suite
+        defer {
+            suite.removePersistentDomain(forName: suiteName)
+            UserDefaultsManagement.shared = oldDefaults
         }
 
-        var tableRange: NSRange?
-        storage.enumerateAttribute(
-            .blockModelKind,
-            in: NSRange(location: 0, length: storage.length),
-            options: []
-        ) { value, subRange, stop in
-            if let raw = value as? String,
-               raw == BlockModelKind.table.rawValue {
-                tableRange = subRange
-                stop.pointee = true
-            }
-        }
-        guard let range = tableRange else {
-            XCTFail("No .blockModelKind = .table range found under default flag.")
-            return
-        }
-
-        let paragraph = delegate.textContentStorage(
-            contentStorage,
-            textParagraphWith: range
-        )
         XCTAssertTrue(
-            paragraph is TableElement,
-            "Default flag must dispatch a TableElement for the .table range. Got " +
-            "\(paragraph.map { String(describing: type(of: $0)) } ?? "nil")"
+            UserDefaultsManagement.useSubviewTables,
+            "Subview tables should be the production default."
         )
     }
 }

@@ -8,88 +8,6 @@
 import AppKit
 
 extension EditTextView {
-    /// Phase 11 Slice B fix: when the cursor is inside a TableElement,
-    /// TK2's default `rect` argument is computed from the fragment's
-    /// natural-flow `textLineFragments`, which `TableLayoutFragment.draw`
-    /// does not honor (cells are painted at custom grid positions). The
-    /// caret therefore appears at the top-left of the fragment — in
-    /// the column-handle strip — instead of inside the cell the
-    /// cursor's storage offset addresses. We compute the geometrically
-    /// correct rect via `TableLayoutFragment.caretRectInCell(...)` and
-    /// hand it to super in place of the natural-flow rect.
-    public func caretRectIfInTableCell() -> NSRect? {
-        guard let tlm = self.textLayoutManager,
-              let contentStorage = tlm.textContentManager
-                as? NSTextContentStorage
-        else { return nil }
-        let cursor = selectedRange().location
-        guard cursor >= 0,
-              cursor <= (textStorage?.length ?? 0)
-        else { return nil }
-        let docStart = contentStorage.documentRange.location
-        guard let cursorLoc = contentStorage.location(
-            docStart, offsetBy: cursor
-        ) else { return nil }
-        guard let fragment = tlm.textLayoutFragment(for: cursorLoc),
-              let tableFrag = fragment as? TableLayoutFragment,
-              let element = fragment.textElement as? TableElement,
-              let elementRange = element.elementRange
-        else { return nil }
-        // Force TK2 to finalize layout-fragment stacking before we
-        // read `fragment.layoutFragmentFrame.origin.y`. Without this,
-        // a query immediately after `Insert Table` (or any path that
-        // splices a new fragment into the document) returns an
-        // *estimated* origin — the layout manager hasn't yet settled
-        // the table fragment's vertical position relative to preceding
-        // fragments. The next caret query (after typing one char,
-        // which forces a real layout pass) returns the *settled*
-        // origin, ~16pt up the page. The user perceives this as the
-        // caret jumping up after typing the first character.
-        // `ensureLayout(for:)` is documented to drive a synchronous
-        // layout pass for the given range, so the next read returns
-        // the authoritative origin.
-        tlm.ensureLayout(for: elementRange)
-        let elementStart = contentStorage.offset(
-            from: docStart, to: elementRange.location
-        )
-        let localOffset = cursor - elementStart
-        // Cursor-aware: a click-to-cell parks the caret at the END
-        // of the cell's content, which is on the following U+001F /
-        // U+001E separator for non-last cells. The strict locator
-        // returns nil for separator offsets; `cellAtCursor` resolves
-        // to the preceding cell. Without this, the caret falls back
-        // to TK2's natural-flow rect after every click and lands in
-        // the column-handle strip.
-        guard let (row, col) = element.cellAtCursor(
-            forOffset: localOffset
-        ) else { return nil }
-        guard let cellStart = element.offset(
-            forCellAt: (row: row, col: col)
-        ) else { return nil }
-        let offsetInCell = max(0, localOffset - cellStart)
-        guard let localRect = tableFrag.caretRectInCell(
-            row: row, col: col,
-            cellLocalOffset: offsetInCell,
-            caretWidth: caretWidth
-        ) else { return nil }
-        // Convert fragment-local coords → text-view (NSView) coords.
-        // Pipeline: fragment-local + fragment.origin = container coords;
-        // container coords + textContainerOrigin = view coords. The
-        // earlier code stopped at container coords, so the caret was
-        // painted offset by the textContainerOrigin (which carries the
-        // EditTextView -7pt y override + the system-default x/y inset)
-        // — visible to the user as the caret appearing above-left of
-        // the cell rather than inside it.
-        let frameOrigin = fragment.layoutFragmentFrame.origin
-        let containerOrigin = textContainerOrigin
-        return NSRect(
-            x: localRect.origin.x + frameOrigin.x + containerOrigin.x,
-            y: localRect.origin.y + frameOrigin.y + containerOrigin.y,
-            width: localRect.width,
-            height: localRect.height
-        )
-    }
-
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
         var newRect = rect
         newRect.size.width = caretWidth
@@ -99,15 +17,7 @@ extension EditTextView {
         // layout-manager subclass. Under TK2 the default caret rect
         // already tracks the last glyph's font/line height.
 
-        // Phase 11 Slice B: when the cursor is inside a TableElement,
-        // override the natural-flow `rect` with the geometrically
-        // correct in-cell caret rect. See `caretRectIfInTableCell`
-        // for why TK2's default is wrong in this case.
-        if let tableRect = caretRectIfInTableCell() {
-            bmLog("✏️ drawInsertionPoint: TK2-rect=\(rect) tableRect=\(tableRect) containerOrigin=\(textContainerOrigin) selRange=\(selectedRange())")
-            newRect = tableRect
-            newRect.size.width = caretWidth
-        } else if let outsideRect = caretRectAtSubviewTableBoundary(default: rect) {
+        if let outsideRect = caretRectAtSubviewTableBoundary(default: rect) {
             // Subview-tables: when the parent's cursor sits at the
             // U+FFFC of a TableAttachment (start) or one offset past
             // (end), TK2's natural caret rect is the FULL line-fragment
@@ -139,7 +49,6 @@ extension EditTextView {
     }
 
     private func caretRectAtSubviewTableBoundary(default rect: NSRect) -> NSRect? {
-        guard UserDefaultsManagement.useSubviewTables else { return nil }
         guard let storage = textStorage else { return nil }
         let cursor = selectedRange().location
         let len = storage.length
@@ -362,13 +271,12 @@ extension EditTextView {
     /// Called when the editor's available width changes (window resize,
     /// split-view divider drag). Invalidates layout so width-sensitive
     /// fragments (e.g. `CenteredImageCell` mermaid/math scaling) rebuild.
-    /// Native tables re-layout themselves on the next TK2 pass when the
-    /// container width changes — `TableLayoutFragment` re-computes
-    /// column widths on each layout.
+    /// Table attachments re-layout themselves on the next TK2 pass when
+    /// the container width changes.
     public func reflowAttachmentsForWidthChange() {
         // Phase 4.5 moved this off the deleted TK1 NSLayoutManager
         // subclass. Under TK2, width-sensitive fragments
-        // (`CenteredImageCell`, `TableLayoutFragment`, the mermaid/math
+        // (`CenteredImageCell`, table attachments, the mermaid/math
         // bitmap fragments) cache measured geometry on first layout;
         // without an explicit invalidation, a window / split-view
         // resize leaves stale geometry until the user scrolls or

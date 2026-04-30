@@ -528,8 +528,5 @@ extension EditTextView {
     // AppKit owns the view lifecycle — views are added and removed
     // automatically as attachments enter/leave the viewport, so
     // manual orphan cleanup is no longer necessary (and could race
-    // with views Apple just attached). The legacy `InlineTableView`
-    // widget that used the cell pattern was deleted in Phase 2e-T2-h;
-    // tables now render via `TableLayoutFragment`, which has no
-    // attachment / subview lifecycle to manage.
+    // with views Apple just attached).
 }

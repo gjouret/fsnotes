@@ -440,10 +440,8 @@ public struct ThemeChrome: Codable, Equatable {
     /// so existing themes that don't set it still load cleanly.
     public var codeBlockEditToggle: ThemeCodeBlockEditToggle
 
-    /// Table hover-handle color (Phase 2e T2-g). Fill used for the
-    /// top-gutter column handles and left-gutter row handles drawn by
-    /// `TableLayoutFragment` / `TableHandleOverlay`. Defaulted so
-    /// existing themes that don't set it still load cleanly.
+    /// Legacy table hover-handle color retained for older theme files.
+    /// Defaulted so existing themes that don't set it still load cleanly.
     public var tableHandle: ThemeColor
 
     /// Grid-line color between table cells. Light mode default is

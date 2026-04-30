@@ -11,8 +11,7 @@
 //  `TableContainerView` that lays out the cells.
 //
 //  This file is intentionally minimal in A1. Phase B wires up
-//  `TableTextRenderer.renderAsAttachment` to actually emit these,
-//  gated by `UserDefaultsManagement.useSubviewTables`.
+//  `TableTextRenderer.renderAsAttachment` to actually emit these.
 //
 
 import AppKit
@@ -24,9 +23,7 @@ import AppKit
 final class TableAttachment: NSTextAttachment {
 
     /// The authoritative block this attachment represents. The view
-    /// provider reads this to construct the container view; the save
-    /// path reads this when copying the table as TSV/HTML (replacing
-    /// the prior `tableAuthoritativeBlock` storage attribute).
+    /// provider reads this to construct the container view.
     ///
     /// Mutable so cell-content edits can update the payload in place
     /// without remounting the view provider — see

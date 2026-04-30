@@ -30,7 +30,7 @@ final class SubviewTableClickResponderTests: XCTestCase {
     }
 
     override func tearDown() {
-        UserDefaultsManagement.useSubviewTables = false
+        UserDefaultsManagement.useSubviewTables = true
         super.tearDown()
     }
 

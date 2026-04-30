@@ -55,13 +55,15 @@ Two sanctioned permanent exemptions exist alongside the canonical write path:
 
 `performingLegacyStorageWrite` (the original Phase 5a escape hatch) has zero production call sites — all 14 original bypasses retired or reclassified into dedicated scopes. It's retained as a fallback for backwards compatibility but is deprecated for new code.
 
-**B. One layout primitive per block type.** Every per-block visual runs through TK2's element + fragment dispatch. Each block kind maps to exactly one `NSTextParagraph` subclass and at most one `NSTextLayoutFragment` subclass. If a block's rendering is wrong, the fragment class for that kind is where the fix lives. There is no second draw path.
+Subview-table cell edits are not a storage-write exemption: when a table edit re-renders to the same single attachment character, the editor mutates the existing `TableAttachment.block` payload and projection in place rather than replacing storage characters. The DEBUG post-condition in `tryApplyTableCellInPlace` verifies that the skipped splice would have written the same one-character storage representation.
 
-**C. All block content lives in `NSTextContentStorage`.** Tables carry cell text as live character runs; mermaid and math keep their source text in storage and hide it visually via their fragments. `NSTextFinder` / Cmd+F / accessibility traverse everything by construction. No block kind routes through `NSTextAttachment` as its *only* source of text.
+**B. One layout primitive per block type.** Paragraph-backed block visuals run through TK2's element + fragment dispatch. Each paragraph-backed block kind maps to exactly one `NSTextParagraph` subclass and at most one `NSTextLayoutFragment` subclass. Tables are the explicit non-paragraph exception: a table block renders as one `TableAttachment` whose view provider vends a `TableContainerView`. If a block's rendering is wrong, the one primitive for that kind is where the fix lives. There is no second draw path.
+
+**C. The `Document` is the authoritative text model.** WYSIWYG `NSTextContentStorage` contains the displayed character representation for paragraph-backed blocks. Mermaid and math keep their source text in storage and hide it visually via their fragments. Tables are deliberately attachment-backed: storage contains one `U+FFFC` with a `TableAttachment` carrying the authoritative `Block.table` payload, while visible/searchable cell text lives in `TableCellTextView` subviews. Cmd+F/Cmd+G table search is provided by the subview-table `NSTextFinderClient`, which expands table attachments into virtual searchable text and maps matches back to live cells.
 
 **D. No marker-hiding tricks in storage.** WYSIWYG storage contains only displayed characters — markdown markers (`**`, `#`, `` ` ``, `>`, list prefixes, fence lines, HR lines, cell pipes) do not exist in `textStorage.string`. Source mode contains markers but renders them via `SourceLayoutFragment` overpainting `.markerRange` runs in `Theme.shared.chrome.sourceMarker`; the default `.foregroundColor` is never mutated to hide or dim markers. The grep gate bans tiny-font / clear-foreground / negative-kern / invisible-character tricks.
 
-**E. Views read data; views never write data.** The projection → renderer → element → fragment chain is one-way. Views capture user intent (clicks, keystrokes, selections) and call a pure `EditingOps.*` primitive that returns a new `Document`; `applyDocumentEdit` delivers the minimal splice. Widget-level read-back into the model (the cautionary `InlineTableView` pattern, deleted) is grep-banned.
+**E. Views read data; views never write data.** The projection → renderer → element/fragment chain is one-way; tables use the sibling projection → `TableAttachment` → `TableContainerView` route. Views capture user intent (clicks, keystrokes, selections) and call a pure `EditingOps.*` primitive that returns a new `Document`; `applyDocumentEdit` delivers the minimal splice. Table cell typing goes through `EditingOps.replaceTableCellInline` and then updates the existing `TableAttachment` payload in place when the rendered storage remains the same single attachment character. Widget-level read-back into the model (the cautionary `InlineTableView` pattern, deleted) is grep-banned.
 
 **F. Theme is the sole presentation source of truth.** Every font size, color, paragraph spacing, border width, margin, and line-height literal is defined in `ThemeSchema.swift` + bundled JSON files. Renderers and fragments *read* from `Theme.shared`; they do not hardcode values. The grep gate bans literal `systemFont(ofSize:)`, `paragraphSpacing`, and hex color literals in render-path files.
 
@@ -116,7 +118,7 @@ Every `Block` kind has a dedicated `BlockEditor` conformer under `FSNotesCore/Re
 | `.heading` | `HeadingBlockEditor.swift` |
 | `.codeBlock` | `CodeBlockBlockEditor.swift` |
 | `.htmlBlock` | `HtmlBlockBlockEditor.swift` |
-| `.blankLine`, `.horizontalRule`, `.table` (atomic / read-only kinds) | `AtomicBlockEditors.swift` |
+| `.blankLine`, `.horizontalRule`, `.table` | `AtomicBlockEditors.swift` (`.table` is read-only only at the per-character block primitive; cell/structure edits use table-specific `EditingOps` primitives) |
 | `.list` | `ListBlockEditor.swift` (wraps `EditingOps.{insertIntoList,deleteInList,replaceInList}`) |
 | `.blockquote` | `BlockquoteBlockEditor.swift` |
 
@@ -264,11 +266,7 @@ i.e. the live `Document` after the action sequence must produce the same HTML as
 
 ### Outstanding bugs surfaced by the sweep
 
-Combinatorial scenarios whose minimal-invariant or round-trip assertions currently fail are recorded in [Tests/Combinatorial/DiscoveredBugs.txt](Tests/Combinatorial/DiscoveredBugs.txt) (one line per `<scenario-label> → <one-line explanation>`). The runner reads that file at startup and `XCTExpectFailure(strict: true)`-wraps every listed scenario so the suite is green today; entries flip to red ("unexpectedly passed") once the underlying behaviour is fixed.
-
-The same fail-by-design contract applies to the bug rows in `FSMTransitions.swift` (`bugId != nil`). Together, `DiscoveredBugs.txt` and the bug rows form the "what's outstanding" punch-list — anything not listed there is presumed-correct as of the last suite run.
-
-When fixing one of the listed bugs, **delete the corresponding entry** (or clear the `bugId` on the row) as part of the same change — the strict expectation will otherwise flip the now-passing scenario to red.
+All bugs are created as beads in Beadbox. You have the skill to create/update beads. Do not use any other file to track bugs.
 
 ## Cross-Block Merge Rules
 
@@ -383,8 +381,8 @@ Character-by-character typing can complete inline patterns (typing `*` completes
 
 1. Checks `.foldedContent` first — if present, returns `FoldedElement` (zero-height) regardless of underlying block kind.
 2. Reads `.blockModelKind` tagged by the renderer.
-3. For `.table`, unwraps `.tableAuthoritativeBlock` and constructs a `TableElement` directly.
-4. Otherwise dispatches through `BlockModelElementFactory` to the matching `NSTextParagraph` subclass: `ParagraphElement`, `ParagraphWithKbdElement`, `HeadingElement`, `ListItemElement`, `BlockquoteElement`, `CodeBlockElement`, `HorizontalRuleElement`, `MermaidElement`, `MathElement`, `DisplayMathElement`, `SourceMarkdownElement`.
+3. Dispatches through `BlockModelElementFactory` to the matching `NSTextParagraph` subclass: `ParagraphElement`, `ParagraphWithKbdElement`, `HeadingElement`, `ListItemElement`, `BlockquoteElement`, `CodeBlockElement`, `HorizontalRuleElement`, `MermaidElement`, `MathElement`, `DisplayMathElement`, `SourceMarkdownElement`.
+4. `.table` is a legacy/transient fallback at this delegate layer. Production table rendering is emitted earlier by `TableTextRenderer` as a `TableAttachment`; if a paragraph range still carries `.table`, `BlockModelElementFactory` falls back to `ParagraphElement` rather than constructing a table-specific element.
 
 Untagged ranges (mid-splice windows) fall back to TK2's default `NSTextParagraph`.
 
@@ -399,12 +397,13 @@ Untagged ranges (mid-splice windows) fall back to TK2's default `NSTextParagraph
 - `MermaidLayoutFragment` — diagram widget; reads `.renderedBlockSource`
 - `MathLayoutFragment` — MathJax bitmap
 - `DisplayMathLayoutFragment` — centered equation for inline `$$…$$` paragraph
-- `TableLayoutFragment` — native TK2 grid with resize handles
 - `KbdBoxParagraphLayoutFragment` — rounded boxes behind `.kbdTag` runs
 - `CodeBlockLayoutFragment` — gray rounded-rect background + 1pt border
 - `SourceLayoutFragment` — paints `.markerRange` runs in `theme.chrome.sourceMarker`
 
 Plain paragraphs (`ParagraphElement`, `ListItemElement`) fall back to the default `NSTextLayoutFragment` — zero dispatch overhead for the common case.
+
+Tables do not appear in this delegate list. `TableTextRenderer` emits one `TableAttachment`; `TableAttachmentViewProvider` mounts a `TableContainerView`; `TableContainerView` paints the grid and hosts one `TableCellTextView` per visible cell.
 
 ### TK2 gotchas (learned the hard way)
 
@@ -414,7 +413,7 @@ Plain paragraphs (`ParagraphElement`, `ListItemElement`) fall back to the defaul
 
 3. **`cacheDisplay` does NOT capture fragment-level drawing.** `bitmapImageRepForCachingDisplay` invokes `view.draw()` but does not invoke `NSTextLayoutFragment.draw`. Per-block chrome (HR line, blockquote border, heading hairline, kbd box, code-block border) won't appear in test snapshots taken this way. Verify these by asserting fragment-class dispatch (see `TextKit2FragmentDispatchTests`) or via live deployment.
 
-4. **Element-vs-fragment attribute ownership.** `DocumentRenderer` / `SourceRenderer` tag `.blockModelKind` + per-kind payload (`.headingLevel`, `.tableAuthoritativeBlock`, `.renderedBlockSource`) at render time. The content-storage delegate reads these and constructs the right element class; the layout-manager delegate dispatches by element class to the right fragment.
+4. **Element-vs-fragment attribute ownership.** `DocumentRenderer` / `SourceRenderer` tag `.blockModelKind` + per-kind payload (`.headingLevel`, `.renderedBlockSource`) at render time. The content-storage delegate reads these and constructs the right element class; the layout-manager delegate dispatches by element class to the right fragment. Tables bypass this paragraph-fragment payload route and carry their table payload on `TableAttachment.block`.
 
 ## Edit Application (`DocumentEditApplier`)
 
@@ -551,7 +550,7 @@ If a named theme is missing or its JSON is corrupt, `Theme.load(named:)` falls b
 | `DocumentRenderer` | block-level fills, borders, margins, paragraph spacing, heading font sizes, list/blockquote/code-block chrome |
 | `InlineRenderer` | link color, highlight background, inline code chrome, strike/underline/mark styles |
 | Per-block fragments | the block's own section of the theme |
-| `TableElement` / `TableLayoutFragment` | table handle color, resize preview, column separator |
+| `TableGeometry` / `TableContainerView` / `TableAttachment` | table grid colors, separator width, cell padding, attachment bounds |
 
 Geometry that is inherently structural (HR arithmetic around line thickness, bezier offsets in code-block borders) stays as-is; only *values* flow through Theme.
 
@@ -574,7 +573,7 @@ One documented literal: `PreferencesEditorViewController.previewFontSize: CGFloa
 `scripts/rule7-gate.sh` (pure shell, CI-ready) scans `FSNotes/` and `FSNotesCore/` for:
 
 - Marker-hiding tricks (0.1pt font, `NSColor.clear` foreground, `.kern` attribute, widget-local `parseInlineMarkdown`)
-- View→model bidirectional reads (`.stringValue` into `rows[]` / `headers[]` in table widgets)
+- View→model bidirectional reads (`.stringValue` into `rows[]` / `headers[]` in retired table widgets)
 - Literal presentation values in render-path files (hardcoded `NSFont.systemFont(ofSize:)`, hardcoded `paragraphSpacing`, hex color literals in `Fragments/`)
 - `performEditingTransaction` callers outside `DocumentEditApplier.swift` (Phase 5a)
 

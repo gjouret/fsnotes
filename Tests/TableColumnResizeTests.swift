@@ -2,16 +2,14 @@
 //  TableColumnResizeTests.swift
 //  FSNotesTests
 //
-//  Phase 2e-T2-g.4 — column drag-resize + persisted `columnWidths`
-//  on native `TableElement` grids.
+//  Column drag-resize + persisted `columnWidths` on table blocks.
 //
 //  Rule-3 posture: every test operates on pure value types
 //  (`DocumentProjection`, `Block`) and / or the pure
 //  `MarkdownParser` / `MarkdownSerializer` functions. No `NSWindow`,
-//  no field editor, no synthesized mouse events. The drag loop itself
-//  lives in `TableHandleView`; its math is factored into a pure
-//  helper (`applyDragDelta`), which is exercised indirectly through
-//  the `setTableColumnWidths` primitive here.
+//  no field editor, no synthesized mouse events. The UI drag loop
+//  commits through the same `setTableColumnWidths` primitive exercised
+//  here.
 //
 
 import XCTest

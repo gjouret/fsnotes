@@ -81,14 +81,10 @@ public extension NSAttributedString.Key {
 /// right `NSTextParagraph` subclass per block, which in turn lets
 /// Phase 2c's layout fragments route their drawing.
 ///
-/// `table` was added in Phase 2e-T2-b for the native-cell table path.
-/// `TableTextRenderer` emits a flat, separator-encoded attributed
-/// string tagged with this kind; the TK2 content-storage delegate
-/// returns a `TableElement`. Mermaid and math are distinct kinds
-/// (not just code blocks with a language marker) because their
-/// Phase 2c layout fragments reserve bitmap space and draw a
-/// rendered image over the source text, which the plain code-block
-/// fragment doesn't do.
+/// Mermaid and math are distinct kinds (not just code blocks with a
+/// language marker) because their Phase 2c layout fragments reserve
+/// bitmap space and draw a rendered image over the source text, which
+/// the plain code-block fragment doesn't do.
 public enum BlockModelKind: String {
     case paragraph
     case paragraphWithKbd  // paragraph containing one or more .kbdTag runs
@@ -105,9 +101,9 @@ public enum BlockModelKind: String {
     /// this kind; they fall through to `.paragraph` and the display
     /// math stays on the inline attachment path.
     case displayMath
-    /// Phase 2e-T2-b: block-model table rendered as a single flat
-    /// attributed string of cell text joined by U+001F / U+001E
-    /// separators.
+    /// Legacy fallback tag for paragraph-shaped table ranges. The live
+    /// macOS table route uses `TableAttachment`, so production rendering
+    /// should not emit this kind.
     case table
 
     /// Paragraph-shaped range rendered by `SourceRenderer` — carries
@@ -116,49 +112,4 @@ public enum BlockModelKind: String {
     /// paragraph. Live since Phase 4.4 (source mode dispatches to
     /// `SourceLayoutFragment` for paragraphs tagged with this kind).
     case sourceMarkdown
-}
-
-/// Phase 2e-T2-b: tags header-row cells inside a `.table`-kinded
-/// range so `TableLayoutFragment` can style them differently (bold /
-/// separator line) without having to peek at the `TableElement.block`
-/// payload on every draw call. Value: `Bool` (`true` on header-cell
-/// ranges, attribute absent elsewhere).
-public extension NSAttributedString.Key {
-    static let tableHeader = NSAttributedString.Key(rawValue: "es.fsnot.table.header")
-
-    /// Phase 2e-T2-e: carries the authoritative `Block.table` value for
-    /// a `.table`-kinded range. Set by `TableTextRenderer.renderNative`
-    /// on the full range of the emitted separator-encoded cell text;
-    /// read by the content-storage delegate when vending a
-    /// `TableElement` so the element's `block` payload has accurate
-    /// `alignments`, `header`, `rows`, and `raw` (vs. the placeholder
-    /// decoded from the flat string, which loses alignments).
-    ///
-    /// Value: a `TableAuthoritativeBlockBox` wrapper holding the
-    /// `Block.table`. The value is wrapped in a reference type so it
-    /// can live on an `NSAttributedString` attribute run without
-    /// requiring `Block` itself to be Objective-C compatible. The
-    /// render path holds a strong reference for the lifetime of the
-    /// storage range; the delegate reads it out on element construction.
-    ///
-    /// Absence of this attribute is tolerated: the delegate falls
-    /// back to the placeholder decode path. This preserves flag-off
-    /// byte-identical behaviour and keeps edit-reconciliation windows
-    /// (where the attribute may briefly be missing mid-splice) safe.
-    static let tableAuthoritativeBlock = NSAttributedString.Key(rawValue: "es.fsnot.table.auth")
-}
-
-/// Phase 2e-T2-e: boxed `Block.table` for storage on an
-/// `NSAttributedString` attribute run. Reference type so the value
-/// can be carried on attribute runs without requiring the block to be
-/// Objective-C convertible.
-///
-/// The box is immutable after construction — the render path creates
-/// a fresh box on every emission, so stale payloads never appear on a
-/// run that's been edited through the cell primitives.
-public final class TableAuthoritativeBlockBox {
-    public let block: Block
-    public init(_ block: Block) {
-        self.block = block
-    }
 }

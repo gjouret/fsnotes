@@ -13,7 +13,7 @@
 //    - Storage span per block (from DocumentProjection.blockSpans)
 //    - Selection (editor.selectedRange)
 //    - Overlay subview tree — NSViews whose class name matches a known
-//      overlay marker (TableHandleView, CodeBlockEditToggleView, etc.)
+//      overlay marker (CodeBlockEditToggleView, etc.)
 //    - Attachment-host subview tree — BulletGlyphView / CheckboxGlyphView
 //      / InlineImageView / InlinePDFView / InlineQuickLookView
 //    - Attachment geometry for inline-math placeholders (bounds.y
@@ -253,8 +253,6 @@ private struct EditorSnapshotBuilder {
     /// (would require making these classes internal-visible to the
     /// test target).
     private static let overlayClassNames: Set<String> = [
-        "TableHandleView",
-        "TableHandleChip",
         "CodeBlockEditToggleView",
     ]
 
@@ -587,9 +585,9 @@ private struct EditorSnapshotBuilder {
         var attachments: [Int: [ObservedSubview]] = [:]
 
         // Recurse through the full editor view hierarchy. Overlay
-        // controllers (`TableHandleOverlay`, `CodeBlockEditToggleOverlay`)
-        // add their subviews directly to `editor.subviews`, so those
-        // sit at depth 1. TK2's view-provider-hosted views (BulletGlyphView,
+        // controllers such as `CodeBlockEditToggleOverlay` add their
+        // subviews directly to `editor.subviews`, so those sit at
+        // depth 1. TK2's view-provider-hosted views (BulletGlyphView,
         // CheckboxGlyphView, InlineImageView, InlinePDFView,
         // InlineQuickLookView) are mounted by `NSTextViewportLayoutController`
         // as subviews of `_NSTextContentView` → `_NSTextViewportElementView`

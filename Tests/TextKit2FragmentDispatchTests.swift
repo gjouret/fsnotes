@@ -2590,13 +2590,6 @@ final class TextKit2FragmentDispatchTests: XCTestCase {
         )
     }
 
-    // NOTE: the Phase 2e `TableBlockAttachment` TK2-view-provider tests
-    // (`test_phase2e_tableAttachment_vendsTableAttachmentViewProvider`,
-    // `test_phase2e_tableAttachment_returnsNilProviderUnderTK1`,
-    // `test_phase2e_tableViewProvider_sizesViewToAttachmentBounds`)
-    // were deleted in Phase 2e-T2-h along with `TableBlockAttachment`,
-    // `TableAttachmentViewProvider`, and `InlineTableView`. Native
-    // tables render via `TableLayoutFragment` (no attachment, no view
-    // provider) — the flat-cell-text emission contract is pinned by
-    // `TableElementEmissionTests` and `TableLayoutFragmentRenderTests`.
+    // Table attachment/view-provider coverage now lives in
+    // SubviewTableRenderTests and related subview-table suites.
 }

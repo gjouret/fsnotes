@@ -688,9 +688,7 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
             isRendering = false
             // Hide live subviews — they draw independently of LayoutManager.
             // InlinePDFView renders outside LayoutManager's fold gate, so
-            // it must be hidden explicitly. (Native tables render via
-            // TK2 `TableLayoutFragment`, which is fold-aware — no
-            // separate subview hiding needed.)
+            // it must be hidden explicitly.
             if let textView = editor {
                 for subview in textView.subviews {
                     if !subview.isHidden,
@@ -728,8 +726,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         // Bug #54: also invalidate a wider range covering the heading,
         // its trailing newline, AND the full fold range below. Bullets
         // and todo checkboxes in the fold range are attachments whose
-        // `NSTextAttachmentViewProvider`s get cached on `TableLayoutFragment`
-        // / paragraph fragments. A narrow invalidation of just the
+        // `NSTextAttachmentViewProvider`s get cached on paragraph
+        // fragments. A narrow invalidation of just the
         // attachment-character offsets doesn't always trigger
         // `loadView()` to re-run; expanding to the wider range, then
         // forcing a full TextKit 2 re-layout via the layout manager,
@@ -1646,9 +1644,8 @@ class TextStorageProcessor: NSObject, NSTextStorageDelegate, RenderingFlagProvid
         }
     }
 
-    // Tables are rendered via `TableLayoutFragment` (FSNotesCore) in
-    // the WYSIWYG block-model path. The source-mode processor has no
-    // table rendering of its own.
+    // Tables are rendered by the WYSIWYG block-model path. The
+    // source-mode processor has no table rendering of its own.
     #endif
 
     private func getImageMaxWidth() -> CGFloat {

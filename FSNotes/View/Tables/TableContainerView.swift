@@ -5,7 +5,7 @@
 //  Phase 8 / Subview Tables — A3.
 //
 //  `NSView` that renders a `Block.table` as a grid of cells with the
-//  same visual chrome as `TableLayoutFragment.draw(at:in:)` — header
+//  same visual chrome as the table renderer — header
 //  fill, zebra body rows, grid lines, and a top/left handle-strip
 //  reservation so handles can later sit there.
 //
@@ -19,7 +19,7 @@
 //  matching TK2's drawing convention. The view's own bounds are
 //  (0, 0, containerWidth, handleBarHeight + totalCellHeight). Grid
 //  origin is (handleBarWidth, handleBarHeight) relative to view-
-//  local (0, 0) — same offsets `TableLayoutFragment.draw` uses.
+//  local (0, 0).
 //
 
 import AppKit
@@ -683,8 +683,7 @@ final class TableContainerView: NSView, NSTextViewDelegate {
 
     // MARK: - Row fills (header + zebra body shading)
     //
-    // Mirrors `TableLayoutFragment.drawRowFills` exactly so the
-    // visual is byte-equivalent during the migration.
+    // Uses the shared table chrome colors from TableGeometry.
     private func drawRowFills(
         context: CGContext,
         rowHeights: [CGFloat],
@@ -701,7 +700,7 @@ final class TableContainerView: NSView, NSTextViewDelegate {
             height: rowHeights[0]
         )
         context.saveGState()
-        context.setFillColor(TableLayoutFragment.headerFillColor.cgColor)
+        context.setFillColor(TableGeometry.headerFillColor.cgColor)
         context.fill(headerRect)
         context.restoreGState()
 
@@ -713,7 +712,7 @@ final class TableContainerView: NSView, NSTextViewDelegate {
                     x: gridLeft, y: rowY, width: gridWidth, height: h
                 )
                 context.saveGState()
-                context.setFillColor(TableLayoutFragment.zebraFillColor.cgColor)
+                context.setFillColor(TableGeometry.zebraFillColor.cgColor)
                 context.fill(rect)
                 context.restoreGState()
             }
@@ -723,7 +722,7 @@ final class TableContainerView: NSView, NSTextViewDelegate {
 
     // MARK: - Grid lines
     //
-    // Mirrors `TableLayoutFragment.drawGridLines` exactly.
+    // Draw the table grid using the shared table chrome constants.
     private func drawGridLines(
         context: CGContext,
         columnWidths: [CGFloat],
@@ -735,10 +734,10 @@ final class TableContainerView: NSView, NSTextViewDelegate {
     ) {
         context.saveGState()
         defer { context.restoreGState() }
-        context.setStrokeColor(TableLayoutFragment.gridLineColor.cgColor)
-        context.setLineWidth(TableLayoutFragment.gridLineWidth)
+        context.setStrokeColor(TableGeometry.gridLineColor.cgColor)
+        context.setLineWidth(TableGeometry.gridLineWidth)
 
-        let half = TableLayoutFragment.gridLineWidth / 2
+        let half = TableGeometry.gridLineWidth / 2
 
         // Horizontal lines.
         var y = gridTop

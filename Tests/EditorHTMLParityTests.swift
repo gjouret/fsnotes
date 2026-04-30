@@ -1462,10 +1462,9 @@ class EditorHTMLParityTests: XCTestCase {
         // The fix: EditingOps.delete now uses blockIndices(overlapping:) to
         // detect when an atomic block (table, HR) is fully covered by selection.
         //
-        // Native-path version (post-T2-h): native tables render as
-        // separator-encoded live text, not a U+FFFC attachment. Locate
-        // the table via the block-model projection (the Document's
-        // table block) and select the storage span that covers it.
+        // Subview-table path: locate the table through the block-model
+        // projection and select the storage span that covers its
+        // attachment glyph.
         let editor = makeEditor()
         fill(editor, "before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nafter")
 

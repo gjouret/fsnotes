@@ -6,7 +6,7 @@
 //  column-width / row-height computer that replaces
 //  `InlineTableView.contentBasedColumnWidths` +
 //  `InlineTableView.rowHeights` (+ `wrappedCellHeight`) for the TK2
-//  native-cell path.
+//  table rendering path shared by attachments and cell subviews.
 //
 //  Ported from the geometry subset of `TableLayoutTests`. Since the
 //  implementation in `TableGeometry` is a verbatim port of the widget

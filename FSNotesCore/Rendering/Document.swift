@@ -228,9 +228,9 @@ public enum Block: Equatable {
     /// of a note that contains tables — this is an accepted trade-off
     /// (see REFACTOR_PLAN Phase 4.2).
     ///
-    /// Cell content is "a paragraph inside a cell" — the parser, the
-    /// primitives, and the native `TableElement` renderer all operate
-    /// on inline trees using the same `InlineRenderer` paragraphs use.
+    /// Cell content is "a paragraph inside a cell" — the parser,
+    /// editing primitives, and subview renderer all operate on inline
+    /// trees using the same `InlineRenderer` paragraphs use.
     case table(header: [TableCell], alignments: [TableAlignment], rows: [[TableCell]], columnWidths: [CGFloat]?)
 
     /// A literal blank line separating blocks.

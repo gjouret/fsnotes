@@ -1,7 +1,6 @@
 # DEBUG.md — Plan for the FSNotes++ Refactor 4 bug inventory
 
-**Source**: Notes "FSNotes++ Bugs - Refactor 4" + "FSNotes++ Refactor 4" (running plan)
-**Tracker**: `bd` (beads) — 59 open issues as of 2026-04-29 (4 P1 / 42 P2 / 13 P3)
+**Tracker**: `bd` (beads) from the Beadbox app.
 **Scope**: define a workflow for (1) detecting bugs that are already fixed, (2) fixing the open ones, (3) handling new bugs discovered while testing or fixing.
 
 ---

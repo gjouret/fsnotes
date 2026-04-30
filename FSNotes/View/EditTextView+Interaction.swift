@@ -73,18 +73,6 @@ extension EditTextView {
         dragDetected = false
         skipLoadSelectedRange = true
 
-        // Click-on-table-cell: place the cursor at the correct cell
-        // offset BEFORE super.mouseDown runs. TK2's default click→
-        // cursor mapping uses naturally-flowing text line fragments,
-        // but `TableLayoutFragment.draw` paints cells at custom grid
-        // positions. So the default mapping never lands clicks on
-        // cell text inside the right cell's storage range — the
-        // user can never place the caret in a cell to type.
-        if handleTableCellClick(event: event) {
-            saveSelectedRange()
-            return
-        }
-
         super.mouseDown(with: event)
 
         // Phase 4.8: legacy clear-color-marker skip removed. Before 4.4,
@@ -255,13 +243,9 @@ extension EditTextView {
               blockIndex < projection.blockSpans.count
         else { return }
         let span = projection.blockSpans[blockIndex]
-        // The TableElement begins at `span.location`; the first
-        // header cell content starts at offset 0 inside the element.
-        // (The native-cell encoding has cell text first, then a
-        // U+001F separator — see `TableElement.offset(forCellAt:)`.)
-        // For an empty cell, the first cell's content range is
-        // `(span.location, length=0)`, so parking at `span.location`
-        // is the right insertion point.
+        // The table block renders as a single TableAttachment at the
+        // block span. Park the parent cursor there, then transfer focus
+        // into the attachment's top-left cell below.
         setSelectedRange(NSRange(location: span.location, length: 0))
 
         // Subview-tables: also focus the (0,0) cell of the new table's
@@ -276,9 +260,7 @@ extension EditTextView {
         // `loadView()` for the next viewport-layout pass. Defer the
         // cell-focus to that pass so `attachment.liveContainerView`
         // is populated when we read it.
-        if UserDefaultsManagement.useSubviewTables {
-            requestSubviewTableCellFocus(blockIndex: blockIndex, row: 0, col: 0)
-        }
+        requestSubviewTableCellFocus(blockIndex: blockIndex, row: 0, col: 0)
     }
 
     /// Event-driven post-mount focus: tag the table attachment with
@@ -298,82 +280,6 @@ extension EditTextView {
                 .attachment, at: span.location, effectiveRange: nil
               ) as? TableAttachment else { return }
         attachment.requestPostMountFocus(row: row, col: col)
-    }
-
-    /// Map a mouse-down event to a table cell + cursor offset, and
-    /// place the selection there. Returns true if the click landed
-    /// on a `TableLayoutFragment` cell (caller should NOT fall
-    /// through to `super.mouseDown`); false otherwise.
-    ///
-    /// Why we own this rather than letting NSTextView's default
-    /// click handler do the work: `TableLayoutFragment.draw` paints
-    /// cells at custom grid positions, but TK2's hit test uses the
-    /// naturally-flowing text line fragments. So a click on visible
-    /// cell text doesn't map to the storage offset of that cell's
-    /// content — typing after such a click never routes through
-    /// `handleTableCellEdit` because `cursorIsInTableElement()` only
-    /// holds when the cursor is in the element's range, not when
-    /// the click "missed" into adjacent paragraph storage.
-    fileprivate func handleTableCellClick(event: NSEvent) -> Bool {
-        guard let tlm = self.textLayoutManager,
-              let contentStorage = tlm.textContentManager
-                as? NSTextContentStorage
-        else {
-            bmLog("🖱 handleTableCellClick: no tlm or contentStorage")
-            return false
-        }
-        let point = self.convert(event.locationInWindow, from: nil)
-        // Use `textContainerOrigin` (not `textContainerInset`) for the
-        // view → container conversion. The renderer paints content at
-        // `view.y = container.y + textContainerOrigin.y`; the inverse
-        // for a click hit-test is `container.y = view.y - origin.y`.
-        // `EditTextView` overrides `textContainerOrigin` to subtract 7
-        // pt from super's value (see `EditTextView.swift:625`), so
-        // origin.y differs from inset.height by exactly that 7 pt.
-        // Using inset here created a 7-pt dead zone at the visual top
-        // of every cell where clicks fell into `localY <
-        // handleBarHeight` and got rejected by `cellHit`, sending the
-        // user into TK2's natural-flow fallback (caret parked at the
-        // table's trailing edge or in an adjacent block).
-        let properPoint = NSPoint(
-            x: point.x - textContainerOrigin.x,
-            y: point.y - textContainerOrigin.y
-        )
-        guard let fragment = tlm.textLayoutFragment(for: properPoint) else {
-            bmLog("🖱 handleTableCellClick: no fragment at properPoint=\(properPoint)")
-            return false
-        }
-        let fragClass = String(describing: Swift.type(of: fragment))
-        guard let tableFrag = fragment as? TableLayoutFragment,
-              let element = fragment.textElement as? TableElement,
-              let elementRange = element.elementRange
-        else {
-            bmLog("🖱 handleTableCellClick: fragment is \(fragClass), not TableLayoutFragment — pass-through")
-            return false
-        }
-        let localPoint = CGPoint(
-            x: properPoint.x - fragment.layoutFragmentFrame.origin.x,
-            y: properPoint.y - fragment.layoutFragmentFrame.origin.y
-        )
-        guard let (row, col) = tableFrag.cellHit(at: localPoint) else {
-            bmLog("🖱 handleTableCellClick: cellHit nil at localPoint=\(localPoint) fragFrame=\(fragment.layoutFragmentFrame)")
-            return false
-        }
-        guard let cellLocalRange = element.cellRange(
-            forCellAt: (row: row, col: col)
-        ) else {
-            bmLog("🖱 handleTableCellClick: no cellRange for (\(row),\(col))")
-            return false
-        }
-        let elementStart = NSRange(elementRange.location, in: contentStorage).location
-        // Park the cursor at the END of the cell's content. Most
-        // intuitive for a click on a non-empty cell; for an empty
-        // cell, end == start so it's still right.
-        let target = elementStart + cellLocalRange.location +
-            cellLocalRange.length
-        setSelectedRange(NSRange(location: target, length: 0))
-        bmLog("🖱 handleTableCellClick: cell=(\(row),\(col)) target=\(target) elementStart=\(elementStart) cellLocal=\(cellLocalRange)")
-        return true
     }
 
     func characterIndexTK2(at point: NSPoint) -> Int? {
@@ -536,15 +442,6 @@ extension EditTextView {
            blockType == RenderedBlockType.image.rawValue {
             return false
         }
-
-        // Table click handling used to intercept here when the legacy
-        // `InlineTableAttachmentCell` widget path was live. With the
-        // native `TableLayoutFragment` path, TK2's default hit-testing
-        // positions the selection inside the cell via
-        // `EditTextView+TableNav`'s cursor context logic — no
-        // click-handler override needed. Tables render as real text
-        // content, not a single attachment character, so the check
-        // below (`.attachment != nil`) would never match a table anyway.
 
         let attachmentRange = NSRange(location: index, length: 1)
         guard NSMaxRange(attachmentRange) <= storage.length else { return false }

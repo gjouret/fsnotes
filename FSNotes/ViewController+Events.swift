@@ -393,47 +393,11 @@ extension ViewController {
         }
     }
 
-    // MARK: - Table handle overlay (Phase 2e-T2-g)
-    //
-    // The overlay hangs off the ViewController via an associated object
-    // — `EditTextView+BlockModel.swift` is off-limits under the T2-g
-    // scope rules, and the overlay itself needs a stable owner so it
-    // can observe scroll / text-change notifications across the life
-    // of the editor. Lazy instantiation: the first call constructs the
-    // overlay AND kicks a reposition so the handle views exist before
-    // the first hover.
-    //
-    // Production wiring: call `tableHandleOverlay.reposition()` after a
-    // note is filled into the editor. Tests construct the overlay
-    // directly (bypassing this accessor) so they don't need the full
-    // ViewController hierarchy.
-
-    private struct TableHandleOverlayKeys {
-        static var overlay = "TableHandleOverlay.overlayKey"
-    }
-
-    public var tableHandleOverlay: TableHandleOverlay {
-        if let existing = objc_getAssociatedObject(
-            self, &TableHandleOverlayKeys.overlay
-        ) as? TableHandleOverlay {
-            return existing
-        }
-        let overlay = TableHandleOverlay(editor: editor)
-        objc_setAssociatedObject(
-            self,
-            &TableHandleOverlayKeys.overlay,
-            overlay,
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
-        return overlay
-    }
-
     // MARK: - Code-block edit toggle overlay (Phase 8 Slice 3)
     //
     // The `</>` hover button that flips a fenced code block between its
-    // rendered view and its raw source form. Same shape as
-    // `tableHandleOverlay` above: an associated-object lazy getter whose
-    // first read constructs the overlay and installs its
+    // rendered view and its raw source form. An associated-object lazy
+    // getter's first read constructs the overlay and installs its
     // `NSText.didChangeNotification` +
     // `NSView.boundsDidChangeNotification` +
     // `EditTextView.editingCodeBlocksDidChangeNotification` observers.
@@ -441,10 +405,9 @@ extension ViewController {
     // aligned with visible code-block fragments on every scroll / edit.
     //
     // Production wiring: call `codeBlockEditToggleOverlay.reposition()`
-    // after a note is filled into the editor, alongside the equivalent
-    // `tableHandleOverlay` call. Without that call the overlay is never
-    // constructed, no observers wire up, and the `</>` buttons never
-    // appear. Tests bypass this getter and construct
+    // after a note is filled into the editor. Without that call the
+    // overlay is never constructed, no observers wire up, and the `</>`
+    // buttons never appear. Tests bypass this getter and construct
     // `CodeBlockEditToggleOverlay(editor:)` directly.
 
     private struct CodeBlockEditToggleOverlayKeys {

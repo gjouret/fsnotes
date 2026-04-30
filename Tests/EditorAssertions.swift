@@ -19,8 +19,7 @@
 //    4. toolbar.button(_).isHighlighted / .isOff
 //    5. glyphs.bulletCount.equals(_)
 //    6. glyphs.checkboxCount.equals(_)
-//    7. tableHandle.column(_).alignsWithBoundary
-//    8. fragment.atBlock(_).is(_)
+//    7. fragment.atBlock(_).is(_)
 //
 //  Plus one demo helper used by the demonstration test:
 //    - tableContent.cell(_, _).equals(_)
@@ -46,7 +45,6 @@ struct EditorAssertions {
     var cursor: CursorAssertions { CursorAssertions(parent: self) }
     var toolbar: ToolbarAssertions { ToolbarAssertions(parent: self) }
     var glyphs: GlyphAssertions { GlyphAssertions(parent: self) }
-    var tableHandle: TableHandleAssertions { TableHandleAssertions(parent: self) }
     var fragment: FragmentAssertions { FragmentAssertions(parent: self) }
     var tableContent: TableContentAssertions { TableContentAssertions(parent: self) }
     var block: BlockAssertions { BlockAssertions(parent: self) }
@@ -102,25 +100,6 @@ fileprivate enum AssertionHelpers {
             return true
         }
         return found
-    }
-
-    /// Locate the first table block + its fragment + element. Returns
-    /// nil if there is no table in the document.
-    static func firstTable(
-        in editor: EditTextView
-    ) -> (blockIdx: Int, span: NSRange, element: TableElement, fragment: TableLayoutFragment)? {
-        guard let projection = editor.documentProjection else { return nil }
-        var blockIdx: Int? = nil
-        for (i, b) in projection.document.blocks.enumerated() {
-            if case .table = b { blockIdx = i; break }
-        }
-        guard let bi = blockIdx,
-              bi < projection.blockSpans.count,
-              let frag = fragment(forBlockIndex: bi, in: editor)
-                as? TableLayoutFragment,
-              let el = frag.textElement as? TableElement
-        else { return nil }
-        return (bi, projection.blockSpans[bi], el, frag)
     }
 
     /// Recursive subview walk; counts subviews whose class name
@@ -204,57 +183,28 @@ struct CursorAssertions {
         return parent
     }
 
-    /// Resolve the current selection through the table block at
-    /// `selectedRange.location` and assert the cursor lives inside
-    /// cell `(row, col)`. Catches the Insert-Table → type cell-cursor
-    /// mismatch (commit `c08d3ee`).
+    /// Assert that the active first responder is the table cell at
+    /// `(row, col)`.
     @discardableResult
     func isInCell(
         row: Int, col: Int,
         file: StaticString = #filePath, line: UInt = #line
     ) -> EditorAssertions {
-        let selLoc = editor.selectedRange().location
-        guard let table = AssertionHelpers.firstTable(in: editor) else {
+        guard let cell = editor.window?.firstResponder as? TableCellTextView else {
             XCTFail(
-                "Then.cursor.isInCell: no table block in document.",
-                file: file, line: line
-            )
-            return parent
-        }
-        guard NSLocationInRange(selLoc, table.span)
-              || selLoc == table.span.location + table.span.length
-        else {
-            XCTFail(
-                "Then.cursor.isInCell: selection \(selLoc) is outside " +
-                "the table block span \(table.span.location)..\(table.span.location + table.span.length).",
-                file: file, line: line
-            )
-            return parent
-        }
-        let elementLocal = selLoc - table.span.location
-        // `cellLocation(forOffset:)` treats `offset == cellEnd` as
-        // outside the cell; for cursor readbacks a position right
-        // after the cell's last typed char belongs to that cell.
-        let resolved = table.element.cellLocation(forOffset: elementLocal)
-            ?? (elementLocal > 0
-                ? table.element.cellLocation(forOffset: elementLocal - 1)
-                : nil)
-        guard let (r, c) = resolved else {
-            XCTFail(
-                "Then.cursor.isInCell: selection \(selLoc) (element-local " +
-                "\(elementLocal)) doesn't resolve to a cell.",
+                "Then.cursor.isInCell: first responder is not a TableCellTextView.",
                 file: file, line: line
             )
             return parent
         }
         XCTAssertEqual(
-            (r, c).0, row,
-            "Then.cursor.isInCell: expected row=\(row), got \(r) (col=\(c)).",
+            cell.cellRow, row,
+            "Then.cursor.isInCell: expected row=\(row), got \(cell.cellRow).",
             file: file, line: line
         )
         XCTAssertEqual(
-            (r, c).1, col,
-            "Then.cursor.isInCell: expected col=\(col), got \(c) (row=\(r)).",
+            cell.cellCol, col,
+            "Then.cursor.isInCell: expected col=\(col), got \(cell.cellCol).",
             file: file, line: line
         )
         return parent
@@ -287,32 +237,13 @@ struct CursorAssertions {
     }
 
     private func currentRect() -> CGRect? {
+        if let cell = editor.window?.firstResponder as? TableCellTextView {
+            return cell.convert(cell.bounds, to: editor)
+        }
         let sel = editor.selectedRange()
         guard let projection = editor.documentProjection,
               let (blockIdx, _) = projection.blockContaining(storageIndex: sel.location)
         else { return nil }
-        // Table cells get their grid-computed rect.
-        if case .table = projection.document.blocks[blockIdx],
-           let table = AssertionHelpers.firstTable(in: editor),
-           let geom = table.fragment.geometryForHandleOverlay() {
-            let elementLocal = sel.location - table.span.location
-            guard let (row, col) = table.element.cellLocation(forOffset: elementLocal)
-                    ?? (elementLocal > 0
-                        ? table.element.cellLocation(forOffset: elementLocal - 1)
-                        : nil),
-                  col < geom.columnWidths.count, row < geom.rowHeights.count
-            else { return nil }
-            var x = TableGeometry.handleBarWidth
-            for c in 0..<col { x += geom.columnWidths[c] }
-            var y = TableGeometry.handleBarHeight
-            for r in 0..<row { y += geom.rowHeights[r] }
-            let origin = table.fragment.layoutFragmentFrame.origin
-            return CGRect(
-                x: origin.x + x, y: origin.y + y,
-                width: geom.columnWidths[col],
-                height: geom.rowHeights[row]
-            )
-        }
         // Default: the fragment containing the selection.
         return AssertionHelpers.fragment(forBlockIndex: blockIdx, in: editor)?
             .layoutFragmentFrame
@@ -455,73 +386,7 @@ struct GlyphCounter {
     }
 }
 
-// MARK: - 7: Table handle alignment
-
-struct TableHandleAssertions {
-    let parent: EditorAssertions
-    func column(_ col: Int) -> TableHandleColumnAssertion {
-        return TableHandleColumnAssertion(parent: parent, col: col)
-    }
-}
-
-struct TableHandleColumnAssertion {
-    let parent: EditorAssertions
-    let col: Int
-    fileprivate var editor: EditTextView { parent.scenario.editor }
-
-    /// Assert the column-`col` handle chip's `frame.minX` (in editor
-    /// coords) is within ±1pt of the geometry-computed column
-    /// boundary. Catches the `fragFrame.origin.x` drift class.
-    @discardableResult
-    func alignsWithBoundary(
-        file: StaticString = #filePath, line: UInt = #line
-    ) -> EditorAssertions {
-        guard let table = AssertionHelpers.firstTable(in: editor),
-              let geom = table.fragment.geometryForHandleOverlay()
-        else {
-            XCTFail(
-                "Then.tableHandle.column(\(col)).alignsWithBoundary: " +
-                "no table block / no geometry.",
-                file: file, line: line
-            )
-            return parent
-        }
-        guard col >= 0, col < geom.columnWidths.count else {
-            XCTFail(
-                "Then.tableHandle.column(\(col)).alignsWithBoundary: " +
-                "col out of range (\(geom.columnWidths.count) cols).",
-                file: file, line: line
-            )
-            return parent
-        }
-        var expectedX = table.fragment.layoutFragmentFrame.origin.x +
-            TableGeometry.handleBarWidth
-        for c in 0..<col { expectedX += geom.columnWidths[c] }
-
-        let chips = AssertionHelpers.collectFrames(
-            named: "TableHandleView", in: editor
-        )
-        if chips.isEmpty {
-            XCTFail(
-                "Then.tableHandle.column(\(col)).alignsWithBoundary: " +
-                "no TableHandleView subviews mounted.",
-                file: file, line: line
-            )
-            return parent
-        }
-        let chip = chips.min { abs($0.midX - expectedX) < abs($1.midX - expectedX) }!
-        if abs(chip.minX - expectedX) > 1.0 {
-            XCTFail(
-                "Then.tableHandle.column(\(col)).alignsWithBoundary: " +
-                "expected ≈\(expectedX), got chip.minX=\(chip.minX) (Δ=\(chip.minX - expectedX)).",
-                file: file, line: line
-            )
-        }
-        return parent
-    }
-}
-
-// MARK: - 8: Fragment dispatch
+// MARK: - 7: Fragment dispatch
 
 struct FragmentAssertions {
     let parent: EditorAssertions
@@ -567,10 +432,8 @@ struct TableContentAssertions {
     let parent: EditorAssertions
 
     /// Locator for the cell at `(row, col)` of the first table block
-    /// in the document. Row indexing matches `TableElement.cellLocation
-    /// (forOffset:)`: row 0 is the header, row r ≥ 1 is body row r-1.
-    /// This keeps `Then.cursor.isInCell(row: 0, col: 0)` and
-    /// `Then.tableContent.cell(0, 0)` referring to the same cell.
+    /// in the document. Row 0 is the header, row r >= 1 is body row
+    /// r - 1.
     func cell(_ row: Int, _ col: Int) -> TableCellAssertion {
         return TableCellAssertion(parent: parent, row: row, col: col)
     }

@@ -3,8 +3,8 @@
 //  FSNotesTests
 //
 //  Bug #36 regression coverage — drag-and-drop reorder for table
-//  rows and columns. Tests the pure helpers + primitives the
-//  TableHandleOverlay's drag loop consults.
+//  rows and columns. Tests the pure helpers + primitives the UI drag
+//  loop consults.
 //
 
 import XCTest

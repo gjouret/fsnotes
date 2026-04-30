@@ -24,9 +24,9 @@
 //        chrome would compound visually.
 //      • MermaidLayoutFragment / MathLayoutFragment / DisplayMathLayoutFragment
 //        — replace text with bitmaps, no inline code spans visible.
-//      • TableLayoutFragment — table cells render via custom paint;
-//        cell-level inline code lives inside cell text but the cell
-//        renderer owns that paint pass already (out of scope for #51).
+//      • Table cell subviews — cell-level inline code lives inside
+//        cell text and the cell renderer owns that paint pass already
+//        (out of scope for #51).
 //      • HorizontalRuleLayoutFragment — no text content.
 //      • FoldedLayoutFragment — zero-height no-op.
 //      • SourceLayoutFragment — source mode shows raw `` ` `` markers,

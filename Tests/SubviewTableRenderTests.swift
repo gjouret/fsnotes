@@ -14,7 +14,7 @@
 //    3. `TableContainerView.totalHeight` matches
 //       `handleBarHeight + TableGeometry.compute(...).totalHeight`
 //       for the same input — i.e. the provider's `attachmentBounds`
-//       sizes the attachment to the same height the native-cell
+//       sizes the attachment to the same height the shared table
 //       fragment would have used.
 //
 //  These tests run without an `EditTextView`; they exercise the
@@ -125,7 +125,7 @@ final class SubviewTableRenderTests: XCTestCase {
         )
     }
 
-    // MARK: - 3. attachmentBounds height matches native-cell geometry
+    // MARK: - 3. attachmentBounds height matches shared table geometry
 
     func test_attachmentBounds_matchesTableGeometryHeight() {
         let block = sample2x2Block()
