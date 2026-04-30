@@ -1867,9 +1867,11 @@ extension EditTextView {
 
         guard let projection = documentProjection else { return false }
         do {
-            let result = try EditingOps.toggleInlineTrait(
+            guard let result = try EditingOps.toggleInlineTraitAcrossSelection(
                 trait, range: sel, in: projection
-            )
+            ) else {
+                return false
+            }
             bmLog("🔤 toggleInlineTrait(\(trait)): splice \(result.spliceRange) → \(result.spliceReplacement.length) chars")
             let name: String
             switch trait {
@@ -1890,37 +1892,20 @@ extension EditTextView {
 
     /// Change heading level via the block model.
     ///
-    /// Bug #26 semantics: when the user has a multi-paragraph
-    /// selection and clicks an H1/H2/H3 button, only the FIRST
-    /// non-blank block in the selection is promoted. The remaining
-    /// paragraphs stay paragraphs. Promoting *every* paragraph in a
-    /// multi-block selection produces a wall of headings that's almost
-    /// never what the user wants — selecting "title plus body" should
-    /// title the title, not promote the body. This is a deliberate
-    /// departure from the parallel `toggleList` / `toggleQuote` /
-    /// `toggleTodo` primitives which still apply to every overlapped
-    /// block.
+    /// Multi-selection formatting applies to every selected
+    /// paragraph/heading. Blank lines are skipped.
     ///
     /// Returns true if handled.
     func changeHeadingLevelViaBlockModel(_ level: Int) -> Bool {
-        guard var projection = documentProjection else { return false }
+        guard let projection = documentProjection else { return false }
         let sel = selectedRange()
         do {
-            let overlapping = projection.blockIndices(overlapping: sel)
-            // Skip blank lines (consistent with applyToggleAcrossSelection).
-            let nonBlank = overlapping.filter { idx in
-                if case .blankLine = projection.document.blocks[idx] { return false }
-                return true
+            guard let result = try EditingOps.changeHeadingLevelAcrossSelection(
+                level, range: sel, in: projection
+            ) else {
+                return false
             }
-            let candidates = nonBlank.isEmpty ? overlapping : nonBlank
-            guard let firstIdx = candidates.first else { return false }
-            let span = projection.blockSpans[firstIdx]
-            let result = try EditingOps.changeHeadingLevel(
-                level, at: span.location, in: projection
-            )
             applyEditResultWithUndo(result, actionName: "Heading")
-            projection = result.newProjection
-            documentProjection = projection
             return true
         } catch {
             bmLog("⚠️ changeHeadingLevel failed: \(error)")

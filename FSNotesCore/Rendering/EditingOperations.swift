@@ -5574,6 +5574,246 @@ public enum EditingOps {
         return result
     }
 
+    /// Toggle an inline trait across every editable inline segment
+    /// touched by `selectionRange`.
+    ///
+    /// `toggleInlineTrait` is intentionally single-segment: both
+    /// endpoints must live inside the same paragraph, heading suffix,
+    /// list item, or blockquote line. Toolbar selections commonly span
+    /// multiple paragraphs/items, so this wrapper applies the same
+    /// primitive semantics to each overlapped editable segment and
+    /// returns one coalesced `EditResult`.
+    public static func toggleInlineTraitAcrossSelection(
+        _ trait: InlineTrait,
+        range selectionRange: NSRange,
+        in projection: DocumentProjection
+    ) throws -> EditResult? {
+        guard selectionRange.length > 0 else {
+            return try toggleInlineTrait(
+                trait, range: selectionRange, in: projection
+            )
+        }
+
+        let selectionEnd = NSMaxRange(selectionRange)
+        let overlapping = projection.blockIndices(overlapping: selectionRange)
+        guard !overlapping.isEmpty else {
+            throw EditingError.notInsideBlock(
+                storageIndex: selectionRange.location
+            )
+        }
+
+        var blocks = projection.document.blocks
+        var changed = Set<Int>()
+
+        func localOverlap(
+            span: NSRange,
+            contentStart: Int,
+            contentEnd: Int
+        ) -> (from: Int, to: Int)? {
+            let absoluteStart = span.location + contentStart
+            let absoluteEnd = span.location + contentEnd
+            let overlapStart = max(selectionRange.location, absoluteStart)
+            let overlapEnd = min(selectionEnd, absoluteEnd)
+            guard overlapEnd > overlapStart else { return nil }
+            return (
+                overlapStart - absoluteStart,
+                overlapEnd - absoluteStart
+            )
+        }
+
+        for idx in overlapping {
+            let span = projection.blockSpans[idx]
+            let block = blocks[idx]
+            let blockStart = max(selectionRange.location, span.location)
+            let blockEnd = min(selectionEnd, NSMaxRange(span))
+            guard blockEnd > blockStart else { continue }
+            let inBlockStart = blockStart - span.location
+            let inBlockEnd = blockEnd - span.location
+
+            switch block {
+            case .paragraph(let inline):
+                let inlineEnd = inlinesLength(inline)
+                let from = min(max(inBlockStart, 0), inlineEnd)
+                let to = min(max(inBlockEnd, from), inlineEnd)
+                guard to > from else { continue }
+                blocks[idx] = .paragraph(
+                    inline: toggleTraitOnInlines(
+                        inline, trait: trait, from: from, to: to
+                    )
+                )
+                changed.insert(idx)
+
+            case .heading(let level, let suffix):
+                let leading = leadingWhitespaceCount(in: suffix)
+                let leadingWS = String(suffix.prefix(leading))
+                let inlines = parseInlinesFromText(
+                    String(suffix.dropFirst(leading))
+                )
+                let inlineEnd = inlinesLength(inlines)
+                let from = min(max(inBlockStart, 0), inlineEnd)
+                let to = min(max(inBlockEnd, from), inlineEnd)
+                guard to > from else { continue }
+                let newInline = toggleTraitOnInlines(
+                    inlines, trait: trait, from: from, to: to
+                )
+                blocks[idx] = .heading(
+                    level: level,
+                    suffix: leadingWS + inlinesToText(newInline)
+                )
+                changed.insert(idx)
+
+            case .list(let items, let loose):
+                var newItems = items
+                for entry in flattenList(items) {
+                    let inlineStart = entry.startOffset + entry.prefixLength
+                    let inlineEnd = inlineStart + entry.inlineLength
+                    guard let range = localOverlap(
+                        span: span,
+                        contentStart: inlineStart,
+                        contentEnd: inlineEnd
+                    ) else { continue }
+                    let newInline = toggleTraitOnInlines(
+                        entry.item.inline,
+                        trait: trait,
+                        from: range.from,
+                        to: range.to
+                    )
+                    let newItem = ListItem(
+                        indent: entry.item.indent,
+                        marker: entry.item.marker,
+                        afterMarker: entry.item.afterMarker,
+                        checkbox: entry.item.checkbox,
+                        inline: newInline,
+                        children: entry.item.children
+                    )
+                    newItems = replaceItemAtPath(
+                        newItems, path: entry.path, with: newItem
+                    )
+                    changed.insert(idx)
+                }
+                blocks[idx] = .list(items: newItems, loose: loose)
+
+            case .blockquote(let lines):
+                var newLines = lines
+                for entry in flattenBlockquote(lines) {
+                    let inlineStart = entry.startOffset + entry.prefixLength
+                    let inlineEnd = inlineStart + entry.inlineLength
+                    guard let range = localOverlap(
+                        span: span,
+                        contentStart: inlineStart,
+                        contentEnd: inlineEnd
+                    ) else { continue }
+                    let newInline = toggleTraitOnInlines(
+                        entry.line.inline,
+                        trait: trait,
+                        from: range.from,
+                        to: range.to
+                    )
+                    newLines[entry.lineIndex] = BlockquoteLine(
+                        prefix: entry.line.prefix,
+                        inline: newInline
+                    )
+                    changed.insert(idx)
+                }
+                blocks[idx] = .blockquote(lines: newLines)
+
+            default:
+                continue
+            }
+        }
+
+        guard let first = changed.min(), let last = changed.max() else {
+            return nil
+        }
+
+        var result = try replaceBlockRange(
+            first...last,
+            with: Array(blocks[first...last]),
+            in: projection
+        )
+        result.newCursorPosition = selectionRange.location
+        result.newSelectionLength = selectionRange.length
+        result.contract = EditContract(
+            declaredActions: changed.sorted().map {
+                .modifyInline(blockIndex: $0)
+            },
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            ),
+            postSelectionLength: selectionRange.length
+        )
+        return result
+    }
+
+    /// Change heading level across every selected paragraph/heading.
+    public static func changeHeadingLevelAcrossSelection(
+        _ newLevel: Int,
+        range selectionRange: NSRange,
+        in projection: DocumentProjection
+    ) throws -> EditResult? {
+        let overlapping = projection.blockIndices(overlapping: selectionRange)
+        guard !overlapping.isEmpty else {
+            throw EditingError.notInsideBlock(
+                storageIndex: selectionRange.location
+            )
+        }
+
+        var blocks = projection.document.blocks
+        var changed = Set<Int>()
+
+        for idx in overlapping {
+            let block = blocks[idx]
+            switch block {
+            case .heading(let level, let suffix):
+                if newLevel == 0 || newLevel == level {
+                    let text = suffix.trimmingCharacters(in: .whitespaces)
+                    blocks[idx] = .paragraph(
+                        inline: parseInlinesFromText(text)
+                    )
+                } else {
+                    blocks[idx] = .heading(level: newLevel, suffix: suffix)
+                }
+                changed.insert(idx)
+
+            case .paragraph(let inline):
+                guard newLevel > 0 else { continue }
+                blocks[idx] = .heading(
+                    level: newLevel,
+                    suffix: " " + inlinesToText(inline)
+                )
+                changed.insert(idx)
+
+            case .blankLine:
+                continue
+
+            default:
+                continue
+            }
+        }
+
+        guard let first = changed.min(), let last = changed.max() else {
+            return nil
+        }
+
+        var result = try replaceBlockRange(
+            first...last,
+            with: Array(blocks[first...last]),
+            in: projection
+        )
+        result.newCursorPosition = selectionRange.location
+        result.newSelectionLength = selectionRange.length
+        result.contract = EditContract(
+            declaredActions: changed.sorted().map {
+                .changeBlockKind(at: $0)
+            },
+            postCursor: result.newProjection.cursor(
+                atStorageIndex: result.newCursorPosition
+            ),
+            postSelectionLength: selectionRange.length
+        )
+        return result
+    }
+
     /// Toggle an HTML tag (e.g. `<u>`, `<mark>`) on the selected range.
     /// Wraps the selected text with rawHTML open/close tags in the inline
     /// tree, or removes them if already present. The tags are serialized

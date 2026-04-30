@@ -461,13 +461,11 @@ final class BugInventoryRegressionTests: XCTestCase {
         )
     }
 
-    // MARK: - Bug #26: H1 button on multi-paragraph promotes only first (FIXED)
+    // MARK: - Bug #26: H1 button on multi-paragraph formats all selected blocks
 
-    /// Commit `f6734b0`: `changeHeadingLevelViaBlockModel` applies
-    /// only to the first non-blank overlapped block on a
-    /// multi-paragraph selection. Deliberate departure from
-    /// `toggleList` / `toggleQuote` / `toggleTodo`.
-    func test_bug26_h1_onMultiLineSelection_promotesOnlyFirstLine() {
+    /// Superseded by fsnotes-3pe: toolbar formatting over a
+    /// multi-selection applies to every selected paragraph/item.
+    func test_bug26_h1_onMultiLineSelection_promotesEveryLine() {
         // Blank-line-separated paragraphs to get TWO blocks from the
         // parser (markdown collapses single \n into soft-break).
         let scenario = Given.note()
@@ -477,12 +475,12 @@ final class BugInventoryRegressionTests: XCTestCase {
         let md = scenario.harness.savedMarkdown
         XCTAssertTrue(
             md.hasPrefix("# first line"),
-            "Bug #26 regression: H1 should promote only the first line. " +
+            "H1 should promote the first selected line. " +
             "Got markdown:\n\(md)"
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             md.contains("# second line"),
-            "Bug #26 regression: H1 promoted the second line too. " +
+            "H1 should promote every selected line. " +
             "Got markdown:\n\(md)"
         )
     }

@@ -259,15 +259,30 @@ final class AppBridgeImpl: AppBridge {
         do {
             switch command {
             case .toggleBold:
-                result = try EditingOps.toggleInlineTrait(.bold, range: selection, in: projection)
+                guard let r = try EditingOps.toggleInlineTraitAcrossSelection(.bold, range: selection, in: projection) else {
+                    return .failed(reason: "applyFormatting: selection does not cover editable text")
+                }
+                result = r
             case .toggleItalic:
-                result = try EditingOps.toggleInlineTrait(.italic, range: selection, in: projection)
+                guard let r = try EditingOps.toggleInlineTraitAcrossSelection(.italic, range: selection, in: projection) else {
+                    return .failed(reason: "applyFormatting: selection does not cover editable text")
+                }
+                result = r
             case .toggleStrikethrough:
-                result = try EditingOps.toggleInlineTrait(.strikethrough, range: selection, in: projection)
+                guard let r = try EditingOps.toggleInlineTraitAcrossSelection(.strikethrough, range: selection, in: projection) else {
+                    return .failed(reason: "applyFormatting: selection does not cover editable text")
+                }
+                result = r
             case .toggleInlineCode:
-                result = try EditingOps.toggleInlineTrait(.code, range: selection, in: projection)
+                guard let r = try EditingOps.toggleInlineTraitAcrossSelection(.code, range: selection, in: projection) else {
+                    return .failed(reason: "applyFormatting: selection does not cover editable text")
+                }
+                result = r
             case .toggleHeading(let level):
-                result = try EditingOps.changeHeadingLevel(level, at: selection.location, in: projection)
+                guard let r = try EditingOps.changeHeadingLevelAcrossSelection(level, range: selection, in: projection) else {
+                    return .failed(reason: "applyFormatting: selection does not cover heading-compatible blocks")
+                }
+                result = r
             case .toggleBlockquote:
                 result = try EditingOps.toggleBlockquote(at: selection.location, in: projection)
             case .toggleUnorderedList:
