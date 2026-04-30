@@ -51,19 +51,49 @@ private let bmLogDateFormatter: DateFormatter = {
     return df
 }()
 
+private let bmLogEnvironmentKey = "FSNOTES_BLOCK_MODEL_LOG"
+private let bmLogUserDefaultsKey = "FSNotesBlockModelLogEnabled"
+private let bmLogMaxBytes = 1_048_576
+
+private var bmLogIsEnabled: Bool {
+#if DEBUG
+    return ProcessInfo.processInfo.environment[bmLogEnvironmentKey] == "1" ||
+        UserDefaults.standard.bool(forKey: bmLogUserDefaultsKey)
+#else
+    return false
+#endif
+}
+
 func bmLog(_ message: String) {
+#if DEBUG
+    guard bmLogIsEnabled else { return }
+
     let line = "[\(bmLogDateFormatter.string(from: Date()))] \(message)\n"
     guard let data = line.data(using: .utf8) else { return }
 
-    if FileManager.default.fileExists(atPath: blockModelLogURL.path) {
-        if let handle = try? FileHandle(forWritingTo: blockModelLogURL) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            handle.closeFile()
+    do {
+        let logsDir = blockModelLogURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: logsDir, withIntermediateDirectories: true)
+
+        var output = Data()
+        if FileManager.default.fileExists(atPath: blockModelLogURL.path) {
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: blockModelLogURL.path),
+               let size = attributes[.size] as? NSNumber,
+               size.intValue <= bmLogMaxBytes,
+               let existing = try? Data(contentsOf: blockModelLogURL) {
+                output = existing
+            } else if let truncated = "[block-model log truncated]\n".data(using: .utf8) {
+                output = truncated
+            }
         }
-    } else {
-        try? data.write(to: blockModelLogURL)
+
+        output.append(data)
+        try output.write(to: blockModelLogURL, options: .atomic)
+    } catch {
+        return
     }
+#endif
 }
 
 extension EditTextView {
