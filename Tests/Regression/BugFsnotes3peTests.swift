@@ -23,6 +23,31 @@ final class BugFsnotes3peTests: XCTestCase {
         return (haystack as NSString).range(of: needle)
     }
 
+    private func assertRenderedTextIsBold(
+        _ needle: String,
+        in harness: EditorHarness,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let storage = harness.editor.textStorage else {
+            XCTFail("Missing editor storage", file: file, line: line)
+            return
+        }
+        let textRange = range(of: needle, in: storage.string)
+        XCTAssertNotEqual(textRange.location, NSNotFound, "Missing text \(needle)", file: file, line: line)
+        guard textRange.location != NSNotFound,
+              let font = storage.attribute(.font, at: textRange.location, effectiveRange: nil) as? NSFont else {
+            XCTFail("Missing font for \(needle)", file: file, line: line)
+            return
+        }
+        XCTAssertTrue(
+            font.fontDescriptor.symbolicTraits.contains(.bold),
+            "\(needle) should render bold immediately",
+            file: file,
+            line: line
+        )
+    }
+
     private func toolbarButton(
         tooltip: String,
         in view: NSView
@@ -88,6 +113,9 @@ final class BugFsnotes3peTests: XCTestCase {
             markdown(in: h),
             "**First**\n\n**Second**\n\n**Third**"
         )
+        assertRenderedTextIsBold("First", in: h)
+        assertRenderedTextIsBold("Second", in: h)
+        assertRenderedTextIsBold("Third", in: h)
     }
 
     func test_toolbarBoldButton_multiParagraphSelection_boldsEveryParagraph() {
@@ -122,6 +150,9 @@ final class BugFsnotes3peTests: XCTestCase {
             markdown(in: h),
             "**First\nSecond\nThird**"
         )
+        assertRenderedTextIsBold("First", in: h)
+        assertRenderedTextIsBold("Second", in: h)
+        assertRenderedTextIsBold("Third", in: h)
     }
 
     func test_toolbarBoldButton_singleNewlineParagraphSelection_boldsSelection() {
@@ -315,5 +346,8 @@ final class BugFsnotes3peTests: XCTestCase {
             markdown(in: h),
             "- **First**\n- **Second**\n- **Third**"
         )
+        assertRenderedTextIsBold("First", in: h)
+        assertRenderedTextIsBold("Second", in: h)
+        assertRenderedTextIsBold("Third", in: h)
     }
 }

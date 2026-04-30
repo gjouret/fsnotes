@@ -496,6 +496,15 @@ public enum DocumentEditApplier {
         let newLen = newNS.length
         let minLen = min(oldLen, newLen)
 
+        // Attribute-only edits, such as toggling bold or changing a
+        // heading level, keep exactly the same rendered characters.
+        // Character-only narrowing would trim the whole replacement to
+        // a zero-length no-op and leave stale visual attributes in
+        // storage until a full mode-toggle re-render.
+        if oldNS.isEqual(to: newNS as String) {
+            return (priorRange, replacement)
+        }
+
         // Common prefix at character (UTF-16) level.
         var prefix = 0
         while prefix < minLen
